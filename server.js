@@ -55,7 +55,7 @@ app.post("/twilio-voice", (req, res) => {
   res.set("Content-Type", "text/xml");
   res.send(`
     <Response>
-      <Gather input="speech" action="/process-speech" method="POST" timeout="4" speechTimeout="auto">
+    <Gather input="speech" action="https://ai-front-desk-backend.onrender.com/process-speech" method="POST" timeout="4" speechTimeout="auto">
         <Say voice="alice">
           Thank you for calling Gladiators Painting. How can I help you today?
         </Say>

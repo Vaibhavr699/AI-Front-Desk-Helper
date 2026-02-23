@@ -38,15 +38,22 @@ app.post("/twilio-voice", (req, res) => {
   const callSid = req.body.CallSid;
   const from = req.body.From;
 
-  if (callSid && !callState.has(callSid)) {
-    callState.set(callSid, { lead: { ...emptyLead(), caller_phone: from || null } });
-  }
-
-  const base = process.env.BASE_URL;
+  const base = process.env.BASE_URL; // must be set in Render
   const wsUrl = base.replace("https://", "wss://") + "/twilio-media";
 
-  res.type("text/xml").send(`
+  if (callSid && !callState.has(callSid)) {
+    callState.set(callSid, {
+      lead: { ...emptyLead(), caller_phone: from || null },
+      transcript: [],
+      createdAt: Date.now(),
+      pushedToZapier: false
+    });
+  }
+
+  res.set("Content-Type", "text/xml");
+  res.send(`
     <Response>
+      <Say voice="Polly.Joanna">Connecting you now.</Say>
       <Connect>
         <Stream url="${wsUrl}" />
       </Connect>

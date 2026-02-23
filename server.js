@@ -277,31 +277,85 @@ const wss = new WebSocket.Server({
   path: "/twilio-media"
 });
 
-wss.on("connection", (socket) => {
+wss.on("connection", (twilioSocket) => {
   console.log("Twilio Media Stream connected");
 
-  socket.on("message", (message) => {
+  let streamSid = null;
+  let openaiSocket = null;
+
+  // Connect to OpenAI Realtime
+  const OpenAI = require("ws");
+
+  openaiSocket = new OpenAI("wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview", {
+    headers: {
+      "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+      "OpenAI-Beta": "realtime=v1"
+    }
+  });
+
+  openaiSocket.on("open", () => {
+    console.log("Connected to OpenAI Realtime");
+
+    // Configure session for μ-law (Twilio format)
+    openaiSocket.send(JSON.stringify({
+      type: "session.update",
+      session: {
+        input_audio_format: "g711_ulaw",
+        output_audio_format: "g711_ulaw",
+        voice: "alloy"
+      }
+    }));
+  });
+
+  // Receive audio from OpenAI and send back to Twilio
+  openaiSocket.on("message", (msg) => {
+    try {
+      const data = JSON.parse(msg.toString());
+
+      if (data.type === "response.audio.delta" && streamSid) {
+        twilioSocket.send(JSON.stringify({
+          event: "media",
+          streamSid,
+          media: {
+            payload: data.delta
+          }
+        }));
+      }
+    } catch (err) {
+      console.error("OpenAI parse error:", err);
+    }
+  });
+
+  // Receive audio from Twilio and forward to OpenAI
+  twilioSocket.on("message", (message) => {
     try {
       const data = JSON.parse(message.toString());
 
       if (data.event === "start") {
-        console.log("Stream started:", data.start.streamSid);
+        streamSid = data.start.streamSid;
+        console.log("Stream started:", streamSid);
       }
 
-      if (data.event === "media") {
-        // Audio frames arrive here
+      if (data.event === "media" && openaiSocket.readyState === 1) {
+        openaiSocket.send(JSON.stringify({
+          type: "input_audio_buffer.append",
+          audio: data.media.payload
+        }));
       }
 
       if (data.event === "stop") {
         console.log("Stream stopped");
+        if (openaiSocket) openaiSocket.close();
       }
+
     } catch (err) {
-      console.error("WebSocket parse error:", err);
+      console.error("Twilio parse error:", err);
     }
   });
 
-  socket.on("close", () => {
+  twilioSocket.on("close", () => {
     console.log("Twilio socket closed");
+    if (openaiSocket) openaiSocket.close();
   });
 });
 

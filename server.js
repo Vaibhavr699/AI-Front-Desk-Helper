@@ -277,6 +277,48 @@ function escapeForTwiML(text) {
     .replace(/'/g, "&apos;");
 }
 
-// -------------------- Start --------------------
+// -------------------- Start Server (HTTP + WebSocket) --------------------
+
+const http = require("http");
+const WebSocket = require("ws");
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on ${PORT}`));
+
+// Create HTTP server from Express app
+const server = http.createServer(app);
+
+// Attach WebSocket server to same HTTP server
+const wss = new WebSocket.Server({
+  server,
+  path: "/twilio-media"
+});
+
+wss.on("connection", (socket) => {
+  console.log("Twilio Media Stream connected");
+
+  socket.on("message", (message) => {
+    const data = JSON.parse(message.toString());
+
+    if (data.event === "start") {
+      console.log("Stream started:", data.start.streamSid);
+    }
+
+    if (data.event === "media") {
+      // Audio frames from Twilio will arrive here
+      // Next step: forward to OpenAI Realtime
+    }
+
+    if (data.event === "stop") {
+      console.log("Stream stopped");
+    }
+  });
+
+  socket.on("close", () => {
+    console.log("Twilio socket closed");
+  });
+});
+
+// Start server
+server.listen(PORT, () => {
+  console.log(`Server running on ${PORT}`);
+});

@@ -35,31 +35,24 @@ app.get("/health", (req, res) => res.status(200).send("OK"));
 
 // -------------------- Twilio: Entry --------------------
 app.post("/twilio-voice", (req, res) => {
-  const base = process.env.BASE_URL; // must be set in Render
+  const callSid = req.body.CallSid;
+  const from = req.body.From;
+
+  if (callSid && !callState.has(callSid)) {
+    callState.set(callSid, { lead: { ...emptyLead(), caller_phone: from || null } });
+  }
+
+  const base = process.env.BASE_URL;
   const wsUrl = base.replace("https://", "wss://") + "/twilio-media";
 
-  res.set("Content-Type", "text/xml");
-  res.send(`
+  res.type("text/xml").send(`
     <Response>
-      <Say voice="Polly.Joanna">
-        Connecting you now.
-      </Say>
       <Connect>
         <Stream url="${wsUrl}" />
       </Connect>
     </Response>
   `);
 });
-
-  if (!callState.has(callSid)) {
-    callState.set(callSid, {
-      lead: { ...emptyLead(), caller_phone: from || null },
-      transcript: [],
-      createdAt: Date.now(),
-      pushedToZapier: false
-    });
-  }
-
 // -------------------- Core AI Loop --------------------
 app.post("/process-speech", async (req, res) => {
   const callSid = req.body.CallSid;

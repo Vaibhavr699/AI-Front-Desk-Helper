@@ -35,11 +35,15 @@ app.get("/health", (req, res) => res.status(200).send("OK"));
 
 // -------------------- Twilio: Entry --------------------
 app.post("/twilio-voice", (req, res) => {
-  const base = process.env.BASE_URL; // https://...
+  const base = process.env.BASE_URL; // must be set in Render
   const wsUrl = base.replace("https://", "wss://") + "/twilio-media";
 
-  res.type("text/xml").send(`
+  res.set("Content-Type", "text/xml");
+  res.send(`
     <Response>
+      <Say voice="Polly.Joanna">
+        Connecting you now.
+      </Say>
       <Connect>
         <Stream url="${wsUrl}" />
       </Connect>
@@ -55,27 +59,6 @@ app.post("/twilio-voice", (req, res) => {
       pushedToZapier: false
     });
   }
-
-  // Greeting + gather
-  res.set("Content-Type", "text/xml");
-  res.send(`
-    <Response>
-    <Gather input="speech" action="https://ai-front-desk-backend.onrender.com/process-speech" method="POST" timeout="4" speechTimeout="auto">
-       <Say voice="Polly.Joanna">
-          Thank you for calling Gladiators Painting. How can I help you today?
-        </Say>
-      <Response>
-  <Say voice="Polly.Joanna">
-    Connecting you now.
-  </Say>
-  <Connect>
-    <Stream url="wss://ai-front-desk-backend.onrender.com/twilio-media" />
-  </Connect>
-</Response>
-       <Say voice="Polly.Joanna">Sorry, I didn’t catch that. Please call again.</Say>
-    </Response>
-  `);
-});
 
 // -------------------- Core AI Loop --------------------
 app.post("/process-speech", async (req, res) => {

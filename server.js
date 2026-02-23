@@ -16,15 +16,16 @@ function emptyLead() {
   return {
     name: null,
     caller_phone: null,
+    email: null, // ✅ NEW FIELD
     address: null,
-    project_type: null,       // "interior" | "exterior" | "both" | null
-    property_type: null,      // "residential" | "commercial" | null
-    rooms_or_scope: null,     // free text
-    square_footage: null,     // free text
-    timeline: null,           // "ASAP" | "30_days" | "90_days" | "future" | "quote_shopping" | null
-    repairs_needed: null,     // free text
-    decision_stage: null,     // "ready_to_book" | "needs_callback" | "just_info" | null
-    estimate_requested: null, // boolean
+    project_type: null,      // "interior" | "exterior" | "both" | null
+    property_type: null,     // "residential" | "commercial" | null
+    rooms_or_scope: null,    // free text
+    square_footage: null,    // free text
+    timeline: null,          // "ASAP" | "30_days" | "90_days" | "future" | "quote_shopping" | null
+    repairs_needed: null,    // free text
+    decision_stage: null,    // "ready_to_book" | "needs_callback" | "just_info" | null
+    estimate_requested: null,// boolean
     notes: null
   };
 }

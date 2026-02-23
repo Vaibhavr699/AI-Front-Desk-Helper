@@ -286,26 +286,42 @@ wss.on("connection", (twilioSocket) => {
   // Connect to OpenAI Realtime
   const OpenAI = require("ws");
 
-  openaiSocket = new OpenAI("wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview", {
+openaiSocket = new OpenAI(
+  "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview",
+  {
     headers: {
-      "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       "OpenAI-Beta": "realtime=v1"
     }
-  });
+  }
+);
 
-  openaiSocket.on("open", () => {
-    console.log("Connected to OpenAI Realtime");
+openaiSocket.on("open", () => {
+  console.log("Connected to OpenAI Realtime");
 
-    // Configure session for μ-law (Twilio format)
-    openaiSocket.send(JSON.stringify({
-      type: "session.update",
-      session: {
-        input_audio_format: "g711_ulaw",
-        output_audio_format: "g711_ulaw",
-        voice: "alloy"
-      }
-    }));
-  });
+  // Configure session
+  openaiSocket.send(JSON.stringify({
+    type: "session.update",
+    session: {
+      input_audio_format: "g711_ulaw",
+      output_audio_format: "g711_ulaw",
+      voice: "verse", // more natural than alloy
+      instructions: `
+You are the professional AI receptionist for Gladiators Painting.
+
+Be warm, confident, and concise.
+Ask one question at a time.
+Greet the caller immediately and ask how you can help.
+Never mention AI.
+`
+    }
+  }));
+
+  // Make AI speak first
+ openaiSocket.send(JSON.stringify({
+  type: "response.create",
+  response: { modalities: ["audio"] }
+}));
 
   // Receive audio from OpenAI and send back to Twilio
   openaiSocket.on("message", (msg) => {

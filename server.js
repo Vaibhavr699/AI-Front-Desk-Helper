@@ -287,7 +287,7 @@ const PORT = process.env.PORT || 3000;
 // Create HTTP server from Express app
 const server = http.createServer(app);
 
-// Attach WebSocket server to same HTTP server
+// Attach WebSocket server
 const wss = new WebSocket.Server({
   server,
   path: "/twilio-media"
@@ -297,19 +297,22 @@ wss.on("connection", (socket) => {
   console.log("Twilio Media Stream connected");
 
   socket.on("message", (message) => {
-    const data = JSON.parse(message.toString());
+    try {
+      const data = JSON.parse(message.toString());
 
-    if (data.event === "start") {
-      console.log("Stream started:", data.start.streamSid);
-    }
+      if (data.event === "start") {
+        console.log("Stream started:", data.start.streamSid);
+      }
 
-    if (data.event === "media") {
-      // Audio frames from Twilio will arrive here
-      // Next step: forward to OpenAI Realtime
-    }
+      if (data.event === "media") {
+        // Audio frames arrive here
+      }
 
-    if (data.event === "stop") {
-      console.log("Stream stopped");
+      if (data.event === "stop") {
+        console.log("Stream stopped");
+      }
+    } catch (err) {
+      console.error("WebSocket parse error:", err);
     }
   });
 

@@ -34,13 +34,17 @@ app.get("/health", (req, res) => res.status(200).send("OK"));
 
 // -------------------- Twilio: Entry --------------------
 app.post("/twilio-voice", (req, res) => {
-  const callSid = req.body.CallSid;
-  const from = req.body.From; // caller phone
+  const base = process.env.BASE_URL; // https://...
+  const wsUrl = base.replace("https://", "wss://") + "/twilio-media";
 
-  if (!callSid) {
-    res.set("Content-Type", "text/xml");
-    return res.send(`<Response><Say>Sorry, we could not process your call.</Say></Response>`);
-  }
+  res.type("text/xml").send(`
+    <Response>
+      <Connect>
+        <Stream url="${wsUrl}" />
+      </Connect>
+    </Response>
+  `);
+});
 
   if (!callState.has(callSid)) {
     callState.set(callSid, {
@@ -56,11 +60,18 @@ app.post("/twilio-voice", (req, res) => {
   res.send(`
     <Response>
     <Gather input="speech" action="https://ai-front-desk-backend.onrender.com/process-speech" method="POST" timeout="4" speechTimeout="auto">
-        <Say voice="alice">
+       <Say voice="Polly.Joanna">
           Thank you for calling Gladiators Painting. How can I help you today?
         </Say>
-      </Gather>
-      <Say voice="alice">Sorry, I didn’t catch that. Please call again.</Say>
+      <Response>
+  <Say voice="Polly.Joanna">
+    Connecting you now.
+  </Say>
+  <Connect>
+    <Stream url="wss://ai-front-desk-backend.onrender.com/twilio-media" />
+  </Connect>
+</Response>
+       <Say voice="Polly.Joanna">Sorry, I didn’t catch that. Please call again.</Say>
     </Response>
   `);
 });

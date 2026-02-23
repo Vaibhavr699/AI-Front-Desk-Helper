@@ -281,68 +281,70 @@ wss.on("connection", (twilioSocket) => {
   console.log("Twilio Media Stream connected");
 
   let streamSid = null;
-  let openaiSocket = null;
 
   // Connect to OpenAI Realtime
-  const OpenAI = require("ws");
-
-openaiSocket = new OpenAI(
-  "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview",
-  {
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      "OpenAI-Beta": "realtime=v1"
+  const OpenAIws = require("ws");
+  const openaiSocket = new OpenAIws(
+    "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview",
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "OpenAI-Beta": "realtime=v1",
+      },
     }
-  }
-);
+  );
 
-openaiSocket.on("open", () => {
-  console.log("Connected to OpenAI Realtime");
+  openaiSocket.on("open", () => {
+    console.log("Connected to OpenAI Realtime");
 
-  // Configure session
-  openaiSocket.send(JSON.stringify({
-    type: "session.update",
-    session: {
-      input_audio_format: "g711_ulaw",
-      output_audio_format: "g711_ulaw",
-      voice: "verse", // more natural than alloy
-      instructions: `
+    // Configure session
+    openaiSocket.send(
+      JSON.stringify({
+        type: "session.update",
+        session: {
+          input_audio_format: "g711_ulaw",
+          output_audio_format: "g711_ulaw",
+          voice: "verse",
+          instructions: `
 You are the professional AI receptionist for Gladiators Painting.
-
 Be warm, confident, and concise.
 Ask one question at a time.
 Greet the caller immediately and ask how you can help.
 Never mention AI.
-`
-    }
-  }));
+`,
+        },
+      })
+    );
 
-  // Make AI speak first
- openaiSocket.send(JSON.stringify({
-  type: "response.create",
-  response: { modalities: ["audio"] }
-}));
+    // Make AI speak first
+    openaiSocket.send(
+      JSON.stringify({
+        type: "response.create",
+        response: { modalities: ["audio"] },
+      })
+    );
+  });
 
-  // Receive audio from OpenAI and send back to Twilio
+  // OpenAI → Twilio (send audio back)
   openaiSocket.on("message", (msg) => {
     try {
       const data = JSON.parse(msg.toString());
 
       if (data.type === "response.audio.delta" && streamSid) {
-        twilioSocket.send(JSON.stringify({
-          event: "media",
-          streamSid,
-          media: {
-            payload: data.delta
-          }
-        }));
+        twilioSocket.send(
+          JSON.stringify({
+            event: "media",
+            streamSid,
+            media: { payload: data.delta },
+          })
+        );
       }
     } catch (err) {
       console.error("OpenAI parse error:", err);
     }
   });
 
-  // Receive audio from Twilio and forward to OpenAI
+  // Twilio → OpenAI (send caller audio in)
   twilioSocket.on("message", (message) => {
     try {
       const data = JSON.parse(message.toString());
@@ -353,17 +355,18 @@ Never mention AI.
       }
 
       if (data.event === "media" && openaiSocket.readyState === 1) {
-        openaiSocket.send(JSON.stringify({
-          type: "input_audio_buffer.append",
-          audio: data.media.payload
-        }));
+        openaiSocket.send(
+          JSON.stringify({
+            type: "input_audio_buffer.append",
+            audio: data.media.payload,
+          })
+        );
       }
 
       if (data.event === "stop") {
         console.log("Stream stopped");
-        if (openaiSocket) openaiSocket.close();
+        openaiSocket.close();
       }
-
     } catch (err) {
       console.error("Twilio parse error:", err);
     }
@@ -371,10 +374,9 @@ Never mention AI.
 
   twilioSocket.on("close", () => {
     console.log("Twilio socket closed");
-    if (openaiSocket) openaiSocket.close();
+    openaiSocket.close();
   });
 });
-
 // Start server
 server.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);

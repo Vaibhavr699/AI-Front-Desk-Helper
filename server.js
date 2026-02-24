@@ -142,7 +142,6 @@ Be warm, friendly, and concise. Ask one question at a time.
 Do NOT mention AI.`,
       },
     });
-  });
 
   // OpenAI → Twilio (audio out)
   openaiSocket.on("message", (msg) => {

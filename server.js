@@ -134,6 +134,7 @@ instructions:
   "Speak ONLY English.\n",
       },
     });
+    });
 
   openaiSocket.on("message", (msg) => {
     let data;

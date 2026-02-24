@@ -108,15 +108,26 @@ wss.on("connection", (twilioSocket) => {
     while (openaiQueue.length) openaiSocket.send(openaiQueue.shift());
 
     // Session config MUST match Twilio Media Streams (g711_ulaw @ 8k)
-    sendToOpenAI({
-      type: "session.update",
-      session: {
-        input_audio_format: "g711_ulaw",
-        output_audio_format: "g711_ulaw",
-        voice: "verse",
-        instructions: `
-        You are the professional receptionist for Gladiators Painting.
+   sendToOpenAI({
+  type: "session.update",
+  session: {
+    audio: {
+      input: { format: "g711_ulaw" },
+      output: { format: "g711_ulaw" }
+    },
+    turn_detection: { type: "server_vad" },
+    voice: "verse",
+    instructions: `
+You are the professional receptionist for Gladiators Painting.
 
+Speak ONLY English.
+Be warm, confident, natural, and human.
+1–2 sentences at a time.
+Ask ONE question at a time.
+Never mention AI or technology.
+`
+  }
+});
 Personality:
 - Warm, confident, human, and helpful full of energy.
 - Speak naturally (no robotic tone). 

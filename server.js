@@ -294,12 +294,10 @@ wss.on("connection", (twilioSocket) => {
     }
   );
 
-  openaiSocket.on("open", () => {
-    console.log("Connected to OpenAI Realtime");
-
-    // Configure session
-    openaiSocket.send(
-      JSON.stringify({
+  openaiSocket.send(JSON.stringify({
+  type: "response.create",
+  response: { modalities: ["audio"] }
+}));
         type: "session.update",
         session: {
           input_audio_format: "g711_ulaw",

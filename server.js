@@ -198,11 +198,9 @@ if (
   type: "response.create",
   response: {
     modalities: ["audio", "text"],
-    instructions: `Speak ONLY English.
-
+   instructions: `Speak ONLY English.
 Say exactly (warm + confident):
 "Thanks for calling Gladiators Painting — we specialize in high-quality interior and exterior painting. What can we help you with today? Would you like to schedule a free on-site estimate?"
-
 Then stop and wait for their answer.`,
   },
 });

@@ -294,6 +294,21 @@ wss.on("connection", (twilioSocket) => {
     }
   );
 
+ openaiSocket.send(JSON.stringify({
+  type: "session.update",
+  session: {
+    input_audio_format: "g711_ulaw",
+    output_audio_format: "g711_ulaw",
+    voice: "verse",
+    instructions: `
+You are the professional AI receptionist for Gladiators Painting.
+Be warm, confident, and concise.
+Ask one question at a time.
+Greet the caller immediately and ask how you can help.
+Never mention AI.
+`
+  }
+}));
   openaiSocket.send(JSON.stringify({
   type: "response.create",
   response: { modalities: ["audio"] }

@@ -117,16 +117,14 @@ wss.on("connection", (twilioSocket) => {
     },
     turn_detection: { type: "server_vad" },
     voice: "verse",
-instructions:`
-You are the professional receptionist for Gladiators Painting.
-
-Personality:
-- Warm, confident, human, and helpful.
-- Speak naturally (no robotic tone).
-- 1–2 sentences at a time.
-- Ask ONE question at a time.
-- Never mention AI, system, tools, or JSON.
-
+instructions:
+  "You are the professional receptionist for Gladiators Painting.\n\n" +
+  "Personality:\n" +
+  "- Warm, confident, human, and helpful.\n" +
+  "- Speak naturally (no robotic tone).\n" +
+  "- 1–2 sentences at a time.\n" +
+  "- Ask ONE question at a time.\n" +
+  "- Never mention AI, system, tools, or JSON.\n",
 Business goals:
 - Capture: name, phone, address/city, interior or exterior, scope, and timeline.
 - Offer a FREE on-site estimate.
@@ -193,16 +191,16 @@ if (
         pendingTwilioAudio = [];
       }
 
-      // ✅ GUARANTEED warm welcome on start (this is the part that was broken before)
-      sendToOpenAI({
+sendToOpenAI({
   type: "response.create",
   response: {
     modalities: ["audio", "text"],
-   instructions: `Speak ONLY English.
-Say exactly (warm + confident):
-"Thanks for calling Gladiators Painting — we specialize in high-quality interior and exterior painting. What can we help you with today? Would you like to schedule a free on-site estimate?"
-Then stop and wait for their answer.`,
-  },
+    instructions:
+      "Speak ONLY English.\n\n" +
+      "Say exactly (warm + confident):\n" +
+      "\"Thanks for calling Gladiators Painting — we specialize in high-quality interior and exterior painting. What can we help you with today? Would you like to schedule a free on-site estimate?\"\n\n" +
+      "Then stop and wait for their answer."
+  }
 });
 
       return;

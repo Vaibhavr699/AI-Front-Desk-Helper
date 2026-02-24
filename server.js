@@ -186,7 +186,7 @@ Conversation rules:
 
       // ✅ GUARANTEED warm welcome on start (this is the part that was broken before)
       sendToOpenAI({
-        type: "response.create",
+       modalities: ["audio"],
         response: {
           modalities: ["audio"],
           instructions: `Say exactly (warm + confident):

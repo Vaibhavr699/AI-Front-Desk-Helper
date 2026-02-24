@@ -76,7 +76,7 @@ wss.on("connection", (twilioSocket) => {
 
   // Helper: safe send to OpenAI
   function sendToOpenAI(obj) {
-    const msg = JSON.stringify(obj);
+   const msg = (typeof obj === "string") ? obj : JSON.stringify(obj);
     if (openaiReady && openaiSocket.readyState === WebSocket.OPEN) {
       openaiSocket.send(msg);
     } else {

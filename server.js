@@ -1,15 +1,24 @@
+"use strict";
+
 const express = require("express");
-const OpenAI = require("openai");
+const http = require("http");
+const WebSocket = require("ws");
 
 // -------------------- Config --------------------
 const app = express();
 app.use(express.urlencoded({ extended: false })); // Twilio sends form-encoded
 app.use(express.json());
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const PORT = process.env.PORT || 3000;
+const BASE_URL = process.env.BASE_URL; // ex: https://ai-front-desk-backend.onrender.com
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const ZAPIER_WEBHOOK_URL = process.env.ZAPIER_WEBHOOK_URL; // optional
 
-// In-memory call state (V1). Replace with DB later.
-const callState = new Map(); // key: CallSid -> { lead, transcript, createdAt, pushedToZapier }
+if (!BASE_URL) console.warn("⚠️ BASE_URL is missing (Render Env). Calls may fail.");
+if (!OPENAI_API_KEY) console.warn("⚠️ OPENAI_API_KEY is missing (Render Env). AI will not speak.");
+
+// In-memory call state (replace with DB later)
+const callState = new Map(); // CallSid -> { lead, transcript, createdAt, pushedToZapier }
 
 // Lead template
 function emptyLead() {
@@ -18,40 +27,40 @@ function emptyLead() {
     caller_phone: null,
     email: null,
     address: null,
-    project_type: null,
-    property_type: null,
+    project_type: null,     // interior | exterior | both | null
+    property_type: null,    // residential | commercial | null
     rooms_or_scope: null,
     square_footage: null,
     timeline: null,
     repairs_needed: null,
     decision_stage: null,
     estimate_requested: null,
-    notes: null
+    notes: null,
   };
 }
 
 // Basic server health check
 app.get("/health", (req, res) => res.status(200).send("OK"));
 
-// -------------------- Twilio: Entry --------------------
+// -------------------- Twilio: Entry (TwiML) --------------------
 app.post("/twilio-voice", (req, res) => {
   const callSid = req.body.CallSid;
   const from = req.body.From;
 
-  const base = process.env.BASE_URL; // must be set in Render
-  const wsUrl = base.replace("https://", "wss://") + "/twilio-media";
-
+  // Track call state
   if (callSid && !callState.has(callSid)) {
     callState.set(callSid, {
       lead: { ...emptyLead(), caller_phone: from || null },
       transcript: [],
       createdAt: Date.now(),
-      pushedToZapier: false
+      pushedToZapier: false,
     });
   }
 
-  res.set("Content-Type", "text/xml");
-  res.send(`
+  // Build websocket URL
+  const wsUrl = (BASE_URL || "").replace("https://", "wss://").replace("http://", "ws://") + "/twilio-media";
+
+  res.type("text/xml").send(`
     <Response>
       <Say voice="Polly.Joanna">Connecting you now.</Say>
       <Connect>
@@ -60,322 +69,181 @@ app.post("/twilio-voice", (req, res) => {
     </Response>
   `);
 });
-// -------------------- Core AI Loop --------------------
-app.post("/process-speech", async (req, res) => {
-  const callSid = req.body.CallSid;
-  const from = req.body.From;
-  const speech = (req.body.SpeechResult || "").trim();
-
-  res.set("Content-Type", "text/xml");
-
-  if (!callSid || !callState.has(callSid)) {
-    return res.send(`
-      <Response>
-        <Say voice="alice">Sorry—please call back and try again.</Say>
-      </Response>
-    `);
-  }
-
-  const state = callState.get(callSid);
-  if (from && !state.lead.caller_phone) state.lead.caller_phone = from;
-
-  if (speech) state.transcript.push({ role: "caller", text: speech, ts: Date.now() });
-
-  try {
-    // 1) Ask OpenAI for:
-    //    - a short spoken response
-    //    - an updated lead JSON (merge-friendly)
-    //    - a boolean "ready_to_push"
-    const ai = await runReceptionistTurn({
-      lead: state.lead,
-      transcript: state.transcript
-    });
-
-    // merge lead updates
-    state.lead = { ...state.lead, ...ai.lead_update };
-
-    // store assistant response to transcript
-    state.transcript.push({ role: "assistant", text: ai.say, ts: Date.now() });
-
-    // 2) If ready, push to Zapier once
-    let pushedMsg = "";
-    if (ai.ready_to_push && !state.pushedToZapier) {
-      const zapierOk = await pushLeadToZapier({
-        callSid,
-        lead: state.lead,
-        transcript: state.transcript
-      });
-
-      if (zapierOk) {
-        state.pushedToZapier = true;
-        pushedMsg = " I’ve got your info and we’ll reach out shortly.";
-      } else {
-        pushedMsg = " I’m having trouble saving the details—if you can, please text or call us back shortly.";
-      }
-    }
-
-    // 3) Respond to caller + continue gathering unless we’re “done”
-    // If lead already pushed, we can close politely.
-    if (state.pushedToZapier) {
-      return res.send(`
-        <Response>
-          <Say voice="alice">${escapeForTwiML(ai.say + pushedMsg)} Thanks for calling Gladiators Painting.</Say>
-        </Response>
-      `);
-    }
-
-    // Otherwise continue conversation loop
-    return res.send(`
-      <Response>
-        <Say voice="alice">${escapeForTwiML(ai.say + pushedMsg)}</Say>
-        <Gather input="speech" action="/process-speech" method="POST" timeout="4" speechTimeout="auto">
-          <Say voice="alice">What else can I help you with?</Say>
-        </Gather>
-        <Say voice="alice">Sorry, I didn’t catch that. Goodbye.</Say>
-      </Response>
-    `);
-  } catch (err) {
-    console.error("AI loop error:", err);
-    return res.send(`
-      <Response>
-        <Say voice="alice">Sorry, something went wrong. Please call back in a moment.</Say>
-      </Response>
-    `);
-  }
-});
-
-// -------------------- OpenAI Turn --------------------
-async function runReceptionistTurn({ lead, transcript }) {
-  const systemPrompt = `
-You are the AI receptionist for Gladiators Painting.
-
-Goals:
-1) Be friendly and concise (1–2 sentences max spoken).
-2) Ask ONE question at a time.
-3) Collect these fields (best effort): name, phone, address, interior/exterior, scope/rooms, timeline, repairs.
-4) When you have enough to create a lead (name OR phone, address OR city-area description, project_type, and some scope), set ready_to_push=true.
-
-Rules:
-- Do NOT mention JSON or “tools”.
-- If caller is price-shopping aggressively, respond politely and try to book an estimate; if they insist on cheapest, set decision_stage="just_info" and ready_to_push=true with notes.
-- Never invent details. Use null when unknown.
-
-Output MUST be valid JSON with this exact shape:
-{
-  "say": "string",
-  "lead_update": { ...partial lead fields... },
-  "ready_to_push": boolean
-}
-`;
-
-  // Build a compact conversation summary for context
-  const lastTurns = transcript.slice(-10).map(t => `${t.role.toUpperCase()}: ${t.text}`).join("\n");
-
-  const userPrompt = `
-Current lead data (may contain nulls):
-${JSON.stringify(lead, null, 2)}
-
-Recent conversation:
-${lastTurns || "(none yet)"}
-`;
-
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    temperature: 0.3,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: systemPrompt.trim() },
-      { role: "user", content: userPrompt.trim() }
-    ]
-  });
-
-  const raw = completion.choices?.[0]?.message?.content || "{}";
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    // Fallback if model ever misbehaves
-    parsed = {
-      say: "Thanks—what’s the address for the project?",
-      lead_update: {},
-      ready_to_push: false
-    };
-  }
-
-  // Validate minimal shape
-  return {
-    say: typeof parsed.say === "string" ? parsed.say : "Thanks—what’s the address for the project?",
-    lead_update: typeof parsed.lead_update === "object" && parsed.lead_update ? parsed.lead_update : {},
-    ready_to_push: Boolean(parsed.ready_to_push)
-  };
-}
-
-// -------------------- Zapier Push --------------------
-async function pushLeadToZapier({ callSid, lead, transcript }) {
-  const url = process.env.ZAPIER_WEBHOOK_URL;
-  if (!url) return false;
-
-  // Basic summary (keep it short)
-  const summary = buildSummary(lead);
-
-  const payload = {
-    source: "gladiators_ai_front_desk",
-    callSid,
-    lead,
-    summary,
-    transcript: transcript.slice(-30) // last 30 lines max
-  };
-
-  try {
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    return resp.ok;
-  } catch (e) {
-    console.error("Zapier push failed:", e);
-    return false;
-  }
-}
-
-function buildSummary(lead) {
-  const bits = [];
-  if (lead.name) bits.push(`Name: ${lead.name}`);
-  if (lead.caller_phone) bits.push(`Phone: ${lead.caller_phone}`);
-  if (lead.address) bits.push(`Address: ${lead.address}`);
-  if (lead.project_type) bits.push(`Type: ${lead.project_type}`);
-  if (lead.rooms_or_scope) bits.push(`Scope: ${lead.rooms_or_scope}`);
-  if (lead.timeline) bits.push(`Timeline: ${lead.timeline}`);
-  if (lead.repairs_needed) bits.push(`Repairs: ${lead.repairs_needed}`);
-  return bits.join(" | ");
-}
-
-// TwiML escaping
-function escapeForTwiML(text) {
-  return String(text)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
 
 // -------------------- Start Server (HTTP + WebSocket) --------------------
-
-const http = require("http");
-const WebSocket = require("ws");
-
-const PORT = process.env.PORT || 3000;
-
-// Create HTTP server from Express app
 const server = http.createServer(app);
 
-// Attach WebSocket server
 const wss = new WebSocket.Server({
   server,
-  path: "/twilio-media"
+  path: "/twilio-media",
 });
 
-wss.on("connection", (twilioSocket) => {
-  console.log("Twilio Media Stream connected");
+wss.on("connection", (twilioSocket, req) => {
+  console.log("✅ Twilio Media Stream connected");
 
+  // Twilio stream info
   let streamSid = null;
+  let callSid = null;
 
-  // Connect to OpenAI Realtime
-  const OpenAIws = require("ws");
-  const openaiSocket = new OpenAIws(
+  // If OpenAI speaks before streamSid exists, buffer chunks and flush after start
+  let pendingTwilioAudio = [];
+
+  // OpenAI state
+  let openaiReady = false;
+  const openaiQueue = [];
+
+  // Helper: safe send to OpenAI (never throws while CONNECTING)
+  function sendToOpenAI(obj) {
+    const msg = JSON.stringify(obj);
+    if (openaiReady && openaiSocket.readyState === WebSocket.OPEN) {
+      openaiSocket.send(msg);
+    } else {
+      openaiQueue.push(msg);
+    }
+  }
+
+  // Helper: send audio back to Twilio
+  function sendAudioToTwilio(base64UlawChunk) {
+    if (!streamSid) {
+      pendingTwilioAudio.push(base64UlawChunk);
+      return;
+    }
+    twilioSocket.send(
+      JSON.stringify({
+        event: "media",
+        streamSid,
+        media: { payload: base64UlawChunk },
+      })
+    );
+  }
+
+  // -------------------- Connect to OpenAI Realtime --------------------
+  const openaiSocket = new WebSocket(
     "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview",
     {
       headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
         "OpenAI-Beta": "realtime=v1",
       },
     }
   );
 
-openaiSocket.send(JSON.stringify({
-  type: "session.update",
-  session: {
-    input_audio_format: "g711_ulaw",
-    output_audio_format: "g711_ulaw",
-    voice: "verse",
-instructions: `You are the professional AI receptionist for Gladiators Painting.
+  openaiSocket.on("open", () => {
+    console.log("✅ Connected to OpenAI Realtime");
+    openaiReady = true;
+
+    // Flush any queued sends
+    while (openaiQueue.length) openaiSocket.send(openaiQueue.shift());
+
+    // Configure session (Twilio = g711_ulaw @ 8k)
+    sendToOpenAI({
+      type: "session.update",
+      session: {
+        input_audio_format: "g711_ulaw",
+        output_audio_format: "g711_ulaw",
+        voice: "verse",
+        instructions: `You are the professional receptionist for Gladiators Painting.
 Be warm, confident, and concise.
 Ask one question at a time.
-Greet the caller immediately and ask how you can help.
-Never mention AI.`
-  }
-}));
+Start by saying: "Thanks for calling Gladiators Painting. How can I help you today?"
+Then gather: name, phone, email, address, interior/exterior, scope, timeline, repairs.
+Never mention AI.`,
+      },
+    });
+  });
 
-openaiSocket.send(JSON.stringify({
-  type: "response.create",
-  response: { modalities: ["audio"] }
-}));
-
-  // OpenAI → Twilio (send audio back)
   openaiSocket.on("message", (msg) => {
+    let data;
     try {
-      const data = JSON.parse(msg.toString());
+      data = JSON.parse(msg.toString());
+    } catch (e) {
+      console.error("OpenAI parse error:", e);
+      return;
+    }
 
-      if (data.type === "response.audio.delta" && streamSid) {
-        twilioSocket.send(
-          JSON.stringify({
-            event: "media",
-            streamSid,
-            media: { payload: data.delta },
-          })
-        );
-      }
-    } catch (err) {
-      console.error("OpenAI parse error:", err);
+    // Audio out from OpenAI -> Twilio
+    if (data.type === "response.audio.delta" && data.delta) {
+      sendAudioToTwilio(data.delta);
+      return;
+    }
+
+    // Optional: log errors to debug quickly
+    if (data.type && data.type.includes("error")) {
+      console.error("OpenAI error event:", data);
     }
   });
 
-  // Twilio → OpenAI (send caller audio in)
+  openaiSocket.on("close", () => {
+    console.log("⚠️ OpenAI socket closed");
+    openaiReady = false;
+  });
+
+  openaiSocket.on("error", (err) => {
+    console.error("OpenAI socket error:", err);
+  });
+
+  // -------------------- Twilio -> OpenAI --------------------
   twilioSocket.on("message", (message) => {
+    let data;
     try {
-      const data = JSON.parse(message.toString());
+      data = JSON.parse(message.toString());
+    } catch (e) {
+      console.error("Twilio parse error:", e);
+      return;
+    }
 
-     if (data.event === "start") {
-  streamSid = data.start.streamSid;
-  console.log("Stream started:", streamSid);
+    if (data.event === "start") {
+      streamSid = data.start.streamSid;
+      callSid = data.start.callSid || callSid;
 
-  // AI greets only AFTER streamSid exists
-  if (openaiSocket && openaiSocket.readyState === 1) {
-    openaiSocket.send(JSON.stringify({
-      type: "response.create",
-      response: {
-        modalities: ["audio"],
-        instructions: "You are Gladiators Painting receptionist. Say: Thanks for calling Gladiators Painting. How can I help you today?"
-      }
-    }));
-  }
-}
-      if (data.event === "media" && openaiSocket.readyState === 1) {
-        openaiSocket.send(
-          JSON.stringify({
-            type: "input_audio_buffer.append",
-            audio: data.media.payload,
-          })
-        );
+      console.log("▶️ Stream started:", streamSid);
+
+      // Flush any audio that arrived before streamSid
+      if (pendingTwilioAudio.length) {
+        for (const chunk of pendingTwilioAudio) sendAudioToTwilio(chunk);
+        pendingTwilioAudio = [];
       }
 
-      if (data.event === "stop") {
-        console.log("Stream stopped");
+      // Trigger greeting AFTER Twilio start (so audio won’t be dropped)
+      sendToOpenAI({
+        type: "response.create",
+        response: { modalities: ["audio"] },
+      });
+
+      return;
+    }
+
+    if (data.event === "media" && data.media && data.media.payload) {
+      // Forward caller audio to OpenAI (safe; queued if OpenAI not ready yet)
+      sendToOpenAI({
+        type: "input_audio_buffer.append",
+        audio: data.media.payload,
+      });
+      return;
+    }
+
+    if (data.event === "stop") {
+      console.log("⏹️ Stream stopped");
+      try {
         openaiSocket.close();
-      }
-    } catch (err) {
-      console.error("Twilio parse error:", err);
+      } catch {}
+      return;
     }
   });
 
   twilioSocket.on("close", () => {
-    console.log("Twilio socket closed");
-    openaiSocket.close();
+    console.log("⚠️ Twilio socket closed");
+    try {
+      openaiSocket.close();
+    } catch {}
+  });
+
+  twilioSocket.on("error", (err) => {
+    console.error("Twilio socket error:", err);
   });
 });
-// Start server
+
+// -------------------- Server listen --------------------
 server.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);
 });

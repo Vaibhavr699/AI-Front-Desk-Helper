@@ -146,11 +146,15 @@ Conversation rules:
     }
 
     // AUDIO OUT: OpenAI -> Twilio
-    // (Your earlier code used response.audio.delta; keep that)
-    if (data.type === "response.audio.delta" && data.delta) {
-      sendAudioToTwilio(data.delta);
-      return;
-    }
+   // Handle both possible OpenAI audio delta event types
+if (
+  (data.type === "response.audio.delta" ||
+   data.type === "response.output_audio.delta") &&
+  data.delta
+) {
+  sendAudioToTwilio(data.delta);
+  return;
+}
 
     // Helpful error visibility
     if (data.type && data.type.includes("error")) {

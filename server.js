@@ -17,11 +17,15 @@ app.get("/health", (req, res) => res.status(200).send("OK"));
 
 // -------------------- Twilio Voice Entry --------------------
 app.post("/twilio-voice", (req, res) => {
-  // Build websocket URL to your Render service
-  // (Twilio needs wss:// in production)
-  const wsUrl = (BASE_URL || "")
-    .replace("https://", "wss://")
-    .replace("http://", "ws://") + "/twilio-media";
+  if (!BASE_URL) {
+    console.error("❌ BASE_URL missing. Set it in Render env vars.");
+  }
+
+  // Twilio needs wss:// in production
+  const wsUrl =
+    (BASE_URL || "")
+      .replace("https://", "wss://")
+      .replace("http://", "ws://") + "/twilio-media";
 
   res.type("text/xml").send(`
     <Response>
@@ -53,6 +57,23 @@ wss.on("connection", (twilioSocket) => {
   let openaiReady = false;
   const openaiQueue = [];
 
+  if (!OPENAI_API_KEY) {
+    console.error("❌ Missing OPENAI_API_KEY env var. Closing stream.");
+    try { twilioSocket.close(); } catch {}
+    return;
+  }
+
+  // -------------------- OpenAI Realtime Socket --------------------
+  const openaiSocket = new WebSocket(
+    "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview",
+    {
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "OpenAI-Beta": "realtime=v1",
+      },
+    }
+  );
+
   // Helper: safe send to OpenAI
   function sendToOpenAI(obj) {
     const msg = JSON.stringify(obj);
@@ -78,33 +99,15 @@ wss.on("connection", (twilioSocket) => {
     );
   }
 
-  if (!OPENAI_API_KEY) {
-    console.error("❌ Missing OPENAI_API_KEY env var. Closing stream.");
-    twilioSocket.close();
-    return;
-  }
-
-  // -------------------- OpenAI Realtime Socket --------------------
-  const openaiSocket = new WebSocket(
-    "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview",
-    {
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "OpenAI-Beta": "realtime=v1",
-      },
-    }
-  );
-
+  // -------------------- OpenAI lifecycle --------------------
   openaiSocket.on("open", () => {
     console.log("✅ Connected to OpenAI Realtime");
     openaiReady = true;
 
     // Flush queued sends
-    while (openaiQueue.length) {
-      openaiSocket.send(openaiQueue.shift());
-    }
+    while (openaiQueue.length) openaiSocket.send(openaiQueue.shift());
 
-    // Session config must match Twilio Media Streams (g711_ulaw @ 8k)
+    // Session config MUST match Twilio Media Streams (g711_ulaw @ 8k)
     sendToOpenAI({
       type: "session.update",
       session: {
@@ -112,13 +115,25 @@ wss.on("connection", (twilioSocket) => {
         output_audio_format: "g711_ulaw",
         voice: "verse",
         instructions: `You are the professional receptionist for Gladiators Painting.
-Be warm, friendly, and concise. Ask one question at a time.
-Never mention AI.`,
+
+Personality:
+- Warm, confident, human, and helpful.
+- Speak naturally (no robotic tone). 1–2 sentences at a time.
+- Ask ONE question at a time.
+- Do not mention AI, "system", "tools", or JSON.
+
+Business goals:
+- Help the caller and capture: name, phone, address/city, interior/exterior, scope, timeline.
+- Offer: a FREE on-site estimate (high priority).
+- If they ask pricing: give a helpful range-style answer and pivot to booking an estimate.
+
+Conversation rules:
+- If caller is in a hurry: grab best contact + quick summary, then confirm next steps.
+- Keep it friendly and brief.`,
       },
     });
   });
 
-  // OpenAI -> Twilio (audio out)
   openaiSocket.on("message", (msg) => {
     let data;
     try {
@@ -128,7 +143,8 @@ Never mention AI.`,
       return;
     }
 
-    // Audio chunks
+    // AUDIO OUT: OpenAI -> Twilio
+    // (Your earlier code used response.audio.delta; keep that)
     if (data.type === "response.audio.delta" && data.delta) {
       sendAudioToTwilio(data.delta);
       return;
@@ -166,13 +182,15 @@ Never mention AI.`,
         pendingTwilioAudio = [];
       }
 
-      // ✅ Automatic warm welcome (fires right after Twilio start)
+      // ✅ GUARANTEED warm welcome on start (this is the part that was broken before)
       sendToOpenAI({
         type: "response.create",
         response: {
           modalities: ["audio"],
-          instructions:
-            "Warmly say: Hi! Thanks for calling Gladiators Painting — how can I help you today?",
+          instructions: `Say exactly (warm + confident):
+"Thanks for calling Gladiators Painting — we specialize in high-quality interior and exterior painting. What can we help you with today? Would you like to schedule a free on-site estimate?"
+
+Then stop and wait for their answer.`,
         },
       });
 
@@ -180,7 +198,7 @@ Never mention AI.`,
     }
 
     if (data.event === "media" && data.media?.payload) {
-      // Forward caller audio to OpenAI (queued safely until open)
+      // AUDIO IN: Twilio -> OpenAI
       sendToOpenAI({
         type: "input_audio_buffer.append",
         audio: data.media.payload,
@@ -190,18 +208,14 @@ Never mention AI.`,
 
     if (data.event === "stop") {
       console.log("⏹️ Stream stopped");
-      try {
-        openaiSocket.close();
-      } catch {}
+      try { openaiSocket.close(); } catch {}
       return;
     }
   });
 
   twilioSocket.on("close", () => {
     console.log("⚠️ Twilio socket closed");
-    try {
-      openaiSocket.close();
-    } catch {}
+    try { openaiSocket.close(); } catch {}
   });
 
   twilioSocket.on("error", (err) => console.error("Twilio socket error:", err));

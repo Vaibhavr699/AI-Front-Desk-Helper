@@ -28,13 +28,13 @@ app.post("/twilio-voice", (req, res) => {
       .replace("http://", "ws://") + "/twilio-media";
 
   res.type("text/xml").send(`
-    <Response>
-      <Say voice="Polly.Joanna">Connecting you now.</Say>
-      <Connect>
-        <Stream url="${wsUrl}" />
-      </Connect>
-    </Response>
-  `);
+  <Response>
+    <Say voice="Polly.Joanna">Connecting you now.</Say>
+    <Connect>
+      <Stream url="${wsUrl}" />
+    </Connect>
+  </Response>
+`); 
 });
 
 // -------------------- HTTP + WebSocket Server --------------------
@@ -124,12 +124,12 @@ instructions:
   "- Speak naturally (no robotic tone).\n" +
   "- 1–2 sentences at a time.\n" +
   "- Ask ONE question at a time.\n" +
-  "- Never mention AI, system, tools, or JSON.\n",
-Business goals:
-- Capture: name, phone, address/city, interior or exterior, scope, and timeline.
-- Offer a FREE on-site estimate.
-- If asked about pricing, give a helpful range and pivot to booking an estimate.
-
+  "- Never mention AI, system, tools, or JSON.\n\n" +
+  "Business goals:\n" +
+  "- Capture: name, phone, address/city, interior or exterior, scope, and timeline.\n" +
+  "- Offer a FREE on-site estimate.\n" +
+  "- If asked about pricing, give a helpful range and pivot to booking an estimate.\n\n" +
+  "Speak ONLY English.\n",
 Conversation rules:
 - If caller is in a hurry: grab best contact + quick summary, then confirm next steps.
 - Keep it friendly and brief.

@@ -324,10 +324,9 @@ Be warm, confident, and concise.
 Ask one question at a time.
 Greet the caller immediately and ask how you can help.
 Never mention AI.
-`,
-        },
-      })
-    );
+`
+        }
+      }));
 
     // Make AI speak first
     openaiSocket.send(

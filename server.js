@@ -99,29 +99,17 @@ wss.on("connection", (twilioSocket) => {
     while (openaiQueue.length) openaiSocket.send(openaiQueue.shift());
 
     // IMPORTANT: force Twilio-compatible audio (mulaw 8k)
-    sendToOpenAI({
-      type: "session.update",
-      session: {
-        audio: {
-          input: { format: "g711_ulaw" },
-          output: { format: "g711_ulaw" },
-        },
-        turn_detection: { type: "server_vad" },
-        voice: "verse",
-        instructions:
-          "You are the professional receptionist for Gladiators Painting.\n\n" +
-          "Personality:\n" +
-          "- Warm, confident, human, and helpful.\n" +
-          "- 1–2 sentences at a time.\n" +
-          "- Ask ONE question at a time.\n" +
-          "- Never mention AI, system, tools, or JSON.\n\n" +
-          "Business goals:\n" +
-          "- Capture: name, phone, address/city, interior or exterior, scope, and timeline.\n" +
-          "- Offer a FREE on-site estimate.\n" +
-          "- If asked about pricing, give a helpful range and pivot to booking an estimate.\n\n" +
-          "Speak ONLY English.\n",
-      },
-    });
+ sendToOpenAI({
+  type: "response.create",
+  response: {
+    modalities: ["audio", "text"],
+    instructions:
+      "Speak ONLY English.\n\n" +
+      "Say exactly (warm + confident):\n" +
+      "\"Thanks for calling Gladiators Painting — we specialize in high-quality interior and exterior painting. What can we help you with today? Would you like to schedule a free on-site estimate?\"\n\n" +
+      "Then stop and wait for their answer."
+  }
+});
   });
 
   openaiSocket.on("message", (msg) => {

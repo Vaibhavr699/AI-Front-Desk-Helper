@@ -10,16 +10,14 @@ app.use(express.urlencoded({ extended: false })); // Twilio sends form-encoded
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const BASE_URL = process.env.BASE_URL; // e.g. https://ai-front-desk-backend.onrender.com
+const BASE_URL = process.env.BASE_URL; // e.g. https://your-app.onrender.com
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 app.get("/health", (req, res) => res.status(200).send("OK"));
 
 // -------------------- Twilio Voice Entry --------------------
 app.post("/twilio-voice", (req, res) => {
-  if (!BASE_URL) {
-    console.error("❌ BASE_URL missing. Set it in Render env vars.");
-  }
+  if (!BASE_URL) console.error("❌ BASE_URL missing. Set it in Render env vars.");
 
   // Twilio needs wss:// in production
   const wsUrl =
@@ -28,34 +26,28 @@ app.post("/twilio-voice", (req, res) => {
       .replace("http://", "ws://") + "/twilio-media";
 
   res.type("text/xml").send(`
-  <Response>
-    <Say voice="Polly.Joanna">Connecting you now.</Say>
-    <Connect>
-      <Stream url="${wsUrl}" />
-    </Connect>
-  </Response>
-`); 
+<Response>
+  <Say voice="Polly.Joanna">Connecting you now.</Say>
+  <Connect>
+    <Stream url="${wsUrl}" />
+  </Connect>
+</Response>
+`);
 });
 
 // -------------------- HTTP + WebSocket Server --------------------
 const server = http.createServer(app);
-
-const wss = new WebSocket.Server({
-  server,
-  path: "/twilio-media",
-});
+const wss = new WebSocket.Server({ server, path: "/twilio-media" });
 
 wss.on("connection", (twilioSocket) => {
   console.log("✅ Twilio Media Stream connected");
 
   let streamSid = null;
+  let openaiReady = false;
+  const openaiQueue = [];
 
   // Buffer OpenAI audio until Twilio start arrives (streamSid exists)
   let pendingTwilioAudio = [];
-
-  // OpenAI readiness + queue (prevents readyState 0 CONNECTING crash)
-  let openaiReady = false;
-  const openaiQueue = [];
 
   if (!OPENAI_API_KEY) {
     console.error("❌ Missing OPENAI_API_KEY env var. Closing stream.");
@@ -74,9 +66,9 @@ wss.on("connection", (twilioSocket) => {
     }
   );
 
-  // Helper: safe send to OpenAI
-  function sendToOpenAI(obj) {
-   const msg = (typeof obj === "string") ? obj : JSON.stringify(obj);
+  // Helper: safe send to OpenAI (prevents double-stringify)
+  function sendToOpenAI(payload) {
+    const msg = typeof payload === "string" ? payload : JSON.stringify(payload);
     if (openaiReady && openaiSocket.readyState === WebSocket.OPEN) {
       openaiSocket.send(msg);
     } else {
@@ -104,37 +96,33 @@ wss.on("connection", (twilioSocket) => {
     console.log("✅ Connected to OpenAI Realtime");
     openaiReady = true;
 
-    // Flush queued sends
     while (openaiQueue.length) openaiSocket.send(openaiQueue.shift());
 
-    // Session config MUST match Twilio Media Streams (g711_ulaw @ 8k)
-   sendToOpenAI({
-  type: "session.update",
-  session: {
-    audio: {
-      input: { format: "g711_ulaw" },
-      output: { format: "g711_ulaw" }
-    },
-    turn_detection: { type: "server_vad" },
-    voice: "verse",
-instructions:
-  "You are the professional receptionist for Gladiators Painting.\n\n" +
-  "Personality:\n" +
-  "- Warm, confident, human, and helpful.\n" +
-  "- 1–2 sentences at a time.\n" +
-  "- Ask ONE question at a time.\n" +
-  "- Never mention AI, system, tools, or JSON.\n\n" +
-  "Business goals:\n" +
-  "- Capture: name, phone, address/city, interior or exterior, scope, and timeline.\n" +
-  "- Offer a FREE on-site estimate.\n" +
-  "- If asked about pricing, give a helpful range and pivot to booking an estimate.\n\n" +
-  "Conversation rules:\n" +
-  "- If caller is in a hurry: grab best contact + quick summary, then confirm next steps.\n" +
-  "- Keep it friendly and brief.\n\n" +
-  "Speak ONLY English.\n",
+    // IMPORTANT: force Twilio-compatible audio (mulaw 8k)
+    sendToOpenAI({
+      type: "session.update",
+      session: {
+        audio: {
+          input: { format: "g711_ulaw" },
+          output: { format: "g711_ulaw" },
+        },
+        turn_detection: { type: "server_vad" },
+        voice: "verse",
+        instructions:
+          "You are the professional receptionist for Gladiators Painting.\n\n" +
+          "Personality:\n" +
+          "- Warm, confident, human, and helpful.\n" +
+          "- 1–2 sentences at a time.\n" +
+          "- Ask ONE question at a time.\n" +
+          "- Never mention AI, system, tools, or JSON.\n\n" +
+          "Business goals:\n" +
+          "- Capture: name, phone, address/city, interior or exterior, scope, and timeline.\n" +
+          "- Offer a FREE on-site estimate.\n" +
+          "- If asked about pricing, give a helpful range and pivot to booking an estimate.\n\n" +
+          "Speak ONLY English.\n",
       },
     });
-    });
+  });
 
   openaiSocket.on("message", (msg) => {
     let data;
@@ -145,19 +133,36 @@ instructions:
       return;
     }
 
-    // AUDIO OUT: OpenAI -> Twilio
-   // Handle both possible OpenAI audio delta event types
-if (
-  (data.type === "response.audio.delta" ||
-   data.type === "response.output_audio.delta") &&
-  data.delta
-) {
-  sendAudioToTwilio(data.delta);
-  return;
-}
+    // ---- AUDIO OUT: OpenAI -> Twilio ----
+    // Handle both common audio delta event names.
+    if (
+      (data.type === "response.output_audio.delta" ||
+        data.type === "response.audio.delta") &&
+      data.delta
+    ) {
+      sendAudioToTwilio(data.delta);
+      return;
+    }
+
+    // ---- AUTO-RESPOND after caller speech stops ----
+    // With server_vad, OpenAI emits speech start/stop events; on stop we ask it to respond.
+    if (data.type === "input_audio_buffer.speech_stopped") {
+      sendToOpenAI({
+        type: "response.create",
+        response: {
+          modalities: ["audio", "text"],
+          // EXTRA SAFETY: force mulaw per response to prevent static
+          audio: { output: { format: "g711_ulaw" } },
+          instructions:
+            "Speak ONLY English.\n" +
+            "Be warm and concise. Continue the conversation and ask ONE question to move the booking forward.",
+        },
+      });
+      return;
+    }
 
     // Helpful error visibility
-    if (data.type && data.type.includes("error")) {
+    if (data.type === "error" || (data.type && data.type.includes("error"))) {
       console.error("OpenAI error event:", data);
     }
   });
@@ -182,23 +187,25 @@ if (
       streamSid = data.start.streamSid;
       console.log("▶️ Stream started:", streamSid);
 
-      // Flush any buffered audio that arrived before streamSid existed
+      // Flush any buffered OpenAI audio that arrived before streamSid existed
       if (pendingTwilioAudio.length) {
         for (const chunk of pendingTwilioAudio) sendAudioToTwilio(chunk);
         pendingTwilioAudio = [];
       }
 
-sendToOpenAI({
-  type: "response.create",
-  response: {
-    modalities: ["audio", "text"],
-    instructions:
-      "Speak ONLY English.\n\n" +
-      "Say exactly (warm + confident):\n" +
-      "\"Thanks for calling Gladiators Painting — we specialize in high-quality interior and exterior painting. What can we help you with today? Would you like to schedule a free on-site estimate?\"\n\n" +
-      "Then stop and wait for their answer."
-  }
-});
+      // GREETING (force mulaw per response)
+      sendToOpenAI({
+        type: "response.create",
+        response: {
+          modalities: ["audio", "text"],
+          audio: { output: { format: "g711_ulaw" } },
+          instructions:
+            "Speak ONLY English.\n\n" +
+            "Say exactly (warm + confident):\n" +
+            "\"Thanks for calling Gladiators Painting — we specialize in high-quality interior and exterior painting. What can we help you with today? Would you like to schedule a free on-site estimate?\"\n\n" +
+            "Then stop and wait for their answer.",
+        },
+      });
 
       return;
     }

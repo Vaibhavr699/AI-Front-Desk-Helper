@@ -349,11 +349,21 @@ Never mention AI.
     try {
       const data = JSON.parse(message.toString());
 
-      if (data.event === "start") {
-        streamSid = data.start.streamSid;
-        console.log("Stream started:", streamSid);
-      }
+     if (data.event === "start") {
+  streamSid = data.start.streamSid;
+  console.log("Stream started:", streamSid);
 
+  // AI greets only AFTER streamSid exists
+  if (openaiSocket && openaiSocket.readyState === 1) {
+    openaiSocket.send(JSON.stringify({
+      type: "response.create",
+      response: {
+        modalities: ["audio"],
+        instructions: "You are Gladiators Painting receptionist. Say: Thanks for calling Gladiators Painting. How can I help you today?"
+      }
+    }));
+  }
+}
       if (data.event === "media" && openaiSocket.readyState === 1) {
         openaiSocket.send(
           JSON.stringify({

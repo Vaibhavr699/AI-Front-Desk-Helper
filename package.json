@@ -4,7 +4,8 @@
   "description": "AI Voice Front Desk System",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "postinstall": "node --check server.js"
   },
   "engines": {
     "node": ">=20"

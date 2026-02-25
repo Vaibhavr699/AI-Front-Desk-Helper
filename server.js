@@ -11,6 +11,8 @@ const { Pool } = require("pg");
 
 // ================= CONFIG =================
 const PORT = Number(process.env.PORT || 3000);
+const BASE_URL = process.env.BASE_URL || "";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-realtime-preview-2024-12-17";
 
 const REQUIRED_ENV_VARS = [
@@ -45,10 +47,15 @@ const TENANTS = {
       "Warm and confident tone.",
       "Ask ONE question at a time.",
       "Capture: full name, phone, address, service type, and timeline.",
+      "You are the receptionist for Gladiators Painting.",
+      "Use a warm, concise, professional tone.",
+      "Ask one question at a time.",
+      "Collect name, phone, address, requested service, and timeline.",
       "Offer a free estimate.",
       "If the caller asks for a human, explain you can transfer after a few qualification questions.",
       "Never mention AI.",
       "Speak ONLY English."
+      "Never mention AI."
     ].join("\n")
   }
 };
@@ -96,6 +103,9 @@ app.get("/health", (req, res) => res.status(200).send("OK"));
     console.error("DB query failed:", error.message);
   }
 }
+app.get("/health", (_req, res) => {
+  res.status(200).send("OK");
+});
 
 // -------------------- Twilio Voice Entry --------------------
 app.post("/twilio-voice", (req, res) => {
@@ -108,20 +118,31 @@ app.post("/twilio-voice/:tenantId", (req, res) => {
   }
 
   // Twilio needs wss:// in production
+  if (!BASE_URL) {
+    return res.status(500).send("BASE_URL is not configured");
+  }
+
   const wsUrl =
     (BASE_URL || "")
       .replace("https://", "wss://")
       .replace("http://", "ws://") + "/twilio-media";
   const wsUrl = buildTenantWsUrl(req.params.tenantId);
+    BASE_URL.replace("https://", "wss://").replace("http://", "ws://") +
+    `/twilio-media/${req.params.tenantId}`;
 
   res.type("text/xml").send(`
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Joanna">Connecting you now.</Say>
+  <Say voice="Polly.Joanna">Thanks for calling ${tenant.name}. Connecting you now.</Say>
   <Connect>
     <Stream url="${wsUrl}" />
   </Connect>
 </Response>
 `);
+</Response>`;
+
+  res.type("text/xml").send(twiml);
 });
 
 // -------------------- HTTP + WebSocket Server --------------------
@@ -142,18 +163,27 @@ wss.on("connection", (twilioSocket, req) => {
 
   // Buffer OpenAI audio until Twilio start arrives (streamSid exists)
   let pendingTwilioAudio = [];
-
-  if (!OPENAI_API_KEY) {
-    console.error("❌ Missing OPENAI_API_KEY env var. Closing stream.");
-    try { twilioSocket.close(); } catch {}
   if (!tenant) {
     twilioSocket.close();
     return;
   }
 
+  if (!OPENAI_API_KEY) {
+    console.error("❌ Missing OPENAI_API_KEY env var. Closing stream.");
+    try { twilioSocket.close(); } catch {}
+  if (!tenant) {
+    console.error("Missing OPENAI_API_KEY");
+    twilioSocket.close();
+    return;
+  }
+
   // -------------------- OpenAI Realtime Socket --------------------
+  let streamSid = null;
+  const pendingAudio = [];
+
   const openaiSocket = new WebSocket(
     "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview",
+    `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(OPENAI_MODEL)}`,
     {
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,
@@ -171,6 +201,8 @@ wss.on("connection", (twilioSocket, req) => {
     headers: {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       "OpenAI-Beta": "realtime=v1"
+        "OpenAI-Beta": "realtime=v1"
+      }
     }
   );
   });
@@ -197,11 +229,21 @@ wss.on("connection", (twilioSocket, req) => {
     if (!streamSid || twilioSocket.readyState !== WebSocket.OPEN) return;
 
     twilioSocket.send(
+  openaiSocket.on("open", () => {
+    openaiSocket.send(
       JSON.stringify({
         event: "media",
         streamSid,
         media: { payload: base64UlawChunk },
         media: { payload: base64Audio }
+        type: "session.update",
+        session: {
+          voice: tenant.voice,
+          input_audio_format: "g711_ulaw",
+          output_audio_format: "g711_ulaw",
+          modalities: ["audio", "text"],
+          instructions: tenant.instructions
+        }
       })
     );
   }
@@ -273,6 +315,14 @@ wss.on("connection", (twilioSocket, req) => {
         },
         body: `Twiml=${encodeURIComponent(twiml)}`
       }
+    openaiSocket.send(
+      JSON.stringify({
+        type: "response.create",
+        response: {
+          modalities: ["audio", "text"],
+          instructions: "Greet the caller and ask how you can help today."
+        }
+      })
     );
 
     if (!response.ok) {
@@ -299,6 +349,7 @@ wss.on("connection", (twilioSocket, req) => {
   openaiSocket.on("message", (msg) => {
   openaiSocket.on("message", async (msg) => {
     let data;
+  openaiSocket.on("message", (raw) => {
     try {
       data = JSON.parse(msg.toString());
     } catch (e) {
@@ -334,6 +385,7 @@ wss.on("connection", (twilioSocket, req) => {
       }
       return;
     }
+      const msg = JSON.parse(raw.toString());
 
     if (data.type === "input_audio_buffer.speech_stopped") {
       sendToOpenAI({
@@ -347,6 +399,10 @@ wss.on("connection", (twilioSocket, req) => {
             "Be warm and concise. Continue the conversation and ask ONE question to move the booking forward.",
         },
           audio: { output: { format: "g711_ulaw" } }
+      if (msg.type === "response.audio.delta" && msg.delta) {
+        if (!streamSid) {
+          pendingAudio.push(msg.delta);
+          return;
         }
       });
       return;
@@ -362,6 +418,13 @@ wss.on("connection", (twilioSocket, req) => {
         }
       } catch (error) {
         console.error("Transfer flow failed:", error.message);
+        twilioSocket.send(
+          JSON.stringify({
+            event: "media",
+            streamSid,
+            media: { payload: msg.delta }
+          })
+        );
       }
 
       const durationMinutes = (Date.now() - startTime) / 60000;
@@ -369,6 +432,8 @@ wss.on("connection", (twilioSocket, req) => {
         "INSERT INTO calls (id, tenant_id, transcript, duration_minutes) VALUES ($1, $2, $3, $4)",
         [callId, tenantId, transcript, durationMinutes]
       );
+    } catch (err) {
+      console.error("OpenAI message parse error:", err.message);
     }
   });
 
@@ -391,7 +456,10 @@ wss.on("connection", (twilioSocket, req) => {
       data = JSON.parse(rawMessage.toString());
     } catch {
       return;
+    if (twilioSocket.readyState === WebSocket.OPEN) {
+      twilioSocket.close();
     }
+  });
 
     if (data.event === "start") {
       streamSid = data.start.streamSid;
@@ -404,6 +472,9 @@ wss.on("connection", (twilioSocket, req) => {
       }
       streamSid = data.start?.streamSid;
       callSid = data.start?.callSid;
+  openaiSocket.on("error", (err) => {
+    console.error("OpenAI socket error:", err.message);
+  });
 
       // GREETING (force mulaw per response)
       sendToOpenAI({
@@ -419,11 +490,29 @@ wss.on("connection", (twilioSocket, req) => {
             "Then stop and wait for their answer.",
         },
           instructions: `Say: "Thanks for calling ${tenant.name}. How can we help today?"`
+  twilioSocket.on("message", (raw) => {
+    try {
+      const msg = JSON.parse(raw.toString());
+
+      if (msg.event === "start") {
+        streamSid = msg.start?.streamSid || null;
+
+        while (pendingAudio.length && twilioSocket.readyState === WebSocket.OPEN && streamSid) {
+          const chunk = pendingAudio.shift();
+          twilioSocket.send(
+            JSON.stringify({
+              event: "media",
+              streamSid,
+              media: { payload: chunk }
+            })
+          );
         }
       });
 
       return;
     }
+        return;
+      }
 
     if (data.event === "media" && data.media?.payload) {
       // AUDIO IN: Twilio -> OpenAI
@@ -434,12 +523,25 @@ wss.on("connection", (twilioSocket, req) => {
       });
       return;
     }
+      if (msg.event === "media" && msg.media?.payload && openaiSocket.readyState === WebSocket.OPEN) {
+        openaiSocket.send(
+          JSON.stringify({
+            type: "input_audio_buffer.append",
+            audio: msg.media.payload
+          })
+        );
+      }
 
     if (data.event === "stop") {
       console.log("⏹️ Stream stopped");
       try { openaiSocket.close(); } catch {}
       return;
       sendToOpenAI({ type: "input_audio_buffer.commit" });
+      if (msg.event === "stop" && openaiSocket.readyState === WebSocket.OPEN) {
+        openaiSocket.close();
+      }
+    } catch (err) {
+      console.error("Twilio message parse error:", err.message);
     }
   });
 
@@ -452,10 +554,14 @@ wss.on("connection", (twilioSocket, req) => {
   });
 
   twilioSocket.on("error", (err) => console.error("Twilio socket error:", err));
+  twilioSocket.on("error", (err) => {
+    console.error("Twilio socket error:", err.message);
+  });
 });
 
 // -------------------- Listen --------------------
 server.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);
   console.log(`🚀 Enterprise AI Front Desk running on port ${PORT}`);
+  console.log(`AI front desk backend listening on port ${PORT}`);
 });

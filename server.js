@@ -14,17 +14,15 @@ const BASE_URL = process.env.BASE_URL || "";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-realtime-preview-2024-12-17";
 
-const REQUIRED_ENV_VARS = [
-  "BASE_URL",
-  "OPENAI_API_KEY",
-  "TWILIO_ACCOUNT_SID",
-  "TWILIO_AUTH_TOKEN",
-  "TWILIO_PHONE_NUMBER"
-];
+const REQUIRED_ENV_VARS = ["OPENAI_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"];
 
 const missingEnv = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
 if (missingEnv.length) {
-  console.warn(`⚠️ Missing env vars: ${missingEnv.join(", ")}`);
+  console.warn(`⚠️ Missing required env vars: ${missingEnv.join(", ")}`);
+}
+
+if (!process.env.BASE_URL) {
+  console.warn("⚠️ BASE_URL not set; deriving URL from incoming request headers.");
 }
 
 const pool = process.env.DATABASE_URL
@@ -57,8 +55,23 @@ const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
+app.get("/", (_req, res) => {
+  res.status(200).send("AI front desk backend is running");
+});
+
 app.get("/health", (_req, res) => {
   res.status(200).send("OK");
+});
+
+app.get("/health/details", (_req, res) => {
+  res.status(200).json({
+    status: "ok",
+    hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY),
+    hasTwilioAccountSid: Boolean(process.env.TWILIO_ACCOUNT_SID),
+    hasTwilioAuthToken: Boolean(process.env.TWILIO_AUTH_TOKEN),
+    hasBaseUrl: Boolean(process.env.BASE_URL),
+    baseUrlMode: process.env.BASE_URL ? "env" : "derived_from_request"
+  });
 });
 
 function isBusinessHours(tenant) {
@@ -66,8 +79,29 @@ function isBusinessHours(tenant) {
   return hour >= tenant.businessHours.start && hour < tenant.businessHours.end;
 }
 
-function buildTenantWsUrl(tenantId) {
-  return `${BASE_URL.replace("https://", "wss://").replace("http://", "ws://")}/twilio-media/${tenantId}`;
+function toWebSocketBaseUrl(baseUrl) {
+  return baseUrl.replace("https://", "wss://").replace("http://", "ws://");
+}
+
+function resolveBaseUrl(req) {
+  if (BASE_URL) return BASE_URL;
+  const forwardedProto = req.get("x-forwarded-proto");
+  const proto = (forwardedProto || req.protocol || "https").split(",")[0].trim();
+  const host = req.get("x-forwarded-host") || req.get("host");
+  if (!host) return "";
+  return `${proto}://${host}`;
+}
+
+function buildTenantWsUrl(baseUrl, tenantId) {
+  return `${toWebSocketBaseUrl(baseUrl)}/twilio-media/${tenantId}`;
+}
+
+function buildFallbackTwiml(message) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>${message}</Say>
+  <Hangup/>
+</Response>`;
 }
 
 function buildTwilioAuthHeader() {
@@ -110,41 +144,64 @@ async function attemptTransfer(callSid, tenant) {
   return true;
 }
 
-app.post("/twilio-voice/:tenantId", (req, res) => {
-  const { tenantId } = req.params;
-  const tenant = TENANTS[tenantId];
+function handleTwilioVoice(req, res, tenantId) {
+  const resolvedTenantId = TENANTS[tenantId] ? tenantId : "gladiators";
+  const tenant = TENANTS[resolvedTenantId];
 
-  if (!tenant) {
-    return res.status(404).send("Unknown tenant");
+  if (!OPENAI_API_KEY) {
+    const fallbackTwiml = buildFallbackTwiml(
+      "We are temporarily unable to connect your call. Please try again shortly."
+    );
+    res.type("text/xml").send(fallbackTwiml);
+    return;
   }
 
-  if (!BASE_URL) {
-    return res.status(500).send("BASE_URL is not configured");
+  const requestBaseUrl = resolveBaseUrl(req);
+  if (!requestBaseUrl) {
+    const fallbackTwiml = buildFallbackTwiml(
+      "We are temporarily unable to connect your call. Please call again in a few minutes."
+    );
+    res.type("text/xml").send(fallbackTwiml);
+    return;
   }
 
-  const wsUrl = buildTenantWsUrl(tenantId);
+  const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId);
   const greetingPrefix = isBusinessHours(tenant) ? "Thanks for calling." : "Thanks for calling after hours.";
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="Polly.Joanna">${greetingPrefix} ${tenant.name} will assist you now.</Say>
+  <Say>${greetingPrefix} ${tenant.name} will assist you now.</Say>
   <Connect>
     <Stream url="${wsUrl}" />
   </Connect>
 </Response>`;
 
   res.type("text/xml").send(twiml);
+}
+
+app.all(["/twilio-voice", "/twilio-voice/"], (req, res) => {
+  handleTwilioVoice(req, res, "gladiators");
+});
+
+app.all(["/twilio-voice/:tenantId", "/twilio-voice/:tenantId/"], (req, res) => {
+  const { tenantId } = req.params;
+  handleTwilioVoice(req, res, tenantId);
 });
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 wss.on("connection", (twilioSocket, req) => {
-  const url = req.url || "";
-  const tenantId = url.split("/").pop();
+  const rawUrl = req.url || "";
+  const parsedUrl = new URL(rawUrl, "http://localhost");
+  const pathname = parsedUrl.pathname || "";
+  const pathSegments = pathname.split("/").filter(Boolean);
+  const tenantIdFromPath = pathSegments.length >= 2 ? pathSegments[1] : "";
+  const tenantId = TENANTS[tenantIdFromPath] ? tenantIdFromPath : "gladiators";
   const tenant = TENANTS[tenantId];
 
-  if (!url.startsWith("/twilio-media/") || !tenant) {
+  if (!pathname.startsWith("/twilio-media/")) {
+    console.error("Invalid Twilio media stream path:", pathname);
     twilioSocket.close();
     return;
   }

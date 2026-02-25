@@ -33,6 +33,12 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
+const pool = process.env.DATABASE_URL
+  ? new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false }
+    })
+  : null;
 
 // ================= TENANTS =================
 const TENANTS = {
@@ -41,6 +47,7 @@ const TENANTS = {
     transferNumber: "+14022907925",
     notifySms: "+14022907925",
     businessHours: { start: 8, end: 17 }, // 8am–5pm local server time
+    businessHours: { start: 8, end: 17 },
     voice: "verse",
     instructions: [
       "You are the professional receptionist for Gladiators Painting.",
@@ -56,6 +63,7 @@ const TENANTS = {
       "Never mention AI.",
       "Speak ONLY English."
       "Never mention AI."
+      "Speak only English."
     ].join("\n")
   }
 };
@@ -71,12 +79,17 @@ const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL; // e.g. https://your-app.onrender.com
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 app.get("/health", (_, res) => res.status(200).send("OK"));
+app.get("/health", (_req, res) => {
+  res.status(200).send("OK");
+});
 
 // ================= HELPERS =================
 function isBusinessHours(tenant) {
   const now = new Date();
   const hour = now.getHours();
   return hour >= tenant.businessHours.start && hour < tenant.businessHours.end;
+function buildTenantWsUrl(tenantId) {
+  return `${BASE_URL.replace("https://", "wss://").replace("http://", "ws://")}/twilio-media/${tenantId}`;
 }
 
 function buildTwilioAuthHeader() {
@@ -84,6 +97,9 @@ function buildTwilioAuthHeader() {
     "Basic " +
     Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString("base64")
   );
+  const sid = process.env.TWILIO_ACCOUNT_SID || "";
+  const token = process.env.TWILIO_AUTH_TOKEN || "";
+  return `Basic ${Buffer.from(`${sid}:${token}`).toString("base64")}`;
 }
 
 function buildTenantWsUrl(tenantId) {
@@ -91,10 +107,16 @@ function buildTenantWsUrl(tenantId) {
     process.env.BASE_URL.replace("https://", "wss://").replace("http://", "ws://") +
     `/twilio-media/${tenantId}`
   );
+function isBusinessHours(tenant) {
+  const hour = new Date().getHours();
+  return hour >= tenant.businessHours.start && hour < tenant.businessHours.end;
 }
 
 async function safePoolQuery(query, values) {
   if (!process.env.DATABASE_URL) return;
+  if (!pool) {
+    return;
+  }
 
 app.get("/health", (req, res) => res.status(200).send("OK"));
   try {
@@ -111,8 +133,38 @@ app.get("/health", (_req, res) => {
 app.post("/twilio-voice", (req, res) => {
   if (!BASE_URL) console.error("❌ BASE_URL missing. Set it in Render env vars.");
 // ================= TWILIO ENTRY =================
+async function attemptTransfer(callSid, tenant) {
+  if (!callSid || !tenant.transferNumber) {
+    return false;
+  }
+
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${callSid}.json`;
+  const twiml = `<Response><Dial>${tenant.transferNumber}</Dial></Response>`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: buildTwilioAuthHeader(),
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: new URLSearchParams({ Twiml: twiml }).toString()
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    console.error("Twilio transfer failed:", response.status, body);
+    return false;
+  }
+
+  return true;
+}
+
 app.post("/twilio-voice/:tenantId", (req, res) => {
   const tenant = TENANTS[req.params.tenantId];
+  const { tenantId } = req.params;
+  const tenant = TENANTS[tenantId];
+
   if (!tenant) {
     return res.status(404).send("Unknown tenant");
   }
@@ -129,12 +181,18 @@ app.post("/twilio-voice/:tenantId", (req, res) => {
   const wsUrl = buildTenantWsUrl(req.params.tenantId);
     BASE_URL.replace("https://", "wss://").replace("http://", "ws://") +
     `/twilio-media/${req.params.tenantId}`;
+  const businessHoursText = isBusinessHours(tenant)
+    ? "Thanks for calling."
+    : "Thanks for calling after hours.";
+
+  const wsUrl = buildTenantWsUrl(tenantId);
 
   res.type("text/xml").send(`
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Joanna">Connecting you now.</Say>
   <Say voice="Polly.Joanna">Thanks for calling ${tenant.name}. Connecting you now.</Say>
+  <Say voice="Polly.Joanna">${businessHoursText} ${tenant.name} will assist you now.</Say>
   <Connect>
     <Stream url="${wsUrl}" />
   </Connect>
@@ -192,14 +250,18 @@ wss.on("connection", (twilioSocket, req) => {
   const callId = crypto.randomUUID();
   let callSid;
   let streamSid;
+  let callSid = null;
+  let streamSid = null;
   let transcript = "";
   const startTime = Date.now();
   let qualificationComplete = false;
   let transferAttempted = false;
 
   const openaiSocket = new WebSocket(`wss://api.openai.com/v1/realtime?model=${OPENAI_MODEL}`, {
+  const openaiSocket = new WebSocket(`wss://api.openai.com/v1/realtime?model=${encodeURIComponent(OPENAI_MODEL)}`, {
     headers: {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
       "OpenAI-Beta": "realtime=v1"
         "OpenAI-Beta": "realtime=v1"
       }
@@ -238,11 +300,14 @@ wss.on("connection", (twilioSocket, req) => {
         media: { payload: base64Audio }
         type: "session.update",
         session: {
+          instructions: tenant.instructions,
           voice: tenant.voice,
+          modalities: ["text", "audio"],
           input_audio_format: "g711_ulaw",
           output_audio_format: "g711_ulaw",
           modalities: ["audio", "text"],
           instructions: tenant.instructions
+          input_audio_transcription: { model: "gpt-4o-mini-transcribe" }
         }
       })
     );
@@ -350,10 +415,13 @@ wss.on("connection", (twilioSocket, req) => {
   openaiSocket.on("message", async (msg) => {
     let data;
   openaiSocket.on("message", (raw) => {
+  openaiSocket.on("message", async (raw) => {
+    let msg;
     try {
       data = JSON.parse(msg.toString());
     } catch (e) {
       console.error("OpenAI parse error:", e);
+      msg = JSON.parse(raw.toString());
     } catch {
       return;
     }
@@ -367,6 +435,14 @@ wss.on("connection", (twilioSocket, req) => {
     ) {
     if ((data.type === "response.audio.delta" || data.type === "response.output_audio.delta") && data.delta) {
       sendAudioToTwilio(data.delta);
+    if (msg.type === "response.audio.delta" && streamSid && msg.delta) {
+      twilioSocket.send(
+        JSON.stringify({
+          event: "media",
+          streamSid,
+          media: { payload: msg.delta }
+        })
+      );
       return;
     }
 
@@ -381,6 +457,15 @@ wss.on("connection", (twilioSocket, req) => {
         lowerTranscript.includes("representative") ||
         lowerTranscript.includes("person")
       ) {
+    if (msg.type === "response.text.delta" && msg.delta) {
+      transcript += msg.delta;
+    }
+
+    if (msg.type === "conversation.item.input_audio_transcription.completed" && msg.transcript) {
+      transcript += `\nCALLER: ${msg.transcript}`;
+
+      const callerAskedHuman = /human|person|representative|manager|transfer/i.test(msg.transcript);
+      if (callerAskedHuman && !qualificationComplete) {
         qualificationComplete = true;
       }
       return;
@@ -415,6 +500,11 @@ wss.on("connection", (twilioSocket, req) => {
       try {
         if (qualificationComplete) {
           await warmTransfer();
+      if (callerAskedHuman && qualificationComplete && !transferAttempted) {
+        transferAttempted = true;
+        const transferred = await attemptTransfer(callSid, tenant);
+        if (transferred) {
+          console.log(`✅ Transfer started for ${callSid}`);
         }
       } catch (error) {
         console.error("Transfer flow failed:", error.message);
@@ -449,11 +539,14 @@ wss.on("connection", (twilioSocket, req) => {
   twilioSocket.on("message", (message) => {
   twilioSocket.on("message", (rawMessage) => {
     let data;
+  twilioSocket.on("message", async (raw) => {
+    let msg;
     try {
       data = JSON.parse(message.toString());
     } catch (e) {
       console.error("Twilio parse error:", e);
       data = JSON.parse(rawMessage.toString());
+      msg = JSON.parse(raw.toString());
     } catch {
       return;
     if (twilioSocket.readyState === WebSocket.OPEN) {
@@ -464,6 +557,9 @@ wss.on("connection", (twilioSocket, req) => {
     if (data.event === "start") {
       streamSid = data.start.streamSid;
       console.log("▶️ Stream started:", streamSid);
+    if (msg.event === "start") {
+      streamSid = msg.start?.streamSid;
+      callSid = msg.start?.callSid || null;
 
       // Flush any buffered OpenAI audio that arrived before streamSid existed
       if (pendingTwilioAudio.length) {
@@ -508,6 +604,12 @@ wss.on("connection", (twilioSocket, req) => {
           );
         }
       });
+      await safePoolQuery(
+        `insert into calls (id, tenant_id, call_sid, started_at, status)
+         values ($1, $2, $3, now(), $4)
+         on conflict (id) do nothing`,
+        [callId, tenantId, callSid, "in_progress"]
+      );
 
       return;
     }
@@ -521,6 +623,13 @@ wss.on("connection", (twilioSocket, req) => {
         audio: data.media.payload,
         audio: data.media.payload
       });
+    if (msg.event === "media" && msg.media?.payload && openaiSocket.readyState === WebSocket.OPEN) {
+      openaiSocket.send(
+        JSON.stringify({
+          type: "input_audio_buffer.append",
+          audio: msg.media.payload
+        })
+      );
       return;
     }
       if (msg.event === "media" && msg.media?.payload && openaiSocket.readyState === WebSocket.OPEN) {
@@ -542,6 +651,16 @@ wss.on("connection", (twilioSocket, req) => {
       }
     } catch (err) {
       console.error("Twilio message parse error:", err.message);
+    if (msg.event === "stop") {
+      openaiSocket.close();
+      await safePoolQuery(
+        `update calls
+         set ended_at = now(),
+             status = $2,
+             transcript = $3
+         where id = $1`,
+        [callId, transferAttempted ? "transferred" : "completed", transcript]
+      );
     }
   });
 
@@ -556,6 +675,18 @@ wss.on("connection", (twilioSocket, req) => {
   twilioSocket.on("error", (err) => console.error("Twilio socket error:", err));
   twilioSocket.on("error", (err) => {
     console.error("Twilio socket error:", err.message);
+  openaiSocket.on("close", () => {
+    if (twilioSocket.readyState === WebSocket.OPEN) {
+      twilioSocket.close();
+    }
+  });
+
+  openaiSocket.on("error", (error) => {
+    console.error("OpenAI socket error:", error.message);
+  });
+
+  twilioSocket.on("error", (error) => {
+    console.error("Twilio socket error:", error.message);
   });
 });
 
@@ -564,4 +695,5 @@ server.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);
   console.log(`🚀 Enterprise AI Front Desk running on port ${PORT}`);
   console.log(`AI front desk backend listening on port ${PORT}`);
+  console.log(`Server listening on :${PORT}`);
 });

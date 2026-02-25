@@ -378,9 +378,21 @@ wss.on("connection", (twilioSocket, req) => {
   }
 
   let initialGreetingRequested = false;
+  let initialGreetingTimer = null;
 
   function requestInitialGreetingIfReady() {
-    if (initialGreetingRequested || !callSid) return;
+    if (initialGreetingRequested) return;
+
+    if (!callSid || !openaiReady || !streamSid) {
+      if (!initialGreetingTimer) {
+        initialGreetingTimer = setTimeout(() => {
+          initialGreetingTimer = null;
+          requestInitialGreetingIfReady();
+        }, 250);
+      }
+      return;
+    }
+
     initialGreetingRequested = true;
 
     sendToOpenAI({
@@ -392,6 +404,14 @@ wss.on("connection", (twilioSocket, req) => {
           `Say exactly: "Hi there! Thanks so much for calling ${tenant.name}. We specialize in high-quality interior and exterior painting, and we'd love to help with your project. What can we help you with today?" Then wait for the caller's response before continuing.`
       }
     });
+  }
+
+  function scheduleInitialGreeting() {
+    if (initialGreetingRequested || initialGreetingTimer) return;
+    initialGreetingTimer = setTimeout(() => {
+      initialGreetingTimer = null;
+      requestInitialGreetingIfReady();
+    }, 1000);
   }
 
   function connectOpenAI(modelIndex) {
@@ -433,7 +453,7 @@ wss.on("connection", (twilioSocket, req) => {
         openaiSocket.send(openaiQueue.shift());
       }
 
-      requestInitialGreetingIfReady();
+      scheduleInitialGreeting();
     });
 
     socket.on("message", async (raw) => {
@@ -538,7 +558,7 @@ wss.on("connection", (twilioSocket, req) => {
         );
       }
 
-      requestInitialGreetingIfReady();
+      scheduleInitialGreeting();
 
       await safePoolQuery(
         `INSERT INTO calls (id, tenant_id, call_sid, started_at, status)
@@ -572,6 +592,11 @@ wss.on("connection", (twilioSocket, req) => {
   });
 
   twilioSocket.on("close", () => {
+    if (initialGreetingTimer) {
+      clearTimeout(initialGreetingTimer);
+      initialGreetingTimer = null;
+    }
+
     if (openaiSocket?.readyState === WebSocket.OPEN) {
       openaiSocket.close();
     }

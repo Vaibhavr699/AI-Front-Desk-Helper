@@ -177,7 +177,6 @@ function buildTenantWsUrl(baseUrl, tenantId) {
   return `${wsBaseUrl}/twilio-media/${tenantId}`;
 }
 
-function buildFallbackTwiml(message) {
 function buildFallbackTwiml(message, transferNumber) {
   if (transferNumber) {
     return `<?xml version="1.0" encoding="UTF-8"?>
@@ -278,7 +277,6 @@ function handleTwilioVoice(req, res, tenantId) {
 
   if (!OPENAI_API_KEY) {
     const fallbackTwiml = buildFallbackTwiml(
-      "We are temporarily unable to connect your call. Please try again shortly."
       "Please hold while we connect you to the team.",
       tenant.transferNumber
     );
@@ -289,7 +287,6 @@ function handleTwilioVoice(req, res, tenantId) {
   const requestBaseUrl = resolveBaseUrl(req);
   if (!requestBaseUrl) {
     const fallbackTwiml = buildFallbackTwiml(
-      "We are temporarily unable to connect your call. Please call again in a few minutes."
       "Please hold while we connect you to the team.",
       tenant.transferNumber
     );
@@ -298,11 +295,9 @@ function handleTwilioVoice(req, res, tenantId) {
   }
 
   const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId);
-  const greetingPrefix = isBusinessHours(tenant) ? "Thanks for calling." : "Thanks for calling after hours.";
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>${greetingPrefix} ${tenant.name} will assist you now.</Say>
   <Say>Hi there! Thanks so much for calling ${tenant.name}. We specialize in high-quality interior and exterior painting, and we'd love to help with your project. What can we help you with today?</Say>
   <Connect>
     <Stream url="${wsUrl}" />
@@ -355,7 +350,6 @@ wss.on("connection", (twilioSocket, req) => {
         type: "session.update",
         session: {
           voice: tenant.voice,
-          instructions: tenant.instructions,
           instructions: buildRealtimeInstructions(tenant),
           modalities: ["audio", "text"],
           input_audio_format: "g711_ulaw",

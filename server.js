@@ -51,8 +51,8 @@ const TENANTS = {
     voice: "verse",
     instructions: [
       "You are the friendly, human-sounding receptionist for Gladiators Painting.",
-      "Sound warm, conversational, and natural. Avoid robotic wording.",
-      "Start by welcoming the caller and then guide an open conversation.",
+      "Sound warm, upbeat, and conversational. Avoid robotic wording.",
+      "Start with an upbeat, personable welcome and then guide an open conversation.",
       "Collect and confirm: full name, best phone number, project address, scope of work (interior, exterior, or both), and target timeframe.",
       "After collecting details, offer to schedule an appointment and suggest two appointment windows.",
       "If the caller asks questions about services, use the website knowledge context provided in system instructions.",
@@ -60,6 +60,7 @@ const TENANTS = {
       "Offer a free estimate.",
       "If the caller asks for a human, explain you can transfer after a few qualification questions.",
       "Never mention AI.",
+      "Speak slightly faster than average natural speech (about 10% faster), while staying clear and easy to understand.",
       "Speak only English."
     ].join("\n")
   }
@@ -198,6 +199,7 @@ function buildTwilioAuthHeader() {
   const token = process.env.TWILIO_AUTH_TOKEN || "";
   return `Basic ${Buffer.from(`${sid}:${token}`).toString("base64")}`;
 }
+
 function hasTwilioCredentials() {
   return Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
 }
@@ -244,7 +246,7 @@ async function attemptTransfer(callSid, tenant) {
     return false;
   }
   if (!isValidE164(tenant.transferNumber)) {
-    console.error(`Twilio transfer skipped: invalid transfer number ${tenant.transferNumber}`);
+console.error(`Twilio transfer skipped: invalid transfer number ${tenant.transferNumber}`);
     return false;
   }
 
@@ -296,7 +298,7 @@ function handleTwilioVoice(req, res, tenantId) {
   const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId);
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>Hi there! Thanks so much for calling ${tenant.name}. We specialize in high-quality interior and exterior painting, and we'd love to help with your project. What can we help you with today?</Say>
+  <Say>Hey there! Thanks so much for calling ${tenant.name}—we're really glad you reached out. We do beautiful interior and exterior painting, and we'd love to help with your project. What can we get started for you today?</Say>
   <Connect>
     <Stream url="${wsUrl}" />
   </Connect>
@@ -396,7 +398,8 @@ wss.on("connection", (twilioSocket, req) => {
     socket.on("open", () => {
       opened = true;
       openaiReady = true;
-sendToOpenAI({
+
+      sendToOpenAI({
         type: "session.update",
         session: {
           voice: tenant.voice,
@@ -516,12 +519,13 @@ sendToOpenAI({
         );
       }
 
-      sendToOpenAI({
+      sendToOpenAI(
+{
         type: "response.create",
         response: {
           modalities: ["audio", "text"],
           audio: { output: { format: "g711_ulaw" } },
-          instructions: `Say exactly: \"Thanks for calling ${tenant.name}. We specialize in high-quality interior and exterior painting. What can we help you with today?\"`
+          instructions: `Say exactly: \"Hey there! Thanks so much for calling ${tenant.name}—we're really glad you reached out. We do beautiful interior and exterior painting, and we'd love to help with your project. What can we get started for you today?\" Deliver it in a warm, upbeat tone at a slightly brisk pace.`
         }
       });
 

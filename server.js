@@ -525,7 +525,7 @@ wss.on("connection", (twilioSocket, req) => {
         response: {
           modalities: ["audio", "text"],
           audio: { output: { format: "g711_ulaw" } },
-          instructions: `Say exactly: \"Hey there! Thanks so much for calling ${tenant.name}—we're really glad you reached out. We do beautiful interior and exterior painting, and we'd love to help with your project. What can we get started for you today?\" Deliver it in a warm, upbeat tone at a slightly brisk pace.`
+          instructions: `Say exactly: \Hey there! Thanks so much for calling ${tenant.name}—we're really glad you reached out. We do beautiful interior and exterior painting, and we'd love to help with your project. What can we get started for you today?\" Deliver it in a warm, upbeat tone at a slightly brisk pace.`
         }
       });
 

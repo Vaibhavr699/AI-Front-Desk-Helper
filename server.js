@@ -16,6 +16,10 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-realtime";
 
 const REQUIRED_ENV_VARS = ["OPENAI_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"];
 
+function isValidE164(value) {
+  return /^\+[1-9]\d{6,14}$/.test(String(value || "").trim());
+}
+
 const missingEnv = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
 if (missingEnv.length) {
   console.warn(`⚠️ Missing required env vars: ${missingEnv.join(", ")}`);
@@ -23,6 +27,11 @@ if (missingEnv.length) {
 
 if (!process.env.BASE_URL) {
   console.warn("⚠️ BASE_URL not set; deriving URL from incoming request headers.");
+}
+
+const defaultTransferNumber = process.env.GLADIATORS_TRANSFER_NUMBER || "+14022907925";
+if (!isValidE164(defaultTransferNumber)) {
+  console.warn(`⚠️ Transfer number is not valid E.164 format: ${defaultTransferNumber}`);
 }
 
 const pool = process.env.DATABASE_URL
@@ -35,7 +44,7 @@ const pool = process.env.DATABASE_URL
 const TENANTS = {
   gladiators: {
     name: "Gladiators Painting",
-    transferNumber: "+14022907925",
+    transferNumber: defaultTransferNumber,
     businessHours: { start: 8, end: 17 },
     voice: "verse",
     instructions: [
@@ -72,6 +81,19 @@ app.get("/health/details", (_req, res) => {
     hasBaseUrl: Boolean(process.env.BASE_URL),
     baseUrlMode: process.env.BASE_URL ? "env" : "derived_from_request",
     wsBaseUrlPreview: toWebSocketBaseUrl(process.env.BASE_URL || "https://example.com")
+  });
+});
+
+app.get("/health/twilio", async (_req, res) => {
+  const transferNumber = TENANTS.gladiators.transferNumber;
+  const diagnostics = await checkTwilioAccountHealth();
+
+  res.status(diagnostics.ok ? 200 : 503).json({
+    status: diagnostics.ok ? "ok" : "degraded",
+    hasTwilioCredentials: hasTwilioCredentials(),
+    transferNumber,
+    transferNumberValidE164: isValidE164(transferNumber),
+    diagnostics
   });
 });
 
@@ -114,7 +136,15 @@ function buildTenantWsUrl(baseUrl, tenantId) {
   return `${wsBaseUrl}/twilio-media/${tenantId}`;
 }
 
-function buildFallbackTwiml(message) {
+function buildFallbackTwiml(message, transferNumber) {
+  if (transferNumber) {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>${message}</Say>
+  <Dial>${transferNumber}</Dial>
+</Response>`;
+  }
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say>${message}</Say>
@@ -128,6 +158,36 @@ function buildTwilioAuthHeader() {
   return `Basic ${Buffer.from(`${sid}:${token}`).toString("base64")}`;
 }
 
+function hasTwilioCredentials() {
+  return Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
+}
+
+async function checkTwilioAccountHealth() {
+  if (!hasTwilioCredentials()) {
+    return { ok: false, reason: "missing_credentials" };
+  }
+
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}.json`;
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: buildTwilioAuthHeader() }
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      return { ok: false, reason: "twilio_http_error", status: response.status, body };
+    }
+
+    const payload = await response.json();
+    return { ok: true, accountSid: payload.sid, accountStatus: payload.status };
+  } catch (error) {
+    return { ok: false, reason: "network_error", error: error.message };
+  }
+}
+
 async function safePoolQuery(query, values) {
   if (!pool) return;
   try {
@@ -138,7 +198,15 @@ async function safePoolQuery(query, values) {
 }
 
 async function attemptTransfer(callSid, tenant) {
-  if (!callSid || !tenant.transferNumber) return false;
+if (!callSid || !tenant.transferNumber) return false;
+  if (!hasTwilioCredentials()) {
+    console.error("Twilio transfer skipped: missing TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN.");
+    return false;
+  }
+  if (!isValidE164(tenant.transferNumber)) {
+    console.error(`Twilio transfer skipped: invalid transfer number ${tenant.transferNumber}`);
+    return false;
+  }
 
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${callSid}.json`;
@@ -168,7 +236,8 @@ function handleTwilioVoice(req, res, tenantId) {
 
   if (!OPENAI_API_KEY) {
     const fallbackTwiml = buildFallbackTwiml(
-      "We are temporarily unable to connect your call. Please try again shortly."
+      "Please hold while we connect you to the team.",
+      tenant.transferNumber
     );
     res.type("text/xml").send(fallbackTwiml);
     return;
@@ -177,7 +246,8 @@ function handleTwilioVoice(req, res, tenantId) {
   const requestBaseUrl = resolveBaseUrl(req);
   if (!requestBaseUrl) {
     const fallbackTwiml = buildFallbackTwiml(
-      "We are temporarily unable to connect your call. Please call again in a few minutes."
+      "Please hold while we connect you to the team.",
+      tenant.transferNumber
     );
     res.type("text/xml").send(fallbackTwiml);
     return;
@@ -328,7 +398,7 @@ wss.on("connection", (twilioSocket, req) => {
       if (msg.type === "conversation.item.input_audio_transcription.completed" && msg.transcript) {
         transcript += `\nCALLER: ${msg.transcript}`;
         return;
-      }
+}
 
       if (msg.type === "input_audio_buffer.speech_stopped") {
         sendToOpenAI({

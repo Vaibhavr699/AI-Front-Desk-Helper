@@ -198,7 +198,7 @@ async function safePoolQuery(query, values) {
 }
 
 async function attemptTransfer(callSid, tenant) {
-if (!callSid || !tenant.transferNumber) return false;
+  if (!callSid || !tenant.transferNumber) return false;
   if (!hasTwilioCredentials()) {
     console.error("Twilio transfer skipped: missing TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN.");
     return false;
@@ -254,11 +254,9 @@ function handleTwilioVoice(req, res, tenantId) {
   }
 
   const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId);
-  const greetingPrefix = isBusinessHours(tenant) ? "Thanks for calling." : "Thanks for calling after hours.";
-
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>${greetingPrefix} ${tenant.name} will assist you now.</Say>
+  <Say>Thanks for calling. ${tenant.name} will assist you now and can help book appointments 24 hours a day.</Say>
   <Connect>
     <Stream url="${wsUrl}" />
   </Connect>
@@ -398,7 +396,7 @@ wss.on("connection", (twilioSocket, req) => {
       if (msg.type === "conversation.item.input_audio_transcription.completed" && msg.transcript) {
         transcript += `\nCALLER: ${msg.transcript}`;
         return;
-}
+      }
 
       if (msg.type === "input_audio_buffer.speech_stopped") {
         sendToOpenAI({

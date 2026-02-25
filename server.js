@@ -377,6 +377,23 @@ wss.on("connection", (twilioSocket, req) => {
     );
   }
 
+  let initialGreetingRequested = false;
+
+  function requestInitialGreetingIfReady() {
+    if (initialGreetingRequested || !callSid) return;
+    initialGreetingRequested = true;
+
+    sendToOpenAI({
+      type: "response.create",
+      response: {
+        modalities: ["audio", "text"],
+        audio: { output: { format: "g711_ulaw" } },
+        instructions:
+          `Say exactly: "Hi there! Thanks so much for calling ${tenant.name}. We specialize in high-quality interior and exterior painting, and we'd love to help with your project. What can we help you with today?" Then wait for the caller's response before continuing.`
+      }
+    });
+  }
+
   function connectOpenAI(modelIndex) {
     if (modelIndex >= openaiModelCandidates.length) {
       console.error("OpenAI realtime connection failed for all model candidates.");
@@ -415,6 +432,8 @@ wss.on("connection", (twilioSocket, req) => {
       while (openaiQueue.length && openaiSocket?.readyState === WebSocket.OPEN) {
         openaiSocket.send(openaiQueue.shift());
       }
+
+      requestInitialGreetingIfReady();
     });
 
     socket.on("message", async (raw) => {
@@ -519,15 +538,7 @@ wss.on("connection", (twilioSocket, req) => {
         );
       }
 
-      sendToOpenAI({
-        type: "response.create",
-        response: {
-          modalities: ["audio", "text"],
-          audio: { output: { format: "g711_ulaw" } },
-          instructions:
-            `Say exactly: "Hi there! Thanks so much for calling ${tenant.name}. We specialize in high-quality interior and exterior painting, and we'd love to help with your project. What can we help you with today?" Then wait for the caller's response before continuing.`
-        }
-      });
+      requestInitialGreetingIfReady();
 
       await safePoolQuery(
         `INSERT INTO calls (id, tenant_id, call_sid, started_at, status)

@@ -19,7 +19,18 @@ const CRM_WEBHOOK_URL = String(process.env.CRM_WEBHOOK_URL || "").trim();
 const WARM_GREETING =
   "Hi there! Thanks so much for calling Gladiators Painting. We specialize in high-quality interior and exterior painting, and we'd love to help with your project. What can we help you with today?";
 
-const LEAD_CAPTURE_FIELDS = ["full_name", "phone", "email", "address", "project_type", "project_details", "timeline"];
+const LEAD_CAPTURE_FIELDS = [
+  "full_name",
+  "phone",
+  "email",
+  "address",
+  "project_type",
+  "project_details",
+  "timeline",
+  "appointment_date",
+  "appointment_time"
+];
+const FOLLOW_UP_RESPONSE_DELAY_MS = Number(process.env.FOLLOW_UP_RESPONSE_DELAY_MS || 700);
 
 const REQUIRED_ENV_VARS = ["OPENAI_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"];
 
@@ -56,10 +67,10 @@ const TENANTS = {
     voice: "ash",
     instructions: [
       "You are the receptionist for Gladiators Painting.",
-      "Your goal is to collect: full_name, phone, email, address, project_type (interior or exterior), project_details, and timeline.",
+      "Your goal is to collect: full_name, phone, email, address, project_type (interior or exterior), project_details, timeline, preferred appointment_date, and preferred appointment_time.",
       "Ask one question at a time and confirm unclear details.",
       "When you have collected all required fields, you MUST respond with exactly this JSON structure and valid JSON only:",
-      '{"lead_capture":{"full_name":"...","phone":"...","email":"...","address":"...","project_type":"...","project_details":"...","timeline":"..."}}',
+      '{"lead_capture":{"full_name":"...","phone":"...","email":"...","address":"...","project_type":"...","project_details":"...","timeline":"...","appointment_date":"...","appointment_time":"..."}}',
       "Only output the JSON when all fields are collected.",
       "If any field is missing, continue the conversation and do not output JSON yet.",
       "Speak only English."
@@ -490,9 +501,21 @@ wss.on("connection", (twilioSocket, req) => {
                   address: { type: "string" },
                   project_type: { type: "string" },
                   project_details: { type: "string" },
-                  timeline: { type: "string" }
+                  timeline: { type: "string" },
+                  appointment_date: { type: "string" },
+                  appointment_time: { type: "string" }
                 },
-                required: ["full_name", "phone", "email", "address", "project_type", "project_details", "timeline"]
+                required: [
+                  "full_name",
+                  "phone",
+                  "email",
+                  "address",
+                  "project_type",
+                  "project_details",
+                  "timeline",
+                  "appointment_date",
+                  "appointment_time"
+                ]
               }
             }
           ]
@@ -543,14 +566,17 @@ wss.on("connection", (twilioSocket, req) => {
       }
 
       if (msg.type === "input_audio_buffer.speech_stopped") {
-        sendToOpenAI({
-          type: "response.create",
-          response: {
-            modalities: ["audio", "text"],
-            audio: { output: { format: "g711_ulaw" } },
-            instructions: "Speak only English. Be warm and concise. Do not repeat the greeting or thank-you line. Continue from the caller's last response and ask one follow-up question."
-          }
-        });
+        setTimeout(() => {
+          sendToOpenAI({
+            type: "response.create",
+            response: {
+              modalities: ["audio", "text"],
+              audio: { output: { format: "g711_ulaw" } },
+              instructions:
+                "Speak only English. Be upbeat, warm, and personable. Do not repeat the greeting or thank-you line. Continue from the caller's last response, add a short natural pause before replying, and ask one follow-up question that helps complete any missing lead fields including appointment date/time."
+            }
+          });
+        }, Math.max(0, FOLLOW_UP_RESPONSE_DELAY_MS));
         return;
       }
 

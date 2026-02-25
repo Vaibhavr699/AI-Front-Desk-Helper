@@ -30,7 +30,7 @@ const LEAD_CAPTURE_FIELDS = [
   "appointment_date",
   "appointment_time"
 ];
-const FOLLOW_UP_RESPONSE_DELAY_MS = Number(process.env.FOLLOW_UP_RESPONSE_DELAY_MS || 700);
+const FOLLOW_UP_RESPONSE_DELAY_MS = Number(process.env.FOLLOW_UP_RESPONSE_DELAY_MS || 1600);
 
 const REQUIRED_ENV_VARS = ["OPENAI_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"];
 
@@ -67,8 +67,10 @@ const TENANTS = {
     voice: "ash",
     instructions: [
       "You are the receptionist for Gladiators Painting.",
-      "Your goal is to collect: full_name, phone, email, address, project_type (interior or exterior), project_details, timeline, preferred appointment_date, and preferred appointment_time.",
-      "Ask one question at a time and confirm unclear details.",
+      "Your goal is to naturally guide a friendly conversation while collecting: full_name, phone, email, address, project_type (interior or exterior), project_details, timeline, preferred appointment_date, and preferred appointment_time.",
+      "Keep the conversation natural and flexible: combine related questions when appropriate, acknowledge answers, and avoid sounding like a rigid checklist.",
+      "Your main objective is to help the caller get booked on the schedule with a clear appointment date and time window.",
+      "Confirm the final appointment details back to the caller before finishing.",
       "When you have collected all required fields, you MUST respond with exactly this JSON structure and valid JSON only:",
       '{"lead_capture":{"full_name":"...","phone":"...","email":"...","address":"...","project_type":"...","project_details":"...","timeline":"...","appointment_date":"...","appointment_time":"..."}}',
       "Only output the JSON when all fields are collected.",
@@ -573,7 +575,7 @@ wss.on("connection", (twilioSocket, req) => {
               modalities: ["audio", "text"],
               audio: { output: { format: "g711_ulaw" } },
               instructions:
-                "Speak only English. Be upbeat, warm, and personable. Do not repeat the greeting or thank-you line. Continue from the caller's last response, add a short natural pause before replying, and ask one follow-up question that helps complete any missing lead fields including appointment date/time."
+                "Speak only English. Be upbeat, warm, and personable. Keep the conversation natural (not robotic), and focus on getting the caller booked with a confirmed appointment date/time. Do not repeat the greeting or thank-you line. Continue from the caller's last response after a brief pause and ask a helpful next question."
             }
           });
         }, Math.max(0, FOLLOW_UP_RESPONSE_DELAY_MS));

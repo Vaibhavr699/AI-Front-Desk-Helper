@@ -299,6 +299,7 @@ function handleTwilioVoice(req, res, tenantId) {
   const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId);
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
+  <Say>Hi there! Thanks so much for calling Gladiators Painting. We specialize in high-quality interior and exterior painting, and we'd love to help with your project. What can we help you with today?</Say>
   <Connect>
     <Stream url="${wsUrl}" />
   </Connect>
@@ -518,15 +519,6 @@ wss.on("connection", (twilioSocket, req) => {
           })
         );
       }
-
-      sendToOpenAI({
-        type: "response.create",
-        response: {
-          modalities: ["audio", "text"],
-          audio: { output: { format: "g711_ulaw" } },
-          instructions: `Say exactly: \"Hi there! Thanks so much for calling ${tenant.name}. We specialize in high-quality interior and exterior painting, and we'd love to help with your project. What can we help you with today?\" Deliver it in a warm, upbeat tone at a slightly brisk pace.`
-        }
-      });
 
       await safePoolQuery(
         `INSERT INTO calls (id, tenant_id, call_sid, started_at, status)

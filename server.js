@@ -198,7 +198,6 @@ function buildTwilioAuthHeader() {
   const token = process.env.TWILIO_AUTH_TOKEN || "";
   return `Basic ${Buffer.from(`${sid}:${token}`).toString("base64")}`;
 }
-
 function hasTwilioCredentials() {
   return Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
 }
@@ -295,7 +294,6 @@ function handleTwilioVoice(req, res, tenantId) {
   }
 
   const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId);
-
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say>Hi there! Thanks so much for calling ${tenant.name}. We specialize in high-quality interior and exterior painting, and we'd love to help with your project. What can we help you with today?</Say>
@@ -324,7 +322,60 @@ wss.on("connection", (twilioSocket, req) => {
   const parsedUrl = new URL(rawUrl, "http://localhost");
   const pathname = parsedUrl.pathname || "";
   const pathSegments = pathname.split("/").filter(Boolean);
-@@ -271,51 +380,51 @@ wss.on("connection", (twilioSocket, req) => {
+  const tenantIdFromPath = pathSegments.length >= 2 ? pathSegments[1] : "";
+  const tenantId = TENANTS[tenantIdFromPath] ? tenantIdFromPath : "gladiators";
+  const tenant = TENANTS[tenantId];
+
+  if (!pathname.startsWith("/twilio-media/")) {
+    console.error("Invalid Twilio media stream path:", pathname);
+    twilioSocket.close();
+    return;
+  }
+
+  if (!OPENAI_API_KEY) {
+    console.error("❌ Missing OPENAI_API_KEY env var. Closing stream.");
+    twilioSocket.close();
+    return;
+  }
+
+  const callId = crypto.randomUUID();
+  let callSid = null;
+  let streamSid = null;
+  let transcript = "";
+  let transferAttempted = false;
+
+  const pendingTwilioAudio = [];
+  const openaiQueue = [];
+  let openaiReady = false;
+  let openaiSocket = null;
+  const openaiModelCandidates = [...new Set([OPENAI_MODEL, "gpt-4o-realtime-preview-2024-12-17", "gpt-realtime"])]
+    .filter(Boolean);
+
+  function sendToOpenAI(payload) {
+    const message = typeof payload === "string" ? payload : JSON.stringify(payload);
+    if (openaiReady && openaiSocket.readyState === WebSocket.OPEN) {
+      openaiSocket.send(message);
+      return;
+    }
+    openaiQueue.push(message);
+  }
+
+  function sendAudioToTwilio(base64Audio) {
+    if (!streamSid || twilioSocket.readyState !== WebSocket.OPEN) {
+      pendingTwilioAudio.push(base64Audio);
+      return;
+    }
+
+    twilioSocket.send(
+      JSON.stringify({
+        event: "media",
+        streamSid,
+        media: { payload: base64Audio }
+      })
+    );
+  }
+
+  function connectOpenAI(modelIndex) {
     if (modelIndex >= openaiModelCandidates.length) {
       console.error("OpenAI realtime connection failed for all model candidates.");
       if (twilioSocket.readyState === WebSocket.OPEN) twilioSocket.close();
@@ -345,8 +396,7 @@ wss.on("connection", (twilioSocket, req) => {
     socket.on("open", () => {
       opened = true;
       openaiReady = true;
-
-      sendToOpenAI({
+sendToOpenAI({
         type: "session.update",
         session: {
           voice: tenant.voice,
@@ -376,7 +426,122 @@ wss.on("connection", (twilioSocket, req) => {
         sendAudioToTwilio(msg.delta);
         return;
       }
-@@ -438,28 +547,30 @@ wss.on("connection", (twilioSocket, req) => {
+
+      if (msg.type === "response.output_text.delta" && msg.delta) {
+        transcript += msg.delta;
+        return;
+      }
+
+      if (msg.type === "conversation.item.input_audio_transcription.completed" && msg.transcript) {
+        transcript += `\nCALLER: ${msg.transcript}`;
+        return;
+      }
+
+      if (msg.type === "input_audio_buffer.speech_stopped") {
+        sendToOpenAI({
+          type: "response.create",
+          response: {
+            modalities: ["audio", "text"],
+            audio: { output: { format: "g711_ulaw" } },
+            instructions: "Speak only English. Be warm and concise. Ask one follow-up question."
+          }
+        });
+        return;
+      }
+
+      if (msg.type === "response.completed") {
+        const callerAskedHuman = /human|person|representative|manager|transfer/i.test(transcript);
+        if (callerAskedHuman && !transferAttempted && isBusinessHours(tenant)) {
+          transferAttempted = true;
+          await attemptTransfer(callSid, tenant);
+        }
+
+        await safePoolQuery(
+          `UPDATE calls
+           SET transcript = $2,
+               duration_minutes = EXTRACT(EPOCH FROM (now() - started_at)) / 60
+           WHERE id = $1`,
+          [callId, transcript]
+        );
+        return;
+      }
+
+      if (msg.type === "error" || (msg.type && msg.type.includes("error"))) {
+        console.error("OpenAI error event:", msg);
+      }
+    });
+
+    socket.on("error", (error) => {
+      console.error(`OpenAI socket error (${activeModel}):`, error.message);
+    });
+
+    socket.on("close", (code, reason) => {
+      openaiReady = false;
+      const reasonText = reason ? reason.toString() : "";
+      console.error(`OpenAI socket closed (${activeModel}) code=${code} reason=${reasonText}`);
+
+      if (!opened) {
+        connectOpenAI(modelIndex + 1);
+        return;
+      }
+
+      if (twilioSocket.readyState === WebSocket.OPEN) {
+        twilioSocket.close();
+      }
+    });
+  }
+
+  connectOpenAI(0);
+
+  twilioSocket.on("message", async (raw) => {
+    let msg;
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
+      return;
+    }
+
+    if (msg.event === "start") {
+      streamSid = msg.start?.streamSid || null;
+      callSid = msg.start?.callSid || null;
+
+      while (pendingTwilioAudio.length && streamSid && twilioSocket.readyState === WebSocket.OPEN) {
+        const chunk = pendingTwilioAudio.shift();
+        twilioSocket.send(
+          JSON.stringify({
+            event: "media",
+            streamSid,
+            media: { payload: chunk }
+          })
+        );
+      }
+
+      sendToOpenAI({
+        type: "response.create",
+        response: {
+          modalities: ["audio", "text"],
+          audio: { output: { format: "g711_ulaw" } },
+          instructions: `Say exactly: \"Thanks for calling ${tenant.name}. We specialize in high-quality interior and exterior painting. What can we help you with today?\"`
+        }
+      });
+
+      await safePoolQuery(
+        `INSERT INTO calls (id, tenant_id, call_sid, started_at, status)
+         VALUES ($1, $2, $3, now(), $4)
+         ON CONFLICT (id) DO NOTHING`,
+        [callId, tenantId, callSid, "in_progress"]
+      );
+      return;
+    }
+
+    if (msg.event === "media" && msg.media?.payload) {
+      sendToOpenAI({ type: "input_audio_buffer.append", audio: msg.media.payload });
+      return;
+    }
+
+    if (msg.event === "stop") {
+      if (openaiSocket?.readyState === WebSocket.OPEN) {
+        openaiSocket.close();
       }
 
       await safePoolQuery(

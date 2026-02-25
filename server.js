@@ -15,8 +15,11 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-realtime";
 const WEBSITE_CONTEXT_URL = process.env.WEBSITE_CONTEXT_URL || "https://www.gladiatorspainting.com";
 const WEBSITE_CONTEXT_MAX_CHARS = Number(process.env.WEBSITE_CONTEXT_MAX_CHARS || 4000);
+const CRM_WEBHOOK_URL = String(process.env.CRM_WEBHOOK_URL || "").trim();
 const WARM_GREETING =
   "Hi there! Thanks so much for calling Gladiators Painting. We specialize in high-quality interior and exterior painting, and we'd love to help with your project. What can we help you with today?";
+
+const LEAD_CAPTURE_FIELDS = ["full_name", "phone", "email", "address", "project_type", "project_details", "timeline"];
 
 const REQUIRED_ENV_VARS = ["OPENAI_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"];
 
@@ -52,18 +55,13 @@ const TENANTS = {
     businessHours: { start: 8, end: 17 },
     voice: "ash",
     instructions: [
-      "You are the friendly, human-sounding receptionist for Gladiators Painting.",
-      "Sound warm, upbeat, and conversational. Avoid robotic wording.",
-      "Start with one upbeat, personable welcome at the beginning of the call, then do not repeat that greeting.",
-      "Collect and confirm: full name, best phone number, project address, scope of work (interior, exterior, or both), and target timeframe.",
-      "After collecting details, offer to schedule an appointment and suggest two appointment windows.",
-      "If the caller asks questions about services, use the website knowledge context provided in system instructions.",
-      "If you are unsure, be transparent and offer to have a team member follow up.",
-      "Offer a free estimate.",
-      "If the caller asks for a human, explain you can transfer after a few qualification questions.",
-      "Never mention AI.",
-      "Speak slightly faster than average natural speech (about 10% faster), while staying clear and easy to understand.",
-      "Do not repeat the opening thank-you message after the caller responds.",
+      "You are the receptionist for Gladiators Painting.",
+      "Your goal is to collect: full_name, phone, email, address, project_type (interior or exterior), project_details, and timeline.",
+      "Ask one question at a time and confirm unclear details.",
+      "When you have collected all required fields, you MUST respond with exactly this JSON structure and valid JSON only:",
+      '{"lead_capture":{"full_name":"...","phone":"...","email":"...","address":"...","project_type":"...","project_details":"...","timeline":"..."}}',
+      "Only output the JSON when all fields are collected.",
+      "If any field is missing, continue the conversation and do not output JSON yet.",
       "Speak only English."
     ].join("\n")
   }
@@ -242,6 +240,70 @@ async function safePoolQuery(query, values) {
   }
 }
 
+async function sendToCRM(leadCapture) {
+  if (!CRM_WEBHOOK_URL) {
+    console.warn("CRM webhook not configured. Skipping lead push.");
+    return;
+  }
+
+  try {
+    const response = await fetch(CRM_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(leadCapture)
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      console.error("CRM push failed:", response.status, body);
+    }
+  } catch (error) {
+    console.error("CRM push error:", error.message);
+  }
+}
+
+function parsePotentialLeadCapture(rawPayload) {
+  if (!rawPayload) return null;
+
+  let parsed;
+  if (typeof rawPayload === "string") {
+    try {
+      parsed = JSON.parse(rawPayload);
+    } catch {
+      return null;
+    }
+  } else if (typeof rawPayload === "object") {
+    parsed = rawPayload;
+  } else {
+    return null;
+  }
+
+  const leadCapture = parsed?.lead_capture && typeof parsed.lead_capture === "object"
+    ? parsed.lead_capture
+    : parsed;
+
+  if (!leadCapture || typeof leadCapture !== "object") return null;
+
+  const normalized = {};
+  for (const field of LEAD_CAPTURE_FIELDS) {
+    const value = leadCapture[field];
+    normalized[field] = typeof value === "string" ? value.trim() : "";
+  }
+
+  if (!normalized.full_name || !normalized.phone) return null;
+
+  return normalized;
+}
+
+async function forwardLeadCaptureToCRM(rawPayload, crmLeadSentRef) {
+  if (crmLeadSentRef.sent) return;
+  const leadCapture = parsePotentialLeadCapture(rawPayload);
+  if (!leadCapture) return;
+
+  crmLeadSentRef.sent = true;
+  await sendToCRM(leadCapture);
+}
+
 async function attemptTransfer(callSid, tenant) {
   if (!callSid || !tenant.transferNumber) return false;
   if (!hasTwilioCredentials()) {
@@ -353,6 +415,7 @@ wss.on("connection", (twilioSocket, req) => {
   const openaiQueue = [];
   let openaiReady = false;
   let openaiSocket = null;
+  const crmLeadSentRef = { sent: false };
   const openaiModelCandidates = [...new Set([OPENAI_MODEL, "gpt-4o-realtime-preview-2024-12-17", "gpt-realtime"])]
     .filter(Boolean);
 
@@ -411,7 +474,28 @@ wss.on("connection", (twilioSocket, req) => {
           input_audio_format: "g711_ulaw",
           output_audio_format: "g711_ulaw",
           input_audio_transcription: { model: "gpt-4o-mini-transcribe" },
-          turn_detection: { type: "server_vad" }
+          turn_detection: { type: "server_vad" },
+          tool_choice: "auto",
+          tools: [
+            {
+              type: "function",
+              name: "create_lead",
+              description: "Submit the captured customer lead once required fields are collected.",
+              parameters: {
+                type: "object",
+                properties: {
+                  full_name: { type: "string" },
+                  phone: { type: "string" },
+                  email: { type: "string" },
+                  address: { type: "string" },
+                  project_type: { type: "string" },
+                  project_details: { type: "string" },
+                  timeline: { type: "string" }
+                },
+                required: ["full_name", "phone", "email", "address", "project_type", "project_details", "timeline"]
+              }
+            }
+          ]
         }
       });
 
@@ -435,6 +519,21 @@ wss.on("connection", (twilioSocket, req) => {
 
       if (msg.type === "response.output_text.delta" && msg.delta) {
         transcript += msg.delta;
+        return;
+      }
+
+      if (msg.type === "response.output_text" && msg.output_text) {
+        await forwardLeadCaptureToCRM(msg.output_text, crmLeadSentRef);
+        return;
+      }
+
+      if (msg.type === "response.function_call_arguments.done" && msg.name === "create_lead" && msg.arguments) {
+        await forwardLeadCaptureToCRM(msg.arguments, crmLeadSentRef);
+        return;
+      }
+
+      if (msg.type === "response.output_item.done" && msg.item?.type === "function_call" && msg.item?.name === "create_lead") {
+        await forwardLeadCaptureToCRM(msg.item.arguments, crmLeadSentRef);
         return;
       }
 

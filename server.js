@@ -15,6 +15,8 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-realtime";
 const WEBSITE_CONTEXT_URL = process.env.WEBSITE_CONTEXT_URL || "https://www.gladiatorspainting.com";
 const WEBSITE_CONTEXT_MAX_CHARS = Number(process.env.WEBSITE_CONTEXT_MAX_CHARS || 4000);
+const WARM_GREETING =
+  "Hi there! Thanks so much for calling Gladiators Painting. We specialize in high-quality interior and exterior painting, and we'd love to help with your project. What can we help you with today?";
 
 const REQUIRED_ENV_VARS = ["OPENAI_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"];
 
@@ -299,6 +301,7 @@ function handleTwilioVoice(req, res, tenantId) {
   const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId);
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
+  <Say>${WARM_GREETING}</Say>
   <Connect>
     <Stream url="${wsUrl}" />
   </Connect>
@@ -377,32 +380,6 @@ wss.on("connection", (twilioSocket, req) => {
     );
   }
 
-  let initialGreetingRequested = false;
-  let initialGreetingTimer = null;
-
-  function requestInitialGreetingIfReady() {
-    if (initialGreetingRequested || !callSid) return;
-
-    initialGreetingRequested = true;
-    sendToOpenAI({
-      type: "response.create",
-      response: {
-        modalities: ["audio", "text"],
-        audio: { output: { format: "g711_ulaw" } },
-        instructions:
-          `Say exactly: "Hi there! Thanks so much for calling ${tenant.name}. We specialize in high-quality interior and exterior painting, and we'd love to help with your project. What can we help you with today?" Then wait for the caller's response before continuing.`
-      }
-    });
-  }
-
-  function scheduleInitialGreeting() {
-    if (initialGreetingRequested || initialGreetingTimer || !callSid) return;
-    initialGreetingTimer = setTimeout(() => {
-      initialGreetingTimer = null;
-      requestInitialGreetingIfReady();
-    }, 1000);
-  }
-
   function connectOpenAI(modelIndex) {
     if (modelIndex >= openaiModelCandidates.length) {
       console.error("OpenAI realtime connection failed for all model candidates.");
@@ -441,8 +418,6 @@ wss.on("connection", (twilioSocket, req) => {
       while (openaiQueue.length && openaiSocket?.readyState === WebSocket.OPEN) {
         openaiSocket.send(openaiQueue.shift());
       }
-
-      scheduleInitialGreeting();
     });
 
     socket.on("message", async (raw) => {
@@ -547,8 +522,6 @@ wss.on("connection", (twilioSocket, req) => {
         );
       }
 
-      scheduleInitialGreeting();
-
       await safePoolQuery(
         `INSERT INTO calls (id, tenant_id, call_sid, started_at, status)
          VALUES ($1, $2, $3, now(), $4)
@@ -581,11 +554,6 @@ wss.on("connection", (twilioSocket, req) => {
   });
 
   twilioSocket.on("close", () => {
-    if (initialGreetingTimer) {
-      clearTimeout(initialGreetingTimer);
-      initialGreetingTimer = null;
-    }
-
     if (openaiSocket?.readyState === WebSocket.OPEN) {
       openaiSocket.close();
     }

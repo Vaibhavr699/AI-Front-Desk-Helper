@@ -16,8 +16,6 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-realtime";
 const WEBSITE_CONTEXT_URL = process.env.WEBSITE_CONTEXT_URL || "https://www.gladiatorspainting.com";
 const WEBSITE_CONTEXT_MAX_CHARS = Number(process.env.WEBSITE_CONTEXT_MAX_CHARS || 4000);
 
-const GREETING_AUDIO_URL = String(process.env.GREETING_AUDIO_URL || "").trim();
-
 const REQUIRED_ENV_VARS = ["OPENAI_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"];
 
 function isValidE164(value) {
@@ -181,26 +179,6 @@ function buildTenantWsUrl(baseUrl, tenantId) {
   return `${wsBaseUrl}/twilio-media/${tenantId}`;
 }
 
-function buildWelcomePromptTwiml(greetingText, wsUrl) {
-  if (GREETING_AUDIO_URL) {
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Play>${GREETING_AUDIO_URL}</Play>
-  <Connect>
-    <Stream url="${wsUrl}" />
-  </Connect>
-</Response>`;
-  }
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say>${greetingText}</Say>
-  <Connect>
-    <Stream url="${wsUrl}" />
-  </Connect>
-</Response>`;
-}
-
 function buildFallbackTwiml(message, transferNumber) {
   if (transferNumber) {
     return `<?xml version="1.0" encoding="UTF-8"?>
@@ -319,9 +297,12 @@ function handleTwilioVoice(req, res, tenantId) {
   }
 
   const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId);
-  const greetingText =
-    "Hi there! Thanks so much for calling Gladiators Painting. We specialize in high-quality interior and exterior painting, and we'd love to help with your project. What can we help you with today?";
-  const twiml = buildWelcomePromptTwiml(greetingText, wsUrl);
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Connect>
+    <Stream url="${wsUrl}" />
+  </Connect>
+</Response>`;
 
   res.type("text/xml").send(twiml);
 }
@@ -537,6 +518,16 @@ wss.on("connection", (twilioSocket, req) => {
           })
         );
       }
+
+      sendToOpenAI({
+        type: "response.create",
+        response: {
+          modalities: ["audio", "text"],
+          audio: { output: { format: "g711_ulaw" } },
+          instructions:
+            `Say exactly: "Hi there! Thanks so much for calling ${tenant.name}. We specialize in high-quality interior and exterior painting, and we'd love to help with your project. What can we help you with today?" Then wait for the caller's response before continuing.`
+        }
+      });
 
       await safePoolQuery(
         `INSERT INTO calls (id, tenant_id, call_sid, started_at, status)

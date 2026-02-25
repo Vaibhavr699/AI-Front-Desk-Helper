@@ -12,7 +12,7 @@ const { Pool } = require("pg");
 const PORT = Number(process.env.PORT || 3000);
 const BASE_URL = process.env.BASE_URL || "";
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-realtime-preview-2024-12-17";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-realtime";
 
 const REQUIRED_ENV_VARS = ["OPENAI_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"];
 
@@ -239,16 +239,9 @@ wss.on("connection", (twilioSocket, req) => {
   const pendingTwilioAudio = [];
   const openaiQueue = [];
   let openaiReady = false;
-
-  const openaiSocket = new WebSocket(
-    `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(OPENAI_MODEL)}`,
-    {
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "OpenAI-Beta": "realtime=v1"
-      }
-    }
-  );
+  let openaiSocket = null;
+  const openaiModelCandidates = [...new Set([OPENAI_MODEL, "gpt-4o-realtime-preview-2024-12-17", "gpt-realtime"])]
+    .filter(Boolean);
 
   function sendToOpenAI(payload) {
     const message = typeof payload === "string" ? payload : JSON.stringify(payload);
@@ -274,94 +267,124 @@ wss.on("connection", (twilioSocket, req) => {
     );
   }
 
-  openaiSocket.on("open", () => {
-    openaiReady = true;
+  function connectOpenAI(modelIndex) {
+    if (modelIndex >= openaiModelCandidates.length) {
+      console.error("OpenAI realtime connection failed for all model candidates.");
+      if (twilioSocket.readyState === WebSocket.OPEN) twilioSocket.close();
+      return;
+    }
 
-    sendToOpenAI({
-      type: "session.update",
-      session: {
-        voice: tenant.voice,
-        instructions: tenant.instructions,
-        modalities: ["audio", "text"],
-        input_audio_format: "g711_ulaw",
-        output_audio_format: "g711_ulaw",
-        input_audio_transcription: { model: "gpt-4o-mini-transcribe" },
-        turn_detection: { type: "server_vad" }
+    const activeModel = openaiModelCandidates[modelIndex];
+    const socket = new WebSocket(`wss://api.openai.com/v1/realtime?model=${encodeURIComponent(activeModel)}`, {
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "OpenAI-Beta": "realtime=v1"
       }
     });
 
-    while (openaiQueue.length && openaiSocket.readyState === WebSocket.OPEN) {
-      openaiSocket.send(openaiQueue.shift());
-    }
-  });
+    openaiSocket = socket;
+    let opened = false;
 
-  openaiSocket.on("message", async (raw) => {
-    let msg;
-    try {
-      msg = JSON.parse(raw.toString());
-    } catch {
-      return;
-    }
+    socket.on("open", () => {
+      opened = true;
+      openaiReady = true;
 
-    if ((msg.type === "response.audio.delta" || msg.type === "response.output_audio.delta") && msg.delta) {
-      sendAudioToTwilio(msg.delta);
-      return;
-    }
-
-    if (msg.type === "response.output_text.delta" && msg.delta) {
-      transcript += msg.delta;
-      return;
-    }
-
-    if (msg.type === "conversation.item.input_audio_transcription.completed" && msg.transcript) {
-      transcript += `\nCALLER: ${msg.transcript}`;
-      return;
-    }
-
-    if (msg.type === "input_audio_buffer.speech_stopped") {
       sendToOpenAI({
-        type: "response.create",
-        response: {
+        type: "session.update",
+        session: {
+          voice: tenant.voice,
+          instructions: tenant.instructions,
           modalities: ["audio", "text"],
-          audio: { output: { format: "g711_ulaw" } },
-          instructions: "Speak only English. Be warm and concise. Ask one follow-up question."
+          input_audio_format: "g711_ulaw",
+          output_audio_format: "g711_ulaw",
+          input_audio_transcription: { model: "gpt-4o-mini-transcribe" },
+          turn_detection: { type: "server_vad" }
         }
       });
-      return;
-    }
 
-    if (msg.type === "response.completed") {
-      const callerAskedHuman = /human|person|representative|manager|transfer/i.test(transcript);
-      if (callerAskedHuman && !transferAttempted && isBusinessHours(tenant)) {
-        transferAttempted = true;
-        await attemptTransfer(callSid, tenant);
+      while (openaiQueue.length && openaiSocket?.readyState === WebSocket.OPEN) {
+        openaiSocket.send(openaiQueue.shift());
+      }
+    });
+
+    socket.on("message", async (raw) => {
+      let msg;
+      try {
+        msg = JSON.parse(raw.toString());
+      } catch {
+        return;
       }
 
-      await safePoolQuery(
-        `UPDATE calls
-         SET transcript = $2,
-             duration_minutes = EXTRACT(EPOCH FROM (now() - started_at)) / 60
-         WHERE id = $1`,
-        [callId, transcript]
-      );
-      return;
-    }
+      if ((msg.type === "response.audio.delta" || msg.type === "response.output_audio.delta") && msg.delta) {
+        sendAudioToTwilio(msg.delta);
+        return;
+      }
 
-    if (msg.type === "error" || (msg.type && msg.type.includes("error"))) {
-      console.error("OpenAI error event:", msg);
-    }
-  });
+      if (msg.type === "response.output_text.delta" && msg.delta) {
+        transcript += msg.delta;
+        return;
+      }
 
-  openaiSocket.on("error", (error) => {
-    console.error("OpenAI socket error:", error.message);
-  });
+      if (msg.type === "conversation.item.input_audio_transcription.completed" && msg.transcript) {
+        transcript += `\nCALLER: ${msg.transcript}`;
+        return;
+      }
 
-  openaiSocket.on("close", () => {
-    openaiReady = false;
-    if (twilioSocket.readyState === WebSocket.OPEN) {
-      twilioSocket.close();
-    }
-  });
+      if (msg.type === "input_audio_buffer.speech_stopped") {
+        sendToOpenAI({
+          type: "response.create",
+          response: {
+            modalities: ["audio", "text"],
+            audio: { output: { format: "g711_ulaw" } },
+            instructions: "Speak only English. Be warm and concise. Ask one follow-up question."
+          }
+        });
+        return;
+      }
+
+      if (msg.type === "response.completed") {
+        const callerAskedHuman = /human|person|representative|manager|transfer/i.test(transcript);
+        if (callerAskedHuman && !transferAttempted && isBusinessHours(tenant)) {
+          transferAttempted = true;
+          await attemptTransfer(callSid, tenant);
+        }
+
+        await safePoolQuery(
+          `UPDATE calls
+           SET transcript = $2,
+               duration_minutes = EXTRACT(EPOCH FROM (now() - started_at)) / 60
+           WHERE id = $1`,
+          [callId, transcript]
+        );
+        return;
+      }
+
+      if (msg.type === "error" || (msg.type && msg.type.includes("error"))) {
+        console.error("OpenAI error event:", msg);
+      }
+    });
+
+    socket.on("error", (error) => {
+      console.error(`OpenAI socket error (${activeModel}):`, error.message);
+    });
+
+    socket.on("close", (code, reason) => {
+      openaiReady = false;
+      const reasonText = reason ? reason.toString() : "";
+      console.error(`OpenAI socket closed (${activeModel}) code=${code} reason=${reasonText}`);
+
+      if (!opened) {
+        connectOpenAI(modelIndex + 1);
+        return;
+      }
+
+      if (twilioSocket.readyState === WebSocket.OPEN) {
+        twilioSocket.close();
+      }
+    });
+  }
+
+  connectOpenAI(0);
 
   twilioSocket.on("message", async (raw) => {
     let msg;
@@ -410,7 +433,7 @@ wss.on("connection", (twilioSocket, req) => {
     }
 
     if (msg.event === "stop") {
-      if (openaiSocket.readyState === WebSocket.OPEN) {
+      if (openaiSocket?.readyState === WebSocket.OPEN) {
         openaiSocket.close();
       }
 
@@ -427,7 +450,7 @@ wss.on("connection", (twilioSocket, req) => {
   });
 
   twilioSocket.on("close", () => {
-    if (openaiSocket.readyState === WebSocket.OPEN) {
+    if (openaiSocket?.readyState === WebSocket.OPEN) {
       openaiSocket.close();
     }
   });

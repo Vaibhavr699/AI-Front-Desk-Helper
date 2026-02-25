@@ -381,20 +381,9 @@ wss.on("connection", (twilioSocket, req) => {
   let initialGreetingTimer = null;
 
   function requestInitialGreetingIfReady() {
-    if (initialGreetingRequested) return;
-
-    if (!callSid || !openaiReady || !streamSid) {
-      if (!initialGreetingTimer) {
-        initialGreetingTimer = setTimeout(() => {
-          initialGreetingTimer = null;
-          requestInitialGreetingIfReady();
-        }, 250);
-      }
-      return;
-    }
+    if (initialGreetingRequested || !callSid) return;
 
     initialGreetingRequested = true;
-
     sendToOpenAI({
       type: "response.create",
       response: {
@@ -407,7 +396,7 @@ wss.on("connection", (twilioSocket, req) => {
   }
 
   function scheduleInitialGreeting() {
-    if (initialGreetingRequested || initialGreetingTimer) return;
+    if (initialGreetingRequested || initialGreetingTimer || !callSid) return;
     initialGreetingTimer = setTimeout(() => {
       initialGreetingTimer = null;
       requestInitialGreetingIfReady();

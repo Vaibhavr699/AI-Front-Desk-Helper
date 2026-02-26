@@ -8,6 +8,7 @@ const http = require("http");
 const WebSocket = require("ws");
 const fetch = require("node-fetch");
 const { Pool } = require("pg");
+const calendar = require("./calendar");
 
 const PORT = Number(process.env.PORT || 3000);
 const BASE_URL = process.env.BASE_URL || "";
@@ -52,10 +53,12 @@ if (!isValidE164(defaultTransferNumber)) {
   console.warn(`⚠️ Transfer number is not valid E.164 format: ${defaultTransferNumber}`);
 }
 
+const pgIpFamily = Number(process.env.PGIP_FAMILY || 4);
 const pool = process.env.DATABASE_URL
   ? new Pool({
       connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false }
+      ssl: { rejectUnauthorized: false },
+     family: Number.isFinite(pgIpFamily) && (pgIpFamily === 4 || pgIpFamily === 6) ? pgIpFamily : 4
     })
   : null;
 
@@ -100,7 +103,8 @@ app.get("/health/details", (_req, res) => {
     hasTwilioAuthToken: Boolean(process.env.TWILIO_AUTH_TOKEN),
     hasBaseUrl: Boolean(process.env.BASE_URL),
     baseUrlMode: process.env.BASE_URL ? "env" : "derived_from_request",
-    wsBaseUrlPreview: toWebSocketBaseUrl(process.env.BASE_URL || "https://example.com")
+    wsBaseUrlPreview: toWebSocketBaseUrl(process.env.BASE_URL || "https://example.com"),
+    hasGoogleCalendar: Boolean(calendar)
   });
 });
 
@@ -436,9 +440,22 @@ registerTwilioVoiceRoutes(["/twilio/voice/:tenantId", "/twilio/voice/:tenantId/"
 
 app.use((req, _res, next) => {
   if (/^\/twilio(?:-|\/)/i.test(req.path)) {
-    console.warn(`Unhandled Twilio route: ${req.method} ${req.originalUrl}`);
+        next();
+    return;
   }
-  next();
+  
+    console.warn(`Unhandled Twilio route: ${req.method} ${req.originalUrl}`);
+  if (req.method !== "GET" && req.method !== "POST") {
+    res.status(405).send("Method Not Allowed");
+    return;
+  }
+  
+    const tenant = TENANTS.gladiators;
+  const fallbackTwiml = buildFallbackTwiml(
+    "Please hold while we connect you to the team.",
+    tenant.transferNumber
+  );
+  res.type("text/xml").status(200).send(fallbackTwiml);
 });
 
 const server = http.createServer(app);

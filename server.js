@@ -34,7 +34,8 @@ const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:3001",
   ...(process.env.BASE_URL ? [process.env.BASE_URL] : []),
-  ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim()) : []),
+  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL.replace(/\/$/, "")] : []),
+  ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean) : []),
 ];
 app.use(
   cors({
@@ -56,6 +57,14 @@ if (SERVE_DASHBOARD) {
   app.get("/", (req, res) => res.redirect(302, "/dashboard"));
   app.use("/dashboard", express.static(path.join(__dirname, "dashboard", "dist")));
   app.get("/dashboard*", (req, res) => res.sendFile(path.join(__dirname, "dashboard", "dist", "index.html")));
+} else {
+  const FRONTEND_URL = process.env.FRONTEND_URL || "";
+  app.get("/", (req, res) => {
+    if (FRONTEND_URL) return res.redirect(302, FRONTEND_URL);
+    res.set("Content-Type", "text/plain").status(200).send(
+      "AI Front Desk API. Dashboard is deployed separately. Use your frontend URL to sign in, or set FRONTEND_URL to redirect / here."
+    );
+  });
 }
 app.use("/twilio", twilioRoutes);
 app.use("/api/auth", authRoutes);

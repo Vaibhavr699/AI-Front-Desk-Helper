@@ -41,14 +41,17 @@ app.use(
   })
 );
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT;
 const BASE_URL = process.env.BASE_URL;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const SERVE_DASHBOARD = process.env.SERVE_DASHBOARD !== "false";
 
 app.get("/health", (req, res) => res.status(200).send("OK"));
-app.get("/", (req, res) => res.redirect(302, "/dashboard"));
-app.use("/dashboard", express.static(path.join(__dirname, "dashboard", "dist")));
-app.get("/dashboard*", (req, res) => res.sendFile(path.join(__dirname, "dashboard", "dist", "index.html")));
+if (SERVE_DASHBOARD) {
+  app.get("/", (req, res) => res.redirect(302, "/dashboard"));
+  app.use("/dashboard", express.static(path.join(__dirname, "dashboard", "dist")));
+  app.get("/dashboard*", (req, res) => res.sendFile(path.join(__dirname, "dashboard", "dist", "index.html")));
+}
 app.use("/twilio", twilioRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/stripe", authMiddleware, require("./routes/stripe"));

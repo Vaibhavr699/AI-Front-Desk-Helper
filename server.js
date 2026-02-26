@@ -192,18 +192,27 @@ function buildTenantWsUrl(baseUrl, tenantId) {
   return `${wsBaseUrl}/twilio-media/${tenantId}`;
 }
 
+function escapeXml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
 function buildFallbackTwiml(message, transferNumber) {
   if (transferNumber) {
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>${message}</Say>
+  <Say>${escapeXml(message)}</Say>
   <Dial>${transferNumber}</Dial>
 </Response>`;
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>${message}</Say>
+  <Say>${escapeXml(message)}</Say>
   <Hangup/>
 </Response>`;
 }
@@ -354,35 +363,53 @@ function handleTwilioVoice(req, res, tenantId) {
   const resolvedTenantId = TENANTS[tenantId] ? tenantId : "gladiators";
   const tenant = TENANTS[resolvedTenantId];
 
-  if (!OPENAI_API_KEY) {
-    const fallbackTwiml = buildFallbackTwiml(
-      "Please hold while we connect you to the team.",
-      tenant.transferNumber
-    );
-    res.type("text/xml").send(fallbackTwiml);
-    return;
-  }
+  try {
+    if (!OPENAI_API_KEY) {
+      const fallbackTwiml = buildFallbackTwiml(
+        "Please hold while we connect you to the team.",
+        tenant.transferNumber
+      );
+      res.type("text/xml").send(fallbackTwiml);
+      return;
+    }
 
-  const requestBaseUrl = resolveBaseUrl(req);
-  if (!requestBaseUrl) {
-    const fallbackTwiml = buildFallbackTwiml(
-      "Please hold while we connect you to the team.",
-      tenant.transferNumber
-    );
-    res.type("text/xml").send(fallbackTwiml);
-    return;
-  }
+    const requestBaseUrl = resolveBaseUrl(req);
+    if (!requestBaseUrl) {
+      const fallbackTwiml = buildFallbackTwiml(
+        "Please hold while we connect you to the team.",
+        tenant.transferNumber
+      );
+      res.type("text/xml").send(fallbackTwiml);
+      return;
+    }
 
-  const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId);
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+    const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId);
+    if (!/^wss:\/\//i.test(wsUrl)) {
+      const fallbackTwiml = buildFallbackTwiml(
+        "Please hold while we connect you to the team.",
+        tenant.transferNumber
+      );
+      res.type("text/xml").send(fallbackTwiml);
+      return;
+    }
+
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>${WARM_GREETING}</Say>
+  <Say>${escapeXml(WARM_GREETING)}</Say>
   <Connect>
     <Stream url="${wsUrl}" />
   </Connect>
 </Response>`;
 
-  res.type("text/xml").send(twiml);
+    res.type("text/xml").send(twiml);
+  } catch (error) {
+    console.error("Twilio voice webhook error:", error.message);
+    const fallbackTwiml = buildFallbackTwiml(
+      "Please hold while we connect you to the team.",
+      tenant.transferNumber
+    );
+    res.type("text/xml").send(fallbackTwiml);
+  }
 }
 
 app.all(["/twilio-voice", "/twilio-voice/"], (req, res) => {

@@ -412,15 +412,19 @@ function handleTwilioVoice(req, res, tenantId) {
   }
 }
 
-function registerTwilioVoiceRoutes(pathPattern, tenantScoped) {
+function registerTwilioVoiceRoutes(pathPatterns, tenantScoped) {
   const handler = (req, res) => {
     const tenantId = tenantScoped ? req.params.tenantId : "gladiators";
     handleTwilioVoice(req, res, tenantId);
   };
 
-  app.get(pathPattern, handler);
-  app.post(pathPattern, handler);
-  app.all(pathPattern, handler);
+ const normalizedPatterns = Array.isArray(pathPatterns) ? pathPatterns : [pathPatterns];
+
+  for (const pathPattern of normalizedPatterns) {
+    app.get(pathPattern, handler);
+    app.post(pathPattern, handler);
+    app.all(pathPattern, handler);
+  }
 }
 
 registerTwilioVoiceRoutes(["/twilio-voice", "/twilio-voice/"], false);
@@ -429,6 +433,13 @@ registerTwilioVoiceRoutes(["/twilio-voice/:tenantId", "/twilio-voice/:tenantId/"
 // Backward compatibility with older webhook paths that may still be configured in Twilio.
 registerTwilioVoiceRoutes(["/twilio/voice", "/twilio/voice/"], false);
 registerTwilioVoiceRoutes(["/twilio/voice/:tenantId", "/twilio/voice/:tenantId/"], true);
+
+app.use((req, _res, next) => {
+  if (/^\/twilio(?:-|\/)/i.test(req.path)) {
+    console.warn(`Unhandled Twilio route: ${req.method} ${req.originalUrl}`);
+  }
+  next();
+});
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });

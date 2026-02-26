@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { getFollowUps } from "../api";
+import { LumaSpin } from "../components/ui/luma-spin";
 
 const TYPE_LABELS = { "24h": "24h", "3d": "3 days", "5d": "5 days", "10d": "10 days" };
 
@@ -27,7 +28,7 @@ export default function FollowUps({ tenantId }) {
     );
   }
   if (loading) return (
-    <div className="px-0"><div className="animate-pulse text-stone-500 text-sm">Loading follow-ups…</div></div>
+    <div className="px-0 flex items-center justify-center py-20"><LumaSpin /></div>
   );
   if (error) return (
     <div className="px-0"><p className="text-red-600 text-sm sm:text-base">{error}</p></div>

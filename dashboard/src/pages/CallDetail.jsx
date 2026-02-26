@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { getCall, getRecordingAudioUrl } from "../api";
+import { LumaSpin } from "../components/ui/luma-spin";
 
 function AudioPlayer({ recordingId }) {
   const [src, setSrc] = useState(null);
@@ -27,7 +28,7 @@ export default function CallDetail() {
     getCall(id).then(setCall).catch((e) => setError(e.message)).finally(() => setLoading(false));
   }, [id]);
 
-  if (loading) return <div className="px-0"><div className="animate-pulse text-stone-500 text-sm">Loading…</div></div>;
+  if (loading) return <div className="px-0 flex items-center justify-center py-20"><LumaSpin /></div>;
   if (error) return <div className="px-0"><p className="text-red-600 text-sm">{error}</p></div>;
   if (!call) return null;
 

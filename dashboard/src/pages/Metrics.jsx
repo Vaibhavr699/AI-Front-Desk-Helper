@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { getMetrics } from "../api";
+import { LumaSpin } from "../components/ui/luma-spin";
 
 export default function Metrics({ tenantId }) {
   const [metrics, setMetrics] = useState(null);
@@ -12,7 +13,7 @@ export default function Metrics({ tenantId }) {
   }, [tenantId]);
 
   if (!tenantId) return <div className="px-0"><p className="text-stone-500 text-sm sm:text-base">Select a business to view metrics.</p></div>;
-  if (loading) return <div className="px-0"><div className="animate-pulse text-stone-500 text-sm">Loading metrics…</div></div>;
+  if (loading) return <div className="px-0 flex items-center justify-center py-20"><LumaSpin /></div>;
   if (error) return <div className="px-0"><p className="text-red-600 text-sm sm:text-base">{error}</p></div>;
   if (!metrics) return null;
 

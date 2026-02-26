@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { getTenants } from "../api";
+import { LumaSpin } from "../components/ui/luma-spin";
 
 export default function Tenants() {
   const [tenants, setTenants] = useState([]);
@@ -16,8 +17,8 @@ export default function Tenants() {
 
   if (loading) {
     return (
-      <div className="px-0">
-        <div className="animate-pulse text-stone-500 text-sm">Loading businesses…</div>
+      <div className="px-0 flex items-center justify-center py-20">
+        <LumaSpin />
       </div>
     );
   }

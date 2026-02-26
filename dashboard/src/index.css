@@ -12,3 +12,9 @@
     @apply min-h-screen;
   }
 }
+
+@layer utilities {
+  .animation-delay-half {
+    animation-delay: -1.25s;
+  }
+}

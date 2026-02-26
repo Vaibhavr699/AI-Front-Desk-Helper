@@ -24,6 +24,34 @@ module.exports = {
           950: "#3f1508",
         },
       },
+      animation: {
+        "shimmer-slide":
+          "shimmer-slide var(--speed) ease-in-out infinite alternate",
+        "spin-around": "spin-around calc(var(--speed) * 2) infinite linear",
+        "loaderAnim": "loaderAnim 2.5s infinite",
+      },
+      keyframes: {
+        "shimmer-slide": {
+          to: { transform: "translate(calc(100cqw - 100%), 0)" },
+        },
+        "spin-around": {
+          "0%": { transform: "translateZ(0) rotate(0)" },
+          "15%, 35%": { transform: "translateZ(0) rotate(90deg)" },
+          "65%, 85%": { transform: "translateZ(0) rotate(270deg)" },
+          "100%": { transform: "translateZ(0) rotate(360deg)" },
+        },
+        "loaderAnim": {
+          "0%": { inset: "0 35px 35px 0" },
+          "12.5%": { inset: "0 35px 0 0" },
+          "25%": { inset: "35px 35px 0 0" },
+          "37.5%": { inset: "35px 0 0 0" },
+          "50%": { inset: "35px 0 0 35px" },
+          "62.5%": { inset: "0 0 0 35px" },
+          "75%": { inset: "0 0 35px 35px" },
+          "87.5%": { inset: "0 0 35px 0" },
+          "100%": { inset: "0 35px 35px 0" },
+        },
+      },
     },
   },
   plugins: [],

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { getCalls, getBookings, getMetrics, getTenant, getPlans } from "../api";
 import { Loading } from "../components";
+import { LumaSpin } from "../components/ui/luma-spin";
 
 export default function Dashboard({ tenantId }) {
   const [recentCalls, setRecentCalls] = useState([]);
@@ -46,8 +47,8 @@ export default function Dashboard({ tenantId }) {
   }
   if (loading) {
     return (
-      <div className="px-0">
-        <div className="animate-pulse text-stone-500 text-sm">Loading…</div>
+      <div className="px-0 flex items-center justify-center py-20">
+        <LumaSpin />
       </div>
     );
   }

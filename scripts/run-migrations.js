@@ -6,8 +6,9 @@ const path = require("path");
 const { pool } = require("../lib/db");
 
 async function run() {
-  if (!process.env.DATABASE_URL) {
-    console.error("Set DATABASE_URL");
+  const connectionString = process.env.DATABASE_URL || process.env.SUPABASE_DATABASE_URL;
+  if (!connectionString) {
+    console.error("Set DATABASE_URL or SUPABASE_DATABASE_URL");
     process.exit(1);
   }
   const dir = path.join(__dirname, "..", "migrations");

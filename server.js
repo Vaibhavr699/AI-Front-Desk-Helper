@@ -412,14 +412,23 @@ function handleTwilioVoice(req, res, tenantId) {
   }
 }
 
-app.all(["/twilio-voice", "/twilio-voice/"], (req, res) => {
-  handleTwilioVoice(req, res, "gladiators");
-});
+function registerTwilioVoiceRoutes(pathPattern, tenantScoped) {
+  const handler = (req, res) => {
+    const tenantId = tenantScoped ? req.params.tenantId : "gladiators";
+    handleTwilioVoice(req, res, tenantId);
+  };
 
-app.all(["/twilio-voice/:tenantId", "/twilio-voice/:tenantId/"], (req, res) => {
-  const { tenantId } = req.params;
-  handleTwilioVoice(req, res, tenantId);
-});
+  app.get(pathPattern, handler);
+  app.post(pathPattern, handler);
+  app.all(pathPattern, handler);
+}
+
+registerTwilioVoiceRoutes(["/twilio-voice", "/twilio-voice/"], false);
+registerTwilioVoiceRoutes(["/twilio-voice/:tenantId", "/twilio-voice/:tenantId/"], true);
+
+// Backward compatibility with older webhook paths that may still be configured in Twilio.
+registerTwilioVoiceRoutes(["/twilio/voice", "/twilio/voice/"], false);
+registerTwilioVoiceRoutes(["/twilio/voice/:tenantId", "/twilio/voice/:tenantId/"], true);
 
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });

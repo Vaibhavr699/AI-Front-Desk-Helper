@@ -50,13 +50,19 @@ app.use(
 const PORT = process.env.PORT;
 const BASE_URL = process.env.BASE_URL;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const SERVE_DASHBOARD = process.env.SERVE_DASHBOARD !== "false";
+// Default: API-only (no /dashboard). Set SERVE_DASHBOARD=true for one-service deploy (API + dashboard on same URL).
+const SERVE_DASHBOARD = process.env.SERVE_DASHBOARD === "true";
 
 app.get("/health", (req, res) => res.status(200).send("OK"));
+app.use("/twilio", twilioRoutes);
+app.use("/api/auth", authRoutes);
+app.use("/api", authMiddleware, dashboardRoutes);
+
 if (SERVE_DASHBOARD) {
-  app.get("/", (req, res) => res.redirect(302, "/dashboard"));
-  app.use("/dashboard", express.static(path.join(__dirname, "dashboard", "dist")));
-  app.get("/dashboard*", (req, res) => res.sendFile(path.join(__dirname, "dashboard", "dist", "index.html")));
+  app.use(express.static(path.join(__dirname, "dashboard", "dist")));
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(__dirname, "dashboard", "dist", "index.html"));
+  });
 } else {
   const FRONTEND_URL = process.env.FRONTEND_URL || "";
   app.get("/", (req, res) => {

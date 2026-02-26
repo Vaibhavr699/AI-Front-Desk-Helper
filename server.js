@@ -2,7 +2,12 @@
 
 require("dotenv").config();
 
-const crypto = require("crypto");
+// BASE_URL must be the backend root (no /dashboard). Strip if set wrong so Twilio/webhooks work.
+if (process.env.BASE_URL) {
+  process.env.BASE_URL = process.env.BASE_URL.replace(/\/dashboard\/?$/, "").replace(/\/$/, "") || process.env.BASE_URL;
+}
+
+const cors = require("cors");
 const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");

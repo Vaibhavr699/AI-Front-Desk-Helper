@@ -58,7 +58,7 @@ const pool = process.env.DATABASE_URL
   ? new Pool({
       connectionString: process.env.DATABASE_URL,
       ssl: { rejectUnauthorized: false },
-     family: Number.isFinite(pgIpFamily) && (pgIpFamily === 4 || pgIpFamily === 6) ? pgIpFamily : 4
+      family: Number.isFinite(pgIpFamily) && (pgIpFamily === 4 || pgIpFamily === 6) ? pgIpFamily : 4
     })
   : null;
 
@@ -288,6 +288,168 @@ async function sendToCRM(leadCapture) {
   }
 }
 
+const DEFAULT_CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID || "primary";
+const BUSINESS_TIMEZONE = process.env.BUSINESS_TIMEZONE || "America/Chicago";
+
+function normalizeTimeString(timeValue) {
+  const raw = String(timeValue || "").trim();
+  if (!raw) return "";
+
+  const ampmMatch = raw.match(/^(\d{1,2})(?::(\d{2}))?\s*([ap]m)$/i);
+  if (ampmMatch) {
+    let hour = Number(ampmMatch[1]);
+    const minutes = Number(ampmMatch[2] || "0");
+    const suffix = ampmMatch[3].toLowerCase();
+    if (suffix === "pm" && hour < 12) hour += 12;
+    if (suffix === "am" && hour === 12) hour = 0;
+    if (hour >= 0 && hour < 24 && minutes >= 0 && minutes < 60) {
+      return `${String(hour).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:00`;
+    }
+  }
+
+  const twentyFourHourMatch = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (twentyFourHourMatch) {
+    const hour = Number(twentyFourHourMatch[1]);
+    const minutes = Number(twentyFourHourMatch[2]);
+    const seconds = Number(twentyFourHourMatch[3] || "0");
+    if (hour >= 0 && hour < 24 && minutes >= 0 && minutes < 60 && seconds >= 0 && seconds < 60) {
+      return `${String(hour).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    }
+  }
+
+  return "";
+}
+
+function buildAppointmentWindow(dateValue, timeValue, durationMinutes = 60) {
+  const normalizedDate = String(dateValue || "").trim();
+  const normalizedTime = normalizeTimeString(timeValue);
+  const duration = Number(durationMinutes) > 0 ? Number(durationMinutes) : 60;
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate) || !normalizedTime) {
+    return null;
+  }
+
+  const start = new Date(`${normalizedDate}T${normalizedTime}`);
+  if (Number.isNaN(start.getTime())) return null;
+
+  const end = new Date(start.getTime() + duration * 60 * 1000);
+  return { start, end };
+}
+
+async function checkAvailability(args = {}) {
+  if (!calendar) {
+    return { ok: false, reason: "calendar_not_configured" };
+  }
+
+  const window = buildAppointmentWindow(args.appointment_date, args.appointment_time, args.duration_minutes || 60);
+  if (!window) {
+    return { ok: false, reason: "invalid_datetime", message: "Use appointment_date (YYYY-MM-DD) and appointment_time (HH:MM or 1:30 PM)." };
+  }
+
+  const response = await calendar.freebusy.query({
+    requestBody: {
+      timeMin: window.start.toISOString(),
+      timeMax: window.end.toISOString(),
+      timeZone: BUSINESS_TIMEZONE,
+      items: [{ id: args.calendar_id || DEFAULT_CALENDAR_ID }]
+    }
+  });
+
+  const calendarId = args.calendar_id || DEFAULT_CALENDAR_ID;
+  const busy = response?.data?.calendars?.[calendarId]?.busy || [];
+  return {
+    ok: true,
+    available: busy.length === 0,
+    busySlots: busy,
+    startIso: window.start.toISOString(),
+    endIso: window.end.toISOString(),
+    timezone: BUSINESS_TIMEZONE
+  };
+}
+
+async function bookAppointment(args = {}) {
+  if (!calendar) return { ok: false, reason: "calendar_not_configured" };
+
+  const window = buildAppointmentWindow(args.appointment_date, args.appointment_time, args.duration_minutes || 60);
+  if (!window) {
+    return { ok: false, reason: "invalid_datetime", message: "Use appointment_date (YYYY-MM-DD) and appointment_time (HH:MM or 1:30 PM)." };
+  }
+
+  const event = {
+    summary: args.summary || `Painting Estimate - ${args.full_name || "New Lead"}`,
+    description: args.description || [
+      args.full_name ? `Name: ${args.full_name}` : "",
+      args.phone ? `Phone: ${args.phone}` : "",
+      args.email ? `Email: ${args.email}` : "",
+      args.address ? `Address: ${args.address}` : "",
+      args.project_details ? `Project: ${args.project_details}` : ""
+    ].filter(Boolean).join("\n"),
+    start: { dateTime: window.start.toISOString(), timeZone: BUSINESS_TIMEZONE },
+    end: { dateTime: window.end.toISOString(), timeZone: BUSINESS_TIMEZONE }
+  };
+
+  const response = await calendar.events.insert({
+    calendarId: args.calendar_id || DEFAULT_CALENDAR_ID,
+    requestBody: event
+  });
+
+  return {
+    ok: true,
+    eventId: response?.data?.id,
+    htmlLink: response?.data?.htmlLink,
+    status: response?.data?.status
+  };
+}
+
+async function cancelAppointment(args = {}) {
+  if (!calendar) return { ok: false, reason: "calendar_not_configured" };
+  if (!args.event_id) return { ok: false, reason: "missing_event_id" };
+
+  await calendar.events.delete({
+    calendarId: args.calendar_id || DEFAULT_CALENDAR_ID,
+    eventId: args.event_id
+  });
+
+  return { ok: true, cancelled: true, eventId: args.event_id };
+}
+
+async function rescheduleAppointment(args = {}) {
+  if (!calendar) return { ok: false, reason: "calendar_not_configured" };
+  if (!args.event_id) return { ok: false, reason: "missing_event_id" };
+
+  const window = buildAppointmentWindow(args.appointment_date, args.appointment_time, args.duration_minutes || 60);
+  if (!window) {
+    return { ok: false, reason: "invalid_datetime", message: "Use appointment_date (YYYY-MM-DD) and appointment_time (HH:MM or 1:30 PM)." };
+  }
+
+  const response = await calendar.events.patch({
+    calendarId: args.calendar_id || DEFAULT_CALENDAR_ID,
+    eventId: args.event_id,
+    requestBody: {
+      start: { dateTime: window.start.toISOString(), timeZone: BUSINESS_TIMEZONE },
+      end: { dateTime: window.end.toISOString(), timeZone: BUSINESS_TIMEZONE }
+    }
+  });
+
+  return {
+    ok: true,
+    eventId: response?.data?.id,
+    htmlLink: response?.data?.htmlLink,
+    status: response?.data?.status
+  };
+}
+
+const OPENAI_FUNCTION_HANDLERS = {
+  create_lead: async (args, context) => {
+    await forwardLeadCaptureToCRM(args, context.crmLeadSentRef);
+    return { ok: true, leadForwarded: true };
+  },
+  checkAvailability,
+  bookAppointment,
+  cancelAppointment,
+  rescheduleAppointment
+};
+
 function parsePotentialLeadCapture(rawPayload) {
   if (!rawPayload) return null;
 
@@ -422,7 +584,7 @@ function registerTwilioVoiceRoutes(pathPatterns, tenantScoped) {
     handleTwilioVoice(req, res, tenantId);
   };
 
- const normalizedPatterns = Array.isArray(pathPatterns) ? pathPatterns : [pathPatterns];
+  const normalizedPatterns = Array.isArray(pathPatterns) ? pathPatterns : [pathPatterns];
 
   for (const pathPattern of normalizedPatterns) {
     app.get(pathPattern, handler);
@@ -438,19 +600,19 @@ registerTwilioVoiceRoutes(["/twilio-voice/:tenantId", "/twilio-voice/:tenantId/"
 registerTwilioVoiceRoutes(["/twilio/voice", "/twilio/voice/"], false);
 registerTwilioVoiceRoutes(["/twilio/voice/:tenantId", "/twilio/voice/:tenantId/"], true);
 
-app.use((req, _res, next) => {
-  if (/^\/twilio(?:-|\/)/i.test(req.path)) {
-        next();
+app.use((req, res, next) => {
+  if (!/^\/twilio(?:-|\/)/i.test(req.path)) {
+    next();
     return;
   }
-  
-    console.warn(`Unhandled Twilio route: ${req.method} ${req.originalUrl}`);
+
+  console.warn(`Unhandled Twilio route: ${req.method} ${req.originalUrl}`);
   if (req.method !== "GET" && req.method !== "POST") {
     res.status(405).send("Method Not Allowed");
     return;
   }
-  
-    const tenant = TENANTS.gladiators;
+
+  const tenant = TENANTS.gladiators;
   const fallbackTwiml = buildFallbackTwiml(
     "Please hold while we connect you to the team.",
     tenant.transferNumber
@@ -583,6 +745,68 @@ wss.on("connection", (twilioSocket, req) => {
                   "appointment_time"
                 ]
               }
+            },
+            {
+              type: "function",
+              name: "checkAvailability",
+              description: "Check whether the requested appointment window is free on Google Calendar.",
+              parameters: {
+                type: "object",
+                properties: {
+                  appointment_date: { type: "string" },
+                  appointment_time: { type: "string" },
+                  duration_minutes: { type: "number" }
+                },
+                required: ["appointment_date", "appointment_time"]
+              }
+            },
+            {
+              type: "function",
+              name: "bookAppointment",
+              description: "Book a new appointment on Google Calendar for the caller.",
+              parameters: {
+                type: "object",
+                properties: {
+                  appointment_date: { type: "string" },
+                  appointment_time: { type: "string" },
+                  duration_minutes: { type: "number" },
+                  full_name: { type: "string" },
+                  phone: { type: "string" },
+                  email: { type: "string" },
+                  address: { type: "string" },
+                  project_details: { type: "string" },
+                  summary: { type: "string" },
+                  description: { type: "string" }
+                },
+                required: ["appointment_date", "appointment_time"]
+              }
+            },
+            {
+              type: "function",
+              name: "cancelAppointment",
+              description: "Cancel an existing Google Calendar appointment by event_id.",
+              parameters: {
+                type: "object",
+                properties: {
+                  event_id: { type: "string" }
+                },
+                required: ["event_id"]
+              }
+            },
+            {
+              type: "function",
+              name: "rescheduleAppointment",
+              description: "Move an existing Google Calendar appointment to a new date/time.",
+              parameters: {
+                type: "object",
+                properties: {
+                  event_id: { type: "string" },
+                  appointment_date: { type: "string" },
+                  appointment_time: { type: "string" },
+                  duration_minutes: { type: "number" }
+                },
+                required: ["event_id", "appointment_date", "appointment_time"]
+              }
             }
           ]
         }
@@ -621,8 +845,44 @@ wss.on("connection", (twilioSocket, req) => {
         return;
       }
 
-      if (msg.type === "response.output_item.done" && msg.item?.type === "function_call" && msg.item?.name === "create_lead") {
-        await forwardLeadCaptureToCRM(msg.item.arguments, crmLeadSentRef);
+      if (msg.type === "response.output_item.done" && msg.item?.type === "function_call" && msg.item?.name) {
+        const handler = OPENAI_FUNCTION_HANDLERS[msg.item.name];
+        if (!handler) return;
+
+        let functionArgs = {};
+        if (msg.item.arguments) {
+          try {
+            functionArgs = JSON.parse(msg.item.arguments);
+          } catch {
+            functionArgs = {};
+          }
+        }
+
+        let result;
+        try {
+          result = await handler(functionArgs, { crmLeadSentRef });
+        } catch (error) {
+          result = { ok: false, reason: "handler_error", message: error.message };
+        }
+
+        if (msg.item.call_id) {
+          sendToOpenAI({
+            type: "conversation.item.create",
+            item: {
+              type: "function_call_output",
+              call_id: msg.item.call_id,
+              output: JSON.stringify(result)
+            }
+          });
+
+          sendToOpenAI({
+            type: "response.create",
+            response: {
+              modalities: ["audio", "text"],
+              audio: { output: { format: "g711_ulaw" } }
+            }
+          });
+        }
         return;
       }
 

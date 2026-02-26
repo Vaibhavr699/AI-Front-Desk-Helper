@@ -18,162 +18,37 @@ const twilioRoutes = require("./routes/twilio");
 const dashboardRoutes = require("./routes/dashboard");
 const authRoutes = require("./routes/auth");
 const { authMiddleware } = require("./lib/auth");
-const { listPlans } = require("./lib/plans");
-const estimateRecoveryService = require("./services/estimateRecovery");
 
-async function sendTypingIndicator(recipientId, action = "typing_on") {
-  const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
-  if (!PAGE_ACCESS_TOKEN) return;
-
-  await fetch(
-    `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        recipient: { id: recipientId },
-        sender_action: action
-      })
-    }
-  );
-}
-
-const PORT = Number(process.env.PORT || 3000);
-const BASE_URL = process.env.BASE_URL || "";
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-realtime";
-const WEBSITE_CONTEXT_URL = process.env.WEBSITE_CONTEXT_URL || "https://www.gladiatorspainting.com";
-const WEBSITE_CONTEXT_MAX_CHARS = Number(process.env.WEBSITE_CONTEXT_MAX_CHARS || 4000);
-const CRM_WEBHOOK_URL = String(process.env.CRM_WEBHOOK_URL || "").trim();
-const WARM_GREETING =
-  "Hi there! Thanks so much for calling Gladiators Painting. We specialize in high-quality interior and exterior painting, and we'd love to help with your project. What can we help you with today?";
-
-const LEAD_CAPTURE_FIELDS = [
-  "full_name",
-  "phone",
-  "email",
-  "address",
-  "project_type",
-  "project_details",
-  "timeline",
-  "appointment_date",
-  "appointment_time"
-];
-const FOLLOW_UP_RESPONSE_DELAY_MS = Number(process.env.FOLLOW_UP_RESPONSE_DELAY_MS || 1600);
-const OPENAI_TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || "gpt-4o-mini";
-const TWILIO_PHONE_NUMBER = String(process.env.TWILIO_PHONE_NUMBER || "").trim();
-const SMS_FOLLOW_UP_DELAY_MINUTES = Number(process.env.SMS_FOLLOW_UP_DELAY_MINUTES || 30);
-const SMS_FOLLOW_UP_CHECK_INTERVAL_MS = Number(process.env.SMS_FOLLOW_UP_CHECK_INTERVAL_MS || 5 * 60 * 1000);
-const smsThreads = new Map();
-let callsTableHasTranscriptColumn = true;
-
-const REQUIRED_ENV_VARS = ["OPENAI_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"];
-
-function isValidE164(value) {
-  return /^\+[1-9]\d{6,14}$/.test(String(value || "").trim());
-}
-
-const missingEnv = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
-if (missingEnv.length) {
-  console.warn(`⚠️ Missing required env vars: ${missingEnv.join(", ")}`);
-}
-
-if (!process.env.BASE_URL) {
-  console.warn("⚠️ BASE_URL not set; deriving URL from incoming request headers.");
-}
-
-const defaultTransferNumber = process.env.GLADIATORS_TRANSFER_NUMBER || "+14022907925";
-if (!isValidE164(defaultTransferNumber)) {
-  console.warn(`⚠️ Transfer number is not valid E.164 format: ${defaultTransferNumber}`);
-}
-
-const pgIpFamily = Number(process.env.PGIP_FAMILY || 4);
-const pool = process.env.DATABASE_URL
-  ? new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-    family: Number.isFinite(pgIpFamily) && (pgIpFamily === 4 || pgIpFamily === 6) ? pgIpFamily : 4
-  })
-  : null;
-
-const TENANTS = {
-  gladiators: {
-    name: "Gladiators Painting",
-    transferNumber: defaultTransferNumber,
-    businessHours: { start: 8, end: 17 },
-    voice: "ash",
-    instructions: [
-      "You are the receptionist for Gladiators Painting.",
-      "Your goal is to naturally guide a friendly conversation while collecting: full_name, phone, email, address, project_type (interior or exterior), project_details, timeline, preferred appointment_date, and preferred appointment_time.",
-      "Keep the conversation natural and flexible: combine related questions when appropriate, acknowledge answers, and avoid sounding like a rigid checklist.",
-      "Your main objective is to help the caller get booked on the schedule with a clear appointment date and time window.",
-      "Confirm the final appointment details back to the caller before finishing.",
-      "When you have collected all required fields, you MUST respond with exactly this JSON structure and valid JSON only:",
-      '{"lead_capture":{"full_name":"...","phone":"...","email":"...","address":"...","project_type":"...","project_details":"...","timeline":"...","appointment_date":"...","appointment_time":"..."}}',
-      "Only output the JSON when all fields are collected.",
-      "If any field is missing, continue the conversation and do not output JSON yet.",
-      "Speak only English."
-    ].join("\n")
-  }
-};
-
-const SERVE_DASHBOARD = process.env.SERVE_DASHBOARD === "true";
-const FRONTEND_URL = process.env.FRONTEND_URL || "";
-
+// -------------------- App --------------------
 const app = express();
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
-}));
-
-// Stripe webhook MUST be before express.json() — needs raw body for signature verification
-const stripeLib = require("./lib/stripe");
-if (stripeLib.stripe) {
-  app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
-    const sig = req.headers["stripe-signature"];
-    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-    try {
-      let event;
-      if (webhookSecret && sig) {
-        event = stripeLib.stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
-      } else {
-        event = JSON.parse(req.body.toString());
-        console.warn("[Stripe] No STRIPE_WEBHOOK_SECRET — skipping signature verification (dev mode)");
-      }
-      await stripeLib.handleWebhookEvent(event);
-      res.json({ received: true });
-    } catch (err) {
-      console.error("[Stripe] Webhook error:", err.message);
-      res.status(400).json({ error: err.message });
-    }
-  });
-}
-
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
-app.use(express.static("public"));
 
-app.get("/", (_req, res) => {
-  if (FRONTEND_URL) return res.redirect(302, FRONTEND_URL);
-  res.status(200).send("AI front desk backend is running");
-});
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "http://localhost:3001",
+  ...(process.env.BASE_URL ? [process.env.BASE_URL] : []),
+  ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim()) : []),
+];
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (!origin || allowedOrigins.includes(origin)) return cb(null, origin || true);
+      cb(null, false);
+    },
+    credentials: true,
+  })
+);
 
-app.get("/health", (_req, res) => {
-  res.status(200).send("OK");
-});
+const PORT = process.env.PORT || 3000;
+const BASE_URL = process.env.BASE_URL;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-// Public: plans list (no auth)
-app.get("/api/plans", (req, res) => {
-  try {
-    res.json({ plans: listPlans() });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-// Multi-tenant platform routes
+app.get("/health", (req, res) => res.status(200).send("OK"));
+app.get("/", (req, res) => res.redirect(302, "/dashboard"));
+app.use("/dashboard", express.static(path.join(__dirname, "dashboard", "dist")));
+app.get("/dashboard*", (req, res) => res.sendFile(path.join(__dirname, "dashboard", "dist", "index.html")));
 app.use("/twilio", twilioRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/stripe", authMiddleware, require("./routes/stripe"));

@@ -1,4 +1,9 @@
-const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+// Must be a full URL (e.g. http://localhost:3001). Fix missing scheme or "http:" typo (no "//").
+let API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+if (API_BASE && !/^https?:\/\//i.test(API_BASE)) {
+  API_BASE = API_BASE.replace(/^https?:(?!\/\/)/i, "").replace(/^\/+/, "");
+  API_BASE = "http://" + API_BASE;
+}
 
 function getToken() {
   return localStorage.getItem("token");

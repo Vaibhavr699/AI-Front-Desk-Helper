@@ -37,10 +37,25 @@ const allowedOrigins = [
   ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL.replace(/\/$/, "")] : []),
   ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean) : []),
 ];
+
+// In development, allow same host as BASE_URL on any port (e.g. frontend at :5173, backend at :3001)
+function isAllowedOrigin(origin) {
+  if (!origin || allowedOrigins.includes(origin)) return true;
+  try {
+    const baseUrl = process.env.BASE_URL || "";
+    if (baseUrl) {
+      const base = new URL(baseUrl);
+      const orig = new URL(origin);
+      if (base.hostname === orig.hostname && base.port !== orig.port) return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
 app.use(
   cors({
     origin: (origin, cb) => {
-      if (!origin || allowedOrigins.includes(origin)) return cb(null, origin || true);
+      if (isAllowedOrigin(origin)) return cb(null, origin || true);
       cb(null, false);
     },
     credentials: true,

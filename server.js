@@ -18,7 +18,13 @@ const calendar = require("./calendar");
 const path = require("path");
 const cron = require("node-cron");
 
-// Multi-tenant platform imports
+const { getTenantByPhone, getTenantById } = require("./lib/tenant");
+const callsService = require("./services/calls");
+const recordingService = require("./services/recording");
+const transferService = require("./services/transfer");
+const bookingsService = require("./services/bookings");
+const followUpService = require("./services/followUp");
+
 const twilioRoutes = require("./routes/twilio");
 const dashboardRoutes = require("./routes/dashboard");
 const authRoutes = require("./routes/auth");
@@ -1189,18 +1195,23 @@ wss.on("connection", (twilioSocket, req) => {
     openaiReady = true;
     while (openaiQueue.length) openaiSocket.send(openaiQueue.shift());
 
-    if (callSid && (to || from)) {
-      tenant = await getTenantByPhone(to);
-      if (!tenant && from) tenant = await getTenantByPhone(from);
+    if (callSid) {
+      const call = await callsService.getCallByTwilioSid(callSid);
+      if (call) {
+        callId = call.id;
+        tenant = await getTenantById(call.tenant_id);
+      }
+      if (!tenant && (to || from)) {
+        tenant = await getTenantByPhone(to);
+        if (!tenant && from) tenant = await getTenantByPhone(from);
+      }
       if (tenant) {
-        const call = await callsService.getCallByTwilioSid(callSid);
-        if (call) callId = call.id;
         console.log("[AI-Desk] Realtime stream ready callSid=%s tenantId=%s callId=%s from=%s to=%s", callSid, tenant?.id, callId || "(none)", from, to);
         if (tenant.id && callSid) {
           recordingService.startRecording(callSid, tenant).catch((e) => console.error("Start recording error:", e));
         }
       } else {
-        console.log("[AI-Desk] Realtime stream no tenant for to=%s from=%s", to, from);
+        console.log("[AI-Desk] Realtime stream no tenant callSid=%s callFound=%s to=%s from=%s", callSid, !!call, to, from);
       }
     }
 

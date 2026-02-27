@@ -924,6 +924,21 @@ app.post("/twilio-sms", async (req, res) => {
     res.type("text/xml").status(200).send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Thanks — we received your message and will text you shortly.</Message></Response>`);
   }
 });
+app.post("/website-chat", async (req, res) => {
+  const message = String(req.body?.message || "").trim();
+
+  if (!message) {
+    return res.status(400).json({ reply: "Message required" });
+  }
+
+  try {
+    const reply = await processSmsConversation("website-user", message);
+    res.json({ reply });
+  } catch (err) {
+    console.error("Website chat error:", err.message);
+    res.json({ reply: "Sorry, something went wrong. Please try again." });
+  }
+});
 
 app.use((req, res, next) => {
   if (!/^\/twilio(?:-|\/)/i.test(req.path)) {

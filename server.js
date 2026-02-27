@@ -1237,60 +1237,87 @@ wss.on("connection", (twilioSocket, req) => {
         return;
       }
 
-      if (msg.type === "response.output_text.delta" && msg.delta) {
-        transcript += msg.delta;
-        return;
-      }
-
-      if (msg.type === "response.output_text" && msg.output_text) {
-        await forwardLeadCaptureToCRM(msg.output_text, crmLeadSentRef);
-        return;
-      }
-
-      if (msg.type === "response.function_call_arguments.done" && msg.name === "create_lead" && msg.arguments) {
-        await forwardLeadCaptureToCRM(msg.arguments, crmLeadSentRef);
-        return;
-      }
-
-      if (msg.type === "response.output_item.done" && msg.item?.type === "function_call" && msg.item?.name) {
-        const handler = OPENAI_FUNCTION_HANDLERS[msg.item.name];
-        if (!handler) return;
-
-        let functionArgs = {};
-        if (msg.item.arguments) {
+    if (data.type === "response.function_call_arguments.done") {
+      const { name, arguments: argsJson } = data;
+      let output = "";
+      let args = {};
+      try {
+        if (argsJson != null) {
+          if (typeof argsJson === "object" && !Array.isArray(argsJson)) {
+            args = argsJson;
+          } else {
+          const raw = typeof argsJson === "string" ? argsJson : String(argsJson);
           try {
-            functionArgs = JSON.parse(msg.item.arguments);
-          } catch {
-            functionArgs = {};
+            args = JSON.parse(raw);
+          } catch (parseErr) {
+            const repaired = raw.trim().replace(/,(\s*[}\]])/g, "$1");
+            try {
+              args = JSON.parse(repaired);
+            } catch (_) {
+              console.error("Tool args JSON parse failed:", parseErr.message, "raw:", raw.slice(0, 200));
+              output = JSON.stringify({ success: false, error: "Invalid format. Please ask the caller again for their name, phone, and address, then complete the booking." });
+              sendToOpenAI({
+                type: "conversation.item.create",
+                item: { type: "function_call_output", call_id: data.call_id, output },
+              });
+              return;
+            }
+          }
           }
         }
-
-        let result;
         try {
-          result = await handler(functionArgs, { crmLeadSentRef });
-        } catch (error) {
-          result = { ok: false, reason: "handler_error", message: error.message };
+        if (name === "book_appointment" && tenant && callId) {
+          const { booking, crmSynced } = await bookingsService.createBooking(tenant.id, callId, args);
+          const message = crmSynced
+            ? "Estimate scheduled. Details synced to Zapier/DripJobs. Tell the caller: You're all set—your estimate is scheduled and we've sent your details to our team. You'll get a confirmation by text."
+            : "Estimate scheduled and saved. Tell the caller: You're all set—your estimate is scheduled. You'll get a confirmation by text.";
+          output = JSON.stringify({ success: true, message });
+        } else if (name === "request_human_transfer" && callSid && tenant) {
+          const result = await transferService.initiateTransfer(
+            callSid,
+            null,
+            args.reason,
+            args.summary
+          );
+          output = JSON.stringify(result);
+        } else {
+          output = JSON.stringify({ success: false, error: "Missing context" });
         }
-
-        if (msg.item.call_id) {
-          sendToOpenAI({
-            type: "conversation.item.create",
-            item: {
-              type: "function_call_output",
-              call_id: msg.item.call_id,
-              output: JSON.stringify(result)
-            }
-          });
-
-          sendToOpenAI({
-            type: "response.create",
-            response: {
-              modalities: ["audio", "text"]
-            }
-          });
+        } catch (err) {
+          console.error("Tool execution error:", err);
+          output = JSON.stringify({ success: false, error: err.message });
         }
-        return;
+      } catch (err) {
+        console.error("Tool execution error:", err);
+        output = JSON.stringify({ success: false, error: err.message });
       }
+      if (!output) return;
+      sendToOpenAI({
+        type: "conversation.item.create",
+        item: {
+          type: "function_call_output",
+          call_id: data.call_id,
+          output,
+        },
+      });
+      return;
+    }
+
+    if (data.type && data.type.includes("error")) {
+      console.error("OpenAI error:", data);
+    }
+  });
+
+  openaiSocket.on("error", (err) => console.error("OpenAI socket error:", err));
+  openaiSocket.on("close", () => { openaiReady = false; });
+
+  twilioSocket.on("message", (message) => {
+    let data;
+    try {
+      data = JSON.parse(message.toString());
+    } catch (e) {
+      return;
+    }
 
       if (msg.type === "conversation.item.input_audio_transcription.completed" && msg.transcript) {
         transcript += `\nCALLER: ${msg.transcript}`;

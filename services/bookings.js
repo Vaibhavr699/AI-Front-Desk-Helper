@@ -29,7 +29,13 @@ async function createBooking(tenantId, callId, data) {
   );
   const booking = res.rows[0];
   const tenant = await getTenantById(tenantId);
-  crm.syncBookingToCrm(tenantId, booking).catch((e) => console.error("CRM sync:", e));
+  let crmSynced = false;
+  try {
+    const syncResult = await crm.syncBookingToCrm(tenantId, booking);
+    crmSynced = !!syncResult.synced;
+  } catch (e) {
+    console.error("CRM sync:", e);
+  }
   if (tenant) {
     crm.sendBookingConfirmationSms(tenant, booking).catch((e) => console.error("SMS:", e));
     emailService.sendBookingConfirmationEmail(tenant, booking).catch((e) => console.error("Email:", e));
@@ -37,7 +43,7 @@ async function createBooking(tenantId, callId, data) {
   if (tenant && tenant.follow_up_enabled) {
     followUp.scheduleFollowUps(tenantId, booking).catch((e) => console.error("Follow-up schedule:", e));
   }
-  return booking;
+  return { booking, crmSynced };
 }
 
 async function getBookingsByTenant(tenantId, limit = 50) {

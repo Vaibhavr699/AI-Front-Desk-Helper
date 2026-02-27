@@ -45,7 +45,7 @@ export default function DashboardLayout() {
   }
 
   return (
-    <div className="min-h-screen bg-stone-100 flex flex-col">
+    <div className="h-screen bg-stone-100 flex flex-col overflow-hidden">
       <Header
         tenantId={tenantId}
         tenants={tenants}
@@ -53,9 +53,9 @@ export default function DashboardLayout() {
         onMenuClick={openMobileSidebar}
       />
 
-      <div className="flex-1 flex min-h-0">
-        {/* Desktop sidebar */}
-        <div className="hidden lg:block">
+      <div className="flex-1 flex min-h-0 overflow-hidden">
+        {/* Desktop sidebar: fixed height, no scroll */}
+        <div className="hidden lg:block h-full shrink-0">
           <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
         </div>
 
@@ -79,9 +79,9 @@ export default function DashboardLayout() {
           />
         </div>
 
-        <main className="flex-1 min-w-0 flex flex-col">
+        <main className="flex-1 min-w-0 min-h-0 overflow-auto flex flex-col">
           <div className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <Outlet context={{ tenantId: tenantId || null }} />
+            <Outlet context={{ tenantId: tenantId || null, tenants, onTenantChange: setTenantId }} />
           </div>
         </main>
       </div>

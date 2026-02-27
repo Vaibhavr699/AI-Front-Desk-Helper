@@ -9,40 +9,59 @@ const { updateCallByTwilioSid } = require("../services/calls");
 const router = express.Router();
 const BASE_URL = process.env.BASE_URL;
 
-router.post("/voice", async (req, res) => {
-  const { CallSid, From, To, CallStatus } = req.body;
-  const toNumber = To || req.body.To;
-  const fromNumber = From || req.body.From;
-
-  let tenant = await getTenantByPhone(toNumber);
-  if (!tenant) tenant = await getTenantByPhone(fromNumber);
-  if (!tenant) {
-    res.type("text/xml").send(`
-      <Response>
-        <Say voice="Polly.Joanna">We're sorry, this number is not configured. Goodbye.</Say>
-        <Hangup/>
-      </Response>
-    `);
-    return;
-  }
-
-  await callsService.createCall(tenant.id, CallSid, fromNumber, toNumber, "inbound");
-
-  const wsUrl = (BASE_URL || "")
-    .replace("https://", "wss://")
-    .replace("http://", "ws://") + "/twilio-media";
-  const streamUrl = `${wsUrl}?CallSid=${encodeURIComponent(CallSid)}&From=${encodeURIComponent(fromNumber)}&To=${encodeURIComponent(toNumber)}`;
-  const statusCallback = BASE_URL ? `${BASE_URL}/twilio/status` : null;
-
-  let twiml = `<Response>`;
-  if (statusCallback) {
-    twiml += `<Connect statusCallback="${statusCallback}" statusCallbackEvent="completed">`;
-  } else {
-    twiml += `<Connect>`;
-  }
-  twiml += `<Stream url="${streamUrl}" /></Connect></Response>`;
-
+function sendVoiceError(res, message = "Something went wrong. Goodbye.") {
+  const twiml = `<Response><Say voice="Polly.Joanna">${escapeXml(message)}</Say><Hangup/></Response>`;
   res.type("text/xml").send(twiml);
+}
+
+function escapeXml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+router.post("/voice", async (req, res) => {
+  try {
+    const { CallSid, From, To } = req.body;
+    const toNumber = To || req.body.To;
+    const fromNumber = From || req.body.From;
+
+    const tenantByTo = await getTenantByPhone(toNumber);
+    const tenantByFrom = await getTenantByPhone(fromNumber);
+    const tenant = tenantByTo || tenantByFrom;
+    if (!tenant) {
+      sendVoiceError(res, "We're sorry, this number is not configured. Goodbye.");
+      return;
+    }
+    const direction = tenantByFrom ? "outbound" : "inbound";
+    await callsService.createCall(tenant.id, CallSid, fromNumber, toNumber, direction);
+
+    const wsUrl = (BASE_URL || "")
+      .replace("https://", "wss://")
+      .replace("http://", "ws://") + "/twilio-media";
+    let streamUrl = `${wsUrl}?CallSid=${encodeURIComponent(CallSid)}&From=${encodeURIComponent(fromNumber)}&To=${encodeURIComponent(toNumber)}`;
+    const testCallFrom = (process.env.TEST_CALL_FROM || "").replace(/\s/g, "");
+    if (testCallFrom && fromNumber && fromNumber.replace(/\D/g, "") === testCallFrom.replace(/\D/g, "")) {
+      streamUrl += "&turnBased=1";
+    }
+    const statusCallback = BASE_URL ? `${BASE_URL}/twilio/status` : null;
+
+    let twiml = `<Response>`;
+    if (statusCallback) {
+      twiml += `<Connect statusCallback="${escapeXml(statusCallback)}" statusCallbackEvent="completed">`;
+    } else {
+      twiml += `<Connect>`;
+    }
+    twiml += `<Stream url="${escapeXml(streamUrl)}" /></Connect></Response>`;
+
+    res.type("text/xml").send(twiml);
+  } catch (err) {
+    console.error("Voice webhook error:", err);
+    sendVoiceError(res, "We're sorry, something went wrong. Please try again later.");
+  }
 });
 
 router.post("/recording-status", (req, res) => {

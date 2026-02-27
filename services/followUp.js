@@ -51,15 +51,19 @@ async function processDueFollowUps() {
 }
 
 async function sendFollowUp(followUp) {
-  if (!twilio.client) return;
-  const fromRow = await db.query(
-    "SELECT pn.phone FROM phone_numbers pn WHERE pn.tenant_id = $1 ORDER BY pn.is_primary DESC NULLS LAST LIMIT 1",
+  const tenant = await db.query(
+    `SELECT t.*, (SELECT pn.phone FROM phone_numbers pn WHERE pn.tenant_id = t.id ORDER BY pn.is_primary DESC NULLS LAST LIMIT 1) as matched_phone
+     FROM tenants t WHERE t.id = $1`,
     [followUp.tenant_id]
   ).then((r) => r.rows[0]);
   if (!tenant) return;
   const client = twilio.getClientForTenant(tenant);
   if (!client) return;
+<<<<<<< HEAD
   const from = tenant.matched_phone || process.env.TWILIO_PHONE_NUMBER;
+=======
+  const from = process.env.TWILIO_PHONE_NUMBER || tenant.matched_phone;
+>>>>>>> 27d1bf5 (Twilio testing)
   if (!from) return;
 
   const messages = {
@@ -71,7 +75,7 @@ async function sendFollowUp(followUp) {
   const body = messages[followUp.follow_up_type] || messages["24h"];
 
   try {
-    await twilio.client.messages.create({
+    await client.messages.create({
       to: followUp.contact_phone,
       from,
       body,

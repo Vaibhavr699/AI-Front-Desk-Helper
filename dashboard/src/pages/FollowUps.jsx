@@ -1,7 +1,11 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { getFollowUps } from "../api";
+<<<<<<< HEAD
 import { LumaSpin } from "../components/ui/luma-spin";
+=======
+import { Loading } from "../components";
+>>>>>>> 27d1bf5 (Twilio testing)
 
 const TYPE_LABELS = { "24h": "24h", "3d": "3 days", "5d": "5 days", "10d": "10 days" };
 
@@ -28,7 +32,11 @@ export default function FollowUps({ tenantId }) {
     );
   }
   if (loading) return (
+<<<<<<< HEAD
     <div className="px-0 flex items-center justify-center py-20"><LumaSpin /></div>
+=======
+    <div className="px-0"><Loading fullScreen={false} message="Loading follow-ups…" /></div>
+>>>>>>> 27d1bf5 (Twilio testing)
   );
   if (error) return (
     <div className="px-0"><p className="text-red-600 text-sm sm:text-base">{error}</p></div>

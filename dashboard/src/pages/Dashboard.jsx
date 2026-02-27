@@ -1,10 +1,15 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+<<<<<<< HEAD
 import { getCalls, getBookings, getMetrics, getTenant, getPlans } from "../api";
 import { Loading } from "../components";
 import { LumaSpin } from "../components/ui/luma-spin";
+=======
+import { getCalls, getBookings, getMetrics } from "../api";
+import { Loading } from "../components";
+>>>>>>> 27d1bf5 (Twilio testing)
 
-export default function Dashboard({ tenantId }) {
+export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
   const [recentCalls, setRecentCalls] = useState([]);
   const [bookingsCount, setBookingsCount] = useState(null);
   const [metrics, setMetrics] = useState(null);
@@ -41,14 +46,36 @@ export default function Dashboard({ tenantId }) {
   if (!tenantId) {
     return (
       <div className="px-0">
-        <p className="text-stone-500 text-sm sm:text-base">Select a business to see the home overview.</p>
+        <h1 className="text-xl sm:text-2xl font-semibold text-stone-900 mb-2">Home</h1>
+        <p className="text-sm text-stone-500 mb-6">Select a business to see the overview.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {(tenants || []).map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onTenantChange?.(t.id)}
+              className="text-left bg-white rounded-xl border border-stone-200 shadow-sm p-4 sm:p-5 hover:border-stone-300 hover:bg-stone-50/80 transition-colors"
+            >
+              <p className="font-medium text-stone-900">{t.company_name || t.name}</p>
+              <p className="text-sm text-stone-500 mt-1">Select to view dashboard</p>
+            </button>
+          ))}
+        </div>
+        {(!tenants || tenants.length === 0) && (
+          <p className="text-stone-500 text-sm sm:text-base">No businesses yet. Create one from the Businesses page.</p>
+        )}
       </div>
     );
   }
   if (loading) {
     return (
+<<<<<<< HEAD
       <div className="px-0 flex items-center justify-center py-20">
         <LumaSpin />
+=======
+      <div className="px-0">
+        <Loading fullScreen={false} message="Loading dashboard…" />
+>>>>>>> 27d1bf5 (Twilio testing)
       </div>
     );
   }

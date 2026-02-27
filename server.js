@@ -29,36 +29,22 @@ const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-const allowedOrigins = [
-  "http://localhost:5173",
-  "http://localhost:3000",
-  "http://localhost:3001",
-  ...(process.env.BASE_URL ? [process.env.BASE_URL] : []),
-  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL.replace(/\/$/, "")] : []),
-  ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean) : []),
-];
-
-// In development, allow same host as BASE_URL on any port (e.g. frontend at :5173, backend at :3001)
-function isAllowedOrigin(origin) {
-  if (!origin || allowedOrigins.includes(origin)) return true;
-  try {
-    const baseUrl = process.env.BASE_URL || "";
-    if (baseUrl) {
-      const base = new URL(baseUrl);
-      const orig = new URL(origin);
-      if (base.hostname === orig.hostname && base.port !== orig.port) return true;
-    }
-  } catch (_) {}
-  return false;
-}
-
+// CORS: reflect request origin so any frontend origin is allowed (e.g. :3089 → :3001).
+// Required for credentials. Set CORS_ORIGINS to restrict in production (comma-separated list).
 app.use(
   cors({
     origin: (origin, cb) => {
-      if (isAllowedOrigin(origin)) return cb(null, origin || true);
-      cb(null, false);
+      if (!origin) return cb(null, true);
+      const restrict = process.env.CORS_ORIGINS;
+      if (restrict) {
+        const list = restrict.split(",").map((o) => o.trim()).filter(Boolean);
+        return cb(null, list.includes(origin) ? origin : false);
+      }
+      cb(null, origin);
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 

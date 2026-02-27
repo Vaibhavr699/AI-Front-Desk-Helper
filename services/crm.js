@@ -18,6 +18,11 @@ async function syncBookingToCrm(tenantId, booking) {
   const webhookUrl = getCrmWebhookUrl(tenant);
   if (!webhookUrl) return { synced: false };
 
+  const name = booking.contact_name && booking.contact_name.trim();
+  const nameParts = name ? name.split(/\s+/).filter(Boolean) : [];
+  const firstName = nameParts[0] ?? null;
+  const lastName = nameParts.length > 1 ? nameParts.slice(1).join(" ") : null;
+
   const payload = {
     event_type: "booking",
     source: "ai-front-desk",
@@ -25,6 +30,8 @@ async function syncBookingToCrm(tenantId, booking) {
     tenant_name: tenant?.name ?? null,
     company_name: tenant?.company_name ?? null,
     contact_name: booking.contact_name,
+    first_name: firstName,
+    last_name: lastName,
     contact_phone: booking.contact_phone,
     contact_email: booking.contact_email,
     address: booking.address,
@@ -73,11 +80,15 @@ async function sendBookingConfirmationSms(tenant, booking, message) {
   if (!fullTenant) return;
   const client = twilio.getClientForTenant(fullTenant);
   if (!client) return;
+<<<<<<< HEAD
   let from = fullTenant.matched_phone || process.env.TWILIO_PHONE_NUMBER;
+=======
+  let from = process.env.TWILIO_PHONE_NUMBER || fullTenant.matched_phone;
+>>>>>>> 27d1bf5 (Twilio testing)
   if (!from) return;
-  const body = message || `Your estimate with ${tenant.company_name} is scheduled. We'll reach out to confirm.`;
+  const body = message || `Your estimate with ${fullTenant.company_name} is scheduled. We'll reach out to confirm.`;
   try {
-    await twilio.client.messages.create({
+    await client.messages.create({
       to: booking.contact_phone,
       from,
       body,

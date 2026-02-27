@@ -224,8 +224,12 @@ function maskTwilioSid(sid) {
 
 const TENANT_SELECT_TWILIO = `t.twilio_account_sid,
        (t.twilio_account_sid IS NOT NULL AND t.twilio_auth_token IS NOT NULL AND t.twilio_auth_token != '') as has_twilio_credentials,`;
+<<<<<<< HEAD
 const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.plan`;
 const TENANT_SELECT_BASE_LEGACY = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled`;
+=======
+const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled`;
+>>>>>>> 27d1bf5 (Twilio testing)
 
 router.get("/tenants/:id", async (req, res) => {
   try {
@@ -239,14 +243,21 @@ router.get("/tenants/:id", async (req, res) => {
     } catch (colErr) {
       if (colErr.code === "42703") {
         r = await db.query(
+<<<<<<< HEAD
           `SELECT ${TENANT_SELECT_BASE_LEGACY}, ${TENANT_SELECT_TWILIO}
            (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1`,
+=======
+          `SELECT ${TENANT_SELECT_BASE}, (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1`,
+>>>>>>> 27d1bf5 (Twilio testing)
           [req.params.id]
         );
         if (r.rows[0]) {
           r.rows[0].twilio_account_sid = null;
           r.rows[0].has_twilio_credentials = false;
+<<<<<<< HEAD
           r.rows[0].plan = "basic";
+=======
+>>>>>>> 27d1bf5 (Twilio testing)
         }
       } else throw colErr;
     }
@@ -256,7 +267,10 @@ router.get("/tenants/:id", async (req, res) => {
     delete out.twilio_account_sid;
     out.twilio_account_sid_masked = maskTwilioSid(row.twilio_account_sid);
     out.has_twilio_credentials = row.has_twilio_credentials === true;
+<<<<<<< HEAD
     if (out.plan == null) out.plan = "basic";
+=======
+>>>>>>> 27d1bf5 (Twilio testing)
     res.json(out);
   } catch (e) {
     console.error(e);
@@ -432,7 +446,11 @@ function normalizeTransferNumbers(value) {
 router.patch("/tenants/:id", async (req, res) => {
   try {
     const id = req.params.id;
+<<<<<<< HEAD
     let allowed = ["welcome_message", "instructions", "transfer_numbers", "transfer_sms_brief", "crm_webhook_url", "crm_type", "follow_up_enabled", "plan", "twilio_account_sid", "twilio_auth_token"];
+=======
+    let allowed = ["welcome_message", "instructions", "transfer_numbers", "transfer_sms_brief", "crm_webhook_url", "crm_type", "follow_up_enabled", "twilio_account_sid", "twilio_auth_token"];
+>>>>>>> 27d1bf5 (Twilio testing)
     try {
       await db.query("SELECT twilio_account_sid FROM tenants WHERE id = $1 LIMIT 1", [id]);
     } catch (colErr) {
@@ -447,12 +465,15 @@ router.patch("/tenants/:id", async (req, res) => {
         updates[key] = normalizeTransferNumbers(req.body[key]);
       } else if (key === "twilio_auth_token") {
         updates[key] = req.body[key] === "" ? null : req.body[key];
+<<<<<<< HEAD
       } else if (key === "plan") {
         const p = (req.body[key] || "").toLowerCase();
         if (!["basic", "pro", "elite"].includes(p)) {
           return res.status(400).json({ error: "plan must be basic, pro, or elite" });
         }
         updates[key] = p;
+=======
+>>>>>>> 27d1bf5 (Twilio testing)
       } else {
         updates[key] = req.body[key];
       }
@@ -465,7 +486,7 @@ router.patch("/tenants/:id", async (req, res) => {
     });
     values.push(id);
     await db.query(
-      `UPDATE tenants SET ${set}, updated_at = now() WHERE id = $${values.length} RETURNING id, name, slug, company_name, welcome_message, instructions, transfer_numbers, transfer_sms_brief, crm_webhook_url, crm_type, follow_up_enabled`,
+      `UPDATE tenants SET ${set}, updated_at = now() WHERE id = $${values.length}`,
       values
     );
     let r;
@@ -478,14 +499,21 @@ router.patch("/tenants/:id", async (req, res) => {
     } catch (colErr) {
       if (colErr.code === "42703") {
         r = await db.query(
+<<<<<<< HEAD
           `SELECT ${TENANT_SELECT_BASE_LEGACY}, ${TENANT_SELECT_TWILIO}
            (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1`,
+=======
+          `SELECT ${TENANT_SELECT_BASE}, (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1`,
+>>>>>>> 27d1bf5 (Twilio testing)
           [id]
         );
         if (r.rows[0]) {
           r.rows[0].twilio_account_sid = null;
           r.rows[0].has_twilio_credentials = false;
+<<<<<<< HEAD
           r.rows[0].plan = "basic";
+=======
+>>>>>>> 27d1bf5 (Twilio testing)
         }
       } else throw colErr;
     }
@@ -495,7 +523,10 @@ router.patch("/tenants/:id", async (req, res) => {
     delete out.twilio_account_sid;
     out.twilio_account_sid_masked = maskTwilioSid(row.twilio_account_sid);
     out.has_twilio_credentials = row.has_twilio_credentials === true;
+<<<<<<< HEAD
     if (out.plan == null) out.plan = "basic";
+=======
+>>>>>>> 27d1bf5 (Twilio testing)
     res.json(out);
   } catch (e) {
     console.error(e);

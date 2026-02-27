@@ -72,10 +72,12 @@ npm run db:seed   # Creates Gladiators Painting + phone 402-773-8795
 
 The backend POSTs to a webhook in two cases:
 
-1. **Booking created** (`event_type: "booking"`) – when the AI books an appointment. Payload: `contact_name`, `contact_phone`, `contact_email`, `address`, `city`, `scope`, `job_type`, `preferred_date`, `notes`, `booking_id`, plus `tenant_id`, `tenant_name`, `company_name`.
-2. **Call details** (`event_type: "call_details"`) – after the call is transcribed. Payload: `call_id`, `from_number`, `to_number`, `transcript`, `recording_url`, `duration_sec`, `disposition`, `transferred`, `booking_id`, `booking_contact`, plus `tenant_id`, `tenant_name`, `company_name`.
+1. **Booking created** (`event_type: "booking"`) – when the AI books an appointment. **Use this for DripJobs leads.** Structured payload: `first_name`, `last_name`, `contact_name`, `contact_phone`, `contact_email`, `address`, `city`, `scope`, `job_type`, `preferred_date`, `notes`, `booking_id`, plus `tenant_id`, `tenant_name`, `company_name`.
+2. **Call details** (`event_type: "call_details"`) – after the call is transcribed. Payload is mostly unstructured (e.g. `transcript` as free text). Use for logging/analytics, not for creating leads.
 
-**To complete the flow with DripJobs:** In Zapier, create a Zap with trigger “Webhooks by Zapier” → Catch Hook. Use that hook URL as the tenant’s **CRM Webhook URL** (Settings) or set it as `ZAPIER_WEBHOOK_URL` in `.env`. In the Zap, filter or route by `event_type` and optionally by `tenant_id`, then send the data to DripJobs (e.g. create job/lead) using the payload fields above.
+**DripJobs leads:** Create a lead **only when `event_type = "booking"`**. The booking payload has structured fields: `first_name`, `last_name`, `contact_email`, `address`, `contact_phone`, `preferred_date`, `notes`. In Zapier, create a Zap with trigger “Webhooks by Zapier” → Catch Hook. Use that hook URL as the tenant’s **CRM Webhook URL** (Settings) or set it as `ZAPIER_WEBHOOK_URL` in `.env`. In the Zap, filter or route by `event_type` and optionally by `tenant_id`, then send the data to DripJobs (e.g. create job/lead) using the payload fields above.
+
+**Test the webhook (and DripJobs lead creation) without a real call:** Run `node scripts/test-book-lead.js` to send one test booking to the webhook (creates a lead in DripJobs when the Zap is set up). Optional args: `node scripts/test-book-lead.js "Jane Smith" "+15559876543" "jane@example.com" "456 Oak Ave" "Omaha"`. Or use `node scripts/test-crm-webhook.js booking` for the same flow; use `test-crm-webhook.js [call_details|both]` for call_details events.
 
 ### 6. Run
 

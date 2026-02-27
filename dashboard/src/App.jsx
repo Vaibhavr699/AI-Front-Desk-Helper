@@ -10,6 +10,13 @@ function Protected({ children }) {
   return children;
 }
 
+/** Rendered when route is /login so we read user on this render (after logout, App may not have re-rendered). */
+function LoginRoute() {
+  const user = getUser();
+  if (user) return <Navigate to="/" replace />;
+  return <Login onLogin={() => { window.location.reload(); }} />;
+}
+
 function RootElement() {
   const user = getUser();
   const { pathname } = useLocation();
@@ -29,21 +36,10 @@ function RootElement() {
 }
 
 export default function App() {
-  const user = getUser();
-
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, "")}>
       <Routes>
-        <Route
-          path="/login"
-          element={
-            user ? (
-              <Navigate to="/" replace />
-            ) : (
-              <Login onLogin={() => { window.location.reload(); }} />
-            )
-          }
-        />
+        <Route path="/login" element={<LoginRoute />} />
         <Route path="/" element={<RootElement />}>
           <Route index element={<DashboardWithContext />} />
           <Route path="create-business" element={<CreateBusiness />} />
@@ -62,8 +58,8 @@ export default function App() {
 }
 
 function DashboardWithContext() {
-  const { tenantId } = useOutletContext();
-  return <Dashboard tenantId={tenantId} />;
+  const { tenantId, tenants, onTenantChange } = useOutletContext();
+  return <Dashboard tenantId={tenantId} tenants={tenants} onTenantChange={onTenantChange} />;
 }
 
 function CallsWithContext() {

@@ -1,7 +1,11 @@
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { getCall, getRecordingAudioUrl } from "../api";
+<<<<<<< HEAD
 import { LumaSpin } from "../components/ui/luma-spin";
+=======
+import { Loading } from "../components";
+>>>>>>> 27d1bf5 (Twilio testing)
 
 function AudioPlayer({ recordingId }) {
   const [src, setSrc] = useState(null);
@@ -28,7 +32,11 @@ export default function CallDetail() {
     getCall(id).then(setCall).catch((e) => setError(e.message)).finally(() => setLoading(false));
   }, [id]);
 
+<<<<<<< HEAD
   if (loading) return <div className="px-0 flex items-center justify-center py-20"><LumaSpin /></div>;
+=======
+  if (loading) return <div className="px-0"><Loading fullScreen={false} message="Loading call…" /></div>;
+>>>>>>> 27d1bf5 (Twilio testing)
   if (error) return <div className="px-0"><p className="text-red-600 text-sm">{error}</p></div>;
   if (!call) return null;
 

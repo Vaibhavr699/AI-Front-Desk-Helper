@@ -31,6 +31,7 @@ async function uploadRecordingToS3(tenantId, recordingSid) {
   ).then((r) => r.rows[0]);
   const authInfo = twilio.getAuthForTenant(tenant);
   if (!authInfo) return;
+<<<<<<< HEAD
 
   // Fetch MP3 from Twilio (same as transcription: .json meta then .mp3 URL with Basic auth)
   const auth = Buffer.from(`${authInfo.accountSid}:${authInfo.authToken}`).toString("base64");
@@ -41,6 +42,12 @@ async function uploadRecordingToS3(tenantId, recordingSid) {
   let mp3Url = (meta.uri || "").replace(".json", ".mp3");
   if (mp3Url && !mp3Url.startsWith("http")) mp3Url = `https://api.twilio.com${mp3Url}`;
   const resp = await fetch(mp3Url, { headers: { Authorization: `Basic ${auth}` } });
+=======
+  const auth = Buffer.from(`${authInfo.accountSid}:${authInfo.authToken}`).toString("base64");
+  const resp = await fetch(rec.recording_url, {
+    headers: { Authorization: `Basic ${auth}` },
+  });
+>>>>>>> 27d1bf5 (Twilio testing)
   if (!resp.ok) throw new Error("Fetch recording failed");
   const body = await resp.arrayBuffer();
   const key = `recordings/${tenantId}/${recordingSid}.mp3`;

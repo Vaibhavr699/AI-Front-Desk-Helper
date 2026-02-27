@@ -1,6 +1,10 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+<<<<<<< HEAD
 import { getTenant, updateTenant, getPhoneNumbers, addPhoneNumber, deletePhoneNumber } from "../api";
+=======
+import { getTenant, updateTenant } from "../api";
+>>>>>>> 27d1bf5 (Twilio testing)
 import { Loading } from "../components";
 
 const TENANT_STORAGE_KEY = "tenantId";
@@ -20,6 +24,8 @@ export default function Settings({ tenantId }) {
   const [crmWebhookUrl, setCrmWebhookUrl] = useState("");
   const [crmType, setCrmType] = useState("webhook");
   const [followUpEnabled, setFollowUpEnabled] = useState(true);
+  const [twilioAccountSid, setTwilioAccountSid] = useState("");
+  const [twilioAuthToken, setTwilioAuthToken] = useState("");
 
   // Phone numbers state
   const [phoneNumbers, setPhoneNumbers] = useState([]);
@@ -44,6 +50,8 @@ export default function Settings({ tenantId }) {
         setCrmWebhookUrl(t.crm_webhook_url || "");
         setCrmType(t.crm_type || "webhook");
         setFollowUpEnabled(t.follow_up_enabled !== false);
+        setTwilioAccountSid("");
+        setTwilioAuthToken("");
       })
       .catch((e) => {
         setError(e.message);
@@ -106,7 +114,7 @@ export default function Settings({ tenantId }) {
       .map((s) => s.trim())
       .filter(Boolean)
       .map((s) => (s.startsWith("+") ? s : `+1${s.replace(/\D/g, "").slice(-10)}`));
-    updateTenant(tenantId, {
+    const payload = {
       welcome_message: welcomeMessage || null,
       instructions: instructions || null,
       transfer_numbers: transferNumbers,
@@ -114,7 +122,14 @@ export default function Settings({ tenantId }) {
       crm_webhook_url: crmWebhookUrl || null,
       crm_type: crmType,
       follow_up_enabled: followUpEnabled,
-    })
+    };
+    if (twilioAccountSid.trim()) payload.twilio_account_sid = twilioAccountSid.trim();
+    if (twilioAuthToken) payload.twilio_auth_token = twilioAuthToken;
+    if (!twilioAccountSid.trim() && !twilioAuthToken && tenant?.has_twilio_credentials) {
+      payload.twilio_account_sid = null;
+      payload.twilio_auth_token = "";
+    }
+    updateTenant(tenantId, payload)
       .then((updated) => {
         setTenant(updated);
         setMessage("Settings saved.");
@@ -144,8 +159,8 @@ export default function Settings({ tenantId }) {
       </p>
 
       {loading && (
-        <div className="mb-6 rounded-lg border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-600">
-          Loading settings…
+        <div className="mb-6">
+          <Loading fullScreen={false} message="Loading settings…" />
         </div>
       )}
 
@@ -326,6 +341,37 @@ export default function Settings({ tenantId }) {
             {message}
           </p>
         )}
+
+        <div className="rounded-lg border border-stone-200 bg-stone-50/50 p-4 space-y-3">
+          <h3 className="text-sm font-medium text-stone-800">Bring your own Twilio (optional)</h3>
+          <p className="text-xs text-stone-500">
+            Use your own Twilio account for this business so your numbers, recordings, and SMS use your billing.
+          </p>
+          <div>
+            <label className="block text-xs font-medium text-stone-600 mb-1">Twilio Account SID</label>
+            <input
+              type="text"
+              value={twilioAccountSid}
+              onChange={(e) => setTwilioAccountSid(e.target.value)}
+              placeholder={tenant?.twilio_account_sid_masked || "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
+              className="w-full px-3 py-2 border border-stone-300 rounded-md text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent font-mono text-sm"
+            />
+            {tenant?.twilio_account_sid_masked && !twilioAccountSid && (
+              <p className="mt-1 text-xs text-stone-500">Current: {tenant.twilio_account_sid_masked}</p>
+            )}
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-stone-600 mb-1">Twilio Auth Token</label>
+            <input
+              type="password"
+              value={twilioAuthToken}
+              onChange={(e) => setTwilioAuthToken(e.target.value)}
+              placeholder={tenant?.has_twilio_credentials ? "Leave blank to keep current" : "Optional"}
+              autoComplete="new-password"
+              className="w-full px-3 py-2 border border-stone-300 rounded-md text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent font-mono text-sm"
+            />
+          </div>
+        </div>
 
         <div>
           <label className="block text-sm font-medium text-stone-700 mb-1.5">

@@ -5,6 +5,9 @@ export default defineConfig({
   plugins: [react()],
   base: '/',
   server: {
+    host: '0.0.0.0',
+    port: 3089,        
+    strictPort: true,        
     allowedHosts: [
       'unjudged-westwardly-trisha.ngrok-free.dev'
     ],

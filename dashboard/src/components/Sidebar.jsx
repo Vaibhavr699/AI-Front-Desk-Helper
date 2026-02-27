@@ -6,7 +6,10 @@ const navItems = [
   { to: "/bookings", label: "Bookings", icon: BookingsIcon },
   { to: "/follow-ups", label: "Follow-ups", icon: FollowUpsIcon },
   { to: "/metrics", label: "Metrics", icon: MetricsIcon },
+<<<<<<< HEAD
   { to: "/plans", label: "Plans", icon: PlansIcon },
+=======
+>>>>>>> 27d1bf5 (Twilio testing)
   { to: "/tenants", label: "Businesses", icon: BusinessesIcon },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
@@ -89,15 +92,39 @@ export default function Sidebar({ collapsed, onToggle, closeMobile }) {
 
   return (
     <aside
+<<<<<<< HEAD
       className={`flex flex-col bg-white border-r border-stone-200 transition-all duration-200 ease-in-out shrink-0 h-full ${collapsed ? "w-[4.25rem]" : "w-56"
         }`}
+=======
+      className={`flex flex-col bg-white border-r border-stone-200 transition-all duration-200 ease-in-out shrink-0 h-full overflow-hidden ${
+        collapsed ? "w-[4.25rem]" : "w-56"
+      }`}
+>>>>>>> 27d1bf5 (Twilio testing)
     >
+      <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-x-hidden overflow-y-hidden min-h-0">
+        {navItems.map(({ to, label, icon: Icon }) => {
+          const isActive =
+            location.pathname === to || (to !== "/" && location.pathname.startsWith(to));
+          return (
+            <Link
+              key={to}
+              to={to}
+              onClick={handleLinkClick}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                isActive
+                  ? "bg-stone-100 text-stone-900"
+                  : "text-stone-600 hover:bg-stone-50 hover:text-stone-900"
+              } ${collapsed ? "justify-center" : ""}`}
+              title={collapsed ? label : undefined}
+            >
+              <Icon className="w-5 h-5 shrink-0" />
+              {!collapsed && <span>{label}</span>}
+            </Link>
+          );
+        })}
+      </nav>
       <div className="flex items-center justify-between h-14 px-3 border-b border-stone-200 shrink-0">
-        {!collapsed && (
-          <span className="text-xs font-medium text-stone-500 uppercase tracking-wider">
-            Menu
-          </span>
-        )}
+        
         <button
           type="button"
           onClick={onToggle}
@@ -120,6 +147,7 @@ export default function Sidebar({ collapsed, onToggle, closeMobile }) {
           )}
         </button>
       </div>
+<<<<<<< HEAD
       <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-x-hidden overflow-y-auto">
         {navItems.map(({ to, label, icon: Icon }) => {
           const isActive =
@@ -141,6 +169,8 @@ export default function Sidebar({ collapsed, onToggle, closeMobile }) {
           );
         })}
       </nav>
+=======
+>>>>>>> 27d1bf5 (Twilio testing)
     </aside>
   );
 }

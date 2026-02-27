@@ -32,6 +32,11 @@ const LEAD_CAPTURE_FIELDS = [
   "appointment_time"
 ];
 const FOLLOW_UP_RESPONSE_DELAY_MS = Number(process.env.FOLLOW_UP_RESPONSE_DELAY_MS || 1600);
+const OPENAI_TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || "gpt-4o-mini";
+const TWILIO_PHONE_NUMBER = String(process.env.TWILIO_PHONE_NUMBER || "").trim();
+const SMS_FOLLOW_UP_DELAY_MINUTES = Number(process.env.SMS_FOLLOW_UP_DELAY_MINUTES || 30);
+const SMS_FOLLOW_UP_CHECK_INTERVAL_MS = Number(process.env.SMS_FOLLOW_UP_CHECK_INTERVAL_MS || 5 * 60 * 1000);
+const smsThreads = new Map();
 
 const REQUIRED_ENV_VARS = ["OPENAI_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"];
 
@@ -118,6 +123,15 @@ app.get("/health/twilio", async (_req, res) => {
     transferNumber,
     transferNumberValidE164: isValidE164(transferNumber),
     diagnostics
+  });
+});
+
+app.get("/health/sms", (_req, res) => {
+  res.status(200).json({
+    status: "ok",
+    hasTwilioCredentials: hasTwilioCredentials(),
+    hasTwilioPhoneNumber: Boolean(TWILIO_PHONE_NUMBER),
+    activeThreads: smsThreads.size
   });
 });
 
@@ -285,6 +299,234 @@ async function sendToCRM(leadCapture) {
     }
   } catch (error) {
     console.error("CRM push error:", error.message);
+  }
+}
+
+
+function normalizePhone(value) {
+  return String(value || "").trim();
+}
+
+function getOrCreateSmsThread(phone) {
+  const normalizedPhone = normalizePhone(phone);
+  const existing = smsThreads.get(normalizedPhone);
+  if (existing) return existing;
+
+  const created = {
+    phone: normalizedPhone,
+    history: [],
+    leadCapture: {},
+    bookedEventId: "",
+    needsFollowUpAt: null,
+    lastInboundAt: null,
+    lastOutboundAt: null
+  };
+  smsThreads.set(normalizedPhone, created);
+  return created;
+}
+
+async function sendTwilioSms(to, body) {
+  if (!hasTwilioCredentials() || !TWILIO_PHONE_NUMBER) {
+    console.warn("Twilio SMS skipped: missing credentials or TWILIO_PHONE_NUMBER.");
+    return { ok: false, reason: "missing_sms_configuration" };
+  }
+
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+  const payload = new URLSearchParams({
+    To: to,
+    From: TWILIO_PHONE_NUMBER,
+    Body: body
+  }).toString();
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: buildTwilioAuthHeader(),
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: payload
+  });
+
+  if (!response.ok) {
+    const errBody = await response.text();
+    console.error("Twilio SMS failed:", response.status, errBody);
+    return { ok: false, reason: "twilio_sms_error", status: response.status };
+  }
+
+  const msg = await response.json();
+  return { ok: true, sid: msg.sid };
+}
+
+function buildSmsSystemPrompt(thread) {
+  return [
+    "You are an SMS receptionist for Gladiators Painting.",
+    "Flow: qualify lead, gather full_name, project_type, project_details, address, preferred appointment_date and appointment_time.",
+    "Be concise, friendly, and use one short text message.",
+    "If enough details exist to request booking, set should_book true and provide appointment_date/time.",
+    "Return strict JSON only with keys: reply, lead_capture, should_book, appointment_date, appointment_time, follow_up_minutes.",
+    `Known lead data: ${JSON.stringify(thread.leadCapture)}`
+  ].join("\n");
+}
+
+async function runSmsAiOrchestrator(thread, incomingText) {
+  const payload = {
+    model: OPENAI_TEXT_MODEL,
+    input: [
+      { role: "system", content: [{ type: "input_text", text: buildSmsSystemPrompt(thread) }] },
+      { role: "user", content: [{ type: "input_text", text: incomingText }] }
+    ],
+    text: {
+      format: {
+        type: "json_schema",
+        name: "sms_orchestrator",
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            reply: { type: "string" },
+            lead_capture: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                full_name: { type: "string" },
+                phone: { type: "string" },
+                email: { type: "string" },
+                address: { type: "string" },
+                project_type: { type: "string" },
+                project_details: { type: "string" },
+                timeline: { type: "string" },
+                appointment_date: { type: "string" },
+                appointment_time: { type: "string" }
+              }
+            },
+            should_book: { type: "boolean" },
+            appointment_date: { type: "string" },
+            appointment_time: { type: "string" },
+            follow_up_minutes: { type: "number" }
+          },
+          required: ["reply", "should_book"]
+        },
+        strict: true
+      }
+    }
+  };
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`OpenAI SMS orchestration failed (${response.status}): ${body}`);
+  }
+
+  const parsed = await response.json();
+  const outputText = parsed.output_text || "{}";
+  return JSON.parse(outputText);
+}
+
+function mergeLeadCapture(thread, incomingLeadCapture) {
+  if (!incomingLeadCapture || typeof incomingLeadCapture !== "object") return;
+  for (const field of LEAD_CAPTURE_FIELDS) {
+    const value = incomingLeadCapture[field];
+    if (typeof value === "string" && value.trim()) {
+      thread.leadCapture[field] = value.trim();
+    }
+  }
+}
+
+async function processSmsConversation(phone, incomingText) {
+  const thread = getOrCreateSmsThread(phone);
+  thread.lastInboundAt = Date.now();
+  thread.history.push({ role: "user", text: incomingText, at: new Date().toISOString() });
+
+  let ai;
+  try {
+    ai = await runSmsAiOrchestrator(thread, incomingText);
+  } catch (error) {
+    console.error("SMS AI orchestration failed:", error.message);
+    ai = {
+      reply: "Thanks for the details. We are reviewing your request now and will text you shortly.",
+      should_book: false,
+      follow_up_minutes: SMS_FOLLOW_UP_DELAY_MINUTES
+    };
+  }
+
+  mergeLeadCapture(thread, ai.lead_capture);
+  if (!thread.leadCapture.phone) thread.leadCapture.phone = thread.phone;
+
+  let replyText = ai.reply || "Thanks for reaching out!";
+
+  if (ai.should_book && ai.appointment_date && ai.appointment_time) {
+    const availability = await checkAvailability({
+      appointment_date: ai.appointment_date,
+      appointment_time: ai.appointment_time,
+      duration_minutes: 60
+    });
+
+    if (availability.ok && availability.available) {
+      const booked = await bookAppointment({
+        appointment_date: ai.appointment_date,
+        appointment_time: ai.appointment_time,
+        duration_minutes: 60,
+        full_name: thread.leadCapture.full_name || "New Lead",
+        phone: thread.phone,
+        email: thread.leadCapture.email || "",
+        address: thread.leadCapture.address || "",
+        project_details: thread.leadCapture.project_details || ""
+      });
+
+      if (booked.ok) {
+        thread.bookedEventId = booked.eventId || "";
+        thread.needsFollowUpAt = Date.now() + 24 * 60 * 60 * 1000;
+        replyText = `${replyText} ✅ You are booked for ${ai.appointment_date} at ${ai.appointment_time}.`;
+      } else {
+        replyText = `${replyText} I couldn't complete booking yet. Can I offer another time?`;
+      }
+    } else {
+      replyText = `${replyText} That time is no longer available. Please share another preferred time.`;
+      thread.needsFollowUpAt = Date.now() + 30 * 60 * 1000;
+    }
+  } else {
+    const followUpMinutes = Number(ai.follow_up_minutes);
+    thread.needsFollowUpAt = Date.now() + (Number.isFinite(followUpMinutes) && followUpMinutes > 0
+      ? followUpMinutes
+      : SMS_FOLLOW_UP_DELAY_MINUTES) * 60 * 1000;
+  }
+
+  await forwardLeadCaptureToCRM(thread.leadCapture, { sent: false });
+
+  thread.history.push({ role: "assistant", text: replyText, at: new Date().toISOString() });
+  thread.lastOutboundAt = Date.now();
+
+  return replyText;
+}
+
+async function runSmsFollowUps() {
+  const now = Date.now();
+  for (const thread of smsThreads.values()) {
+    if (!thread.needsFollowUpAt || thread.needsFollowUpAt > now) continue;
+    const recentInboundMs = thread.lastInboundAt ? now - thread.lastInboundAt : Infinity;
+    if (recentInboundMs < 10 * 60 * 1000) continue;
+
+    const followUpText = thread.bookedEventId
+      ? "Quick follow-up: your appointment is on our schedule. Reply here if you need to reschedule."
+      : "Just checking in — would you like me to help you lock in a time for your estimate?";
+
+    const sent = await sendTwilioSms(thread.phone, followUpText);
+    if (sent.ok) {
+      thread.history.push({ role: "assistant", text: followUpText, at: new Date().toISOString() });
+      thread.lastOutboundAt = now;
+      thread.needsFollowUpAt = now + 24 * 60 * 60 * 1000;
+    } else {
+      thread.needsFollowUpAt = now + 15 * 60 * 1000;
+    }
   }
 }
 
@@ -600,6 +842,52 @@ registerTwilioVoiceRoutes(["/twilio-voice/:tenantId", "/twilio-voice/:tenantId/"
 registerTwilioVoiceRoutes(["/twilio/voice", "/twilio/voice/"], false);
 registerTwilioVoiceRoutes(["/twilio/voice/:tenantId", "/twilio/voice/:tenantId/"], true);
 
+app.post("/twilio-missed-call", async (req, res) => {
+  const from = normalizePhone(req.body?.From || req.body?.from);
+  const callStatus = String(req.body?.CallStatus || req.body?.call_status || "").toLowerCase();
+
+  if (!from) {
+    res.status(400).json({ ok: false, reason: "missing_from" });
+    return;
+  }
+
+  const isMissed = ["no-answer", "busy", "failed", "canceled", "cancelled"].includes(callStatus);
+  if (!isMissed) {
+    res.status(200).json({ ok: true, skipped: true, reason: "not_missed_call" });
+    return;
+  }
+
+  const thread = getOrCreateSmsThread(from);
+  const autoText = "Sorry we missed your call — this is Gladiators Painting. I can help with a fast quote and get your appointment booked. What kind of project are you planning?";
+  const sent = await sendTwilioSms(from, autoText);
+
+  if (sent.ok) {
+    thread.history.push({ role: "assistant", text: autoText, at: new Date().toISOString() });
+    thread.lastOutboundAt = Date.now();
+    thread.needsFollowUpAt = Date.now() + SMS_FOLLOW_UP_DELAY_MINUTES * 60 * 1000;
+  }
+
+  res.status(200).json({ ok: true, sent: sent.ok });
+});
+
+app.post("/twilio-sms", async (req, res) => {
+  const from = normalizePhone(req.body?.From || req.body?.from);
+  const body = String(req.body?.Body || req.body?.body || "").trim();
+
+  if (!from || !body) {
+    res.status(400).send("Missing From or Body");
+    return;
+  }
+
+  try {
+    const reply = await processSmsConversation(from, body);
+    res.type("text/xml").status(200).send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escapeXml(reply)}</Message></Response>`);
+  } catch (error) {
+    console.error("Twilio SMS webhook error:", error.message);
+    res.type("text/xml").status(200).send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Thanks — we received your message and will text you shortly.</Message></Response>`);
+  }
+});
+
 app.use((req, res, next) => {
   if (!/^\/twilio(?:-|\/)/i.test(req.path)) {
     next();
@@ -745,7 +1033,8 @@ wss.on("connection", (twilioSocket, req) => {
                   "appointment_time"
                 ]
               }
-            },
+            }
+,
             {
               type: "function",
               name: "checkAvailability",
@@ -1016,6 +1305,11 @@ wss.on("connection", (twilioSocket, req) => {
 });
 
 loadWebsiteContext();
+setInterval(() => {
+  runSmsFollowUps().catch((error) => {
+    console.error("SMS follow-up loop error:", error.message);
+  });
+}, Math.max(60000, SMS_FOLLOW_UP_CHECK_INTERVAL_MS));
 
 server.listen(PORT, () => {
   console.log(`AI front desk backend listening on port ${PORT}`);

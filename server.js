@@ -1222,14 +1222,6 @@ wss.on("connection", (twilioSocket, req) => {
           prefix_padding_ms: 300,
           silence_duration_ms: silenceMs,
         },
-        audio: {
-          input: {
-            transcription: {
-              model: "gpt-4o-transcribe",
-              language: "en",
-            },
-          },
-        },
       },
     });
   });

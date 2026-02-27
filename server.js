@@ -487,7 +487,7 @@ async function processSmsConversation(phone, incomingText) {
         thread.needsFollowUpAt = Date.now() + 24 * 60 * 60 * 1000;
         replyText = `${replyText} ✅ You are booked for ${ai.appointment_date} at ${ai.appointment_time}.`;
         try {
-    await fetch("PASTE_YOUR_ZAPIER_WEBHOOK_URL_HERE", {
+    await fetch("https://hooks.zapier.com/hooks/catch/26590795/u05xhpd/", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

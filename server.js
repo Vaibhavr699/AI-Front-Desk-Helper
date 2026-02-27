@@ -843,31 +843,48 @@ registerTwilioVoiceRoutes(["/twilio/voice", "/twilio/voice/"], false);
 registerTwilioVoiceRoutes(["/twilio/voice/:tenantId", "/twilio/voice/:tenantId/"], true);
 
 app.post("/twilio-missed-call", async (req, res) => {
-  const from = normalizePhone(req.body?.From || req.body?.from);
-  const callStatus = String(req.body?.CallStatus || req.body?.call_status || "").toLowerCase();
+  const callStatus = String(req.body?.CallStatus || "").toLowerCase();
+  const from = normalizePhone(req.body?.From || "");
+  const answeredBy = String(req.body?.AnsweredBy || "").toLowerCase();
 
   if (!from) {
-    res.status(400).json({ ok: false, reason: "missing_from" });
-    return;
+    return res.status(400).json({ ok: false, reason: "missing_from" });
   }
 
-  const isMissed = ["no-answer", "busy", "failed", "canceled", "cancelled"].includes(callStatus);
-  if (!isMissed) {
-    res.status(200).json({ ok: true, skipped: true, reason: "not_missed_call" });
-    return;
+  console.log("Call status event:", callStatus, "From:", from);
+
+  /*
+    We send SMS if:
+    - Call was completed BUT lasted very short (hang up)
+    - no-answer
+    - busy
+    - failed
+    - canceled
+
+    We DO NOT send if:
+    - Human answered and conversation happened
+  */
+
+  const isMissed =
+    ["no-answer", "busy", "failed", "canceled", "cancelled"].includes(callStatus);
+
+  const isCompleted = callStatus === "completed";
+
+  // If Twilio detected machine pickup, skip text
+  if (answeredBy && answeredBy.includes("machine")) {
+    return res.status(200).json({ ok: true, skipped: "machine_answered" });
   }
 
-  const thread = getOrCreateSmsThread(from);
-  const autoText = "Sorry we missed your call — this is Gladiators Painting. I can help with a fast quote and get your appointment booked. What kind of project are you planning?";
-  const sent = await sendTwilioSms(from, autoText);
+  if (isMissed || isCompleted) {
+    const autoText =
+      "Sorry we missed you — this is Gladiators Painting. I can help with a fast quote and get your appointment booked. What kind of project are you planning?";
 
-  if (sent.ok) {
-    thread.history.push({ role: "assistant", text: autoText, at: new Date().toISOString() });
-    thread.lastOutboundAt = Date.now();
-    thread.needsFollowUpAt = Date.now() + SMS_FOLLOW_UP_DELAY_MINUTES * 60 * 1000;
+    const sent = await sendTwilioSms(from, autoText);
+
+    return res.status(200).json({ ok: true, sent: sent.ok });
   }
 
-  res.status(200).json({ ok: true, sent: sent.ok });
+  res.status(200).json({ ok: true, skipped: true });
 });
 
 app.post("/twilio-sms", async (req, res) => {

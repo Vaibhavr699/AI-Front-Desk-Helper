@@ -1393,20 +1393,18 @@ wss.on("connection", (twilioSocket, req) => {
         transcript += `\nCALLER: ${msg.transcript}`;
         return;
       }
-
-      if (msg.type === "input_audio_buffer.speech_stopped") {
-        setTimeout(() => {
-          sendToOpenAI({
-            type: "response.create",
-            response: {
-              modalities: ["audio", "text"],
-              instructions:
-                "Speak only English. Be upbeat, warm, and personable. Keep the conversation natural (not robotic), and focus on getting the caller booked with a confirmed appointment date/time. Do not repeat the greeting or thank-you line. Continue from the caller's last response after a brief pause and ask a helpful next question."
-            }
-          });
-        }, Math.max(0, FOLLOW_UP_RESPONSE_DELAY_MS));
-        return;
-      }
+      const welcome = (tenant && tenant.welcome_message)
+        ? tenant.welcome_message
+        : "Thanks for calling. What can we help you with today? Would you like to schedule a free estimate?";
+      sendToOpenAI({
+        type: "response.create",
+        response: {
+          modalities: ["audio", "text"],
+          instructions: `Say exactly (warm and confident): "${welcome}" Then stop and wait.`,
+        },
+      });
+      return;
+    }
 
       if (msg.type === "response.completed") {
         const callerAskedHuman = /human|person|representative|manager|transfer/i.test(transcript);

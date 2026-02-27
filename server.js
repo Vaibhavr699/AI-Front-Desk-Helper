@@ -486,6 +486,25 @@ async function processSmsConversation(phone, incomingText) {
         thread.bookedEventId = booked.eventId || "";
         thread.needsFollowUpAt = Date.now() + 24 * 60 * 60 * 1000;
         replyText = `${replyText} ✅ You are booked for ${ai.appointment_date} at ${ai.appointment_time}.`;
+        try {
+    await fetch("PASTE_YOUR_ZAPIER_WEBHOOK_URL_HERE", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        full_name: thread.leadCapture.full_name || "",
+        phone: thread.phone,
+        email: thread.leadCapture.email || "",
+        address: thread.leadCapture.address || "",
+        project_type: thread.leadCapture.project_type || "",
+        project_details: thread.leadCapture.project_details || "",
+        appointment_date: ai.appointment_date,
+        appointment_time: ai.appointment_time
+      })
+    });
+  } catch (err) {
+    console.error("Zapier webhook failed:", err.message);
+  }
+}
       } else {
         replyText = `${replyText} I couldn't complete booking yet. Can I offer another time?`;
       }

@@ -1192,142 +1192,45 @@ wss.on("connection", (twilioSocket, req) => {
       return;
     }
 
-    const activeModel = openaiModelCandidates[modelIndex];
-    const socket = new WebSocket(`wss://api.openai.com/v1/realtime?model=${encodeURIComponent(activeModel)}`, {
-      headers: {
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-        "OpenAI-Beta": "realtime=v1"
-      }
+    const defaultInstructions = [
+      "You are a professional receptionist. Be warm and helpful.",
+      "Ask one question at a time. Wait for the caller to finish speaking before you reply—do not interrupt.",
+      "Collect: full name, phone number, and address or city. Offer a free on-site estimate.",
+      "When you have name, phone, and at least address OR city: immediately call book_appointment with those details. Then say clearly: 'You are all set—your estimate is scheduled. We will confirm by text.' Do not ask more questions after you have enough to book.",
+      "Do NOT say you are transferring or connecting to someone unless you actually need a live agent. Only use request_human_transfer for: commercial job, project over $10k, caller clearly frustrated or angry, or VIP/repeat customer. For normal residential estimates, always complete the booking with book_appointment.",
+      "Repeat back key details (name, phone, address) before finalizing so the caller can correct you if needed.",
+    ].join(" ");
+    const instructions = (tenant && tenant.instructions)
+      ? tenant.instructions
+      : defaultInstructions;
+
+    const voice = process.env.OPENAI_REALTIME_VOICE || "shimmer";
+    const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 800;
+    sendToOpenAI({
+      type: "session.update",
+      session: {
+        input_audio_format: "g711_ulaw",
+        output_audio_format: "g711_ulaw",
+        voice,
+        instructions: `${instructions}\n\nSpeak clearly at a moderate pace. Let the caller finish before you respond.`,
+        tools: REALTIME_TOOLS,
+        turn_detection: {
+          type: "server_vad",
+          threshold: 0.5,
+          prefix_padding_ms: 300,
+          silence_duration_ms: silenceMs,
+        },
+      },
     });
+  });
 
-    openaiSocket = socket;
-    let opened = false;
-
-    socket.on("open", () => {
-      opened = true;
-      openaiReady = true;
-
-      sendToOpenAI({
-        type: "session.update",
-        session: {
-          voice: tenant.voice,
-          instructions: buildRealtimeInstructions(tenant),
-          modalities: ["audio", "text"],
-          input_audio_format: "g711_ulaw",
-          output_audio_format: "g711_ulaw",
-          input_audio_transcription: { model: "gpt-4o-mini-transcribe" },
-          turn_detection: { type: "server_vad" },
-          tool_choice: "auto",
-          tools: [
-            {
-              type: "function",
-              name: "create_lead",
-              description: "Submit the captured customer lead once required fields are collected.",
-              parameters: {
-                type: "object",
-                properties: {
-                  full_name: { type: "string" },
-                  phone: { type: "string" },
-                  email: { type: "string" },
-                  address: { type: "string" },
-                  project_type: { type: "string" },
-                  project_details: { type: "string" },
-                  timeline: { type: "string" },
-                  appointment_date: { type: "string" },
-                  appointment_time: { type: "string" }
-                },
-                required: [
-                  "full_name",
-                  "phone",
-                  "email",
-                  "address",
-                  "project_type",
-                  "project_details",
-                  "timeline",
-                  "appointment_date",
-                  "appointment_time"
-                ]
-              }
-            }
-            ,
-            {
-              type: "function",
-              name: "checkAvailability",
-              description: "Check whether the requested appointment window is free on Google Calendar.",
-              parameters: {
-                type: "object",
-                properties: {
-                  appointment_date: { type: "string" },
-                  appointment_time: { type: "string" },
-                  duration_minutes: { type: "number" }
-                },
-                required: ["appointment_date", "appointment_time"]
-              }
-            },
-            {
-              type: "function",
-              name: "bookAppointment",
-              description: "Book a new appointment on Google Calendar for the caller.",
-              parameters: {
-                type: "object",
-                properties: {
-                  appointment_date: { type: "string" },
-                  appointment_time: { type: "string" },
-                  duration_minutes: { type: "number" },
-                  full_name: { type: "string" },
-                  phone: { type: "string" },
-                  email: { type: "string" },
-                  address: { type: "string" },
-                  project_details: { type: "string" },
-                  summary: { type: "string" },
-                  description: { type: "string" }
-                },
-                required: ["appointment_date", "appointment_time"]
-              }
-            },
-            {
-              type: "function",
-              name: "cancelAppointment",
-              description: "Cancel an existing Google Calendar appointment by event_id.",
-              parameters: {
-                type: "object",
-                properties: {
-                  event_id: { type: "string" }
-                },
-                required: ["event_id"]
-              }
-            },
-            {
-              type: "function",
-              name: "rescheduleAppointment",
-              description: "Move an existing Google Calendar appointment to a new date/time.",
-              parameters: {
-                type: "object",
-                properties: {
-                  event_id: { type: "string" },
-                  appointment_date: { type: "string" },
-                  appointment_time: { type: "string" },
-                  duration_minutes: { type: "number" }
-                },
-                required: ["event_id", "appointment_date", "appointment_time"]
-              }
-            }
-          ]
-        }
-      });
-
-      while (openaiQueue.length && openaiSocket?.readyState === WebSocket.OPEN) {
-        openaiSocket.send(openaiQueue.shift());
-      }
-    });
-
-    socket.on("message", async (raw) => {
-      let msg;
-      try {
-        msg = JSON.parse(raw.toString());
-      } catch {
-        return;
-      }
+  openaiSocket.on("message", async (msg) => {
+    let data;
+    try {
+      data = JSON.parse(msg.toString());
+    } catch (e) {
+      return;
+    }
 
       if ((msg.type === "response.audio.delta" || msg.type === "response.output_audio.delta") && msg.delta) {
         sendAudioToTwilio(msg.delta);
@@ -1400,7 +1303,7 @@ wss.on("connection", (twilioSocket, req) => {
         type: "response.create",
         response: {
           modalities: ["audio", "text"],
-          instructions: `Say exactly (warm, clear, and confident): "${welcome}" Speak at a moderate pace. Then stop and wait.`,
+          instructions: `Say exactly (warm and clear): "${welcome}" Then stop and wait for the caller to respond. Do not continue until they have spoken.`,
         },
       });
       return;

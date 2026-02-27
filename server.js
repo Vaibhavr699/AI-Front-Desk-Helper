@@ -91,6 +91,7 @@ const TENANTS = {
 const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
+app.use(express.static("public"));
 
 app.get("/", (_req, res) => {
   res.status(200).send("AI front desk backend is running");

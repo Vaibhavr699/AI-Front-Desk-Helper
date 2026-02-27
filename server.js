@@ -1185,11 +1185,23 @@ wss.on("connection", (twilioSocket, req) => {
     );
   }
 
-  function connectOpenAI(modelIndex) {
-    if (modelIndex >= openaiModelCandidates.length) {
-      console.error("OpenAI realtime connection failed for all model candidates.");
-      if (twilioSocket.readyState === WebSocket.OPEN) twilioSocket.close();
-      return;
+  openaiSocket.on("open", async () => {
+    openaiReady = true;
+    while (openaiQueue.length) openaiSocket.send(openaiQueue.shift());
+
+    if (callSid && (to || from)) {
+      tenant = await getTenantByPhone(to);
+      if (!tenant && from) tenant = await getTenantByPhone(from);
+      if (tenant) {
+        const call = await callsService.getCallByTwilioSid(callSid);
+        if (call) callId = call.id;
+        console.log("[AI-Desk] Realtime stream ready callSid=%s tenantId=%s callId=%s from=%s to=%s", callSid, tenant?.id, callId || "(none)", from, to);
+        if (tenant.id && callSid) {
+          recordingService.startRecording(callSid, tenant).catch((e) => console.error("Start recording error:", e));
+        }
+      } else {
+        console.log("[AI-Desk] Realtime stream no tenant for to=%s from=%s", to, from);
+      }
     }
 
     const defaultInstructions = [
@@ -1256,7 +1268,7 @@ wss.on("connection", (twilioSocket, req) => {
             try {
               args = JSON.parse(repaired);
             } catch (_) {
-              console.error("Tool args JSON parse failed:", parseErr.message, "raw:", raw.slice(0, 200));
+              console.error("[AI-Desk] Realtime tool args parse failed name=%s error=%s raw=%s", name, parseErr.message, raw.slice(0, 200));
               output = JSON.stringify({ success: false, error: "Invalid format. Please ask the caller again for their name, phone, and address, then complete the booking." });
               sendToOpenAI({
                 type: "conversation.item.create",
@@ -1269,8 +1281,9 @@ wss.on("connection", (twilioSocket, req) => {
         }
         try {
         if (name === "book_appointment" && tenant && callId) {
-          console.log("[book_appointment] args from AI:", JSON.stringify(args));
+          console.log("[AI-Desk] Realtime book_appointment callSid=%s tenantId=%s callId=%s", callSid, tenant.id, callId);
           const { booking, crmSynced } = await bookingsService.createBooking(tenant.id, callId, args);
+          console.log("[AI-Desk] Realtime booking done id=%s crmSynced=%s", booking.id, crmSynced);
           const message = crmSynced
             ? "Estimate scheduled. Details synced to Zapier/DripJobs. Say to the caller: You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye."
             : "Estimate scheduled and saved. Say to the caller: You're all set—your estimate is scheduled. You'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.";
@@ -1302,14 +1315,15 @@ wss.on("connection", (twilioSocket, req) => {
           const langName = langNames[lang] || lang;
           output = JSON.stringify({ success: true, language: lang, message: `Switched to ${langName}. Respond in ${langName} from now on and confirm briefly to the caller.` });
         } else {
+          console.log("[AI-Desk] Realtime book_appointment skipped (missing context) hasTenant=%s hasCallId=%s", !!tenant, !!callId);
           output = JSON.stringify({ success: false, error: "Missing context" });
         }
         } catch (err) {
-          console.error("Tool execution error:", err);
+          console.error("[AI-Desk] Realtime tool error name=%s error=%s", name, err.message);
           output = JSON.stringify({ success: false, error: err.message });
         }
       } catch (err) {
-        console.error("Tool execution error:", err);
+        console.error("[AI-Desk] Realtime tool error name=%s error=%s", name, err.message);
         output = JSON.stringify({ success: false, error: err.message });
       }
       if (!output) return;
@@ -1325,7 +1339,7 @@ wss.on("connection", (twilioSocket, req) => {
     }
 
     if (data.type && data.type.includes("error")) {
-      console.error("OpenAI error:", data);
+      console.error("[AI-Desk] OpenAI error type=%s", data.type, data);
     }
   });
 

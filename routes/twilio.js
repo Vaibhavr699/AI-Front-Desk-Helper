@@ -24,21 +24,22 @@ function escapeXml(s) {
 }
 
 router.post("/voice", async (req, res) => {
-  console.log("[voice] POST /twilio/voice", req.body?.CallSid, "From:", req.body?.From, "To:", req.body?.To);
+  const { CallSid, From, To } = req.body || {};
+  const toNumber = To || req.body?.To;
+  const fromNumber = From || req.body?.From;
+  console.log("[AI-Desk] Voice webhook CallSid=%s From=%s To=%s", CallSid, fromNumber, toNumber);
   try {
-    const { CallSid, From, To } = req.body;
-    const toNumber = To || req.body.To;
-    const fromNumber = From || req.body.From;
-
     const tenantByTo = await getTenantByPhone(toNumber);
     const tenantByFrom = await getTenantByPhone(fromNumber);
     const tenant = tenantByTo || tenantByFrom;
     if (!tenant) {
+      console.log("[AI-Desk] Voice webhook no tenant for To=%s From=%s", toNumber, fromNumber);
       sendVoiceError(res, "We're sorry, this number is not configured. Goodbye.");
       return;
     }
     const direction = tenantByFrom ? "outbound" : "inbound";
     await callsService.createCall(tenant.id, CallSid, fromNumber, toNumber, direction);
+    console.log("[AI-Desk] Voice webhook call created CallSid=%s tenantId=%s direction=%s", CallSid, tenant.id, direction);
 
     const wsUrl = (BASE_URL || "")
       .replace("https://", "wss://")
@@ -47,6 +48,7 @@ router.post("/voice", async (req, res) => {
     const testCallFrom = (process.env.TEST_CALL_FROM || "").replace(/\s/g, "");
     if (testCallFrom && fromNumber && fromNumber.replace(/\D/g, "") === testCallFrom.replace(/\D/g, "")) {
       streamUrl += "&turnBased=1";
+      console.log("[AI-Desk] Voice webhook using turn-based stream (TEST_CALL_FROM)");
     }
     const statusCallback = BASE_URL ? `${BASE_URL}/twilio/status` : null;
 

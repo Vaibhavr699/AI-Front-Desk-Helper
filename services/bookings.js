@@ -40,7 +40,9 @@ function normalizeBookingData(data) {
 }
 
 async function createBooking(tenantId, callId, data) {
+  console.log("[AI-Desk] Booking create start tenantId=%s callId=%s raw_keys=%s", tenantId, callId || "(none)", Object.keys(data || {}).join(","));
   const norm = normalizeBookingData(data);
+  console.log("[AI-Desk] Booking normalized name=%s phone=%s address=%s city=%s", norm.contact_name, norm.contact_phone, norm.address || "(none)", norm.city || "(none)");
   let res;
   try {
     res = await db.query(
@@ -64,17 +66,19 @@ async function createBooking(tenantId, callId, data) {
       ]
     );
   } catch (err) {
-    console.error("[bookings] createBooking INSERT failed:", err.message, "code:", err.code, "data:", JSON.stringify(norm));
+    console.error("[AI-Desk] Booking INSERT failed tenantId=%s error=%s code=%s data=%s", tenantId, err.message, err.code, JSON.stringify(norm));
     throw err;
   }
   const booking = res.rows[0];
+  console.log("[AI-Desk] Booking saved id=%s tenantId=%s contact=%s", booking.id, tenantId, norm.contact_phone);
   const tenant = await getTenantById(tenantId);
   let crmSynced = false;
   try {
     const syncResult = await crm.syncBookingToCrm(tenantId, booking);
     crmSynced = !!syncResult.synced;
+    console.log("[AI-Desk] CRM sync bookingId=%s synced=%s", booking.id, syncResult.synced);
   } catch (e) {
-    console.error("CRM sync:", e);
+    console.error("[AI-Desk] CRM sync failed bookingId=%s error=%s", booking.id, e.message);
   }
   if (tenant) {
     crm.sendBookingConfirmationSms(tenant, booking).catch((e) => console.error("SMS:", e));

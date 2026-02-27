@@ -143,9 +143,10 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
               ? JSON.parse(toolCall.function.arguments)
               : toolCall.function.arguments || {};
           } catch (_) {}
+          console.log("[AI-Desk] Turn-based book_appointment callId=%s tenantId=%s args_keys=%s", callId, tenant.id, Object.keys(args).join(","));
           try {
             const { booking, crmSynced } = await bookingsService.createBooking(tenant.id, callId, args);
-            console.log("[turnBased] booking saved:", booking.id, crmSynced ? "CRM synced" : "");
+            console.log("[AI-Desk] Turn-based booking done id=%s crmSynced=%s", booking.id, crmSynced);
             conversationMessages.push(assistantMessage);
             conversationMessages.push({
               role: "tool",
@@ -161,7 +162,7 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
             reply = (followUpMsg && followUpMsg.content && followUpMsg.content.trim()) || "You're all set—your estimate is scheduled. You'll get a confirmation by text. Thank you for calling. Goodbye.";
             conversationMessages.push(followUpMsg || { role: "assistant", content: reply });
           } catch (err) {
-            console.error("Turn-based createBooking error:", err);
+            console.error("[AI-Desk] Turn-based createBooking failed callId=%s error=%s", callId, err.message);
             conversationMessages.push(assistantMessage);
             conversationMessages.push({
               role: "tool",
@@ -176,7 +177,7 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
             reply = (followUp.choices && followUp.choices[0] && followUp.choices[0].message && followUp.choices[0].message.content) || "Sorry, I had trouble saving that. Please try again or call back.";
           }
         } else {
-          if (!tenant || !callId) console.error("[turnBased] book_appointment skipped: missing tenant or callId");
+          if (!tenant || !callId) console.error("[AI-Desk] Turn-based book_appointment skipped tenant=%s callId=%s", !!tenant, !!callId);
           conversationMessages.push(assistantMessage);
           conversationMessages.push({
             role: "tool",
@@ -280,6 +281,7 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
 
     if (data.event === "start") {
       streamSid = data.start && data.start.streamSid;
+      console.log("[AI-Desk] Turn-based stream start callSid=%s from=%s to=%s", callSid, from, to);
       if (callSid && to) {
         tenant = await getTenantByPhone(to);
         if (!tenant && from) tenant = await getTenantByPhone(from);
@@ -287,10 +289,15 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
           const call = await callsService.getCallByTwilioSid(callSid);
           if (call) {
             callId = call.id;
+            console.log("[AI-Desk] Turn-based callId resolved callId=%s tenantId=%s", callId, tenant.id);
             if (tenant.id && callSid) {
               recordingService.startRecording(callSid, tenant).catch((e) => console.error("Start recording error:", e));
             }
+          } else {
+            console.log("[AI-Desk] Turn-based no call row yet for callSid=%s (callId will be null)", callSid);
           }
+        } else {
+          if (!tenant) console.log("[AI-Desk] Turn-based no tenant for to=%s from=%s", to, from);
         }
       }
       setImmediate(() => playWelcome());

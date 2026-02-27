@@ -17,7 +17,7 @@ async function syncBookingToCrm(tenantId, booking) {
   ).then((r) => r.rows[0]);
   const webhookUrl = getCrmWebhookUrl(tenant);
   if (!webhookUrl) {
-    console.warn(`[CRM] No webhook URL for tenant ${tenantId} (${tenant?.name || "?"}). Set CRM Webhook URL in Dashboard → Settings or ZAPIER_WEBHOOK_URL in .env.`);
+    console.warn("[AI-Desk] CRM no webhook URL tenantId=%s tenantName=%s", tenantId, tenant?.name || "?");
     return { synced: false };
   }
 
@@ -57,7 +57,7 @@ async function syncBookingToCrm(tenantId, booking) {
     });
     const ok = resp.ok;
     const body = await resp.text();
-    console.log(`[CRM] booking ${booking.id} → webhook ${resp.status} ${ok ? "OK" : body?.slice(0, 200)}`);
+    console.log("[AI-Desk] CRM webhook sent bookingId=%s status=%s ok=%s", booking.id, resp.status, ok);
     let crmId = null;
     try {
       const j = JSON.parse(body);
@@ -70,7 +70,7 @@ async function syncBookingToCrm(tenantId, booking) {
     );
     return { synced: ok, crm_id: crmId };
   } catch (e) {
-    console.error("CRM sync error:", e);
+    console.error("[AI-Desk] CRM webhook failed bookingId=%s error=%s", booking.id, e.message);
     return { synced: false, error: e.message };
   }
 }

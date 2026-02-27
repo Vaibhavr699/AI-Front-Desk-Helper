@@ -5,8 +5,32 @@ const path = require("path");
 const os = require("os");
 const OpenAI = require("openai").default;
 const { mulawChunksToWav, mp3ToMulaw } = require("../lib/audioUtils");
+const bookingsService = require("../services/bookings");
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+const BOOK_APPOINTMENT_TOOL = {
+  type: "function",
+  function: {
+    name: "book_appointment",
+    description: "Finalize and save the booking. Call this when you have at least: contact name, contact phone, and address OR city. Include EVERY detail the caller gave: contact_name, contact_phone, address, city, scope (interior/exterior/both/rooms), preferred_date, notes (pets, access, etc.). Do not omit any field the caller provided—all fields are saved to the database and sent to CRM.",
+    parameters: {
+      type: "object",
+      properties: {
+        contact_name: { type: "string", description: "Full name" },
+        contact_phone: { type: "string", description: "Phone number" },
+        contact_email: { type: "string", description: "Email if given" },
+        address: { type: "string", description: "Street address" },
+        city: { type: "string", description: "City" },
+        scope: { type: "string", description: "Interior, exterior, both, rooms, etc." },
+        job_type: { type: "string", description: "Residential or commercial" },
+        preferred_date: { type: "string", description: "Preferred date if given" },
+        notes: { type: "string", description: "Any extra notes" },
+      },
+      required: ["contact_phone"],
+    },
+  },
+};
 const SILENCE_MS = 1500;   // Process after this many ms with no new audio
 const MIN_AUDIO_MS = 400;  // Ignore utterances shorter than this
 const SAMPLE_RATE = 8000;
@@ -28,6 +52,8 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
   const { callSid, from, to } = parsed;
   let streamSid = null;
   let tenant = null;
+  let callId = null;
+  const conversationMessages = [];
   const audioBuffer = [];
   let lastChunkAt = 0;
   let silenceTimer = null;
@@ -91,22 +117,81 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
         ? tenant.welcome_message
         : "Thanks for calling. What can we help you with today? Would you like to schedule a free estimate?";
 
-      const messages = [
-        { role: "system", content: `${instructions}\n\nIf this is the first exchange, you may say: "${welcome}" Otherwise respond naturally to the caller. Keep replies short (1-3 sentences) for phone.` },
-        { role: "user", content: text },
-      ];
+      if (conversationMessages.length === 0) {
+        conversationMessages.push({
+          role: "system",
+          content: `${instructions}\n\nCollect: (1) full name, (2) phone number, (3) address or city, (4) scope (interior/exterior/both/rooms), (5) preferred date if given, (6) any notes. When you have at least name, phone, and address OR city, call book_appointment with ALL details the caller gave. Keep replies short (1-3 sentences) for phone.`,
+        });
+      }
+      conversationMessages.push({ role: "user", content: text });
 
       const completion = await openai.chat.completions.create({
         model: "gpt-4o-mini",
-        messages,
-        max_tokens: 150,
+        messages: conversationMessages,
+        tools: [BOOK_APPOINTMENT_TOOL],
+        max_tokens: 300,
       });
-      const reply = (completion.choices && completion.choices[0] && completion.choices[0].message && completion.choices[0].message.content)
-        ? completion.choices[0].message.content.trim()
-        : "I didn't catch that. Could you repeat?";
+      let assistantMessage = completion.choices && completion.choices[0] && completion.choices[0].message;
+      let reply = assistantMessage && assistantMessage.content ? assistantMessage.content.trim() : "";
+
+      if (assistantMessage && assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
+        const toolCall = assistantMessage.tool_calls.find((tc) => tc.function && tc.function.name === "book_appointment");
+        if (toolCall && tenant && callId) {
+          let args = {};
+          try {
+            args = typeof toolCall.function.arguments === "string"
+              ? JSON.parse(toolCall.function.arguments)
+              : toolCall.function.arguments || {};
+          } catch (_) {}
+          try {
+            const { booking, crmSynced } = await bookingsService.createBooking(tenant.id, callId, args);
+            console.log("[turnBased] booking saved:", booking.id, crmSynced ? "CRM synced" : "");
+            conversationMessages.push(assistantMessage);
+            conversationMessages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: JSON.stringify({ success: true, message: "Booking saved. Confirm to the caller and say goodbye." }),
+            });
+            const followUp = await openai.chat.completions.create({
+              model: "gpt-4o-mini",
+              messages: conversationMessages,
+              max_tokens: 150,
+            });
+            const followUpMsg = followUp.choices && followUp.choices[0] && followUp.choices[0].message;
+            reply = (followUpMsg && followUpMsg.content && followUpMsg.content.trim()) || "You're all set—your estimate is scheduled. You'll get a confirmation by text. Thank you for calling. Goodbye.";
+            conversationMessages.push(followUpMsg || { role: "assistant", content: reply });
+          } catch (err) {
+            console.error("Turn-based createBooking error:", err);
+            conversationMessages.push(assistantMessage);
+            conversationMessages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: JSON.stringify({ success: false, error: err.message }),
+            });
+            const followUp = await openai.chat.completions.create({
+              model: "gpt-4o-mini",
+              messages: conversationMessages,
+              max_tokens: 100,
+            });
+            reply = (followUp.choices && followUp.choices[0] && followUp.choices[0].message && followUp.choices[0].message.content) || "Sorry, I had trouble saving that. Please try again or call back.";
+          }
+        } else {
+          if (!tenant || !callId) console.error("[turnBased] book_appointment skipped: missing tenant or callId");
+          conversationMessages.push(assistantMessage);
+          conversationMessages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({ success: false, error: "Missing context" }),
+          });
+          reply = reply || "I'm sorry, I couldn't complete that. Please try again.";
+        }
+      }
+
       if (!reply) {
-        isProcessing = false;
-        return;
+        reply = "I didn't catch that. Could you repeat?";
+      }
+      if (assistantMessage && !assistantMessage.tool_calls) {
+        conversationMessages.push(assistantMessage);
       }
 
       const ttsModel = process.env.OPENAI_TTS_MODEL || "tts-1-hd";
@@ -201,6 +286,7 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
         if (tenant && callSid) {
           const call = await callsService.getCallByTwilioSid(callSid);
           if (call) {
+            callId = call.id;
             if (tenant.id && callSid) {
               recordingService.startRecording(callSid, tenant).catch((e) => console.error("Start recording error:", e));
             }

@@ -7,21 +7,27 @@ const { client: twilioClient } = require("../lib/twilio");
 const BASE_URL = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
 
 /**
- * Place a test call FROM +1 716 413 3735 TO +1 402 773 8795 (AI number).
- * The AI number (402) "picks up" with the turn-based flow (Whisper → LLM → TTS).
+ * Test call script – two modes:
  *
- * Default (override with env):
- *   From (caller): +1 716 413 3735
- *   To (AI number): +1 402 773 8795
+ * 1) RING MODE (recommended for hearing the AI): AI number calls you.
+ *    Set TEST_RING_NUMBER to the phone that should RING (e.g. your mobile).
+ *    Your phone rings, you answer, you hear the AI.
  *
- * Turn-based mode is used when the caller (From) matches TEST_CALL_FROM.
+ * 2) 716 → 402 MODE: Call from 716 to 402 (for SIP/trunk testing).
+ *    No TEST_RING_NUMBER: script places call From 716 To 402. You need the 716
+ *    leg to answer (e.g. SIP) to hear anything.
  *
- * Usage:
+ * Env:
+ *   TEST_CALL_FROM  – caller number in 716→402 mode (default +17164133735)
+ *   TEST_CALL_TO    – AI number (default +14027738795). In ring mode this is "From".
+ *   TEST_RING_NUMBER – if set, AI number calls this number; that phone rings and you hear the AI.
+ *
+ * Examples:
+ *   # Your mobile rings, you answer and hear the AI:
+ *   TEST_RING_NUMBER=+15551234567 node scripts/test-call-716-to-402.js
+ *
+ *   # Classic 716 → 402 (SIP leg must answer to hear):
  *   node scripts/test-call-716-to-402.js
- *   TEST_CALL_FROM=+17164133735 TEST_CALL_TO=+14027738795 node scripts/test-call-716-to-402.js
- *
- * Requires: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, BASE_URL, OPENAI_API_KEY.
- * For TTS playback you need ffmpeg (mp3 → 8kHz mulaw).
  */
 async function main() {
   if (!twilioClient) {
@@ -29,25 +35,46 @@ async function main() {
     process.exit(1);
   }
 
-  const fromNumber = (process.env.TEST_CALL_FROM || "+17164133735").replace(/\s/g, "");
-  const toNumber = (process.env.TEST_CALL_TO || "+14027738795").replace(/\s/g, "");
+  const ringNumber = (process.env.TEST_RING_NUMBER || "").replace(/\s/g, "");
+  const aiNumber = (process.env.TEST_CALL_TO || "+14027738795").replace(/\s/g, "");
+  const caller716 = (process.env.TEST_CALL_FROM || "+17164133735").replace(/\s/g, "");
 
   const voiceUrl = BASE_URL.replace(/\/$/, "") + "/twilio/voice";
-  console.log("Placing call (716 → 402, turn-based AI):");
-  console.log("  From (caller):", fromNumber);
-  console.log("  To (AI number):", toNumber);
+
+  if (ringNumber) {
+    console.log("Ring mode: AI number will call you. Answer to hear the AI.");
+    console.log("  From (AI number):", aiNumber);
+    console.log("  To (will ring):  ", ringNumber);
+    console.log("  Webhook URL:", voiceUrl);
+
+    const call = await twilioClient.calls.create({
+      from: aiNumber,
+      to: ringNumber,
+      url: voiceUrl,
+      statusCallback: BASE_URL ? `${BASE_URL.replace(/\/$/, "")}/twilio/status` : undefined,
+      statusCallbackEvent: ["completed"],
+    });
+
+    console.log("\nCall created. SID:", call.sid);
+    console.log("Your phone (", ringNumber, ") should ring. Answer to talk to the AI.");
+    return;
+  }
+
+  console.log("716 → 402 mode: call from 716 to AI number (SIP/trunk must answer 716 to hear).");
+  console.log("  From (caller):", caller716);
+  console.log("  To (AI number):", aiNumber);
   console.log("  Webhook URL:", voiceUrl);
 
   const call = await twilioClient.calls.create({
-    from: fromNumber,
-    to: toNumber,
+    from: caller716,
+    to: aiNumber,
     url: voiceUrl,
     statusCallback: BASE_URL ? `${BASE_URL.replace(/\/$/, "")}/twilio/status` : undefined,
     statusCallbackEvent: ["completed"],
   });
 
   console.log("\nCall created. SID:", call.sid);
-  console.log("The AI number (402) picks up with the turn-based flow (Whisper → LLM → TTS).");
+  console.log("To hear the AI when testing, run with TEST_RING_NUMBER=your_mobile");
 }
 
 main().catch((e) => {

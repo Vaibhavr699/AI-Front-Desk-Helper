@@ -24,6 +24,7 @@ function escapeXml(s) {
 }
 
 router.post("/voice", async (req, res) => {
+  console.log("[voice] POST /twilio/voice", req.body?.CallSid, "From:", req.body?.From, "To:", req.body?.To);
   try {
     const { CallSid, From, To } = req.body;
     const toNumber = To || req.body.To;

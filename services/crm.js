@@ -54,6 +54,7 @@ async function syncBookingToCrm(tenantId, booking) {
     });
     const ok = resp.ok;
     const body = await resp.text();
+    console.log(`[CRM] booking ${booking.id} → webhook ${resp.status} ${ok ? "OK" : body?.slice(0, 200)}`);
     let crmId = null;
     try {
       const j = JSON.parse(body);

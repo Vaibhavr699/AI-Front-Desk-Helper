@@ -1400,7 +1400,7 @@ wss.on("connection", (twilioSocket, req) => {
         type: "response.create",
         response: {
           modalities: ["audio", "text"],
-          instructions: `Say exactly (warm and confident): "${welcome}" Then stop and wait.`,
+          instructions: `Say exactly (warm, clear, and confident): "${welcome}" Speak at a moderate pace. Then stop and wait.`,
         },
       });
       return;

@@ -109,9 +109,11 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
         return;
       }
 
+      const ttsModel = process.env.OPENAI_TTS_MODEL || "tts-1-hd";
+      const ttsVoice = process.env.OPENAI_TTS_VOICE || "nova";
       const speech = await openai.audio.speech.create({
-        model: "tts-1",
-        voice: "alloy",
+        model: ttsModel,
+        voice: ttsVoice,
         input: reply,
       });
       const mp3Buffer = Buffer.from(await speech.arrayBuffer());
@@ -131,9 +133,11 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
     } catch (err) {
       console.error("Turn-based voice error:", err);
       try {
+        const ttsModel = process.env.OPENAI_TTS_MODEL || "tts-1-hd";
+        const ttsVoice = process.env.OPENAI_TTS_VOICE || "nova";
         const fallback = await openai.audio.speech.create({
-          model: "tts-1",
-          voice: "alloy",
+          model: ttsModel,
+          voice: ttsVoice,
           input: "Sorry, I had a small hiccup. Please try again.",
         });
         const mp3Buffer = Buffer.from(await fallback.arrayBuffer());
@@ -159,9 +163,11 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
       ? tenant.welcome_message.trim()
       : "Thanks for calling. What can we help you with today? Would you like to schedule a free estimate?";
     try {
+      const ttsModel = process.env.OPENAI_TTS_MODEL || "tts-1-hd";
+      const ttsVoice = process.env.OPENAI_TTS_VOICE || "nova";
       const speech = await openai.audio.speech.create({
-        model: "tts-1",
-        voice: "alloy",
+        model: ttsModel,
+        voice: ttsVoice,
         input: welcome,
       });
       const mp3Buffer = Buffer.from(await speech.arrayBuffer());

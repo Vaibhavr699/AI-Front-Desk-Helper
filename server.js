@@ -506,6 +506,7 @@ async function processSmsConversation(phone, incomingText) {
     console.error("Zapier webhook failed:", err.message);
      replyText = `${replyText} I couldn't complete booking yet. Can I offer another time?`;
   }
+      }
 
       replyText = `${replyText} That time is no longer available. Please share another preferred time.`;
       thread.needsFollowUpAt = Date.now() + 30 * 60 * 1000;

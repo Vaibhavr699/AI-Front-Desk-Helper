@@ -1194,11 +1194,13 @@ wss.on("connection", (twilioSocket, req) => {
 
     const defaultInstructions = [
       "You are a professional receptionist. Be warm and helpful.",
+      "Default language is English. If the caller asks to speak in another language (e.g. Spanish, French, Hindi), immediately call the change_language tool with the ISO 639-1 code (es, fr, hi, zh, ar, etc.), then confirm in that language and continue the entire conversation in that language.",
       "Ask one question at a time. Wait for the caller to finish speaking before you reply—do not interrupt.",
-      "Collect: full name, phone number, and address or city. Offer a free on-site estimate.",
-      "When you have name, phone, and at least address OR city: immediately call book_appointment with those details. Then say clearly: 'You are all set—your estimate is scheduled. We will confirm by text.' Do not ask more questions after you have enough to book.",
+      "Collect these details before booking: (1) full name, (2) phone number, (3) address or city, (4) what they need—interior, exterior, both, or rooms (scope), (5) preferred date if they give one, (6) any extra notes (pets, access, etc.). Offer a free on-site estimate.",
+      "When you have at least name, phone, and address OR city: call book_appointment with ALL the details the caller gave—include contact_name, contact_phone, address or city, scope, preferred_date, and notes. Do not omit fields they provided.",
+      "Right after calling book_appointment successfully, say clearly and then stop: 'You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.' Then allow the call to end naturally.",
       "Do NOT say you are transferring or connecting to someone unless you actually need a live agent. Only use request_human_transfer for: commercial job, project over $10k, caller clearly frustrated or angry, or VIP/repeat customer. For normal residential estimates, always complete the booking with book_appointment.",
-      "Repeat back key details (name, phone, address) before finalizing so the caller can correct you if needed.",
+      "Repeat back key details (name, phone, address, scope) before finalizing so the caller can correct you if needed.",
     ].join(" ");
     const instructions = (tenant && tenant.instructions)
       ? tenant.instructions
@@ -1212,13 +1214,21 @@ wss.on("connection", (twilioSocket, req) => {
         input_audio_format: "g711_ulaw",
         output_audio_format: "g711_ulaw",
         voice,
-        instructions: `${instructions}\n\nSpeak clearly at a moderate pace. Let the caller finish before you respond.`,
+        instructions: `${instructions}\n\nSpeak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English.`,
         tools: REALTIME_TOOLS,
         turn_detection: {
           type: "server_vad",
           threshold: 0.5,
           prefix_padding_ms: 300,
           silence_duration_ms: silenceMs,
+        },
+        audio: {
+          input: {
+            transcription: {
+              model: "gpt-4o-transcribe",
+              language: "en",
+            },
+          },
         },
       },
     });
@@ -1267,10 +1277,11 @@ wss.on("connection", (twilioSocket, req) => {
         }
         try {
         if (name === "book_appointment" && tenant && callId) {
+          console.log("[book_appointment] args from AI:", JSON.stringify(args));
           const { booking, crmSynced } = await bookingsService.createBooking(tenant.id, callId, args);
           const message = crmSynced
-            ? "Estimate scheduled. Details synced to Zapier/DripJobs. Tell the caller: You're all set—your estimate is scheduled and we've sent your details to our team. You'll get a confirmation by text."
-            : "Estimate scheduled and saved. Tell the caller: You're all set—your estimate is scheduled. You'll get a confirmation by text.";
+            ? "Estimate scheduled. Details synced to Zapier/DripJobs. Say to the caller: You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye."
+            : "Estimate scheduled and saved. Say to the caller: You're all set—your estimate is scheduled. You'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.";
           output = JSON.stringify({ success: true, message });
         } else if (name === "request_human_transfer" && callSid && tenant) {
           const result = await transferService.initiateTransfer(
@@ -1280,6 +1291,24 @@ wss.on("connection", (twilioSocket, req) => {
             args.summary
           );
           output = JSON.stringify(result);
+        } else if (name === "change_language" && args.language) {
+          const lang = String(args.language).trim().toLowerCase().slice(0, 2) || "en";
+          sendToOpenAI({
+            type: "session.update",
+            session: {
+              audio: {
+                input: {
+                  transcription: {
+                    model: "gpt-4o-transcribe",
+                    language: lang,
+                  },
+                },
+              },
+            },
+          });
+          const langNames = { en: "English", es: "Spanish", fr: "French", hi: "Hindi", zh: "Chinese", ar: "Arabic" };
+          const langName = langNames[lang] || lang;
+          output = JSON.stringify({ success: true, language: lang, message: `Switched to ${langName}. Respond in ${langName} from now on and confirm briefly to the caller.` });
         } else {
           output = JSON.stringify({ success: false, error: "Missing context" });
         }

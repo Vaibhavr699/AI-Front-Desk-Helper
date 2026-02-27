@@ -32,6 +32,7 @@ async function main() {
     console.log("Address:", b.address || "(none)");
     console.log("Scope:", b.scope || "(none)");
     console.log("Preferred date:", b.preferred_date || "(none)");
+    console.log("Notes:", b.notes || "(none)");
     console.log("Created at:", b.created_at);
     console.log("CRM synced at:", b.crm_synced_at || "(not synced)");
     console.log("CRM webhook set:", b.crm_webhook_url ? "Yes" : "No (set in Settings or use ZAPIER_WEBHOOK_URL)");

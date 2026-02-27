@@ -18,9 +18,12 @@ const BASE_URL = process.env.BASE_URL || `http://localhost:${process.env.PORT ||
  *    leg to answer (e.g. SIP) to hear anything.
  *
  * Env:
+ *   BASE_URL        – backend URL (e.g. https://ai-front-desk-backend.onrender.com). Twilio uses this for /twilio/voice.
  *   TEST_CALL_FROM  – caller number in 716→402 mode (default +17164133735)
  *   TEST_CALL_TO    – AI number (default +14027738795). In ring mode this is "From".
  *   TEST_RING_NUMBER – if set, AI number calls this number; that phone rings and you hear the AI.
+ *
+ * Bookings made during the call are synced to Zapier/DripJobs by the backend (tenant CRM Webhook URL or ZAPIER_WEBHOOK_URL).
  *
  * Examples:
  *   # Your mobile rings, you answer and hear the AI:
@@ -57,6 +60,8 @@ async function main() {
 
     console.log("\nCall created. SID:", call.sid);
     console.log("Your phone (", ringNumber, ") should ring. Answer to talk to the AI.");
+    console.log("");
+    console.log("For bookings/recorded data to sync to Zapier/CRM: the BACKEND at", voiceUrl.replace("/twilio/voice", ""), "must have ZAPIER_WEBHOOK_URL set (or the tenant's CRM Webhook URL in Settings). Set it in Render → Environment if BASE_URL is Render.");
     return;
   }
 
@@ -75,6 +80,8 @@ async function main() {
 
   console.log("\nCall created. SID:", call.sid);
   console.log("To hear the AI when testing, run with TEST_RING_NUMBER=your_mobile");
+  console.log("");
+  console.log("For bookings/recorded data to sync to Zapier/CRM: the BACKEND at", voiceUrl.replace("/twilio/voice", ""), "must have ZAPIER_WEBHOOK_URL set (or the tenant's CRM Webhook URL in Settings).");
 }
 
 main().catch((e) => {

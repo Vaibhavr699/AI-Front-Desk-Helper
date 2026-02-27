@@ -16,7 +16,10 @@ async function syncBookingToCrm(tenantId, booking) {
     [tenantId]
   ).then((r) => r.rows[0]);
   const webhookUrl = getCrmWebhookUrl(tenant);
-  if (!webhookUrl) return { synced: false };
+  if (!webhookUrl) {
+    console.warn(`[CRM] No webhook URL for tenant ${tenantId} (${tenant?.name || "?"}). Set CRM Webhook URL in Dashboard → Settings or ZAPIER_WEBHOOK_URL in .env.`);
+    return { synced: false };
+  }
 
   const name = booking.contact_name && booking.contact_name.trim();
   const nameParts = name ? name.split(/\s+/).filter(Boolean) : [];

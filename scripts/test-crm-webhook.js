@@ -11,8 +11,7 @@ const crm = require("../services/crm");
  *
  * Prerequisites:
  *   - DATABASE_URL (or your DB env) set in .env
- *   - Either set a tenant's crm_webhook_url in the DB (e.g. via Settings or SQL), or set
- *     ZAPIER_WEBHOOK_URL in .env to your Zapier "Catch Hook" URL
+ *   - ZAPIER_WEBHOOK_URL in .env (used first for testing), or a tenant's crm_webhook_url in Settings
  *   - At least one tenant in the DB
  *
  * Usage:
@@ -42,15 +41,15 @@ async function main() {
     process.exit(1);
   }
 
-  const webhookUrl = tenant.crm_webhook_url || process.env.ZAPIER_WEBHOOK_URL;
+  const webhookUrl = process.env.ZAPIER_WEBHOOK_URL || tenant.crm_webhook_url;
   if (!webhookUrl) {
     console.error(
-      "No webhook URL. Set a tenant's CRM Webhook URL in Settings, or set ZAPIER_WEBHOOK_URL in .env to your Zapier Catch Hook URL."
+      "No webhook URL. Set ZAPIER_WEBHOOK_URL in .env for testing, or set a tenant's CRM Webhook URL in Settings."
     );
     process.exit(1);
   }
-
   console.log("Tenant:", tenant.company_name || tenant.name, "(" + tenant.id + ")");
+  if (process.env.ZAPIER_WEBHOOK_URL) console.log("Using ZAPIER_WEBHOOK_URL from .env");
   console.log("Webhook:", webhookUrl);
   console.log("");
 

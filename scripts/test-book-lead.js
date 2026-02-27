@@ -12,7 +12,7 @@ const crm = require("../services/crm");
  *
  * Prerequisites:
  *   - DATABASE_URL (or your DB env) in .env
- *   - At least one tenant with CRM Webhook URL set (Settings), or ZAPIER_WEBHOOK_URL in .env
+ *   - ZAPIER_WEBHOOK_URL in .env (used first for testing), or a tenant CRM Webhook URL in Settings
  *
  * Usage:
  *   node scripts/test-book-lead.js
@@ -44,20 +44,20 @@ async function main() {
     process.exit(1);
   }
 
-  const webhookUrl = tenant.crm_webhook_url || process.env.ZAPIER_WEBHOOK_URL;
+  const webhookUrl = process.env.ZAPIER_WEBHOOK_URL || tenant.crm_webhook_url;
   if (!webhookUrl) {
     console.error(
-      "No webhook URL. Set a tenant's CRM Webhook URL in Settings, or set ZAPIER_WEBHOOK_URL in .env."
+      "No webhook URL. Set ZAPIER_WEBHOOK_URL in .env for testing, or set a tenant's CRM Webhook URL in Settings."
     );
     process.exit(1);
   }
-
   const scope = "Exterior paint, 3-bed home";
   const jobType = "residential";
   const preferredDate = null;
   const notes = "Test lead from scripts/test-book-lead.js";
 
   console.log("--- Test Book Lead ---");
+  if (process.env.ZAPIER_WEBHOOK_URL) console.log("Using ZAPIER_WEBHOOK_URL from .env");
   console.log("Tenant:", tenant.company_name || tenant.name);
   console.log("Webhook:", webhookUrl);
   console.log("Lead data:", { contactName, contactPhone, contactEmail, address, city });

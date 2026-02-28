@@ -37,6 +37,7 @@ const TWILIO_PHONE_NUMBER = String(process.env.TWILIO_PHONE_NUMBER || "").trim()
 const SMS_FOLLOW_UP_DELAY_MINUTES = Number(process.env.SMS_FOLLOW_UP_DELAY_MINUTES || 30);
 const SMS_FOLLOW_UP_CHECK_INTERVAL_MS = Number(process.env.SMS_FOLLOW_UP_CHECK_INTERVAL_MS || 5 * 60 * 1000);
 const smsThreads = new Map();
+let callsTableHasTranscriptColumn = true;
 
 const REQUIRED_ENV_VARS = ["OPENAI_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"];
 
@@ -91,7 +92,6 @@ const TENANTS = {
 const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
-app.use(express.static("public"));
 
 app.get("/", (_req, res) => {
   res.status(200).send("AI front desk backend is running");
@@ -277,6 +277,55 @@ async function safePoolQuery(query, values) {
   try {
     await pool.query(query, values);
   } catch (error) {
+    console.error("DB query failed:", error.message);
+  }
+}
+
+
+async function safeUpdateCallSummary(callId, options = {}) {
+  if (!pool || !callId) return;
+
+  const status = Object.prototype.hasOwnProperty.call(options, "status") ? options.status : undefined;
+  const transcript = typeof options.transcript === "string" ? options.transcript : "";
+  const markEnded = Boolean(options.markEnded);
+
+  async function runUpdate(includeTranscriptColumn) {
+    const setParts = [];
+    const values = [callId];
+
+    if (markEnded) {
+      setParts.push("ended_at = now()");
+    }
+
+    if (typeof status === "string") {
+      values.push(status);
+      setParts.push(`status = $${values.length}`);
+    }
+
+    if (includeTranscriptColumn) {
+      values.push(transcript);
+      setParts.push(`transcript = $${values.length}`);
+    }
+
+    setParts.push("duration_minutes = EXTRACT(EPOCH FROM (now() - started_at)) / 60");
+
+    const query = `UPDATE calls
+         SET ${setParts.join(",\n             ")}
+         WHERE id = $1`;
+
+    await pool.query(query, values);
+  }
+
+  try {
+    await runUpdate(callsTableHasTranscriptColumn);
+  } catch (error) {
+    if (callsTableHasTranscriptColumn && error.code === "42703" && /transcript/i.test(error.message)) {
+      callsTableHasTranscriptColumn = false;
+      console.warn("calls.transcript column not found; continuing without transcript persistence.");
+      await runUpdate(false);
+      return;
+    }
+
     console.error("DB query failed:", error.message);
   }
 }
@@ -487,27 +536,10 @@ async function processSmsConversation(phone, incomingText) {
         thread.bookedEventId = booked.eventId || "";
         thread.needsFollowUpAt = Date.now() + 24 * 60 * 60 * 1000;
         replyText = `${replyText} ✅ You are booked for ${ai.appointment_date} at ${ai.appointment_time}.`;
-        try {
-    await fetch("https://hooks.zapier.com/hooks/catch/26590795/u05xhpd/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        full_name: thread.leadCapture.full_name || "",
-        phone: thread.phone,
-        email: thread.leadCapture.email || "",
-        address: thread.leadCapture.address || "",
-        project_type: thread.leadCapture.project_type || "",
-        project_details: thread.leadCapture.project_details || "",
-        appointment_date: ai.appointment_date,
-        appointment_time: ai.appointment_time
-      })
-    });
-  } catch (err) {
-    console.error("Zapier webhook failed:", err.message);
-     replyText = `${replyText} I couldn't complete booking yet. Can I offer another time?`;
-  }
+      } else {
+        replyText = `${replyText} I couldn't complete booking yet. Can I offer another time?`;
       }
-
+    } else {
       replyText = `${replyText} That time is no longer available. Please share another preferred time.`;
       thread.needsFollowUpAt = Date.now() + 30 * 60 * 1000;
     }
@@ -861,48 +893,31 @@ registerTwilioVoiceRoutes(["/twilio/voice", "/twilio/voice/"], false);
 registerTwilioVoiceRoutes(["/twilio/voice/:tenantId", "/twilio/voice/:tenantId/"], true);
 
 app.post("/twilio-missed-call", async (req, res) => {
-  const callStatus = String(req.body?.CallStatus || "").toLowerCase();
-  const from = normalizePhone(req.body?.From || "");
-  const answeredBy = String(req.body?.AnsweredBy || "").toLowerCase();
+  const from = normalizePhone(req.body?.From || req.body?.from);
+  const callStatus = String(req.body?.CallStatus || req.body?.call_status || "").toLowerCase();
 
   if (!from) {
-    return res.status(400).json({ ok: false, reason: "missing_from" });
+    res.status(400).json({ ok: false, reason: "missing_from" });
+    return;
   }
 
-  console.log("Call status event:", callStatus, "From:", from);
-
-  /*
-    We send SMS if:
-    - Call was completed BUT lasted very short (hang up)
-    - no-answer
-    - busy
-    - failed
-    - canceled
-
-    We DO NOT send if:
-    - Human answered and conversation happened
-  */
-
-  const isMissed =
-    ["no-answer", "busy", "failed", "canceled", "cancelled"].includes(callStatus);
-
-  const isCompleted = callStatus === "completed";
-
-  // If Twilio detected machine pickup, skip text
-  if (answeredBy && answeredBy.includes("machine")) {
-    return res.status(200).json({ ok: true, skipped: "machine_answered" });
+  const isMissed = ["no-answer", "busy", "failed", "canceled", "cancelled"].includes(callStatus);
+  if (!isMissed) {
+    res.status(200).json({ ok: true, skipped: true, reason: "not_missed_call" });
+    return;
   }
 
-  if (isMissed || isCompleted) {
-    const autoText =
-      "Sorry we missed you — this is Gladiators Painting. I can help with a fast quote and get your appointment booked. What kind of project are you planning?";
+  const thread = getOrCreateSmsThread(from);
+  const autoText = "Sorry we missed your call — this is Gladiators Painting. I can help with a fast quote and get your appointment booked. What kind of project are you planning?";
+  const sent = await sendTwilioSms(from, autoText);
 
-    const sent = await sendTwilioSms(from, autoText);
-
-    return res.status(200).json({ ok: true, sent: sent.ok });
+  if (sent.ok) {
+    thread.history.push({ role: "assistant", text: autoText, at: new Date().toISOString() });
+    thread.lastOutboundAt = Date.now();
+    thread.needsFollowUpAt = Date.now() + SMS_FOLLOW_UP_DELAY_MINUTES * 60 * 1000;
   }
 
-  res.status(200).json({ ok: true, skipped: true });
+  res.status(200).json({ ok: true, sent: sent.ok });
 });
 
 app.post("/twilio-sms", async (req, res) => {
@@ -920,21 +935,6 @@ app.post("/twilio-sms", async (req, res) => {
   } catch (error) {
     console.error("Twilio SMS webhook error:", error.message);
     res.type("text/xml").status(200).send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Thanks — we received your message and will text you shortly.</Message></Response>`);
-  }
-});
-app.post("/website-chat", async (req, res) => {
-  const message = String(req.body?.message || "").trim();
-
-  if (!message) {
-    return res.status(400).json({ reply: "Message required" });
-  }
-
-  try {
-    const reply = await processSmsConversation("website-user", message);
-    res.json({ reply });
-  } catch (err) {
-    console.error("Website chat error:", err.message);
-    res.json({ reply: "Sorry, something went wrong. Please try again." });
   }
 });
 
@@ -1164,7 +1164,7 @@ wss.on("connection", (twilioSocket, req) => {
         return;
       }
 
-      if (msg.type === "response.output_audio.delta" && msg.delta) {
+      if ((msg.type === "response.audio.delta" || msg.type === "response.output_audio.delta") && msg.delta) {
         sendAudioToTwilio(msg.delta);
         return;
       }
@@ -1217,8 +1217,7 @@ wss.on("connection", (twilioSocket, req) => {
           sendToOpenAI({
             type: "response.create",
             response: {
-              modalities: ["audio", "text"],
-              audio: { output: { format: "g711_ulaw" } }
+              modalities: ["audio", "text"]
             }
           });
         }
@@ -1236,7 +1235,6 @@ wss.on("connection", (twilioSocket, req) => {
             type: "response.create",
             response: {
               modalities: ["audio", "text"],
-              audio: { output: { format: "g711_ulaw" } },
               instructions:
                 "Speak only English. Be upbeat, warm, and personable. Keep the conversation natural (not robotic), and focus on getting the caller booked with a confirmed appointment date/time. Do not repeat the greeting or thank-you line. Continue from the caller's last response after a brief pause and ask a helpful next question."
             }
@@ -1252,13 +1250,7 @@ wss.on("connection", (twilioSocket, req) => {
           await attemptTransfer(callSid, tenant);
         }
 
-        await safePoolQuery(
-          `UPDATE calls
-           SET transcript = $2,
-               duration_minutes = EXTRACT(EPOCH FROM (now() - started_at)) / 60
-           WHERE id = $1`,
-          [callId, transcript]
-        );
+        await safeUpdateCallSummary(callId, { transcript });
         return;
       }
 
@@ -1331,15 +1323,11 @@ wss.on("connection", (twilioSocket, req) => {
         openaiSocket.close();
       }
 
-      await safePoolQuery(
-        `UPDATE calls
-         SET ended_at = now(),
-             status = $2,
-             transcript = $3,
-             duration_minutes = EXTRACT(EPOCH FROM (now() - started_at)) / 60
-         WHERE id = $1`,
-        [callId, transferAttempted ? "transferred" : "completed", transcript]
-      );
+      await safeUpdateCallSummary(callId, {
+        status: transferAttempted ? "transferred" : "completed",
+        transcript,
+        markEnded: true
+      });
     }
   });
 

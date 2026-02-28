@@ -1164,7 +1164,7 @@ wss.on("connection", (twilioSocket, req) => {
         return;
       }
 
-      if ((msg.type === "response.audio.delta" || msg.type === "response.output_audio.delta") && msg.delta) {
+      if (msg.type === "response.output_audio.delta" && msg.delta) {
         sendAudioToTwilio(msg.delta);
         return;
       }

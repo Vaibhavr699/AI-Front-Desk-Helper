@@ -577,16 +577,25 @@ async function processSmsConversation(phone, incomingText) {
 }
 async function processFacebookConversation(senderId, messageText) {
   const threadKey = `fb-${senderId}`;
-
-  // First-time greeting detection
   const thread = getOrCreateSmsThread(threadKey);
 
-if (!thread.greeted) {
-  thread.greeted = true;
-  return "👋 Hi! Thanks for messaging Gladiators Painting! Want a fast, free estimate? Tap below to get started.";
-}
+  thread.lastInteractionAt = Date.now();
 
-  return await processSmsConversation(threadKey, messageText);
+  if (!thread.greeted) {
+    thread.greeted = true;
+    return "👋 Hi! Thanks for messaging Gladiators Painting! Want a fast, free estimate? Tap below to get started.";
+  }
+
+  // Send directly to AI (NOT SMS fallback)
+  const replyText = await processConversationWithAI(threadKey, messageText);
+
+  thread.history.push({
+    role: "assistant",
+    text: replyText,
+    at: new Date().toISOString()
+  });
+
+  return replyText;
 }
 async function sendFacebookMessage(recipientId, messageText, quickReplies = []) {
   const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;

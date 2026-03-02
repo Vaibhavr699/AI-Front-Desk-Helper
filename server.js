@@ -10,7 +10,7 @@ const fetch = require("node-fetch");
 const { Pool } = require("pg");
 const calendar = require("./calendar");
 
-async function sendTypingIndicator(recipientId, action = "typing_on") {
+async function sendTypingIndicator (recipientId, action = "typing_on") {
   const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
   if (!PAGE_ACCESS_TOKEN) return;
 

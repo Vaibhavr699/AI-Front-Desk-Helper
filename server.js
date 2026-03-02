@@ -637,6 +637,9 @@ app.get("/setup-facebook-menu", async (req, res) => {
   }
 
   const menuData = {
+    get_started: {
+      payload: "GET_STARTED"
+    },
     persistent_menu: [
       {
         locale: "default",

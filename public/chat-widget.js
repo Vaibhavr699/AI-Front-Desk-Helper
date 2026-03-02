@@ -80,8 +80,13 @@
       body: JSON.stringify({ message: text }),
     });
 
-    const data = await response.json();
-    addMessage(data.reply, false);
+   if (!response.ok) {
+  addMessage("Sorry, something went wrong. Please try again.", false);
+  return;
+}
+
+const data = await response.json();
+addMessage(data.reply || "No response from server.", false);
   }
 
   button.addEventListener("click", sendMessage);

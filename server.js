@@ -675,23 +675,6 @@ app.get("/setup-facebook-menu", async (req, res) => {
       }
     );
 
-    async function sendTypingIndicator(recipientId, action = "typing_on") {
-  const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
-  if (!PAGE_ACCESS_TOKEN) return;
-
-  await fetch(
-    `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        recipient: { id: recipientId },
-        sender_action: action
-      })
-    }
-  );
-}
-
     const result = await response.json();
     res.json(result);
   } catch (error) {

@@ -1578,8 +1578,6 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-setupFacebookPersistentMenu();
-
 server.listen(PORT, () => {
   console.log(`AI front desk backend listening on port ${PORT}`);
 });

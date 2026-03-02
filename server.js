@@ -1350,6 +1350,26 @@ setInterval(() => {
   });
 }, Math.max(60000, SMS_FOLLOW_UP_CHECK_INTERVAL_MS));
 
+app.post("/website-chat", async (req, res) => {
+  const message = String(req.body?.message || "").trim();
+
+  if (!message) {
+    res.status(400).json({ reply: "Missing message." });
+    return;
+  }
+
+  try {
+    // Reuse SMS AI engine for web chat
+    const fakePhone = `web-${crypto.randomUUID()}`;
+    const reply = await processSmsConversation(fakePhone, message);
+
+    res.json({ reply });
+  } catch (error) {
+    console.error("Website chat error:", error.message);
+    res.status(500).json({ reply: "Something went wrong." });
+  }
+});
+
 server.listen(PORT, () => {
   console.log(`AI front desk backend listening on port ${PORT}`);
 });

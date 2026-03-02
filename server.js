@@ -570,7 +570,7 @@ async function processFacebookConversation(senderId, messageText) {
 
   return await processSmsConversation(threadKey, messageText);
 }
-async function sendFacebookMessage(recipientId, messageText) {
+async function sendFacebookMessage(recipientId, messageText, quickReplies = []) {
   const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
 
   if (!PAGE_ACCESS_TOKEN) {
@@ -578,19 +578,28 @@ async function sendFacebookMessage(recipientId, messageText) {
     return;
   }
 
+  const payload = {
+    recipient: { id: recipientId },
+    message: { text: messageText }
+  };
+
+  if (quickReplies.length) {
+    payload.message.quick_replies = quickReplies.map(title => ({
+      content_type: "text",
+      title,
+      payload: title
+    }));
+  }
+
   await fetch(
     `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        recipient: { id: recipientId },
-        message: { text: messageText }
-      })
+      body: JSON.stringify(payload)
     }
   );
 }
-
 async function runSmsFollowUps() {
   const now = Date.now();
   for (const thread of smsThreads.values()) {

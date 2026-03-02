@@ -558,6 +558,30 @@ async function processSmsConversation(phone, incomingText) {
 
   return replyText;
 }
+async function processFacebookConversation(senderId, messageText) {
+  const threadKey = `fb-${senderId}`;
+  return await processSmsConversation(threadKey, messageText);
+}
+async function sendFacebookMessage(recipientId, messageText) {
+  const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+
+  if (!PAGE_ACCESS_TOKEN) {
+    console.error("Missing FACEBOOK_PAGE_ACCESS_TOKEN");
+    return;
+  }
+
+  await fetch(
+    `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipient: { id: recipientId },
+        message: { text: messageText }
+      })
+    }
+  );
+}
 
 async function runSmsFollowUps() {
   const now = Date.now();
@@ -570,7 +594,15 @@ async function runSmsFollowUps() {
       ? "Quick follow-up: your appointment is on our schedule. Reply here if you need to reschedule."
       : "Just checking in — would you like me to help you lock in a time for your estimate?";
 
-    const sent = await sendTwilioSms(thread.phone, followUpText);
+ let sent;
+
+if (thread.phone.startsWith("fb-")) {
+  const fbId = thread.phone.replace("fb-", "");
+  await sendFacebookMessage(fbId, followUpText);
+  sent = { ok: true };
+} else {
+  sent = await sendTwilioSms(thread.phone, followUpText);
+}
     if (sent.ok) {
       thread.history.push({ role: "assistant", text: followUpText, at: new Date().toISOString() });
       thread.lastOutboundAt = now;
@@ -1371,6 +1403,43 @@ if (!sessionId) {
   } catch (error) {
     console.error("Website chat error:", error.message);
     res.status(500).json({ reply: "Something went wrong." });
+  }
+});
+
+app.get("/facebook-webhook", (req, res) => {
+  const VERIFY_TOKEN = process.env.FACEBOOK_VERIFY_TOKEN;
+
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    res.status(200).send(challenge);
+  } else {
+    res.sendStatus(403);
+  }
+});
+
+app.post("/facebook-webhook", async (req, res) => {
+  try {
+    const entry = req.body.entry?.[0];
+    const messaging = entry?.messaging?.[0];
+
+    if (!messaging || !messaging.message?.text) {
+      return res.sendStatus(200);
+    }
+
+    const senderId = messaging.sender.id;
+    const messageText = messaging.message.text;
+
+    const reply = await processFacebookConversation(senderId, messageText);
+
+    await sendFacebookMessage(senderId, reply);
+
+    res.sendStatus(200);
+  } catch (error) {
+    console.error("Facebook webhook error:", error.message);
+    res.sendStatus(500);
   }
 });
 

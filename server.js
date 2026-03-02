@@ -519,11 +519,12 @@ async function processSmsConversation(phone, incomingText) {
     ai = await runSmsAiOrchestrator(thread, incomingText);
   } catch (error) {
     console.error("SMS AI orchestration failed:", error.message);
-    ai = {
-      reply: "Thanks for the details. We are reviewing your request now and will text you shortly.",
-      should_book: false,
-      follow_up_minutes: SMS_FOLLOW_UP_DELAY_MINUTES
-    };
+   ai = {
+  reply: "Got it 👍 Let me take a closer look at that for you.",
+  should_book: false,
+  follow_up_minutes: SMS_FOLLOW_UP_DELAY_MINUTES,
+  lead_capture: {}
+};
   }
 
   mergeLeadCapture(thread, ai.lead_capture);

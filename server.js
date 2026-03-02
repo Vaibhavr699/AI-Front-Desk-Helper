@@ -672,6 +672,23 @@ app.get("/setup-facebook-menu", async (req, res) => {
       }
     );
 
+    async function sendTypingIndicator(recipientId, action = "typing_on") {
+  const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  if (!PAGE_ACCESS_TOKEN) return;
+
+  await fetch(
+    `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipient: { id: recipientId },
+        sender_action: action
+      })
+    }
+  );
+}
+
     const result = await response.json();
     res.json(result);
   } catch (error) {
@@ -1489,7 +1506,43 @@ app.post("/facebook-webhook", async (req, res) => {
   try {
     const entry = req.body.entry?.[0];
     const messaging = entry?.messaging?.[0];
+// 🔥 Handle Persistent Menu / Postback Buttons
+if (messaging?.postback) {
+  const senderId = messaging.sender.id;
+  const payload = messaging.postback.payload;
 
+  if (payload === "GET_STARTED") {
+    await sendFacebookMessage(
+      senderId,
+      "👋 Welcome to Gladiators Painting! How can we help you today?"
+    );
+    return res.sendStatus(200);
+  }
+
+  if (payload === "GET_QUOTE") {
+    await sendFacebookMessage(
+      senderId,
+      "Great! What type of painting project are you planning?"
+    );
+    return res.sendStatus(200);
+  }
+
+  if (payload === "BOOK_ESTIMATE") {
+    await sendFacebookMessage(
+      senderId,
+      "Perfect. What day works best for your estimate?"
+    );
+    return res.sendStatus(200);
+  }
+
+  if (payload === "TALK_HUMAN") {
+    await sendFacebookMessage(
+      senderId,
+      "No problem 👍 A team member will reach out shortly."
+    );
+    return res.sendStatus(200);
+  }
+}
     if (!messaging || !messaging.message?.text) {
       return res.sendStatus(200);
     }
@@ -1497,9 +1550,18 @@ app.post("/facebook-webhook", async (req, res) => {
     const senderId = messaging.sender.id;
     const messageText = messaging.message.text;
 
-    const reply = await processFacebookConversation(senderId, messageText);
+// Show typing indicator
+await sendTypingIndicator(senderId, "typing_on");
 
- await sendFacebookMessage(
+// 2–3 second delay
+await delay(2000 + Math.random() * 1000);
+
+// Stop typing indicator
+await sendTypingIndicator(senderId, "typing_off");
+
+const reply = await processFacebookConversation(senderId, messageText);
+
+await sendFacebookMessage(
   senderId,
   reply,
   ["Get a Free Quote", "Talk to a Human", "Book Estimate"]
@@ -1511,6 +1573,12 @@ app.post("/facebook-webhook", async (req, res) => {
     res.sendStatus(500);
   }
 });
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+setupFacebookPersistentMenu();
 
 server.listen(PORT, () => {
   console.log(`AI front desk backend listening on port ${PORT}`);

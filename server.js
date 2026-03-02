@@ -560,6 +560,14 @@ async function processSmsConversation(phone, incomingText) {
 }
 async function processFacebookConversation(senderId, messageText) {
   const threadKey = `fb-${senderId}`;
+
+  // First-time greeting detection
+  const thread = getOrCreateSmsThread(threadKey);
+
+  if (!thread.history.length) {
+    return "👋 Hi! Thanks for messaging Gladiators Painting! Want a fast, free estimate? Tap below to get started.";
+  }
+
   return await processSmsConversation(threadKey, messageText);
 }
 async function sendFacebookMessage(recipientId, messageText) {

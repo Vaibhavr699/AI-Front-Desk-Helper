@@ -1360,9 +1360,13 @@ app.post("/website-chat", async (req, res) => {
 
   try {
     // Reuse SMS AI engine for web chat
-    const fakePhone = `web-${crypto.randomUUID()}`;
-    const reply = await processSmsConversation(fakePhone, message);
+ const sessionId = String(req.body?.sessionId || "").trim();
 
+if (!sessionId) {
+  res.status(400).json({ reply: "Missing session ID." });
+  return;
+}
+  const reply = await processSmsConversation(sessionId, message);
     res.json({ reply });
   } catch (error) {
     console.error("Website chat error:", error.message);

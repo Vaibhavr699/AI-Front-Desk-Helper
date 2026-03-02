@@ -587,7 +587,7 @@ async function processFacebookConversation(senderId, messageText) {
   }
 
   // Send directly to AI (NOT SMS fallback)
-  const replyText = await processConversationWithAI(threadKey, messageText);
+const replyText = await processSmsConversation(threadKey, messageText);
 
   thread.history.push({
     role: "assistant",

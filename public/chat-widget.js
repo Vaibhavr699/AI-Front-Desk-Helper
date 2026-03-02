@@ -1,6 +1,11 @@
 (function () {
   const apiBase = "https://ai-front-desk-backend.onrender.com";
+let sessionId = localStorage.getItem("ai_session_id");
 
+if (!sessionId) {
+  sessionId = "web-" + crypto.randomUUID();
+  localStorage.setItem("ai_session_id", sessionId);
+}
   // Create chat container
   const container = document.createElement("div");
   container.style.position = "fixed";
@@ -77,7 +82,10 @@
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ message: text }),
+     body: JSON.stringify({ 
+  message: text,
+  sessionId: sessionId
+}),
     });
 
    if (!response.ok) {

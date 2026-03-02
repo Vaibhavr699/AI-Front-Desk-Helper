@@ -1451,7 +1451,11 @@ app.post("/facebook-webhook", async (req, res) => {
 
     const reply = await processFacebookConversation(senderId, messageText);
 
-    await sendFacebookMessage(senderId, reply);
+ await sendFacebookMessage(
+  senderId,
+  reply,
+  ["Get a Free Quote", "Talk to a Human", "Book Estimate"]
+);
 
     res.sendStatus(200);
   } catch (error) {

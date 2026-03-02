@@ -629,7 +629,55 @@ if (thread.phone.startsWith("fb-")) {
     }
   }
 }
+app.get("/setup-facebook-menu", async (req, res) => {
+  const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
 
+  if (!PAGE_ACCESS_TOKEN) {
+    return res.status(400).send("Missing FACEBOOK_PAGE_ACCESS_TOKEN");
+  }
+
+  const menuData = {
+    persistent_menu: [
+      {
+        locale: "default",
+        composer_input_disabled: false,
+        call_to_actions: [
+          {
+            type: "postback",
+            title: "📝 Get Free Quote",
+            payload: "GET_QUOTE"
+          },
+          {
+            type: "postback",
+            title: "📅 Book Estimate",
+            payload: "BOOK_ESTIMATE"
+          },
+          {
+            type: "postback",
+            title: "👤 Talk to Human",
+            payload: "TALK_HUMAN"
+          }
+        ]
+      }
+    ]
+  };
+
+  try {
+    const response = await fetch(
+      `https://graph.facebook.com/v18.0/me/messenger_profile?access_token=${PAGE_ACCESS_TOKEN}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(menuData)
+      }
+    );
+
+    const result = await response.json();
+    res.json(result);
+  } catch (error) {
+    res.status(500).send(error.message);
+  }
+});
 const DEFAULT_CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID || "primary";
 const BUSINESS_TIMEZONE = process.env.BUSINESS_TIMEZONE || "America/Chicago";
 

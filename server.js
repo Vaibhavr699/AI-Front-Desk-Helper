@@ -565,6 +565,20 @@ async function processSmsConversation(phone, incomingText) {
   }
 
   mergeLeadCapture(thread, ai.lead_capture);
+
+  if (thread.leadCapture?.full_name || thread.phone) {
+    await sendToCRM({
+     source: thread.channel || "unknown",
+     full_name: thread.leadCapture?.full_name || "",
+     phone: thread.phone || thread.leadCapture?.phone || "",
+     email: thread.leadCapture?.email || "",
+     address: thread.leadCapture?.address || "",
+     project_type: thread.leadCapture?.project_type || "",
+     project_details: thread.leadCapture?.project_details || "",
+     lead_type: ai.should_book ? "BOOKED" : "INQUIRY",
+     timestamp: new Date().toISOString()
+  });
+}
   if (!thread.leadCapture.phone) thread.leadCapture.phone = thread.phone;
 
   let replyText = ai.reply || "Thanks for reaching out!";

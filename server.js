@@ -484,7 +484,14 @@ async function runSmsAiOrchestrator(thread, incomingText) {
             appointment_time: { type: "string" },
             follow_up_minutes: { type: "number" }
           },
-          required: ["reply", "should_book"]
+         required: [
+  "reply",
+  "lead_capture",
+  "should_book",
+  "appointment_date",
+  "appointment_time",
+  "follow_up_minutes"
+]
         },
         strict: true
       }

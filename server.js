@@ -441,14 +441,14 @@ async function runSmsAiOrchestrator(thread, incomingText) {
   const payload = {
     model: OPENAI_TEXT_MODEL,
    input: [
-  { role: "system", content: [{ type: "input_text", text: buildSmsSystemPrompt(thread) }] },
+{ role: "system", content: [{ type: "output_text", text: buildSmsSystemPrompt(thread) }] },
 
   ...thread.history.map(msg => ({
     role: msg.role,
-    content: [{ type: "input_text", text: msg.text }]
+    content: [{ type: "output_text", text: msg.text }]
   })),
 
-  { role: "user", content: [{ type: "input_text", text: incomingText }] }
+  { role: "user", content: [{ type: "output_text", text: incomingText }] }
 ],
     text: {
       format: {

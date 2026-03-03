@@ -71,6 +71,8 @@
   input.style.padding = "12px";
   input.style.outline = "none";
   input.style.fontSize = "14px";
+  input.style.color = "#000";
+  input.style.background = "#fff";
 
   const button = document.createElement("button");
   button.innerText = "Send";

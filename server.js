@@ -588,7 +588,19 @@ parsedDate.setHours(0,0,0,0);
   }
 
   ai.appointment_date = parsedDate.toISOString().split("T")[0];
-   
+
+  if (ai.appointment_time === "morning") {
+  ai.appointment_time = "9:00 AM";
+}
+
+if (ai.appointment_time === "afternoon") {
+  ai.appointment_time = "1:00 PM";
+}
+
+if (ai.appointment_time === "evening") {
+  ai.appointment_time = "6:00 PM";
+}
+
     const availability = await checkAvailability({
       appointment_date: ai.appointment_date,
       appointment_time: ai.appointment_time,

@@ -442,12 +442,10 @@ async function runSmsAiOrchestrator(thread, incomingText) {
     model: OPENAI_TEXT_MODEL,
    input: [
 { role: "system", content: [{ type: "output_text", text: buildSmsSystemPrompt(thread) }] },
-
   ...thread.history.map(msg => ({
     role: msg.role,
     content: [{ type: "output_text", text: msg.text }]
   })),
-
   { role: "user", content: [{ type: "output_text", text: incomingText }] }
 ],
     text: {
@@ -519,7 +517,9 @@ async function runSmsAiOrchestrator(thread, incomingText) {
   }
 
   const parsed = await response.json();
-  const outputText = parsed.output_text || "{}";
+  const outputText = parsed.output_text
+    || parsed.output?.[0]?.content?.find((item) => item.type === "output_text")?.text
+    || "{}";
   return JSON.parse(outputText);
 }
 

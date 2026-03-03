@@ -541,6 +541,9 @@ async function processSmsConversation(phone, incomingText) {
   let ai;
   try {
     ai = await runSmsAiOrchestrator(thread, incomingText);
+
+    console.log("AI STRUCTURED OUTPUT:", JSON.stringify(ai, null, 2));
+    
   } catch (error) {
     console.error("SMS AI orchestration failed:", error.message);
    ai = {

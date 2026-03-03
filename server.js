@@ -443,17 +443,19 @@ function buildSmsSystemPrompt(thread) {
 }
 
 async function runSmsAiOrchestrator(thread, incomingText) {
+  const input = [
+    { role: "system", content: buildSmsSystemPrompt(thread) },
+    ...thread.history.map((msg) => ({
+      role: msg.role,
+      content: String(msg.text || "")
+    })),
+    { role: "user", content: String(incomingText || "") }
+  ];
+
   const payload = {
-    model: OPENAI_TEXT_MODEL,
-   input: [
-{ role: "system", content: [{ type: "output_text", text: buildSmsSystemPrompt(thread) }] },
-  ...thread.history.map(msg => ({
-    role: msg.role,
-    content: [{ type: "output_text", text: msg.text }]
-  })),
-  { role: "user", content: [{ type: "output_text", text: incomingText }] }
-],
-    text: {
+   model: OPENAI_TEXT_MODEL,
+     input,
+     text: {
       format: {
         type: "json_schema",
         name: "sms_orchestrator",
@@ -462,31 +464,31 @@ async function runSmsAiOrchestrator(thread, incomingText) {
           additionalProperties: false,
           properties: {
             reply: { type: "string" },
-         lead_capture: {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    full_name: { type: ["string", "null"] },
-    phone: { type: ["string", "null"] },
-    email: { type: ["string", "null"] },
-    address: { type: ["string", "null"] },
-    project_type: { type: ["string", "null"] },
-    project_details: { type: ["string", "null"] },
-    timeline: { type: ["string", "null"] },
-    appointment_date: { type: ["string", "null"] },
-    appointment_time: { type: ["string", "null"] }
-  },
-  required: [
-    "full_name",
-    "phone",
-    "email",
-    "address",
-    "project_type",
-    "project_details",
-    "timeline",
-    "appointment_date",
-    "appointment_time"
-  ]
+           lead_capture: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                full_name: { type: ["string", "null"] },
+                phone: { type: ["string", "null"] },
+                email: { type: ["string", "null"] },
+                address: { type: ["string", "null"] },
+                project_type: { type: ["string", "null"] },
+                project_details: { type: ["string", "null"] },
+                timeline: { type: ["string", "null"] },
+                appointment_date: { type: ["string", "null"] },
+                appointment_time: { type: ["string", "null"] }
+              },
+              required: [
+                "full_name",
+                "phone",
+                "email",
+                "address",
+                "project_type",
+                "project_details",
+                "timeline",
+               "appointment_date",
+               "appointment_time"
+             ]
           },
             should_book: { type: "boolean" },
             appointment_date: { type: "string" },
@@ -494,12 +496,12 @@ async function runSmsAiOrchestrator(thread, incomingText) {
             follow_up_minutes: { type: "number" }
           },
          required: [
-  "reply",
-  "lead_capture",
-  "should_book",
-  "appointment_date",
-  "appointment_time",
-  "follow_up_minutes"
+           "reply",
+           "lead_capture",
+           "should_book",
+           "appointment_date",
+           "appointment_time",
+           "follow_up_minutes"
 ]
         },
         strict: true
@@ -525,9 +527,12 @@ async function runSmsAiOrchestrator(thread, incomingText) {
   const outputText = parsed.output_text
     || parsed.output?.[0]?.content?.find((item) => item.type === "output_text")?.text
     || "{}";
-  return JSON.parse(outputText);
+ try {
+    return JSON.parse(outputText);
+  } catch {
+    throw new Error(`OpenAI SMS orchestration returned non-JSON output: ${outputText}`);
+  }
 }
-
 function mergeLeadCapture(thread, incomingLeadCapture) {
   if (!incomingLeadCapture || typeof incomingLeadCapture !== "object") return;
   for (const field of LEAD_CAPTURE_FIELDS) {

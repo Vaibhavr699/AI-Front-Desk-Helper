@@ -354,13 +354,13 @@ async function safeUpdateCallSummary(callId, options = {}) {
 }
 
 async function sendToCRM(leadCapture) {
-  if (!CRM_WEBHOOK_URL) {
+  if (!process.env.CRM_WEBHOOK_URL) {
     console.warn("CRM webhook not configured. Skipping lead push.");
     return;
   }
 
   try {
-    const response = await fetch(CRM_WEBHOOK_URL, {
+    const response = await fetch( process.env.CRM_WEBHOOK_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(leadCapture)

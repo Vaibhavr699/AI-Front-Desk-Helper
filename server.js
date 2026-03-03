@@ -466,7 +466,19 @@ async function runSmsAiOrchestrator(thread, incomingText) {
                 timeline: { type: "string" },
                 appointment_date: { type: "string" },
                 appointment_time: { type: "string" }
-              }
+              },
+               required: [
+    "full_name",
+    "phone",
+    "email",
+    "address",
+    "project_type",
+    "project_details",
+    "timeline",
+    "appointment_date",
+    "appointment_time"
+  ]
+}
             },
             should_book: { type: "boolean" },
             appointment_date: { type: "string" },

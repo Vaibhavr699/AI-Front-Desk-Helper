@@ -453,21 +453,21 @@ async function runSmsAiOrchestrator(thread, incomingText) {
           additionalProperties: false,
           properties: {
             reply: { type: "string" },
-            lead_capture: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                full_name: { type: "string" },
-                phone: { type: "string" },
-                email: { type: "string" },
-                address: { type: "string" },
-                project_type: { type: "string" },
-                project_details: { type: "string" },
-                timeline: { type: "string" },
-                appointment_date: { type: "string" },
-                appointment_time: { type: "string" }
-              },
-               required: [
+         lead_capture: {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    full_name: { type: ["string", "null"] },
+    phone: { type: ["string", "null"] },
+    email: { type: ["string", "null"] },
+    address: { type: ["string", "null"] },
+    project_type: { type: ["string", "null"] },
+    project_details: { type: ["string", "null"] },
+    timeline: { type: ["string", "null"] },
+    appointment_date: { type: ["string", "null"] },
+    appointment_time: { type: ["string", "null"] }
+  },
+  required: [
     "full_name",
     "phone",
     "email",
@@ -478,8 +478,7 @@ async function runSmsAiOrchestrator(thread, incomingText) {
     "appointment_date",
     "appointment_time"
   ]
-}
-            },
+          },
             should_book: { type: "boolean" },
             appointment_date: { type: "string" },
             appointment_time: { type: "string" },

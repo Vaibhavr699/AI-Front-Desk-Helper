@@ -449,8 +449,7 @@ async function runSmsAiOrchestrator(thread, incomingText) {
   })),
 
   { role: "user", content: [{ type: "input_text", text: incomingText }] }
-]
-  },
+],
     text: {
       format: {
         type: "json_schema",

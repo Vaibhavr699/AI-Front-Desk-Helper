@@ -570,6 +570,25 @@ async function processSmsConversation(phone, incomingText) {
   let replyText = ai.reply || "Thanks for reaching out!";
 
   if (ai.should_book && ai.appointment_date && ai.appointment_time) {
+
+  let parsedDate = new Date(ai.appointment_date);
+  const now = new Date();
+  const currentYear = now.getFullYear();
+
+  if (parsedDate.getFullYear() < currentYear) {
+    parsedDate.setFullYear(currentYear);
+  }
+    
+const today = new Date();
+today.setHours(0,0,0,0);
+parsedDate.setHours(0,0,0,0);
+
+  if (parsedDate < now) {
+    parsedDate.setFullYear(parsedDate.getFullYear() + 1);
+  }
+
+  ai.appointment_date = parsedDate.toISOString().split("T")[0];
+   
     const availability = await checkAvailability({
       appointment_date: ai.appointment_date,
       appointment_time: ai.appointment_time,

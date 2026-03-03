@@ -7,6 +7,7 @@ const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
 const fetch = require("node-fetch");
+const cors = require("cors");
 const { Pool } = require("pg");
 const calendar = require("./calendar");
 
@@ -106,7 +107,11 @@ const TENANTS = {
   }
 };
 
-const app = express();
+const app = express();app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type"]
+}));
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 app.use(express.static("public"));

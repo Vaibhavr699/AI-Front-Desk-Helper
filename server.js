@@ -167,7 +167,8 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SERVE_DASHBOARD = process.env.SERVE_DASHBOARD === "true";
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || "";
 const smsThreads = new Map();
-let callsTableHasTranscriptColumn = true; // optimistic; set to false if column is missing
+let callsTableHasTranscriptColumn = true;
+let callsTableHasDurationColumn = true; // optimistic; set to false if column is missing
 
 // Tenant map by slug/id -> { ...tenant, transferNumber }. Populated at startup so voice/WebSocket routes can resolve tenant.
 let TENANTS = {};
@@ -383,60 +384,73 @@ async function checkTwilioAccountHealth() {
 }
 
 async function safePoolQuery(query, values) {
-  if (!pool) return;
+  if (!pool) return null;
   try {
-    await pool.query(query, values);
+    return await pool.query(query, values);
   } catch (error) {
     console.error("DB query failed:", error.message);
+    return null;
   }
 }
 
 
 async function safeUpdateCallSummary(callId, options = {}) {
-  if (!pool || !callId) return;
-
-  const status = Object.prototype.hasOwnProperty.call(options, "status") ? options.status : undefined;
-  const transcript = typeof options.transcript === "string" ? options.transcript : "";
-  const markEnded = Boolean(options.markEnded);
-
-  async function runUpdate(includeTranscriptColumn) {
-    const setParts = [];
-    const values = [callId];
-
-    if (markEnded) {
-      setParts.push("ended_at = now()");
-    }
-
-    if (typeof status === "string") {
-      values.push(status);
-      setParts.push(`status = $${values.length}`);
-    }
-
-    if (includeTranscriptColumn) {
-      values.push(transcript);
-      setParts.push(`transcript = $${values.length}`);
-    }
-
-    setParts.push("duration_minutes = EXTRACT(EPOCH FROM (now() - started_at)) / 60");
-
-    const query = `UPDATE calls
-         SET ${setParts.join(",\n             ")}
-         WHERE id = $1`;
-
-    await pool.query(query, values);
-  }
-
   try {
-    await runUpdate(callsTableHasTranscriptColumn);
-  } catch (error) {
-    if (callsTableHasTranscriptColumn && error.code === "42703" && /transcript/i.test(error.message)) {
-      callsTableHasTranscriptColumn = false;
-      console.warn("calls.transcript column not found; continuing without transcript persistence.");
-      await runUpdate(false);
-      return;
+    if (!pool || !callId) return;
+    const status = Object.prototype.hasOwnProperty.call(options, "status") ? options.status : undefined;
+    const transcript = typeof options.transcript === "string" ? options.transcript : "";
+    const markEnded = Boolean(options.markEnded);
+
+    async function runUpdate(includeTranscriptColumn) {
+      const setParts = [];
+      const values = [callId];
+
+      if (markEnded) {
+        setParts.push("ended_at = now()");
+      }
+
+      if (typeof status === "string") {
+        values.push(status);
+        setParts.push(`status = $${values.length}`);
+      }
+
+      if (includeTranscriptColumn) {
+        values.push(transcript);
+        setParts.push(`transcript = $${values.length}`);
+      }
+
+      if (callsTableHasDurationColumn) {
+        setParts.push("duration_minutes = EXTRACT(EPOCH FROM (now() - started_at)) / 60");
+      }
+
+      const query = `UPDATE calls
+           SET ${setParts.join(",\n             ")}
+           WHERE id = $1`;
+
+      if (!pool) return;
+      await pool.query(query, values);
     }
 
-    console.error("DB query failed:", error.message);
+    try {
+      await runUpdate(callsTableHasTranscriptColumn);
+    } catch (error) {
+      // Check if it's a "column does not exist" error (Postgres error code 42703)
+      if (error.code === "42703") {
+        if (callsTableHasTranscriptColumn && /transcript/i.test(error.message)) {
+          callsTableHasTranscriptColumn = false;
+          console.warn("calls.transcript column not found; continuing without transcript persistence.");
+          return safeUpdateCallSummary(callId, options); // Retry without transcript
+        }
+        if (callsTableHasDurationColumn && /duration_minutes/i.test(error.message)) {
+          callsTableHasDurationColumn = false;
+          console.warn("calls.duration_minutes column not found; continuing without duration calculation.");
+          return safeUpdateCallSummary(callId, options); // Retry without duration
+        }
+      }
+      console.error("DB query failed in safeUpdateCallSummary:", error.message);
+    }
+  } catch (criticalErr) {
+    console.error("Critical error in safeUpdateCallSummary wrapper:", criticalErr.message);
   }
 }
 
@@ -1303,7 +1317,9 @@ wss.on("connection", (twilioSocket, req) => {
 
   function sendToOpenAI(payload) {
     const message = typeof payload === "string" ? payload : JSON.stringify(payload);
-    console.log("[DEBUG] sendToOpenAI:", message.slice(0, 500));
+    if (!message.includes("input_audio_buffer.append")) {
+      console.log("[DEBUG] sendToOpenAI:", message.slice(0, 500));
+    }
     if (openaiReady && openaiSocket.readyState === WebSocket.OPEN) {
       openaiSocket.send(message);
       return;

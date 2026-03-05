@@ -156,7 +156,7 @@ async function main() {
         timeout: 30,
         statusCallback: statusCallbackUrl,
         statusCallbackMethod: "POST",
-        statusCallbackEvent: ["completed", "busy", "failed", "no-answer"],
+        statusCallbackEvent: ["completed"],
     });
 
     console.log("\n  📞 Call created! SID:", call.sid);

@@ -131,31 +131,31 @@ router.get("/recovery-call", (req, res) => {
   res.type("text/xml").send(twiml);
 });
 
-// Status callback for recovery outbound calls — logs the outcome
-router.post("/recovery-call-status", async (req, res) => {
-  const { CallSid, CallStatus } = req.body;
+// Status callback for recovery outbound calls — logs the outcome.
+// Twilio requires response body < 64KB; respond immediately with empty body, then update DB in background.
+router.post("/recovery-call-status", (req, res) => {
+  const { CallSid, CallStatus } = req.body || {};
   const recoveryId = req.query.recoveryId;
+
+  res.status(200).set("Content-Length", "0").end();
+
   if (recoveryId && CallSid) {
-    try {
-      const db = require("../lib/db");
-      // Update the touch record with the call outcome
-      const statusMap = {
-        completed: "answered",
-        busy: "busy",
-        failed: "failed",
-        "no-answer": "no_answer",
-        canceled: "failed",
-      };
-      const touchStatus = statusMap[CallStatus] || CallStatus;
-      await db.query(
+    const statusMap = {
+      completed: "answered",
+      busy: "busy",
+      failed: "failed",
+      "no-answer": "no_answer",
+      canceled: "failed",
+    };
+    const touchStatus = statusMap[CallStatus] || CallStatus;
+    const db = require("../lib/db");
+    db
+      .query(
         "UPDATE recovery_touches SET status = $1 WHERE call_sid = $2 AND recovery_id = $3",
         [touchStatus, CallSid, recoveryId]
-      );
-    } catch (e) {
-      console.error("[Recovery] Call status update error:", e.message);
-    }
+      )
+      .catch((e) => console.error("[Recovery] Call status update error:", e.message));
   }
-  res.status(200).send();
 });
 
 module.exports = router;

@@ -368,7 +368,7 @@ async function makeRecoveryCall(recovery, tenant, stepDef, vars) {
             timeout: 30,
             statusCallback: `${baseUrl.replace(/\/$/, "")}/twilio/recovery-call-status?recoveryId=${encodeURIComponent(recovery.id)}`,
             statusCallbackMethod: "POST",
-            statusCallbackEvent: ["completed", "busy", "failed", "no-answer"],
+            statusCallbackEvent: ["completed"],
         });
         await db.query(
             "UPDATE estimate_recoveries SET call_attempts = call_attempts + 1, updated_at = now() WHERE id = $1",

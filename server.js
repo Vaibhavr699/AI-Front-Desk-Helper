@@ -10,19 +10,122 @@ const fetch = require("node-fetch");
 const cors = require("cors");
 const { Pool } = require("pg");
 const calendar = require("./calendar");
+const path = require("path");
+const cron = require("node-cron");
 
-async function sendTypingIndicator (recipientId, action = "typing_on") {
-  const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
-  if (!PAGE_ACCESS_TOKEN) return;
-
+// Multi-tenant platform imports
 const twilioRoutes = require("./routes/twilio");
 const dashboardRoutes = require("./routes/dashboard");
 const authRoutes = require("./routes/auth");
 const { authMiddleware } = require("./lib/auth");
 const { listPlans } = require("./lib/plans");
+const estimateRecoveryService = require("./services/estimateRecovery");
 
-// -------------------- App --------------------
+async function sendTypingIndicator(recipientId, action = "typing_on") {
+  const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  if (!PAGE_ACCESS_TOKEN) return;
+
+  await fetch(
+    `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipient: { id: recipientId },
+        sender_action: action
+      })
+    }
+  );
+}
+
+const PORT = Number(process.env.PORT || 3000);
+const BASE_URL = process.env.BASE_URL || "";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-realtime";
+const WEBSITE_CONTEXT_URL = process.env.WEBSITE_CONTEXT_URL || "https://www.gladiatorspainting.com";
+const WEBSITE_CONTEXT_MAX_CHARS = Number(process.env.WEBSITE_CONTEXT_MAX_CHARS || 4000);
+const CRM_WEBHOOK_URL = String(process.env.CRM_WEBHOOK_URL || "").trim();
+const WARM_GREETING =
+  "Hi there! Thanks so much for calling Gladiators Painting. We specialize in high-quality interior and exterior painting, and we'd love to help with your project. What can we help you with today?";
+
+const LEAD_CAPTURE_FIELDS = [
+  "full_name",
+  "phone",
+  "email",
+  "address",
+  "project_type",
+  "project_details",
+  "timeline",
+  "appointment_date",
+  "appointment_time"
+];
+const FOLLOW_UP_RESPONSE_DELAY_MS = Number(process.env.FOLLOW_UP_RESPONSE_DELAY_MS || 1600);
+const OPENAI_TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || "gpt-4o-mini";
+const TWILIO_PHONE_NUMBER = String(process.env.TWILIO_PHONE_NUMBER || "").trim();
+const SMS_FOLLOW_UP_DELAY_MINUTES = Number(process.env.SMS_FOLLOW_UP_DELAY_MINUTES || 30);
+const SMS_FOLLOW_UP_CHECK_INTERVAL_MS = Number(process.env.SMS_FOLLOW_UP_CHECK_INTERVAL_MS || 5 * 60 * 1000);
+const smsThreads = new Map();
+let callsTableHasTranscriptColumn = true;
+
+const REQUIRED_ENV_VARS = ["OPENAI_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"];
+
+function isValidE164(value) {
+  return /^\+[1-9]\d{6,14}$/.test(String(value || "").trim());
+}
+
+const missingEnv = REQUIRED_ENV_VARS.filter((key) => !process.env[key]);
+if (missingEnv.length) {
+  console.warn(`⚠️ Missing required env vars: ${missingEnv.join(", ")}`);
+}
+
+if (!process.env.BASE_URL) {
+  console.warn("⚠️ BASE_URL not set; deriving URL from incoming request headers.");
+}
+
+const defaultTransferNumber = process.env.GLADIATORS_TRANSFER_NUMBER || "+14022907925";
+if (!isValidE164(defaultTransferNumber)) {
+  console.warn(`⚠️ Transfer number is not valid E.164 format: ${defaultTransferNumber}`);
+}
+
+const pgIpFamily = Number(process.env.PGIP_FAMILY || 4);
+const pool = process.env.DATABASE_URL
+  ? new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+    family: Number.isFinite(pgIpFamily) && (pgIpFamily === 4 || pgIpFamily === 6) ? pgIpFamily : 4
+  })
+  : null;
+
+const TENANTS = {
+  gladiators: {
+    name: "Gladiators Painting",
+    transferNumber: defaultTransferNumber,
+    businessHours: { start: 8, end: 17 },
+    voice: "ash",
+    instructions: [
+      "You are the receptionist for Gladiators Painting.",
+      "Your goal is to naturally guide a friendly conversation while collecting: full_name, phone, email, address, project_type (interior or exterior), project_details, timeline, preferred appointment_date, and preferred appointment_time.",
+      "Keep the conversation natural and flexible: combine related questions when appropriate, acknowledge answers, and avoid sounding like a rigid checklist.",
+      "Your main objective is to help the caller get booked on the schedule with a clear appointment date and time window.",
+      "Confirm the final appointment details back to the caller before finishing.",
+      "When you have collected all required fields, you MUST respond with exactly this JSON structure and valid JSON only:",
+      '{"lead_capture":{"full_name":"...","phone":"...","email":"...","address":"...","project_type":"...","project_details":"...","timeline":"...","appointment_date":"...","appointment_time":"..."}}',
+      "Only output the JSON when all fields are collected.",
+      "If any field is missing, continue the conversation and do not output JSON yet.",
+      "Speak only English."
+    ].join("\n")
+  }
+};
+
+const SERVE_DASHBOARD = process.env.SERVE_DASHBOARD === "true";
+const FRONTEND_URL = process.env.FRONTEND_URL || "";
+
 const app = express();
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
 
 // Stripe webhook MUST be before express.json() — needs raw body for signature verification
 const stripeLib = require("./lib/stripe");
@@ -35,7 +138,6 @@ if (stripeLib.stripe) {
       if (webhookSecret && sig) {
         event = stripeLib.stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
       } else {
-        // No webhook secret — parse body directly (dev mode)
         event = JSON.parse(req.body.toString());
         console.warn("[Stripe] No STRIPE_WEBHOOK_SECRET — skipping signature verification (dev mode)");
       }
@@ -53,6 +155,7 @@ app.use(express.json());
 app.use(express.static("public"));
 
 app.get("/", (_req, res) => {
+  if (FRONTEND_URL) return res.redirect(302, FRONTEND_URL);
   res.status(200).send("AI front desk backend is running");
 });
 
@@ -60,9 +163,7 @@ app.get("/health", (_req, res) => {
   res.status(200).send("OK");
 });
 
-app.get("/health", (req, res) => res.status(200).send("OK"));
-
-// Public: plans list (no auth) — must be before any /api middleware so it always responds
+// Public: plans list (no auth)
 app.get("/api/plans", (req, res) => {
   try {
     res.json({ plans: listPlans() });
@@ -72,15 +173,22 @@ app.get("/api/plans", (req, res) => {
   }
 });
 
+// Multi-tenant platform routes
 app.use("/twilio", twilioRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/stripe", authMiddleware, require("./routes/stripe"));
 app.use("/api", authMiddleware, dashboardRoutes);
 
-if (SERVE_DASHBOARD) {
-  app.use(express.static(path.join(__dirname, "dashboard", "dist")));
-  app.get("*", (req, res) => {
-    res.sendFile(path.join(__dirname, "dashboard", "dist", "index.html"));
+app.get("/health/details", (_req, res) => {
+  res.status(200).json({
+    status: "ok",
+    hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY),
+    hasTwilioAccountSid: Boolean(process.env.TWILIO_ACCOUNT_SID),
+    hasTwilioAuthToken: Boolean(process.env.TWILIO_AUTH_TOKEN),
+    hasBaseUrl: Boolean(process.env.BASE_URL),
+    baseUrlMode: process.env.BASE_URL ? "env" : "derived_from_request",
+    wsBaseUrlPreview: toWebSocketBaseUrl(process.env.BASE_URL || "https://example.com"),
+    hasGoogleCalendar: Boolean(calendar)
   });
 });
 
@@ -127,141 +235,25 @@ async function loadWebsiteContext() {
       return;
     }
 
-const wss = new WebSocket.Server({ server, path: "/twilio-media" });
-
-function parseStreamUrl(requestUrl) {
-  const u = url.parse(requestUrl || "", true);
-  const q = u.query || {};
-  return {
-    callSid: q.CallSid,
-    from: q.From,
-    to: q.To,
-    turnBased: q.turnBased === "1" || q.turnBased === "true",
-    // Recovery call params
-    type: q.type || "inbound",       // "inbound" or "recovery"
-    recoveryId: q.recoveryId || null,
-    recoveryScript: q.script ? decodeURIComponent(q.script) : "",
-  };
+    const html = await response.text();
+    const text = extractWebsiteText(html).slice(0, WEBSITE_CONTEXT_MAX_CHARS);
+    websiteKnowledgeContext = text || "Website context unavailable (empty page content).";
+  } catch (error) {
+    websiteKnowledgeContext = `Website context unavailable (${error.message}).`;
+  }
 }
 
-const REALTIME_TOOLS = [
-  {
-    type: "function",
-    name: "book_appointment",
-    description: "Finalize and save the booking. Call this when you have at least: contact name, contact phone, and address OR city. Include EVERY detail the caller gave: contact_name, contact_phone, address, city, scope (interior/exterior/both/rooms), preferred_date, notes (pets, access, etc.). Do not omit any field the caller provided—all fields are saved to the database and sent to CRM. Use for normal residential estimate requests.",
-    parameters: {
-      type: "object",
-      properties: {
-        contact_name: { type: "string", description: "Full name" },
-        contact_phone: { type: "string", description: "Phone number" },
-        contact_email: { type: "string", description: "Email if given" },
-        address: { type: "string", description: "Street address" },
-        city: { type: "string", description: "City" },
-        scope: { type: "string", description: "Interior, exterior, both, rooms, etc." },
-        job_type: { type: "string", description: "Residential or commercial" },
-        preferred_date: { type: "string", description: "Preferred date if given" },
-        notes: { type: "string", description: "Any extra notes" },
-      },
-      required: ["contact_phone"],
-    },
-  },
-  {
-    type: "function",
-    name: "request_human_transfer",
-    description: "Transfer the caller to a live team member. Trigger this ONLY when one of these conditions is clearly met: (1) caller explicitly says it is a COMMERCIAL job (office building, apartment complex, HOA, restaurant, etc.—not just a large house), (2) caller states a project budget or value OVER $10,000, (3) caller is clearly frustrated, angry, confused, or repeatedly asks for a real person, (4) caller identifies themselves as a VIP, returning customer, or says they've called before. Do NOT transfer for normal residential estimates—use book_appointment instead. Before transferring, try to collect the caller's name and what they need so the agent receiving the call has context.",
-    parameters: {
-      type: "object",
-      properties: {
-        reason: {
-          type: "string",
-          enum: ["commercial_job", "high_value_over_10k", "frustrated_caller", "vip_repeat_customer", "caller_requested_human"],
-          description: "The specific trigger reason for this transfer"
-        },
-        caller_name: { type: "string", description: "Caller's name if collected" },
-        caller_phone: { type: "string", description: "Caller's phone number if collected (or the from_number)" },
-        project_type: { type: "string", description: "What they need: e.g. commercial exterior painting, office renovation, etc." },
-        budget_estimate: { type: "string", description: "Budget or project value if mentioned (e.g. '$15,000', '$25k', 'large project')" },
-        sentiment: { type: "string", enum: ["positive", "neutral", "frustrated", "angry"], description: "Caller's emotional state" },
-        summary: { type: "string", description: "2-3 sentence summary of the conversation so far, including what the caller needs and any details gathered" },
-      },
-      required: ["reason", "summary"],
-    },
-  },
-  {
-    type: "function",
-    name: "change_language",
-    description: "Call this when the caller asks to speak in a different language (e.g. Spanish, French, Hindi). Use the ISO 639-1 code: en=English, es=Spanish, fr=French, hi=Hindi, zh=Chinese, ar=Arabic, etc. After calling, respond in that language for the rest of the call.",
-    parameters: {
-      type: "object",
-      properties: {
-        language: { type: "string", description: "ISO 639-1 language code, e.g. en, es, fr, hi, zh, ar" },
-      },
-      required: ["language"],
-    },
-  },
-];
+function buildRealtimeInstructions(tenant) {
+  return `${tenant.instructions}
 
-const { handleTurnBasedStream } = require("./handlers/turnBasedStream");
-const estimateRecoveryService = require("./services/estimateRecovery");
+Website knowledge context from ${WEBSITE_CONTEXT_URL}:
+${websiteKnowledgeContext}`;
+}
 
-// Recovery-specific tools for live AI outbound calls
-const RECOVERY_TOOLS = [
-  {
-    type: "function",
-    name: "book_appointment",
-    description: "The customer agreed to book! Collect name, phone, address, scope, and finalize. This also marks the recovery as converted.",
-    parameters: {
-      type: "object",
-      properties: {
-        contact_name: { type: "string", description: "Full name" },
-        contact_phone: { type: "string", description: "Phone number" },
-        contact_email: { type: "string", description: "Email if given" },
-        address: { type: "string", description: "Street address" },
-        city: { type: "string", description: "City" },
-        scope: { type: "string", description: "Interior, exterior, both, rooms" },
-        job_type: { type: "string", description: "Residential or commercial" },
-        preferred_date: { type: "string", description: "Preferred date" },
-        notes: { type: "string", description: "Extra notes" },
-      },
-      required: ["contact_phone"],
-    },
-  },
-  {
-    type: "function",
-    name: "detect_objection",
-    description: "Call this when the customer expresses a specific objection. Types: 'price' (they say it's expensive, comparing quotes), 'thinking' (need to think about it, not sure yet), 'spouse' (need to talk to partner/spouse). This adjusts the follow-up sequence after the call.",
-    parameters: {
-      type: "object",
-      properties: {
-        objection_type: {
-          type: "string",
-          enum: ["price", "thinking", "spouse"],
-          description: "The type of objection detected",
-        },
-        details: { type: "string", description: "What exactly they said" },
-      },
-      required: ["objection_type"],
-    },
-  },
-  {
-    type: "function",
-    name: "change_language",
-    description: "Switch to another language if the customer asks.",
-    parameters: {
-      type: "object",
-      properties: {
-        language: { type: "string", description: "ISO 639-1 code: en, es, fr, etc." },
-      },
-      required: ["language"],
-    },
-  },
-];
-
-wss.on("connection", (twilioSocket, req) => {
-  const parsed = parseStreamUrl(req?.url);
-  let { callSid, from, to, turnBased, type: callType, recoveryId, recoveryScript } = parsed;
-  const isRecovery = callType === "recovery";
-  console.log("[AI-Desk] Realtime stream connect req.url=%s callSid=%s type=%s", (req?.url || "").slice(0, 120), callSid || "(none)", callType);
+function isBusinessHours(tenant) {
+  const hour = new Date().getHours();
+  return hour >= tenant.businessHours.start && hour < tenant.businessHours.end;
+}
 
 function normalizeBaseUrl(baseUrl) {
   return String(baseUrl || "").trim().replace(/\/+$/, "");
@@ -422,15 +414,12 @@ async function sendToCRM(leadCapture) {
     return;
   }
 
-  let streamSid = null;
-  let tenant = null;
-  let recoveryRecord = null;
-  let callId = null;
-  const pendingTwilioAudio = [];
-  let openaiReady = false;
-  const openaiQueue = [];
-  let streamReadyResolve;
-  const streamReadyPromise = new Promise((r) => { streamReadyResolve = r; });
+  try {
+    const response = await fetch(process.env.CRM_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(leadCapture)
+    });
 
     if (!response.ok) {
       const body = await response.text();
@@ -519,9 +508,9 @@ async function runSmsAiOrchestrator(thread, incomingText) {
   ];
 
   const payload = {
-   model: OPENAI_TEXT_MODEL,
-     input,
-     text: {
+    model: OPENAI_TEXT_MODEL,
+    input,
+    text: {
       format: {
         type: "json_schema",
         name: "sms_orchestrator",
@@ -530,7 +519,7 @@ async function runSmsAiOrchestrator(thread, incomingText) {
           additionalProperties: false,
           properties: {
             reply: { type: "string" },
-           lead_capture: {
+            lead_capture: {
               type: "object",
               additionalProperties: false,
               properties: {
@@ -552,23 +541,23 @@ async function runSmsAiOrchestrator(thread, incomingText) {
                 "project_type",
                 "project_details",
                 "timeline",
-               "appointment_date",
-               "appointment_time"
-             ]
-          },
+                "appointment_date",
+                "appointment_time"
+              ]
+            },
             should_book: { type: "boolean" },
             appointment_date: { type: "string" },
             appointment_time: { type: "string" },
             follow_up_minutes: { type: "number" }
           },
-         required: [
-           "reply",
-           "lead_capture",
-           "should_book",
-           "appointment_date",
-           "appointment_time",
-           "follow_up_minutes"
-]
+          required: [
+            "reply",
+            "lead_capture",
+            "should_book",
+            "appointment_date",
+            "appointment_time",
+            "follow_up_minutes"
+          ]
         },
         strict: true
       }
@@ -593,7 +582,7 @@ async function runSmsAiOrchestrator(thread, incomingText) {
   const outputText = parsed.output_text
     || parsed.output?.[0]?.content?.find((item) => item.type === "output_text")?.text
     || "{}";
- try {
+  try {
     return JSON.parse(outputText);
   } catch {
     throw new Error(`OpenAI SMS orchestration returned non-JSON output: ${outputText}`);
@@ -619,67 +608,67 @@ async function processSmsConversation(phone, incomingText) {
     ai = await runSmsAiOrchestrator(thread, incomingText);
 
     console.log("AI STRUCTURED OUTPUT:", JSON.stringify(ai, null, 2));
-    
+
   } catch (error) {
     console.error("SMS AI orchestration failed:", error.message);
-   ai = {
-  reply: "Got it 👍 Let me take a closer look at that for you.",
-  should_book: false,
-  follow_up_minutes: SMS_FOLLOW_UP_DELAY_MINUTES,
-  lead_capture: {}
-};
+    ai = {
+      reply: "Got it 👍 Let me take a closer look at that for you.",
+      should_book: false,
+      follow_up_minutes: SMS_FOLLOW_UP_DELAY_MINUTES,
+      lead_capture: {}
+    };
   }
 
   mergeLeadCapture(thread, ai.lead_capture);
 
   if (thread.leadCapture?.full_name || thread.phone) {
     await sendToCRM({
-     source: thread.channel || "unknown",
-     full_name: thread.leadCapture?.full_name || "",
-     phone: thread.phone || thread.leadCapture?.phone || "",
-     email: thread.leadCapture?.email || "",
-     address: thread.leadCapture?.address || "",
-     project_type: thread.leadCapture?.project_type || "",
-     project_details: thread.leadCapture?.project_details || "",
-     lead_type: ai.should_book ? "BOOKED" : "INQUIRY",
-     timestamp: new Date().toISOString()
-  });
-}
+      source: thread.channel || "unknown",
+      full_name: thread.leadCapture?.full_name || "",
+      phone: thread.phone || thread.leadCapture?.phone || "",
+      email: thread.leadCapture?.email || "",
+      address: thread.leadCapture?.address || "",
+      project_type: thread.leadCapture?.project_type || "",
+      project_details: thread.leadCapture?.project_details || "",
+      lead_type: ai.should_book ? "BOOKED" : "INQUIRY",
+      timestamp: new Date().toISOString()
+    });
+  }
   if (!thread.leadCapture.phone) thread.leadCapture.phone = thread.phone;
 
   let replyText = ai.reply || "Thanks for reaching out!";
 
   if (ai.should_book && ai.appointment_date && ai.appointment_time) {
 
-  let parsedDate = new Date(ai.appointment_date);
-  const now = new Date();
-  const currentYear = now.getFullYear();
+    let parsedDate = new Date(ai.appointment_date);
+    const now = new Date();
+    const currentYear = now.getFullYear();
 
-  if (parsedDate.getFullYear() < currentYear) {
-    parsedDate.setFullYear(currentYear);
-  }
-    
-const today = new Date();
-today.setHours(0,0,0,0);
-parsedDate.setHours(0,0,0,0);
+    if (parsedDate.getFullYear() < currentYear) {
+      parsedDate.setFullYear(currentYear);
+    }
 
-  if (parsedDate < now) {
-    parsedDate.setFullYear(parsedDate.getFullYear() + 1);
-  }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    parsedDate.setHours(0, 0, 0, 0);
 
-  ai.appointment_date = parsedDate.toISOString().split("T")[0];
+    if (parsedDate < now) {
+      parsedDate.setFullYear(parsedDate.getFullYear() + 1);
+    }
 
-  if (ai.appointment_time === "morning") {
-  ai.appointment_time = "9:00 AM";
-}
+    ai.appointment_date = parsedDate.toISOString().split("T")[0];
 
-if (ai.appointment_time === "afternoon") {
-  ai.appointment_time = "1:00 PM";
-}
+    if (ai.appointment_time === "morning") {
+      ai.appointment_time = "9:00 AM";
+    }
 
-if (ai.appointment_time === "evening") {
-  ai.appointment_time = "6:00 PM";
-}
+    if (ai.appointment_time === "afternoon") {
+      ai.appointment_time = "1:00 PM";
+    }
+
+    if (ai.appointment_time === "evening") {
+      ai.appointment_time = "6:00 PM";
+    }
 
     const availability = await checkAvailability({
       appointment_date: ai.appointment_date,
@@ -736,7 +725,7 @@ async function processFacebookConversation(senderId, messageText) {
   }
 
   // Send directly to AI (NOT SMS fallback)
-const replyText = await processSmsConversation(threadKey, messageText);
+  const replyText = await processSmsConversation(threadKey, messageText);
 
   thread.history.push({
     role: "assistant",
@@ -787,15 +776,15 @@ async function runSmsFollowUps() {
       ? "Quick follow-up: your appointment is on our schedule. Reply here if you need to reschedule."
       : "Just checking in — would you like me to help you lock in a time for your estimate?";
 
- let sent;
+    let sent;
 
-if (thread.phone.startsWith("fb-")) {
-  const fbId = thread.phone.replace("fb-", "");
-  await sendFacebookMessage(fbId, followUpText);
-  sent = { ok: true };
-} else {
-  sent = await sendTwilioSms(thread.phone, followUpText);
-}
+    if (thread.phone.startsWith("fb-")) {
+      const fbId = thread.phone.replace("fb-", "");
+      await sendFacebookMessage(fbId, followUpText);
+      sent = { ok: true };
+    } else {
+      sent = await sendTwilioSms(thread.phone, followUpText);
+    }
     if (sent.ok) {
       thread.history.push({ role: "assistant", text: followUpText, at: new Date().toISOString() });
       thread.lastOutboundAt = now;
@@ -1304,103 +1293,12 @@ wss.on("connection", (twilioSocket, req) => {
       return;
     }
 
-    // --- Load recovery context for outbound recovery calls ---
-    if (isRecovery && recoveryId) {
-      try {
-        recoveryRecord = await estimateRecoveryService.getRecoveryById(recoveryId);
-        if (recoveryRecord) {
-          tenant = await getTenantById(recoveryRecord.tenant_id);
-          console.log("[AI-Desk] Recovery call loaded recoveryId=%s tenant=%s contact=%s", recoveryId, tenant?.company_name, recoveryRecord.contact_name);
-        }
-      } catch (e) {
-        console.error("[AI-Desk] Failed to load recovery:", e.message);
+    const activeModel = openaiModelCandidates[modelIndex];
+    const socket = new WebSocket(`wss://api.openai.com/v1/realtime?model=${encodeURIComponent(activeModel)}`, {
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "OpenAI-Beta": "realtime=v1"
       }
-    }
-
-    // --- Build instructions based on call type ---
-    let instructions;
-    let tools;
-
-    if (isRecovery && recoveryRecord && tenant) {
-      const firstName = (recoveryRecord.contact_name || "").split(/\s+/)[0] || "there";
-      const companyName = tenant.company_name || tenant.name || "our company";
-      instructions = [
-        `You are a friendly follow-up agent for ${companyName}. You are calling ${firstName} to follow up on an estimate that was sent but not yet booked.`,
-        "Your tone is warm, consultative, and zero-pressure. You are NOT a telemarketer. You sound like a helpful neighbor who happens to work at the company.",
-        `Start the call by saying: \"Hey ${firstName}, this is ${companyName} calling. I just wanted to follow up on the estimate we sent over and see if you had any questions.\"`,
-        "Then LISTEN. Let them talk. Do not pitch.",
-        "",
-        "--- OBJECTION HANDLING ---",
-        "If they say they need to THINK about it or aren't sure:",
-        "  → Call detect_objection with type='thinking'",
-        "  → Say: 'Totally understand — it's a big decision. Is there anything specific you're weighing that I can help clarify?'",
-        "",
-        "If they mention PRICE is too high, comparing quotes, or it's expensive:",
-        "  → Call detect_objection with type='price'",
-        "  → Say: 'I completely understand — most homeowners compare 2-3 options. Besides price, is there anything else that's important in your decision?'",
-        "  → If they isolate price as the only issue, say: 'If there's a budget target you're trying to hit, I can see if there's any flexibility on our end.'",
-        "",
-        "If they say they need to talk to SPOUSE/partner:",
-        "  → Call detect_objection with type='spouse'",
-        "  → Say: 'Of course — would it help if I sent over a quick summary they can review?'",
-        "",
-        "--- BOOKING ---",
-        "If they want to move forward and book, collect name, phone, address, scope, and call book_appointment.",
-        "After booking, say: 'Awesome, you're all set! Your estimate is scheduled. You'll get a confirmation by text. Thanks so much — have a great day!'",
-        "",
-        "--- IF THEY DECLINE ---",
-        "If they clearly say no or not interested, say: 'No problem at all — if anything changes, don't hesitate to give us a call. Have a great day!'",
-        "Be respectful. Never argue or pressure.",
-        "",
-        "--- RULES ---",
-        "Ask one question at a time. Let them finish speaking before you reply.",
-        "Keep the call under 2 minutes unless they want to talk longer.",
-        "Do NOT mention that you are an AI. You represent the company.",
-      ].join("\n");
-      tools = RECOVERY_TOOLS;
-    } else {
-      const defaultInstructions = [
-        "You are a professional, warm receptionist for a home service company. Be friendly, patient, and helpful.",
-        "Default language is English. If the caller asks to speak in another language (e.g. Spanish, French, Hindi), immediately call the change_language tool with the ISO 639-1 code (es, fr, hi, zh, ar, etc.), then confirm in that language and continue the entire conversation in that language.",
-        "Ask one question at a time. Wait for the caller to finish speaking before you reply—do not interrupt.",
-        // --- Booking flow ---
-        "Collect these details before booking: (1) full name, (2) phone number, (3) address or city, (4) what they need—interior, exterior, both, or rooms (scope), (5) preferred date if they give one, (6) any extra notes (pets, access, etc.). Offer a free on-site estimate.",
-        "When you have at least name, phone, and address OR city: call book_appointment with ALL the details the caller gave—include contact_name, contact_phone, address or city, scope, preferred_date, and notes. Do not omit fields they provided.",
-        "Right after calling book_appointment successfully, say clearly and then stop: 'You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.' Then allow the call to end naturally.",
-        "Repeat back key details (name, phone, address, scope) before finalizing so the caller can correct you if needed.",
-        // --- Live transfer detection ---
-        "TRANSFER RULES — call request_human_transfer ONLY when one of these is true:",
-        "(A) COMMERCIAL JOB: The caller explicitly says the project is for a commercial property — office, apartment complex, HOA, warehouse, restaurant, retail store, multi-unit building. A large residential house does NOT count as commercial.",
-        "(B) HIGH VALUE: The caller explicitly mentions a project budget or scope over $10,000 — for example 'my project is about $15k' or 'we need the whole building done, in the $20-30k range.'",
-        "(C) FRUSTRATED/ANGRY: The caller's tone or words clearly show frustration, anger, or confusion — they raise their voice, use profanity, say 'this is ridiculous', 'let me talk to a real person', or repeatedly express dissatisfaction.",
-        "(D) VIP/REPEAT: The caller says they are a returning customer, a VIP, have an existing account, or have called/worked with the company before.",
-        "(E) EXPLICIT REQUEST: The caller directly asks to speak to a person, manager, or owner.",
-        "When transferring: FIRST try to collect the caller's name and what they need. Then call request_human_transfer with all available details — reason, caller_name, project_type, budget_estimate, sentiment, and a clear summary. After the tool succeeds, tell the caller: 'Let me connect you with a team member who can help. Please stay on the line.' Do NOT say goodbye.",
-        "Do NOT transfer for normal residential estimates, general questions, or just because the project sounds large. When in doubt, complete the booking with book_appointment.",
-      ].join(" ");
-      instructions = (tenant && tenant.instructions)
-        ? tenant.instructions
-        : defaultInstructions;
-      tools = REALTIME_TOOLS;
-    }
-
-    const voice = process.env.OPENAI_REALTIME_VOICE || "shimmer";
-    const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 800;
-    sendToOpenAI({
-      type: "session.update",
-      session: {
-        input_audio_format: "g711_ulaw",
-        output_audio_format: "g711_ulaw",
-        voice,
-        instructions: `${instructions}\n\nSpeak clearly at a moderate pace. Let the caller finish before you respond.`,
-        tools,
-        turn_detection: {
-          type: "server_vad",
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: silenceMs,
-        },
-      },
     });
 
     openaiSocket = socket;
@@ -1410,115 +1308,6 @@ wss.on("connection", (twilioSocket, req) => {
       opened = true;
       openaiReady = true;
 
-    if (data.type === "response.function_call_arguments.done") {
-      const { name, arguments: argsJson } = data;
-      let output = "";
-      let args = {};
-      try {
-        if (argsJson != null) {
-          if (typeof argsJson === "object" && !Array.isArray(argsJson)) {
-            args = argsJson;
-          } else {
-            const raw = typeof argsJson === "string" ? argsJson : String(argsJson);
-            try {
-              args = JSON.parse(raw);
-            } catch (parseErr) {
-              const repaired = raw.trim().replace(/,(\s*[}\]])/g, "$1");
-              try {
-                args = JSON.parse(repaired);
-              } catch (_) {
-                console.error("[AI-Desk] Realtime tool args parse failed name=%s error=%s raw=%s", name, parseErr.message, raw.slice(0, 200));
-                output = JSON.stringify({ success: false, error: "Invalid format. Please ask the caller again for their name, phone, and address, then complete the booking." });
-                sendToOpenAI({
-                  type: "conversation.item.create",
-                  item: { type: "function_call_output", call_id: data.call_id, output },
-                });
-                return;
-              }
-            }
-          }
-        }
-        if (name === "book_appointment") {
-          await streamReadyPromise;
-        }
-        try {
-          if (name === "book_appointment" && tenant) {
-            console.log("[AI-Desk] Realtime book_appointment callSid=%s tenantId=%s callId=%s recovery=%s", callSid, tenant.id, callId || "(none)", isRecovery);
-            const { booking, crmSynced } = await bookingsService.createBooking(tenant.id, callId, args);
-            console.log("[AI-Desk] Realtime booking done id=%s crmSynced=%s", booking.id, crmSynced);
-            // If this is a recovery call, mark it as converted
-            if (isRecovery && recoveryRecord) {
-              await estimateRecoveryService.markConverted(recoveryRecord.id);
-              console.log("[AI-Desk] Recovery CONVERTED id=%s 🎉", recoveryRecord.id);
-            }
-            const message = crmSynced
-              ? "Estimate scheduled. Details synced to Zapier/DripJobs. Say to the caller: You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye."
-              : "Estimate scheduled and saved. Say to the caller: You're all set—your estimate is scheduled. You'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.";
-            output = JSON.stringify({ success: true, message });
-          } else if (name === "detect_objection" && isRecovery && recoveryRecord) {
-            // Recovery-specific: detect and route objection
-            const objType = args.objection_type;
-            console.log("[AI-Desk] Recovery objection detected id=%s type=%s details=%s", recoveryRecord.id, objType, args.details || "(none)");
-            await estimateRecoveryService.setObjection(recoveryRecord.id, objType);
-            await estimateRecoveryService.recordResponse(recoveryRecord.id);
-            output = JSON.stringify({
-              success: true,
-              message: `Objection '${objType}' recorded. Continue the conversation using the appropriate response for this objection. Be empathetic and helpful.`,
-            });
-          } else if (name === "request_human_transfer" && callSid && tenant) {
-            console.log("[AI-Desk] Transfer requested callSid=%s reason=%s sentiment=%s", callSid, args.reason, args.sentiment || "unknown");
-            const result = await transferService.initiateTransfer(
-              callSid,
-              null,
-              args.reason,
-              args.summary,
-              {
-                caller_name: args.caller_name,
-                caller_phone: args.caller_phone,
-                project_type: args.project_type,
-                budget_estimate: args.budget_estimate,
-                sentiment: args.sentiment,
-              }
-            );
-            if (result.success) {
-              output = JSON.stringify({
-                success: true,
-                message: "Transfer initiated. Tell the caller: 'Let me connect you with a team member who can help you with this. Please stay on the line.' Then stop speaking and wait for the transfer to connect."
-              });
-            } else {
-              output = JSON.stringify(result);
-            }
-          } else if (name === "change_language" && args.language) {
-            const lang = String(args.language).trim().toLowerCase().slice(0, 2) || "en";
-            sendToOpenAI({
-              type: "session.update",
-              session: {
-                audio: {
-                  input: {
-                    transcription: {
-                      model: "gpt-4o-transcribe",
-                      language: lang,
-                    },
-                  },
-                },
-              },
-            });
-            const langNames = { en: "English", es: "Spanish", fr: "French", hi: "Hindi", zh: "Chinese", ar: "Arabic" };
-            const langName = langNames[lang] || lang;
-            output = JSON.stringify({ success: true, language: lang, message: `Switched to ${langName}. Respond in ${langName} from now on and confirm briefly to the caller.` });
-          } else {
-            console.log("[AI-Desk] Realtime tool skipped (missing context) name=%s hasTenant=%s hasCallId=%s", name, !!tenant, !!callId);
-            output = JSON.stringify({ success: false, error: "Missing context" });
-          }
-        } catch (err) {
-          console.error("[AI-Desk] Realtime tool error name=%s error=%s", name, err.message);
-          output = JSON.stringify({ success: false, error: err.message });
-        }
-      } catch (err) {
-        console.error("[AI-Desk] Realtime tool error name=%s error=%s", name, err.message);
-        output = JSON.stringify({ success: false, error: err.message });
-      }
-      if (!output) return;
       sendToOpenAI({
         type: "session.update",
         session: {
@@ -1561,7 +1350,7 @@ wss.on("connection", (twilioSocket, req) => {
                 ]
               }
             }
-,
+            ,
             {
               type: "function",
               name: "checkAvailability",
@@ -1798,14 +1587,24 @@ wss.on("connection", (twilioSocket, req) => {
     if (msg.event === "stop") {
       if (openaiSocket?.readyState === WebSocket.OPEN) {
         openaiSocket.close();
-      } catch (_) { }
+      }
+
+      await safeUpdateCallSummary(callId, {
+        status: transferAttempted ? "transferred" : "completed",
+        transcript,
+        markEnded: true
+      });
     }
   });
 
   twilioSocket.on("close", () => {
     if (openaiSocket?.readyState === WebSocket.OPEN) {
       openaiSocket.close();
-    } catch (_) { }
+    }
+  });
+
+  twilioSocket.on("error", (error) => {
+    console.error("Twilio socket error:", error.message);
   });
 });
 
@@ -1826,19 +1625,118 @@ app.post("/website-chat", async (req, res) => {
 
   try {
     // Reuse SMS AI engine for web chat
- const sessionId = String(req.body?.sessionId || "").trim();
+    const sessionId = String(req.body?.sessionId || "").trim();
 
-if (!sessionId) {
-  res.status(400).json({ reply: "Missing session ID." });
-  return;
-}
-  const reply = await processSmsConversation(sessionId, message);
+    if (!sessionId) {
+      res.status(400).json({ reply: "Missing session ID." });
+      return;
+    }
+    const reply = await processSmsConversation(sessionId, message);
     res.json({ reply });
   } catch (error) {
     console.error("Website chat error:", error.message);
     res.status(500).json({ reply: "Something went wrong." });
   }
 });
+
+app.get("/facebook-webhook", (req, res) => {
+  const VERIFY_TOKEN = process.env.FACEBOOK_VERIFY_TOKEN;
+
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    res.status(200).send(challenge);
+  } else {
+    res.sendStatus(403);
+  }
+});
+
+app.post("/facebook-webhook", async (req, res) => {
+  try {
+    const entry = req.body.entry?.[0];
+    const messaging = entry?.messaging?.[0];
+    // 🔥 Handle Persistent Menu / Postback Buttons
+    if (messaging?.postback) {
+      const senderId = messaging.sender.id;
+      const payload = messaging.postback.payload;
+
+      if (payload === "GET_STARTED") {
+        await sendFacebookMessage(
+          senderId,
+          "👋 Welcome to Gladiators Painting! How can we help you today?"
+        );
+        return res.sendStatus(200);
+      }
+
+      if (payload === "GET_QUOTE") {
+        await sendFacebookMessage(
+          senderId,
+          "Great! What type of painting project are you planning?"
+        );
+        return res.sendStatus(200);
+      }
+
+      if (payload === "BOOK_ESTIMATE") {
+        await sendFacebookMessage(
+          senderId,
+          "Perfect. What day works best for your estimate?"
+        );
+        return res.sendStatus(200);
+      }
+
+      if (payload === "TALK_HUMAN") {
+        await sendFacebookMessage(
+          senderId,
+          "No problem 👍 A team member will reach out shortly."
+        );
+        return res.sendStatus(200);
+      }
+    }
+    if (!messaging || !messaging.message?.text) {
+      return res.sendStatus(200);
+    }
+
+    const senderId = messaging.sender.id;
+    const messageText = messaging.message.text;
+
+    // Show typing indicator
+    await sendTypingIndicator(senderId, "typing_on");
+
+    // 2–3 second delay
+    await delay(2000 + Math.random() * 1000);
+
+    // Stop typing indicator
+    await sendTypingIndicator(senderId, "typing_off");
+
+    const reply = await processFacebookConversation(senderId, messageText);
+
+    await sendFacebookMessage(
+      senderId,
+      reply,
+      ["Get a Free Quote", "Talk to a Human", "Book Estimate"]
+    );
+
+    res.sendStatus(200);
+  } catch (error) {
+    console.error("Facebook webhook error:", error.message);
+    res.sendStatus(500);
+  }
+});
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// -------------------- SERVE_DASHBOARD (optional) --------------------
+if (SERVE_DASHBOARD) {
+  app.use(express.static(path.join(__dirname, "dashboard", "dist")));
+  app.get("*", (req, res) => {
+    if (req.path.startsWith("/api") || req.path.startsWith("/twilio") || req.path.startsWith("/stripe")) return;
+    res.sendFile(path.join(__dirname, "dashboard", "dist", "index.html"));
+  });
+}
 
 // -------------------- Cron: estimate recovery every 5 min --------------------
 cron.schedule("*/5 * * * *", () => {

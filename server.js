@@ -1329,7 +1329,10 @@ wss.on("connection", (twilioSocket, req) => {
     const model = openaiModelCandidates[modelIndex] || openaiModelCandidates[0];
     const url = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`;
     openaiSocket = new WebSocket(url, {
-      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+      headers: {
+        "Authorization": `Bearer ${OPENAI_API_KEY}`,
+        "OpenAI-Beta": "realtime=v1"
+      },
     });
     openaiSocket.on("open", async () => {
       openaiReady = true;
@@ -1536,7 +1539,7 @@ wss.on("connection", (twilioSocket, req) => {
       }
 
       await safePoolQuery(
-        `INSERT INTO calls (id, tenant_id, call_sid, started_at, status)
+        `INSERT INTO calls (id, tenant_id, twilio_call_sid, started_at, status)
          VALUES ($1, $2, $3, now(), $4)
          ON CONFLICT (id) DO NOTHING`,
         [callId, tenantId, callSid, "in_progress"]

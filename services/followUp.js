@@ -59,11 +59,7 @@ async function sendFollowUp(followUp) {
   if (!tenant) return;
   const client = twilio.getClientForTenant(tenant);
   if (!client) return;
-<<<<<<< HEAD
   const from = tenant.matched_phone || process.env.TWILIO_PHONE_NUMBER;
-=======
-  const from = process.env.TWILIO_PHONE_NUMBER || tenant.matched_phone;
->>>>>>> 27d1bf5 (Twilio testing)
   if (!from) return;
 
   const messages = {

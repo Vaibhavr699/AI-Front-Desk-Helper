@@ -84,11 +84,7 @@ async function sendBookingConfirmationSms(tenant, booking, message) {
   if (!fullTenant) return;
   const client = twilio.getClientForTenant(fullTenant);
   if (!client) return;
-<<<<<<< HEAD
   let from = fullTenant.matched_phone || process.env.TWILIO_PHONE_NUMBER;
-=======
-  let from = process.env.TWILIO_PHONE_NUMBER || fullTenant.matched_phone;
->>>>>>> 27d1bf5 (Twilio testing)
   if (!from) return;
   const body = message || `Your estimate with ${fullTenant.company_name} is scheduled. We'll reach out to confirm.`;
   try {

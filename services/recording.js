@@ -7,7 +7,6 @@ const { getCallByTwilioSid, updateCallByTwilioSid } = require("./calls");
 const BASE_URL = process.env.BASE_URL;
 
 async function startRecording(callSid, tenant = null) {
-<<<<<<< HEAD
   if (!BASE_URL) {
     console.warn("[Recording] BASE_URL not set; Twilio recording-status callbacks will not work. Set BASE_URL so recordings and transcription run.");
     return null;
@@ -16,12 +15,6 @@ async function startRecording(callSid, tenant = null) {
   if (!client) return null;
   const recording = await client.calls(callSid).recordings.create({
     recordingStatusCallback: `${BASE_URL.replace(/\/$/, "")}/twilio/recording-status`,
-=======
-  const client = twilio.getClientForTenant(tenant);
-  if (!client) return null;
-  const recording = await client.calls(callSid).recordings.create({
-    recordingStatusCallback: `${BASE_URL}/twilio/recording-status`,
->>>>>>> 27d1bf5 (Twilio testing)
     recordingStatusCallbackEvent: ["in-progress", "completed", "absent"],
     recordingStatusCallbackMethod: "POST",
   });

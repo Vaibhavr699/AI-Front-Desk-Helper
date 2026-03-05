@@ -24,7 +24,6 @@ const REASON_LABELS = {
   caller_requested_human: "Caller Requested Live Agent",
 };
 
-<<<<<<< HEAD
 /**
  * Build a rich pre-brief SMS body with all available context.
  * If the tenant has a custom template, use that with variable substitution.
@@ -67,9 +66,6 @@ function buildPreBriefBody(tenant, callerPhone, summary, reason, extras = {}) {
 }
 
 async function sendPreBriefSms(tenant, callerPhone, summary, reason, transferTo, extras = {}) {
-=======
-async function sendPreBriefSms(tenant, callerPhone, summary, notes, transferTo) {
->>>>>>> 27d1bf5 (Twilio testing)
   const client = twilio.getClientForTenant(tenant);
   if (!client) return;
   const numbers = tenant.transfer_numbers && Array.isArray(tenant.transfer_numbers)
@@ -103,11 +99,7 @@ async function sendPreBriefSms(tenant, callerPhone, summary, notes, transferTo) 
  * @param {string} callerSummary - AI-generated summary of the conversation
  * @param {object} extras - Additional context: { caller_name, caller_phone, project_type, budget_estimate, sentiment }
  */
-<<<<<<< HEAD
 async function initiateTransfer(callSid, transferToNumber, reason, callerSummary, extras = {}) {
-=======
-async function initiateTransfer(callSid, transferToNumber, reason, callerSummary) {
->>>>>>> 27d1bf5 (Twilio testing)
   const call = await getCallByTwilioSid(callSid);
   if (!call) return { success: false, error: "Call not found" };
 

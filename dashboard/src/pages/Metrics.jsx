@@ -1,10 +1,6 @@
 import { useState, useEffect } from "react";
 import { getMetrics } from "../api";
-<<<<<<< HEAD
 import { LumaSpin } from "../components/ui/luma-spin";
-=======
-import { Loading } from "../components";
->>>>>>> 27d1bf5 (Twilio testing)
 
 export default function Metrics({ tenantId }) {
   const [metrics, setMetrics] = useState(null);
@@ -17,11 +13,7 @@ export default function Metrics({ tenantId }) {
   }, [tenantId]);
 
   if (!tenantId) return <div className="px-0"><p className="text-stone-500 text-sm sm:text-base">Select a business to view metrics.</p></div>;
-<<<<<<< HEAD
   if (loading) return <div className="px-0 flex items-center justify-center py-20"><LumaSpin /></div>;
-=======
-  if (loading) return <div className="px-0"><Loading fullScreen={false} message="Loading metrics…" /></div>;
->>>>>>> 27d1bf5 (Twilio testing)
   if (error) return <div className="px-0"><p className="text-red-600 text-sm sm:text-base">{error}</p></div>;
   if (!metrics) return null;
 

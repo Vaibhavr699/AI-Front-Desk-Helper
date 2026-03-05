@@ -1371,7 +1371,7 @@ wss.on("connection", (twilioSocket, req) => {
 
       const voice = process.env.OPENAI_REALTIME_VOICE || "shimmer";
       const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 800;
-      sendToOpenAI({
+      const payloadToOpenAI = {
         type: "session.update",
         session: {
           input_audio_format: "g711_ulaw",
@@ -1386,7 +1386,10 @@ wss.on("connection", (twilioSocket, req) => {
             silence_duration_ms: silenceMs,
           },
         },
-      });
+      };
+
+      console.log("[DEBUG] Sending payload to OpenAI:", JSON.stringify(payloadToOpenAI, null, 2));
+      sendToOpenAI(payloadToOpenAI);
     });
 
     openaiSocket.on("message", async (msg) => {

@@ -83,6 +83,16 @@ async function loadTenants() {
 }
 
 app.get("/health", (req, res) => res.status(200).send("OK"));
+// Twilio status callbacks must return <64KB. Handle here first with raw empty response.
+app.post("/twilio/status", (req, res) => {
+  res.writeHead(200, { "Content-Length": "0" });
+  res.end();
+  const CallSid = req.body && req.body.CallSid;
+  const CallStatus = req.body && req.body.CallStatus;
+  if (CallSid && (CallStatus === "completed" || CallStatus === "busy" || CallStatus === "failed" || CallStatus === "no-answer")) {
+    callsService.updateCallByTwilioSid(CallSid, { status: CallStatus, ended_at: new Date().toISOString() }).catch(() => {});
+  }
+});
 app.use("/twilio", twilioRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/stripe", authMiddleware, require("./routes/stripe"));

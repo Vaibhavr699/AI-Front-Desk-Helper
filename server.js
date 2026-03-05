@@ -1542,7 +1542,7 @@ wss.on("connection", (twilioSocket, req) => {
         `INSERT INTO calls (id, tenant_id, twilio_call_sid, started_at, status)
          VALUES ($1, $2, $3, now(), $4)
          ON CONFLICT (id) DO NOTHING`,
-        [callId, tenantId, callSid, "in_progress"]
+        [callId, tenant.id, callSid, "in_progress"]
       );
       return;
     }

@@ -155,6 +155,7 @@
         );
 
         hasWelcomed = true;
+        requestPhone();
       }
               function requestPhone() {
   const phoneButton = document.createElement("button");

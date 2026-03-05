@@ -1534,12 +1534,17 @@ wss.on("connection", (twilioSocket, req) => {
         );
       }
 
-      await safePoolQuery(
+      const insertRes = await safePoolQuery(
         `INSERT INTO calls (id, tenant_id, twilio_call_sid, started_at, status)
          VALUES ($1, $2, $3, now(), $4)
-         ON CONFLICT (id) DO NOTHING`,
+         ON CONFLICT (twilio_call_sid) DO UPDATE SET status = 'in_progress'
+         RETURNING id`,
         [callId, tenant.id, callSid, "in_progress"]
       );
+
+      if (insertRes && insertRes.rows && insertRes.rows.length > 0) {
+        callId = insertRes.rows[0].id;
+      }
       return;
     }
 

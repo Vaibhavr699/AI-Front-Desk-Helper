@@ -1,23 +1,33 @@
 {
   "name": "ai-front-desk-backend",
   "version": "1.0.0",
-  "description": "AI Voice Front Desk System",
+  "description": "Multi-tenant AI Voice Front Desk for Home Service Companies",
+  "engines": {
+    "node": ">=18"
+  },
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "postinstall": "node --check server.js"
+    "db:migrate": "node scripts/run-migrations.js",
+    "db:seed": "node scripts/seed-gladiators.js",
+    "build:dashboard": "cd dashboard && npm run build",
+    "create-user": "node scripts/create-dashboard-user.js",
+    "test:create-call": "node scripts/test-create-call.js",
+    "test:call-twilio": "node scripts/test-call-twilio.js"
   },
-  "engines": {
-    "node": ">=20"
-  },
- "dependencies": {
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.700.0",
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
     "express": "^4.18.2",
-     "googleapis": "^144.0.0",
-    "node-fetch": "^2.7.0",
+    "jsonwebtoken": "^9.0.2",
+    "node-cron": "^3.0.3",
     "openai": "^4.0.0",
-    "pg": "^8.12.0",
+    "pg": "^8.13.0",
+    "resend": "^4.0.0",
+    "stripe": "^20.4.0",
+    "twilio": "^5.3.0",
     "ws": "^8.18.0"
   }
 }

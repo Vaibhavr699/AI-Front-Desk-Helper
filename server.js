@@ -30,6 +30,82 @@ const dashboardRoutes = require("./routes/dashboard");
 const authRoutes = require("./routes/auth");
 const { authMiddleware } = require("./lib/auth");
 
+const WEBSITE_CONTEXT_URL = process.env.WEBSITE_CONTEXT_URL || "https://www.gladiatorspainting.com";
+const WEBSITE_CONTEXT_MAX_CHARS = 10000;
+const OPENAI_TEXT_MODEL = "gpt-4o";
+const SMS_FOLLOW_UP_DELAY_MINUTES = 15;
+const LEAD_CAPTURE_FIELDS = [
+  "full_name",
+  "phone",
+  "email",
+  "address",
+  "project_type",
+  "project_details",
+  "timeline",
+  "appointment_date",
+  "appointment_time"
+];
+
+function isValidE164(phone) {
+  return /^\+?[1-9]\d{1,14}$/.test(String(phone || ""));
+}
+
+const REALTIME_TOOLS = [
+  {
+    type: "function",
+    name: "book_appointment",
+    description: "Finalize and save the booking. Call this when you have at least: contact name, contact phone, and address OR city. Include EVERY detail the caller gave: contact_name, contact_phone, address, city, scope (interior/exterior/both/rooms), preferred_date, notes (pets, access, etc.). Do not omit any field the caller provided—all fields are saved to the database and sent to CRM. Use for normal residential estimate requests.",
+    parameters: {
+      type: "object",
+      properties: {
+        contact_name: { type: "string" },
+        contact_phone: { type: "string" },
+        contact_email: { type: "string" },
+        address: { type: "string" },
+        city: { type: "string" },
+        scope: { type: "string" },
+        job_type: { type: "string" },
+        preferred_date: { type: "string" },
+        notes: { type: "string" },
+      },
+      required: ["contact_phone"],
+    },
+  },
+  {
+    type: "function",
+    name: "request_human_transfer",
+    description: "Transfer the caller to a live team member. Trigger this ONLY when one of these conditions is clearly met: (1) caller explicitly says it is a COMMERCIAL job, (2) caller states a project budget or value OVER $10,000, (3) caller is clearly frustrated, angry, confused, or repeatedly asks for a real person, (4) caller identifies themselves as a VIP, returning customer, or says they've called before. Do NOT transfer for normal residential estimates—use book_appointment instead. Before transferring, try to collect the caller's name and what they need so the agent receiving the call has context.",
+    parameters: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          enum: ["commercial_job", "high_value_over_10k", "frustrated_caller", "vip_repeat_customer", "caller_requested_human"]
+        },
+        caller_name: { type: "string" },
+        caller_phone: { type: "string" },
+        project_type: { type: "string" },
+        budget_estimate: { type: "string" },
+        sentiment: { type: "string", enum: ["positive", "neutral", "frustrated", "angry"] },
+        summary: { type: "string" },
+      },
+      required: ["reason", "summary"],
+    },
+  },
+  {
+    type: "function",
+    name: "change_language",
+    description: "Call this when the caller asks to speak in a different language. Use the ISO 639-1 code: en=English, es=Spanish, fr=French, hi=Hindi, zh=Chinese, ar=Arabic, etc.",
+    parameters: {
+      type: "object",
+      properties: {
+        language: { type: "string" },
+      },
+      required: ["language"],
+    },
+  },
+];
+
 // -------------------- App --------------------
 const app = express();
 

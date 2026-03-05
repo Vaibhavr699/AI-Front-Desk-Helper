@@ -1345,6 +1345,16 @@ wss.on("connection", (twilioSocket, req) => {
       return;
     }
 
+    if (data.type === "response.completed") {
+      const callerAskedHuman = /human|person|representative|manager|transfer/i.test(transcript);
+      if (callerAskedHuman && !transferAttempted && isBusinessHours(tenant)) {
+        transferAttempted = true;
+        await attemptTransfer(callSid, tenant);
+      }
+      await safeUpdateCallSummary(callId, { transcript });
+      return;
+    }
+
     if (data.type && data.type.includes("error")) {
       console.error("[AI-Desk] OpenAI error type=%s", data.type, data);
     }
@@ -1353,68 +1363,7 @@ wss.on("connection", (twilioSocket, req) => {
   openaiSocket.on("error", (err) => console.error("OpenAI socket error:", err));
   openaiSocket.on("close", () => { openaiReady = false; });
 
-  twilioSocket.on("message", (message) => {
-    let data;
-    try {
-      data = JSON.parse(message.toString());
-    } catch (e) {
-      return;
-    }
-
-    if (msg.type === "conversation.item.input_audio_transcription.completed" && msg.transcript) {
-      transcript += `\nCALLER: ${msg.transcript}`;
-      return;
-    }
-    const welcome = (tenant && tenant.welcome_message)
-      ? tenant.welcome_message
-      : "Thanks for calling. What can we help you with today? Would you like to schedule a free estimate?";
-    sendToOpenAI({
-      type: "response.create",
-      response: {
-        modalities: ["audio", "text"],
-        instructions: `Say exactly (warm and clear): "${welcome}" Then stop and wait for the caller to respond. Do not continue until they have spoken.`,
-      },
-    });
-    return;
-  }
-
-      if (msg.type === "response.completed") {
-    const callerAskedHuman = /human|person|representative|manager|transfer/i.test(transcript);
-    if (callerAskedHuman && !transferAttempted && isBusinessHours(tenant)) {
-      transferAttempted = true;
-      await attemptTransfer(callSid, tenant);
-    }
-
-    await safeUpdateCallSummary(callId, { transcript });
-    return;
-  }
-
-  if (msg.type === "error" || (msg.type && msg.type.includes("error"))) {
-    console.error("OpenAI error event:", msg);
-  }
-});
-
-socket.on("error", (error) => {
-  console.error(`OpenAI socket error (${activeModel}):`, error.message);
-});
-
-socket.on("close", (code, reason) => {
-  openaiReady = false;
-  const reasonText = reason ? reason.toString() : "";
-  console.error(`OpenAI socket closed (${activeModel}) code=${code} reason=${reasonText}`);
-
-  if (!opened) {
-    connectOpenAI(modelIndex + 1);
-    return;
-  }
-
-  if (twilioSocket.readyState === WebSocket.OPEN) {
-    twilioSocket.close();
-  }
-});
-  }
-
-connectOpenAI(0);
+  connectOpenAI(0);
 
 twilioSocket.on("message", async (raw) => {
   let msg;

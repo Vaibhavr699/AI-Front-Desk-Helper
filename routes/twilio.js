@@ -132,12 +132,14 @@ router.get("/recovery-call", (req, res) => {
 });
 
 // Status callback for recovery outbound calls — logs the outcome.
-// Twilio requires response body < 64KB; respond immediately with empty body, then update DB in background.
+// Twilio requires response body < 64KB. Send empty 200 immediately with raw Node to avoid any middleware adding body.
 router.post("/recovery-call-status", (req, res) => {
-  const { CallSid, CallStatus } = req.body || {};
-  const recoveryId = req.query.recoveryId;
+  res.writeHead(200, { "Content-Length": "0" });
+  res.end();
 
-  res.status(200).set("Content-Length", "0").end();
+  const CallSid = req.body && req.body.CallSid;
+  const CallStatus = req.body && req.body.CallStatus;
+  const recoveryId = req.query && req.query.recoveryId;
 
   if (recoveryId && CallSid) {
     const statusMap = {
@@ -148,13 +150,15 @@ router.post("/recovery-call-status", (req, res) => {
       canceled: "failed",
     };
     const touchStatus = statusMap[CallStatus] || CallStatus;
-    const db = require("../lib/db");
-    db
-      .query(
-        "UPDATE recovery_touches SET status = $1 WHERE call_sid = $2 AND recovery_id = $3",
-        [touchStatus, CallSid, recoveryId]
-      )
-      .catch((e) => console.error("[Recovery] Call status update error:", e.message));
+    setImmediate(() => {
+      const db = require("../lib/db");
+      db
+        .query(
+          "UPDATE recovery_touches SET status = $1 WHERE call_sid = $2 AND recovery_id = $3",
+          [touchStatus, CallSid, recoveryId]
+        )
+        .catch((e) => console.error("[Recovery] Call status update error:", e.message));
+    });
   }
 });
 

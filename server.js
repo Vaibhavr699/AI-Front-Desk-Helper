@@ -58,7 +58,6 @@ const BASE_URL = process.env.BASE_URL;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 // Default: API-only (no /dashboard). Set SERVE_DASHBOARD=true for one-service deploy (API + dashboard on same URL).
 const SERVE_DASHBOARD = process.env.SERVE_DASHBOARD === "true";
-const SMS_FOLLOW_UP_CHECK_INTERVAL_MS = Math.max(60000, parseInt(process.env.SMS_FOLLOW_UP_CHECK_INTERVAL_MS, 10) || 60000);
 
 app.get("/health", (req, res) => res.status(200).send("OK"));
 app.use("/twilio", twilioRoutes);
@@ -1136,7 +1135,7 @@ wss.on("connection", (twilioSocket, req) => {
   const pathSegments = pathname.split("/").filter(Boolean);
   const tenantIdFromPath = pathSegments.length >= 2 ? pathSegments[1] : "";
   const tenantId = TENANTS[tenantIdFromPath] ? tenantIdFromPath : "gladiators";
-  const tenant = TENANTS[tenantId];
+  let tenant = TENANTS[tenantId];
 
   if (!pathname.startsWith("/twilio-media/")) {
     console.error("Invalid Twilio media stream path:", pathname);
@@ -1150,9 +1149,11 @@ wss.on("connection", (twilioSocket, req) => {
     return;
   }
 
-  const callId = crypto.randomUUID();
+  let callId = crypto.randomUUID();
   let callSid = null;
   let streamSid = null;
+  let from = null;
+  let to = null;
   let transcript = "";
   let transferAttempted = false;
 
@@ -1161,7 +1162,7 @@ wss.on("connection", (twilioSocket, req) => {
   let openaiReady = false;
   let openaiSocket = null;
   const crmLeadSentRef = { sent: false };
-  const openaiModelCandidates = [...new Set([OPENAI_MODEL, "gpt-4o-realtime-preview-2024-12-17", "gpt-realtime"])]
+  const openaiModelCandidates = [...new Set([process.env.OPENAI_MODEL, "gpt-4o-realtime-preview-2024-12-17", "gpt-realtime"])]
     .filter(Boolean);
 
   function sendToOpenAI(payload) {
@@ -1188,7 +1189,13 @@ wss.on("connection", (twilioSocket, req) => {
     );
   }
 
-  openaiSocket.on("open", async () => {
+  function connectOpenAI(modelIndex) {
+    const model = openaiModelCandidates[modelIndex] || openaiModelCandidates[0];
+    const url = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`;
+    openaiSocket = new WebSocket(url, {
+      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
+    });
+    openaiSocket.on("open", async () => {
     openaiReady = true;
     while (openaiQueue.length) openaiSocket.send(openaiQueue.shift());
 
@@ -1363,10 +1370,10 @@ wss.on("connection", (twilioSocket, req) => {
 
   openaiSocket.on("error", (err) => console.error("OpenAI socket error:", err));
   openaiSocket.on("close", () => { openaiReady = false; });
-
+  }
   connectOpenAI(0);
 
-twilioSocket.on("message", async (raw) => {
+  twilioSocket.on("message", async (raw) => {
   let msg;
   try {
     msg = JSON.parse(raw.toString());
@@ -1432,7 +1439,7 @@ setInterval(() => {
   runSmsFollowUps().catch((error) => {
     console.error("SMS follow-up loop error:", error.message);
   });
-}, Math.max(60000, SMS_FOLLOW_UP_CHECK_INTERVAL_MS));
+}, Math.max(60000, parseInt(process.env.SMS_FOLLOW_UP_CHECK_INTERVAL_MS, 10) || 60000));
 
 app.post("/website-chat", async (req, res) => {
   const message = String(req.body?.message || "").trim();

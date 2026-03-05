@@ -1458,13 +1458,9 @@ wss.on("connection", (twilioSocket, req) => {
               sendToOpenAI({
                 type: "session.update",
                 session: {
-                  audio: {
-                    input: {
-                      transcription: {
-                        model: "gpt-4o-transcribe",
-                        language: lang,
-                      },
-                    },
+                  input_audio_transcription: {
+                    model: "whisper-1",
+                    language: lang,
                   },
                 },
               });

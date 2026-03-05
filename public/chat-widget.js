@@ -153,8 +153,41 @@
           "Hi there 👋 Welcome to Gladiators Painting! I can help you get a fast quote. Are you looking for interior or exterior painting?",
           false
         );
+
         hasWelcomed = true;
       }
+              function requestPhone() {
+  const phoneButton = document.createElement("button");
+  phoneButton.innerText ="📱 Get Estimate Times by Text";
+  phoneButton.style.marginTop = "10px";
+  phoneButton.style.padding = "10px";
+  phoneButton.style.borderRadius = "8px";
+  phoneButton.style.border = "none";
+  phoneButton.style.background = "#2563eb";
+  phoneButton.style.color = "#fff";
+  phoneButton.style.cursor = "pointer";
+
+  phoneButton.onclick = () => {
+    const phone = prompt("Enter your phone number for estimate times:");
+
+    if (phone) {
+      fetch(apiBase + "/lead/phone", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          phone: phone,
+          source: "website_chat"
+        })
+      });
+
+      addMessage("Perfect 👍 We'll text you estimate times shortly.", false);
+    }
+  };
+
+  messages.appendChild(phoneButton);
+}
     } else {
       container.style.opacity = "0";
       container.style.transform = "translateY(10px)";
@@ -164,7 +197,31 @@
       toggleButton.innerText = "Chat";
     }
   });
+setTimeout(() => {
+  if (!isOpen) {
+    const prompt = document.createElement("div");
+    prompt.innerText = "Hi 👋 Want a fast painting estimate?";
+    prompt.style.position = "fixed";
+    prompt.style.bottom = "80px";
+    prompt.style.right = "20px";
+    prompt.style.background = "#fff";
+    prompt.style.padding = "10px 14px";
+    prompt.style.borderRadius = "12px";
+    prompt.style.boxShadow = "0 4px 10px rgba(0,0,0,0.2)";
+    prompt.style.fontFamily = "Arial, sans-serif";
+    prompt.style.cursor = "pointer";
+    prompt.style.zIndex = "999999";
 
+    prompt.onclick = () => {
+      toggleButton.click();
+      prompt.remove();
+    };
+
+    document.body.appendChild(prompt);
+
+    setTimeout(() => prompt.remove(), 15000);
+  }
+}, 8000);
   // ===== Send Message =====
   async function sendMessage() {
     const text = input.value.trim();

@@ -58,6 +58,8 @@ const BASE_URL = process.env.BASE_URL;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 // Default: API-only (no /dashboard). Set SERVE_DASHBOARD=true for one-service deploy (API + dashboard on same URL).
 const SERVE_DASHBOARD = process.env.SERVE_DASHBOARD === "true";
+const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || "";
+const smsThreads = new Map();
 
 app.get("/health", (req, res) => res.status(200).send("OK"));
 app.use("/twilio", twilioRoutes);

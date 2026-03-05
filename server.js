@@ -1408,9 +1408,14 @@ wss.on("connection", (twilioSocket, req) => {
         return;
       }
 
-      if ((msg.type === "response.audio.delta" || msg.type === "response.output_audio.delta") && msg.delta) {
-        sendAudioToTwilio(msg.delta);
+      if (data.type === "response.audio.delta" && data.delta) {
+        // console.log("[DEBUG] Received audio delta from OpenAI (length: %d)", data.delta.length);
+        sendAudioToTwilio(data.delta);
         return;
+      }
+
+      if (data.type === "input_audio_buffer.speech_started") {
+        console.log("[AI-Desk] User started speaking");
       }
 
       if (data.type === "response.function_call_arguments.done") {

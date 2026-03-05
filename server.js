@@ -83,14 +83,19 @@ async function loadTenants() {
 }
 
 app.get("/health", (req, res) => res.status(200).send("OK"));
-// Twilio status callbacks must return <64KB. Handle here first with raw empty response.
+// Twilio status / <Connect> action callback. Must return valid TwiML < 64KB.
+// Return minimal <Response/> immediately, then update call in background.
 app.post("/twilio/status", (req, res) => {
-  res.writeHead(200, { "Content-Length": "0" });
-  res.end();
+  const twiml = '<?xml version="1.0" encoding="UTF-8"?><Response/>';
+  res.writeHead(200, {
+    "Content-Type": "text/xml",
+    "Content-Length": Buffer.byteLength(twiml).toString(),
+  });
+  res.end(twiml);
   const CallSid = req.body && req.body.CallSid;
   const CallStatus = req.body && req.body.CallStatus;
   if (CallSid && (CallStatus === "completed" || CallStatus === "busy" || CallStatus === "failed" || CallStatus === "no-answer")) {
-    callsService.updateCallByTwilioSid(CallSid, { status: CallStatus, ended_at: new Date().toISOString() }).catch(() => {});
+    callsService.updateCallByTwilioSid(CallSid, { status: CallStatus, ended_at: new Date().toISOString() }).catch(() => { });
   }
 });
 app.use("/twilio", twilioRoutes);
@@ -1234,242 +1239,242 @@ wss.on("connection", (twilioSocket, req) => {
       headers: { Authorization: `Bearer ${OPENAI_API_KEY}` },
     });
     openaiSocket.on("open", async () => {
-    openaiReady = true;
-    while (openaiQueue.length) openaiSocket.send(openaiQueue.shift());
+      openaiReady = true;
+      while (openaiQueue.length) openaiSocket.send(openaiQueue.shift());
 
-    if (callSid) {
-      const call = await callsService.getCallByTwilioSid(callSid);
-      if (call) {
-        callId = call.id;
-        tenant = await getTenantById(call.tenant_id);
-      }
-      if (!tenant && (to || from)) {
-        tenant = await getTenantByPhone(to);
-        if (!tenant && from) tenant = await getTenantByPhone(from);
-      }
-      if (tenant) {
-        console.log("[AI-Desk] Realtime stream ready callSid=%s tenantId=%s callId=%s from=%s to=%s", callSid, tenant?.id, callId || "(none)", from, to);
-        if (tenant.id && callSid) {
-          recordingService.startRecording(callSid, tenant).catch((e) => console.error("Start recording error:", e));
+      if (callSid) {
+        const call = await callsService.getCallByTwilioSid(callSid);
+        if (call) {
+          callId = call.id;
+          tenant = await getTenantById(call.tenant_id);
         }
-      } else {
-        console.log("[AI-Desk] Realtime stream no tenant callSid=%s callFound=%s to=%s from=%s", callSid, !!call, to, from);
+        if (!tenant && (to || from)) {
+          tenant = await getTenantByPhone(to);
+          if (!tenant && from) tenant = await getTenantByPhone(from);
+        }
+        if (tenant) {
+          console.log("[AI-Desk] Realtime stream ready callSid=%s tenantId=%s callId=%s from=%s to=%s", callSid, tenant?.id, callId || "(none)", from, to);
+          if (tenant.id && callSid) {
+            recordingService.startRecording(callSid, tenant).catch((e) => console.error("Start recording error:", e));
+          }
+        } else {
+          console.log("[AI-Desk] Realtime stream no tenant callSid=%s callFound=%s to=%s from=%s", callSid, !!call, to, from);
+        }
       }
-    }
 
-    const defaultInstructions = [
-      "You are a professional receptionist. Be warm and helpful.",
-      "Default language is English. If the caller asks to speak in another language (e.g. Spanish, French, Hindi), immediately call the change_language tool with the ISO 639-1 code (es, fr, hi, zh, ar, etc.), then confirm in that language and continue the entire conversation in that language.",
-      "Ask one question at a time. Wait for the caller to finish speaking before you reply—do not interrupt.",
-      "Collect these details before booking: (1) full name, (2) phone number, (3) address or city, (4) what they need—interior, exterior, both, or rooms (scope), (5) preferred date if they give one, (6) any extra notes (pets, access, etc.). Offer a free on-site estimate.",
-      "When you have at least name, phone, and address OR city: call book_appointment with ALL the details the caller gave—include contact_name, contact_phone, address or city, scope, preferred_date, and notes. Do not omit fields they provided.",
-      "Right after calling book_appointment successfully, say clearly and then stop: 'You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.' Then allow the call to end naturally.",
-      "Do NOT say you are transferring or connecting to someone unless you actually need a live agent. Only use request_human_transfer for: commercial job, project over $10k, caller clearly frustrated or angry, or VIP/repeat customer. For normal residential estimates, always complete the booking with book_appointment.",
-      "Repeat back key details (name, phone, address, scope) before finalizing so the caller can correct you if needed.",
-    ].join(" ");
-    const instructions = (tenant && tenant.instructions)
-      ? tenant.instructions
-      : defaultInstructions;
+      const defaultInstructions = [
+        "You are a professional receptionist. Be warm and helpful.",
+        "Default language is English. If the caller asks to speak in another language (e.g. Spanish, French, Hindi), immediately call the change_language tool with the ISO 639-1 code (es, fr, hi, zh, ar, etc.), then confirm in that language and continue the entire conversation in that language.",
+        "Ask one question at a time. Wait for the caller to finish speaking before you reply—do not interrupt.",
+        "Collect these details before booking: (1) full name, (2) phone number, (3) address or city, (4) what they need—interior, exterior, both, or rooms (scope), (5) preferred date if they give one, (6) any extra notes (pets, access, etc.). Offer a free on-site estimate.",
+        "When you have at least name, phone, and address OR city: call book_appointment with ALL the details the caller gave—include contact_name, contact_phone, address or city, scope, preferred_date, and notes. Do not omit fields they provided.",
+        "Right after calling book_appointment successfully, say clearly and then stop: 'You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.' Then allow the call to end naturally.",
+        "Do NOT say you are transferring or connecting to someone unless you actually need a live agent. Only use request_human_transfer for: commercial job, project over $10k, caller clearly frustrated or angry, or VIP/repeat customer. For normal residential estimates, always complete the booking with book_appointment.",
+        "Repeat back key details (name, phone, address, scope) before finalizing so the caller can correct you if needed.",
+      ].join(" ");
+      const instructions = (tenant && tenant.instructions)
+        ? tenant.instructions
+        : defaultInstructions;
 
-    const voice = process.env.OPENAI_REALTIME_VOICE || "shimmer";
-    const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 800;
-    sendToOpenAI({
-      type: "session.update",
-      session: {
-        input_audio_format: "g711_ulaw",
-        output_audio_format: "g711_ulaw",
-        voice,
-        instructions: `${instructions}\n\nSpeak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English.`,
-        tools: REALTIME_TOOLS,
-        turn_detection: {
-          type: "server_vad",
-          threshold: 0.5,
-          prefix_padding_ms: 300,
-          silence_duration_ms: silenceMs,
+      const voice = process.env.OPENAI_REALTIME_VOICE || "shimmer";
+      const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 800;
+      sendToOpenAI({
+        type: "session.update",
+        session: {
+          input_audio_format: "g711_ulaw",
+          output_audio_format: "g711_ulaw",
+          voice,
+          instructions: `${instructions}\n\nSpeak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English.`,
+          tools: REALTIME_TOOLS,
+          turn_detection: {
+            type: "server_vad",
+            threshold: 0.5,
+            prefix_padding_ms: 300,
+            silence_duration_ms: silenceMs,
+          },
         },
-      },
+      });
     });
-  });
 
-  openaiSocket.on("message", async (msg) => {
-    let data;
-    try {
-      data = JSON.parse(msg.toString());
-    } catch (e) {
-      return;
-    }
-
-    if ((msg.type === "response.audio.delta" || msg.type === "response.output_audio.delta") && msg.delta) {
-      sendAudioToTwilio(msg.delta);
-      return;
-    }
-
-    if (data.type === "response.function_call_arguments.done") {
-      const { name, arguments: argsJson } = data;
-      let output = "";
-      let args = {};
+    openaiSocket.on("message", async (msg) => {
+      let data;
       try {
-        if (argsJson != null) {
-          if (typeof argsJson === "object" && !Array.isArray(argsJson)) {
-            args = argsJson;
-          } else {
-            const raw = typeof argsJson === "string" ? argsJson : String(argsJson);
-            try {
-              args = JSON.parse(raw);
-            } catch (parseErr) {
-              const repaired = raw.trim().replace(/,(\s*[}\]])/g, "$1");
+        data = JSON.parse(msg.toString());
+      } catch (e) {
+        return;
+      }
+
+      if ((msg.type === "response.audio.delta" || msg.type === "response.output_audio.delta") && msg.delta) {
+        sendAudioToTwilio(msg.delta);
+        return;
+      }
+
+      if (data.type === "response.function_call_arguments.done") {
+        const { name, arguments: argsJson } = data;
+        let output = "";
+        let args = {};
+        try {
+          if (argsJson != null) {
+            if (typeof argsJson === "object" && !Array.isArray(argsJson)) {
+              args = argsJson;
+            } else {
+              const raw = typeof argsJson === "string" ? argsJson : String(argsJson);
               try {
-                args = JSON.parse(repaired);
-              } catch (_) {
-                console.error("[AI-Desk] Realtime tool args parse failed name=%s error=%s raw=%s", name, parseErr.message, raw.slice(0, 200));
-                output = JSON.stringify({ success: false, error: "Invalid format. Please ask the caller again for their name, phone, and address, then complete the booking." });
-                sendToOpenAI({
-                  type: "conversation.item.create",
-                  item: { type: "function_call_output", call_id: data.call_id, output },
-                });
-                return;
+                args = JSON.parse(raw);
+              } catch (parseErr) {
+                const repaired = raw.trim().replace(/,(\s*[}\]])/g, "$1");
+                try {
+                  args = JSON.parse(repaired);
+                } catch (_) {
+                  console.error("[AI-Desk] Realtime tool args parse failed name=%s error=%s raw=%s", name, parseErr.message, raw.slice(0, 200));
+                  output = JSON.stringify({ success: false, error: "Invalid format. Please ask the caller again for their name, phone, and address, then complete the booking." });
+                  sendToOpenAI({
+                    type: "conversation.item.create",
+                    item: { type: "function_call_output", call_id: data.call_id, output },
+                  });
+                  return;
+                }
               }
             }
           }
-        }
-        try {
-          if (name === "book_appointment" && tenant && callId) {
-            console.log("[AI-Desk] Realtime book_appointment callSid=%s tenantId=%s callId=%s", callSid, tenant.id, callId);
-            const { booking, crmSynced } = await bookingsService.createBooking(tenant.id, callId, args);
-            console.log("[AI-Desk] Realtime booking done id=%s crmSynced=%s", booking.id, crmSynced);
-            const message = crmSynced
-              ? "Estimate scheduled. Details synced to Zapier/DripJobs. Say to the caller: You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye."
-              : "Estimate scheduled and saved. Say to the caller: You're all set—your estimate is scheduled. You'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.";
-            output = JSON.stringify({ success: true, message });
-          } else if (name === "request_human_transfer" && callSid && tenant) {
-            const result = await transferService.initiateTransfer(
-              callSid,
-              null,
-              args.reason,
-              args.summary
-            );
-            output = JSON.stringify(result);
-          } else if (name === "change_language" && args.language) {
-            const lang = String(args.language).trim().toLowerCase().slice(0, 2) || "en";
-            sendToOpenAI({
-              type: "session.update",
-              session: {
-                audio: {
-                  input: {
-                    transcription: {
-                      model: "gpt-4o-transcribe",
-                      language: lang,
+          try {
+            if (name === "book_appointment" && tenant && callId) {
+              console.log("[AI-Desk] Realtime book_appointment callSid=%s tenantId=%s callId=%s", callSid, tenant.id, callId);
+              const { booking, crmSynced } = await bookingsService.createBooking(tenant.id, callId, args);
+              console.log("[AI-Desk] Realtime booking done id=%s crmSynced=%s", booking.id, crmSynced);
+              const message = crmSynced
+                ? "Estimate scheduled. Details synced to Zapier/DripJobs. Say to the caller: You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye."
+                : "Estimate scheduled and saved. Say to the caller: You're all set—your estimate is scheduled. You'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.";
+              output = JSON.stringify({ success: true, message });
+            } else if (name === "request_human_transfer" && callSid && tenant) {
+              const result = await transferService.initiateTransfer(
+                callSid,
+                null,
+                args.reason,
+                args.summary
+              );
+              output = JSON.stringify(result);
+            } else if (name === "change_language" && args.language) {
+              const lang = String(args.language).trim().toLowerCase().slice(0, 2) || "en";
+              sendToOpenAI({
+                type: "session.update",
+                session: {
+                  audio: {
+                    input: {
+                      transcription: {
+                        model: "gpt-4o-transcribe",
+                        language: lang,
+                      },
                     },
                   },
                 },
-              },
-            });
-            const langNames = { en: "English", es: "Spanish", fr: "French", hi: "Hindi", zh: "Chinese", ar: "Arabic" };
-            const langName = langNames[lang] || lang;
-            output = JSON.stringify({ success: true, language: lang, message: `Switched to ${langName}. Respond in ${langName} from now on and confirm briefly to the caller.` });
-          } else {
-            console.log("[AI-Desk] Realtime book_appointment skipped (missing context) hasTenant=%s hasCallId=%s", !!tenant, !!callId);
-            output = JSON.stringify({ success: false, error: "Missing context" });
+              });
+              const langNames = { en: "English", es: "Spanish", fr: "French", hi: "Hindi", zh: "Chinese", ar: "Arabic" };
+              const langName = langNames[lang] || lang;
+              output = JSON.stringify({ success: true, language: lang, message: `Switched to ${langName}. Respond in ${langName} from now on and confirm briefly to the caller.` });
+            } else {
+              console.log("[AI-Desk] Realtime book_appointment skipped (missing context) hasTenant=%s hasCallId=%s", !!tenant, !!callId);
+              output = JSON.stringify({ success: false, error: "Missing context" });
+            }
+          } catch (err) {
+            console.error("[AI-Desk] Realtime tool error name=%s error=%s", name, err.message);
+            output = JSON.stringify({ success: false, error: err.message });
           }
         } catch (err) {
           console.error("[AI-Desk] Realtime tool error name=%s error=%s", name, err.message);
           output = JSON.stringify({ success: false, error: err.message });
         }
-      } catch (err) {
-        console.error("[AI-Desk] Realtime tool error name=%s error=%s", name, err.message);
-        output = JSON.stringify({ success: false, error: err.message });
+        if (!output) return;
+        sendToOpenAI({
+          type: "conversation.item.create",
+          item: {
+            type: "function_call_output",
+            call_id: data.call_id,
+            output,
+          },
+        });
+        return;
       }
-      if (!output) return;
-      sendToOpenAI({
-        type: "conversation.item.create",
-        item: {
-          type: "function_call_output",
-          call_id: data.call_id,
-          output,
-        },
-      });
-      return;
-    }
 
-    if (data.type === "response.completed") {
-      const callerAskedHuman = /human|person|representative|manager|transfer/i.test(transcript);
-      if (callerAskedHuman && !transferAttempted && isBusinessHours(tenant)) {
-        transferAttempted = true;
-        await attemptTransfer(callSid, tenant);
+      if (data.type === "response.completed") {
+        const callerAskedHuman = /human|person|representative|manager|transfer/i.test(transcript);
+        if (callerAskedHuman && !transferAttempted && isBusinessHours(tenant)) {
+          transferAttempted = true;
+          await attemptTransfer(callSid, tenant);
+        }
+        await safeUpdateCallSummary(callId, { transcript });
+        return;
       }
-      await safeUpdateCallSummary(callId, { transcript });
-      return;
-    }
 
-    if (data.type && data.type.includes("error")) {
-      console.error("[AI-Desk] OpenAI error type=%s", data.type, data);
-    }
-  });
+      if (data.type && data.type.includes("error")) {
+        console.error("[AI-Desk] OpenAI error type=%s", data.type, data);
+      }
+    });
 
-  openaiSocket.on("error", (err) => console.error("OpenAI socket error:", err));
-  openaiSocket.on("close", () => { openaiReady = false; });
+    openaiSocket.on("error", (err) => console.error("OpenAI socket error:", err));
+    openaiSocket.on("close", () => { openaiReady = false; });
   }
   connectOpenAI(0);
 
   twilioSocket.on("message", async (raw) => {
-  let msg;
-  try {
-    msg = JSON.parse(raw.toString());
-  } catch {
-    return;
-  }
-
-  if (msg.event === "start") {
-    streamSid = msg.start?.streamSid || null;
-    callSid = msg.start?.callSid || null;
-
-    while (pendingTwilioAudio.length && streamSid && twilioSocket.readyState === WebSocket.OPEN) {
-      const chunk = pendingTwilioAudio.shift();
-      twilioSocket.send(
-        JSON.stringify({
-          event: "media",
-          streamSid,
-          media: { payload: chunk }
-        })
-      );
+    let msg;
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
+      return;
     }
 
-    await safePoolQuery(
-      `INSERT INTO calls (id, tenant_id, call_sid, started_at, status)
+    if (msg.event === "start") {
+      streamSid = msg.start?.streamSid || null;
+      callSid = msg.start?.callSid || null;
+
+      while (pendingTwilioAudio.length && streamSid && twilioSocket.readyState === WebSocket.OPEN) {
+        const chunk = pendingTwilioAudio.shift();
+        twilioSocket.send(
+          JSON.stringify({
+            event: "media",
+            streamSid,
+            media: { payload: chunk }
+          })
+        );
+      }
+
+      await safePoolQuery(
+        `INSERT INTO calls (id, tenant_id, call_sid, started_at, status)
          VALUES ($1, $2, $3, now(), $4)
          ON CONFLICT (id) DO NOTHING`,
-      [callId, tenantId, callSid, "in_progress"]
-    );
-    return;
-  }
+        [callId, tenantId, callSid, "in_progress"]
+      );
+      return;
+    }
 
-  if (msg.event === "media" && msg.media?.payload) {
-    sendToOpenAI({ type: "input_audio_buffer.append", audio: msg.media.payload });
-    return;
-  }
+    if (msg.event === "media" && msg.media?.payload) {
+      sendToOpenAI({ type: "input_audio_buffer.append", audio: msg.media.payload });
+      return;
+    }
 
-  if (msg.event === "stop") {
+    if (msg.event === "stop") {
+      if (openaiSocket?.readyState === WebSocket.OPEN) {
+        openaiSocket.close();
+      }
+
+      await safeUpdateCallSummary(callId, {
+        status: transferAttempted ? "transferred" : "completed",
+        transcript,
+        markEnded: true
+      });
+    }
+  });
+
+  twilioSocket.on("close", () => {
     if (openaiSocket?.readyState === WebSocket.OPEN) {
       openaiSocket.close();
     }
+  });
 
-    await safeUpdateCallSummary(callId, {
-      status: transferAttempted ? "transferred" : "completed",
-      transcript,
-      markEnded: true
-    });
-  }
-});
-
-twilioSocket.on("close", () => {
-  if (openaiSocket?.readyState === WebSocket.OPEN) {
-    openaiSocket.close();
-  }
-});
-
-twilioSocket.on("error", (error) => {
-  console.error("Twilio socket error:", error.message);
-});
+  twilioSocket.on("error", (error) => {
+    console.error("Twilio socket error:", error.message);
+  });
 });
 
 loadWebsiteContext();

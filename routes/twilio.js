@@ -50,11 +50,11 @@ router.post("/voice", async (req, res) => {
       streamUrl += "&turnBased=1";
       console.log("[AI-Desk] Voice webhook using turn-based stream (TEST_CALL_FROM)");
     }
-    const statusCallback = BASE_URL ? `${BASE_URL}/twilio/status` : null;
+    const actionUrl = BASE_URL ? `${BASE_URL}/twilio/status` : null;
 
     let twiml = `<Response>`;
-    if (statusCallback) {
-      twiml += `<Connect statusCallback="${escapeXml(statusCallback)}" statusCallbackEvent="completed">`;
+    if (actionUrl) {
+      twiml += `<Connect action="${escapeXml(actionUrl)}" method="POST">`;
     } else {
       twiml += `<Connect>`;
     }
@@ -96,15 +96,19 @@ router.get("/transfer-dial", (req, res) => {
   `);
 });
 
-// Twilio requires status callback response < 64KB. Send empty 200 immediately, then update call in background.
+// Twilio status / <Connect> action callback. Must return valid TwiML < 64KB.
 router.post("/status", (req, res) => {
-  res.writeHead(200, { "Content-Length": "0" });
-  res.end();
+  const twiml = '<?xml version="1.0" encoding="UTF-8"?><Response/>';
+  res.writeHead(200, {
+    "Content-Type": "text/xml",
+    "Content-Length": Buffer.byteLength(twiml).toString(),
+  });
+  res.end(twiml);
 
   const CallSid = req.body && req.body.CallSid;
   const CallStatus = req.body && req.body.CallStatus;
   if (CallSid && (CallStatus === "completed" || CallStatus === "busy" || CallStatus === "failed" || CallStatus === "no-answer")) {
-    updateCallByTwilioSid(CallSid, { status: CallStatus, ended_at: new Date().toISOString() }).catch(() => {});
+    updateCallByTwilioSid(CallSid, { status: CallStatus, ended_at: new Date().toISOString() }).catch(() => { });
   }
 });
 
@@ -120,9 +124,9 @@ router.get("/recovery-call", (req, res) => {
     .replace("http://", "ws://") + "/twilio-media";
 
   const streamUrl = `${wsUrl}?type=recovery&recoveryId=${encodeURIComponent(recoveryId)}&script=${encodeURIComponent(script)}`;
-  const statusCallback = BASE_URL ? `${BASE_URL}/twilio/status` : "";
-  const connectAttrs = statusCallback
-    ? ` statusCallback="${escapeXml(statusCallback)}" statusCallbackEvent="completed"`
+  const actionUrl = BASE_URL ? `${BASE_URL}/twilio/status` : "";
+  const connectAttrs = actionUrl
+    ? ` action="${escapeXml(actionUrl)}" method="POST"`
     : "";
 
   const twiml = `
@@ -136,10 +140,14 @@ router.get("/recovery-call", (req, res) => {
 });
 
 // Status callback for recovery outbound calls — logs the outcome.
-// Twilio requires response body < 64KB. Send empty 200 immediately with raw Node to avoid any middleware adding body.
+// Twilio requires response body < 64KB. Return minimal valid TwiML.
 router.post("/recovery-call-status", (req, res) => {
-  res.writeHead(200, { "Content-Length": "0" });
-  res.end();
+  const twiml = '<?xml version="1.0" encoding="UTF-8"?><Response/>';
+  res.writeHead(200, {
+    "Content-Type": "text/xml",
+    "Content-Length": Buffer.byteLength(twiml).toString(),
+  });
+  res.end(twiml);
 
   const CallSid = req.body && req.body.CallSid;
   const CallStatus = req.body && req.body.CallStatus;

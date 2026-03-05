@@ -201,9 +201,9 @@
 setTimeout(() => {
   if (!isOpen) {
     const prompt = document.createElement("div");
-    prompt.innerText = "Hi 👋 Want a fast painting estimate?";
+    prompt.textContent = "Hi! Want a fast painting estimate?";
     prompt.style.position = "fixed";
-    prompt.style.bottom = "80px";
+    prompt.style.bottom = "95px";
     prompt.style.right = "20px";
     prompt.style.background = "#fff";
     prompt.style.padding = "10px 14px";

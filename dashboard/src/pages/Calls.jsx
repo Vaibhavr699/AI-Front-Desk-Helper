@@ -1,11 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { getCalls } from "../api";
-<<<<<<< HEAD
 import { LumaSpin } from "../components/ui/luma-spin";
-=======
-import { Loading } from "../components";
->>>>>>> 27d1bf5 (Twilio testing)
 
 export default function Calls({ tenantId }) {
   const [calls, setCalls] = useState([]);
@@ -29,13 +25,8 @@ export default function Calls({ tenantId }) {
   }
   if (loading) {
     return (
-<<<<<<< HEAD
       <div className="px-0 flex items-center justify-center py-20">
         <LumaSpin />
-=======
-      <div className="px-0">
-        <Loading fullScreen={false} message="Loading calls…" />
->>>>>>> 27d1bf5 (Twilio testing)
       </div>
     );
   }

@@ -1,13 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-<<<<<<< HEAD
 import { getCalls, getBookings, getMetrics, getTenant, getPlans } from "../api";
-import { Loading } from "../components";
 import { LumaSpin } from "../components/ui/luma-spin";
-=======
-import { getCalls, getBookings, getMetrics } from "../api";
-import { Loading } from "../components";
->>>>>>> 27d1bf5 (Twilio testing)
 
 export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
   const [recentCalls, setRecentCalls] = useState([]);
@@ -69,13 +63,8 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
   }
   if (loading) {
     return (
-<<<<<<< HEAD
       <div className="px-0 flex items-center justify-center py-20">
         <LumaSpin />
-=======
-      <div className="px-0">
-        <Loading fullScreen={false} message="Loading dashboard…" />
->>>>>>> 27d1bf5 (Twilio testing)
       </div>
     );
   }

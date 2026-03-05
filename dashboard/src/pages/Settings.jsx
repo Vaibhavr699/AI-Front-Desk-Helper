@@ -1,11 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-<<<<<<< HEAD
 import { getTenant, updateTenant, getPhoneNumbers, addPhoneNumber, deletePhoneNumber } from "../api";
-=======
-import { getTenant, updateTenant } from "../api";
->>>>>>> 27d1bf5 (Twilio testing)
-import { Loading } from "../components";
+import { LumaSpin } from "../components/ui/luma-spin";
 
 const TENANT_STORAGE_KEY = "tenantId";
 
@@ -159,8 +155,8 @@ export default function Settings({ tenantId }) {
       </p>
 
       {loading && (
-        <div className="mb-6">
-          <Loading fullScreen={false} message="Loading settings…" />
+        <div className="mb-6 flex items-center justify-center py-20">
+          <LumaSpin />
         </div>
       )}
 

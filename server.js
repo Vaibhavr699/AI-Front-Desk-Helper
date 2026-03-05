@@ -31,6 +31,36 @@ const { authMiddleware } = require("./lib/auth");
 
 // -------------------- App --------------------
 const app = express();
+
+// Twilio status / <Connect> action callback. MUST be registered BEFORE body
+// parsers so Express cannot reject a large Twilio payload with 413 (whose HTML
+// error page exceeds Twilio's 64 KB response limit, triggering warning 11750).
+// We respond immediately with minimal TwiML, then best-effort parse the body in
+// the background for the DB update.
+app.post("/twilio/status", (req, res) => {
+  const twiml = '<?xml version="1.0" encoding="UTF-8"?><Response/>';
+  res.writeHead(200, {
+    "Content-Type": "text/xml",
+    "Content-Length": Buffer.byteLength(twiml).toString(),
+  });
+  res.end(twiml);
+
+  // Best-effort: read raw body and update DB in background
+  const chunks = [];
+  req.on("data", (c) => chunks.push(c));
+  req.on("end", () => {
+    try {
+      const params = new URLSearchParams(Buffer.concat(chunks).toString());
+      const CallSid = params.get("CallSid");
+      const CallStatus = params.get("CallStatus");
+      if (CallSid && (CallStatus === "completed" || CallStatus === "busy" || CallStatus === "failed" || CallStatus === "no-answer")) {
+        callsService.updateCallByTwilioSid(CallSid, { status: CallStatus, ended_at: new Date().toISOString() }).catch(() => { });
+      }
+    } catch (_) { /* ignore parse errors */ }
+  });
+  req.on("error", () => { });
+});
+
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
@@ -83,21 +113,6 @@ async function loadTenants() {
 }
 
 app.get("/health", (req, res) => res.status(200).send("OK"));
-// Twilio status / <Connect> action callback. Must return valid TwiML < 64KB.
-// Return minimal <Response/> immediately, then update call in background.
-app.post("/twilio/status", (req, res) => {
-  const twiml = '<?xml version="1.0" encoding="UTF-8"?><Response/>';
-  res.writeHead(200, {
-    "Content-Type": "text/xml",
-    "Content-Length": Buffer.byteLength(twiml).toString(),
-  });
-  res.end(twiml);
-  const CallSid = req.body && req.body.CallSid;
-  const CallStatus = req.body && req.body.CallStatus;
-  if (CallSid && (CallStatus === "completed" || CallStatus === "busy" || CallStatus === "failed" || CallStatus === "no-answer")) {
-    callsService.updateCallByTwilioSid(CallSid, { status: CallStatus, ended_at: new Date().toISOString() }).catch(() => { });
-  }
-});
 app.use("/twilio", twilioRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/stripe", authMiddleware, require("./routes/stripe"));

@@ -17,7 +17,7 @@ const calendar = require("./calendar");
 const path = require("path");
 const cron = require("node-cron");
 
-const { getTenantByPhone, getTenantById } = require("./lib/tenant");
+const { getTenantByPhone, getTenantById, getAllTenants } = require("./lib/tenant");
 const callsService = require("./services/calls");
 const recordingService = require("./services/recording");
 const transferService = require("./services/transfer");
@@ -60,6 +60,27 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SERVE_DASHBOARD = process.env.SERVE_DASHBOARD === "true";
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || "";
 const smsThreads = new Map();
+
+// Tenant map by slug/id -> { ...tenant, transferNumber }. Populated at startup so voice/WebSocket routes can resolve tenant.
+let TENANTS = {};
+
+async function loadTenants() {
+  try {
+    const rows = await getAllTenants();
+    const map = {};
+    for (const t of rows || []) {
+      const transferNumber = (t.transfer_numbers && t.transfer_numbers[0]) || null;
+      const entry = { ...t, transferNumber };
+      map[t.slug] = entry;
+      map[t.id] = entry;
+    }
+    if (map["gladiators-painting"]) map.gladiators = map["gladiators-painting"];
+    else if (rows && rows[0]) map.gladiators = { ...rows[0], transferNumber: (rows[0].transfer_numbers && rows[0].transfer_numbers[0]) || null };
+    TENANTS = map;
+  } catch (e) {
+    console.error("loadTenants error:", e.message);
+  }
+}
 
 app.get("/health", (req, res) => res.status(200).send("OK"));
 app.use("/twilio", twilioRoutes);
@@ -1138,8 +1159,13 @@ wss.on("connection", (twilioSocket, req) => {
   const tenantIdFromPath = pathSegments.length >= 2 ? pathSegments[1] : "";
   const tenantId = TENANTS[tenantIdFromPath] ? tenantIdFromPath : "gladiators";
   let tenant = TENANTS[tenantId];
+  if (!tenant) {
+    console.error("[AI-Desk] No tenant for path segment:", tenantIdFromPath, "- ensure DB is seeded and loadTenants ran.");
+    twilioSocket.close();
+    return;
+  }
 
-  if (!pathname.startsWith("/twilio-media/")) {
+  if (!pathname.startsWith("/twilio-media")) {
     console.error("Invalid Twilio media stream path:", pathname);
     twilioSocket.close();
     return;
@@ -1572,6 +1598,8 @@ cron.schedule("*/5 * * * *", () => {
 });
 
 // -------------------- Listen --------------------
-server.listen(PORT, () => {
-  console.log(`AI front desk backend listening on port ${PORT}`);
+loadTenants().then(() => {
+  server.listen(PORT, () => {
+    console.log(`AI front desk backend listening on port ${PORT}`);
+  });
 });

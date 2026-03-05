@@ -96,12 +96,16 @@ router.get("/transfer-dial", (req, res) => {
   `);
 });
 
+// Twilio requires status callback response < 64KB. Send empty 200 immediately, then update call in background.
 router.post("/status", (req, res) => {
-  const { CallSid, CallStatus } = req.body;
-  if (CallStatus === "completed" || CallStatus === "busy" || CallStatus === "failed" || CallStatus === "no-answer") {
-    updateCallByTwilioSid(CallSid, { status: CallStatus, ended_at: new Date().toISOString() }).catch(() => { });
+  res.writeHead(200, { "Content-Length": "0" });
+  res.end();
+
+  const CallSid = req.body && req.body.CallSid;
+  const CallStatus = req.body && req.body.CallStatus;
+  if (CallSid && (CallStatus === "completed" || CallStatus === "busy" || CallStatus === "failed" || CallStatus === "no-answer")) {
+    updateCallByTwilioSid(CallSid, { status: CallStatus, ended_at: new Date().toISOString() }).catch(() => {});
   }
-  res.status(200).send();
 });
 
 // -------------------- Estimate Recovery Outbound Calls --------------------

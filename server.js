@@ -1303,6 +1303,7 @@ wss.on("connection", (twilioSocket, req) => {
 
   function sendToOpenAI(payload) {
     const message = typeof payload === "string" ? payload : JSON.stringify(payload);
+    console.log("[DEBUG] sendToOpenAI:", message.slice(0, 500));
     if (openaiReady && openaiSocket.readyState === WebSocket.OPEN) {
       openaiSocket.send(message);
       return;
@@ -1336,7 +1337,11 @@ wss.on("connection", (twilioSocket, req) => {
     });
     openaiSocket.on("open", async () => {
       openaiReady = true;
-      while (openaiQueue.length) openaiSocket.send(openaiQueue.shift());
+      while (openaiQueue.length) {
+        const msg = openaiQueue.shift();
+        console.log("[DEBUG] Flushing from openaiQueue:", msg.slice(0, 500));
+        openaiSocket.send(msg);
+      }
 
       if (callSid) {
         const call = await callsService.getCallByTwilioSid(callSid);

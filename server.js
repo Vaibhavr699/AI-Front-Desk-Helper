@@ -90,6 +90,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SERVE_DASHBOARD = process.env.SERVE_DASHBOARD === "true";
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || "";
 const smsThreads = new Map();
+let callsTableHasTranscriptColumn = true; // optimistic; set to false if column is missing
 
 // Tenant map by slug/id -> { ...tenant, transferNumber }. Populated at startup so voice/WebSocket routes can resolve tenant.
 let TENANTS = {};

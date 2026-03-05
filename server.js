@@ -12,7 +12,6 @@ const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
 const fetch = require("node-fetch");
-const cors = require("cors");
 const { Pool } = require("pg");
 const calendar = require("./calendar");
 const path = require("path");
@@ -63,6 +62,7 @@ const SERVE_DASHBOARD = process.env.SERVE_DASHBOARD === "true";
 app.get("/health", (req, res) => res.status(200).send("OK"));
 app.use("/twilio", twilioRoutes);
 app.use("/api/auth", authRoutes);
+app.use("/api/stripe", authMiddleware, require("./routes/stripe"));
 app.use("/api", authMiddleware, dashboardRoutes);
 
 if (SERVE_DASHBOARD) {
@@ -79,10 +79,6 @@ if (SERVE_DASHBOARD) {
     );
   });
 }
-app.use("/twilio", twilioRoutes);
-app.use("/api/auth", authRoutes);
-app.use("/api/stripe", authMiddleware, require("./routes/stripe"));
-app.use("/api", authMiddleware, dashboardRoutes);
 
 app.get("/health/details", (_req, res) => {
   res.status(200).json({
@@ -1257,10 +1253,10 @@ wss.on("connection", (twilioSocket, req) => {
       return;
     }
 
-      if ((msg.type === "response.audio.delta" || msg.type === "response.output_audio.delta") && msg.delta) {
-        sendAudioToTwilio(msg.delta);
-        return;
-      }
+    if ((msg.type === "response.audio.delta" || msg.type === "response.output_audio.delta") && msg.delta) {
+      sendAudioToTwilio(msg.delta);
+      return;
+    }
 
     if (data.type === "response.function_call_arguments.done") {
       const { name, arguments: argsJson } = data;
@@ -1271,64 +1267,64 @@ wss.on("connection", (twilioSocket, req) => {
           if (typeof argsJson === "object" && !Array.isArray(argsJson)) {
             args = argsJson;
           } else {
-          const raw = typeof argsJson === "string" ? argsJson : String(argsJson);
-          try {
-            args = JSON.parse(raw);
-          } catch (parseErr) {
-            const repaired = raw.trim().replace(/,(\s*[}\]])/g, "$1");
+            const raw = typeof argsJson === "string" ? argsJson : String(argsJson);
             try {
-              args = JSON.parse(repaired);
-            } catch (_) {
-              console.error("[AI-Desk] Realtime tool args parse failed name=%s error=%s raw=%s", name, parseErr.message, raw.slice(0, 200));
-              output = JSON.stringify({ success: false, error: "Invalid format. Please ask the caller again for their name, phone, and address, then complete the booking." });
-              sendToOpenAI({
-                type: "conversation.item.create",
-                item: { type: "function_call_output", call_id: data.call_id, output },
-              });
-              return;
+              args = JSON.parse(raw);
+            } catch (parseErr) {
+              const repaired = raw.trim().replace(/,(\s*[}\]])/g, "$1");
+              try {
+                args = JSON.parse(repaired);
+              } catch (_) {
+                console.error("[AI-Desk] Realtime tool args parse failed name=%s error=%s raw=%s", name, parseErr.message, raw.slice(0, 200));
+                output = JSON.stringify({ success: false, error: "Invalid format. Please ask the caller again for their name, phone, and address, then complete the booking." });
+                sendToOpenAI({
+                  type: "conversation.item.create",
+                  item: { type: "function_call_output", call_id: data.call_id, output },
+                });
+                return;
+              }
             }
-          }
           }
         }
         try {
-        if (name === "book_appointment" && tenant && callId) {
-          console.log("[AI-Desk] Realtime book_appointment callSid=%s tenantId=%s callId=%s", callSid, tenant.id, callId);
-          const { booking, crmSynced } = await bookingsService.createBooking(tenant.id, callId, args);
-          console.log("[AI-Desk] Realtime booking done id=%s crmSynced=%s", booking.id, crmSynced);
-          const message = crmSynced
-            ? "Estimate scheduled. Details synced to Zapier/DripJobs. Say to the caller: You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye."
-            : "Estimate scheduled and saved. Say to the caller: You're all set—your estimate is scheduled. You'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.";
-          output = JSON.stringify({ success: true, message });
-        } else if (name === "request_human_transfer" && callSid && tenant) {
-          const result = await transferService.initiateTransfer(
-            callSid,
-            null,
-            args.reason,
-            args.summary
-          );
-          output = JSON.stringify(result);
-        } else if (name === "change_language" && args.language) {
-          const lang = String(args.language).trim().toLowerCase().slice(0, 2) || "en";
-          sendToOpenAI({
-            type: "session.update",
-            session: {
-              audio: {
-                input: {
-                  transcription: {
-                    model: "gpt-4o-transcribe",
-                    language: lang,
+          if (name === "book_appointment" && tenant && callId) {
+            console.log("[AI-Desk] Realtime book_appointment callSid=%s tenantId=%s callId=%s", callSid, tenant.id, callId);
+            const { booking, crmSynced } = await bookingsService.createBooking(tenant.id, callId, args);
+            console.log("[AI-Desk] Realtime booking done id=%s crmSynced=%s", booking.id, crmSynced);
+            const message = crmSynced
+              ? "Estimate scheduled. Details synced to Zapier/DripJobs. Say to the caller: You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye."
+              : "Estimate scheduled and saved. Say to the caller: You're all set—your estimate is scheduled. You'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.";
+            output = JSON.stringify({ success: true, message });
+          } else if (name === "request_human_transfer" && callSid && tenant) {
+            const result = await transferService.initiateTransfer(
+              callSid,
+              null,
+              args.reason,
+              args.summary
+            );
+            output = JSON.stringify(result);
+          } else if (name === "change_language" && args.language) {
+            const lang = String(args.language).trim().toLowerCase().slice(0, 2) || "en";
+            sendToOpenAI({
+              type: "session.update",
+              session: {
+                audio: {
+                  input: {
+                    transcription: {
+                      model: "gpt-4o-transcribe",
+                      language: lang,
+                    },
                   },
                 },
               },
-            },
-          });
-          const langNames = { en: "English", es: "Spanish", fr: "French", hi: "Hindi", zh: "Chinese", ar: "Arabic" };
-          const langName = langNames[lang] || lang;
-          output = JSON.stringify({ success: true, language: lang, message: `Switched to ${langName}. Respond in ${langName} from now on and confirm briefly to the caller.` });
-        } else {
-          console.log("[AI-Desk] Realtime book_appointment skipped (missing context) hasTenant=%s hasCallId=%s", !!tenant, !!callId);
-          output = JSON.stringify({ success: false, error: "Missing context" });
-        }
+            });
+            const langNames = { en: "English", es: "Spanish", fr: "French", hi: "Hindi", zh: "Chinese", ar: "Arabic" };
+            const langName = langNames[lang] || lang;
+            output = JSON.stringify({ success: true, language: lang, message: `Switched to ${langName}. Respond in ${langName} from now on and confirm briefly to the caller.` });
+          } else {
+            console.log("[AI-Desk] Realtime book_appointment skipped (missing context) hasTenant=%s hasCallId=%s", !!tenant, !!callId);
+            output = JSON.stringify({ success: false, error: "Missing context" });
+          }
         } catch (err) {
           console.error("[AI-Desk] Realtime tool error name=%s error=%s", name, err.message);
           output = JSON.stringify({ success: false, error: err.message });
@@ -1365,120 +1361,120 @@ wss.on("connection", (twilioSocket, req) => {
       return;
     }
 
-      if (msg.type === "conversation.item.input_audio_transcription.completed" && msg.transcript) {
-        transcript += `\nCALLER: ${msg.transcript}`;
-        return;
-      }
-      const welcome = (tenant && tenant.welcome_message)
-        ? tenant.welcome_message
-        : "Thanks for calling. What can we help you with today? Would you like to schedule a free estimate?";
-      sendToOpenAI({
-        type: "response.create",
-        response: {
-          modalities: ["audio", "text"],
-          instructions: `Say exactly (warm and clear): "${welcome}" Then stop and wait for the caller to respond. Do not continue until they have spoken.`,
-        },
-      });
+    if (msg.type === "conversation.item.input_audio_transcription.completed" && msg.transcript) {
+      transcript += `\nCALLER: ${msg.transcript}`;
       return;
     }
-
-      if (msg.type === "response.completed") {
-        const callerAskedHuman = /human|person|representative|manager|transfer/i.test(transcript);
-        if (callerAskedHuman && !transferAttempted && isBusinessHours(tenant)) {
-          transferAttempted = true;
-          await attemptTransfer(callSid, tenant);
-        }
-
-        await safeUpdateCallSummary(callId, { transcript });
-        return;
-      }
-
-      if (msg.type === "error" || (msg.type && msg.type.includes("error"))) {
-        console.error("OpenAI error event:", msg);
-      }
+    const welcome = (tenant && tenant.welcome_message)
+      ? tenant.welcome_message
+      : "Thanks for calling. What can we help you with today? Would you like to schedule a free estimate?";
+    sendToOpenAI({
+      type: "response.create",
+      response: {
+        modalities: ["audio", "text"],
+        instructions: `Say exactly (warm and clear): "${welcome}" Then stop and wait for the caller to respond. Do not continue until they have spoken.`,
+      },
     });
-
-    socket.on("error", (error) => {
-      console.error(`OpenAI socket error (${activeModel}):`, error.message);
-    });
-
-    socket.on("close", (code, reason) => {
-      openaiReady = false;
-      const reasonText = reason ? reason.toString() : "";
-      console.error(`OpenAI socket closed (${activeModel}) code=${code} reason=${reasonText}`);
-
-      if (!opened) {
-        connectOpenAI(modelIndex + 1);
-        return;
-      }
-
-      if (twilioSocket.readyState === WebSocket.OPEN) {
-        twilioSocket.close();
-      }
-    });
+    return;
   }
 
-  connectOpenAI(0);
-
-  twilioSocket.on("message", async (raw) => {
-    let msg;
-    try {
-      msg = JSON.parse(raw.toString());
-    } catch {
-      return;
+      if (msg.type === "response.completed") {
+    const callerAskedHuman = /human|person|representative|manager|transfer/i.test(transcript);
+    if (callerAskedHuman && !transferAttempted && isBusinessHours(tenant)) {
+      transferAttempted = true;
+      await attemptTransfer(callSid, tenant);
     }
 
-    if (msg.event === "start") {
-      streamSid = msg.start?.streamSid || null;
-      callSid = msg.start?.callSid || null;
+    await safeUpdateCallSummary(callId, { transcript });
+    return;
+  }
 
-      while (pendingTwilioAudio.length && streamSid && twilioSocket.readyState === WebSocket.OPEN) {
-        const chunk = pendingTwilioAudio.shift();
-        twilioSocket.send(
-          JSON.stringify({
-            event: "media",
-            streamSid,
-            media: { payload: chunk }
-          })
-        );
-      }
+  if (msg.type === "error" || (msg.type && msg.type.includes("error"))) {
+    console.error("OpenAI error event:", msg);
+  }
+});
 
-      await safePoolQuery(
-        `INSERT INTO calls (id, tenant_id, call_sid, started_at, status)
+socket.on("error", (error) => {
+  console.error(`OpenAI socket error (${activeModel}):`, error.message);
+});
+
+socket.on("close", (code, reason) => {
+  openaiReady = false;
+  const reasonText = reason ? reason.toString() : "";
+  console.error(`OpenAI socket closed (${activeModel}) code=${code} reason=${reasonText}`);
+
+  if (!opened) {
+    connectOpenAI(modelIndex + 1);
+    return;
+  }
+
+  if (twilioSocket.readyState === WebSocket.OPEN) {
+    twilioSocket.close();
+  }
+});
+  }
+
+connectOpenAI(0);
+
+twilioSocket.on("message", async (raw) => {
+  let msg;
+  try {
+    msg = JSON.parse(raw.toString());
+  } catch {
+    return;
+  }
+
+  if (msg.event === "start") {
+    streamSid = msg.start?.streamSid || null;
+    callSid = msg.start?.callSid || null;
+
+    while (pendingTwilioAudio.length && streamSid && twilioSocket.readyState === WebSocket.OPEN) {
+      const chunk = pendingTwilioAudio.shift();
+      twilioSocket.send(
+        JSON.stringify({
+          event: "media",
+          streamSid,
+          media: { payload: chunk }
+        })
+      );
+    }
+
+    await safePoolQuery(
+      `INSERT INTO calls (id, tenant_id, call_sid, started_at, status)
          VALUES ($1, $2, $3, now(), $4)
          ON CONFLICT (id) DO NOTHING`,
-        [callId, tenantId, callSid, "in_progress"]
-      );
-      return;
-    }
+      [callId, tenantId, callSid, "in_progress"]
+    );
+    return;
+  }
 
-    if (msg.event === "media" && msg.media?.payload) {
-      sendToOpenAI({ type: "input_audio_buffer.append", audio: msg.media.payload });
-      return;
-    }
+  if (msg.event === "media" && msg.media?.payload) {
+    sendToOpenAI({ type: "input_audio_buffer.append", audio: msg.media.payload });
+    return;
+  }
 
-    if (msg.event === "stop") {
-      if (openaiSocket?.readyState === WebSocket.OPEN) {
-        openaiSocket.close();
-      }
-
-      await safeUpdateCallSummary(callId, {
-        status: transferAttempted ? "transferred" : "completed",
-        transcript,
-        markEnded: true
-      });
-    }
-  });
-
-  twilioSocket.on("close", () => {
+  if (msg.event === "stop") {
     if (openaiSocket?.readyState === WebSocket.OPEN) {
       openaiSocket.close();
     }
-  });
 
-  twilioSocket.on("error", (error) => {
-    console.error("Twilio socket error:", error.message);
-  });
+    await safeUpdateCallSummary(callId, {
+      status: transferAttempted ? "transferred" : "completed",
+      transcript,
+      markEnded: true
+    });
+  }
+});
+
+twilioSocket.on("close", () => {
+  if (openaiSocket?.readyState === WebSocket.OPEN) {
+    openaiSocket.close();
+  }
+});
+
+twilioSocket.on("error", (error) => {
+  console.error("Twilio socket error:", error.message);
+});
 });
 
 loadWebsiteContext();

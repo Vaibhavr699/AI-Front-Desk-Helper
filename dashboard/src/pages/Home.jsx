@@ -486,30 +486,64 @@ export default function Home() {
       </main>
 
       {/* Footer */}
-      <footer className="bg-stone-900 text-stone-300 py-12">
+      <footer className="bg-stone-950 text-stone-400 py-16 border-t border-stone-800/50">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
-            <div className="flex items-center gap-2">
-              <span className="flex items-center justify-center w-8 h-8 rounded-lg bg-stone-700 text-white text-sm font-bold">
-                FD
-              </span>
-              <span className="font-semibold text-white">Front Desk</span>
-            </div>
-            <nav className="flex items-center gap-6">
-              <Link to="/login" className="text-sm hover:text-white transition-colors">
-                Log in
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-12 mb-12">
+            <div className="md:col-span-1">
+              <Link to="/" className="flex items-center gap-2 mb-6">
+                <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-stone-800 text-white text-sm font-bold shadow-lg shadow-white/5">
+                  FD
+                </span>
+                <span className="font-bold text-xl text-white tracking-tight">Front Desk</span>
               </Link>
-              <button
-                type="button"
-                onClick={() => navigate("/login?signup=1")}
-                className="text-sm hover:text-white transition-colors"
-              >
-                Sign up
-              </button>
-            </nav>
+              <p className="text-sm leading-relaxed text-stone-500">
+                The intelligent phone assistant for home service companies. Stop losing leads to voicemail and start booking more jobs.
+              </p>
+            </div>
+
+            <div>
+              <h4 className="text-white font-semibold mb-6">Product</h4>
+              <ul className="space-y-4 text-sm">
+                <li><a href="#features" className="hover:text-white transition-colors">Features</a></li>
+                <li><a href="#how-it-works" className="hover:text-white transition-colors">How it works</a></li>
+                <li><a href="#pricing" className="hover:text-white transition-colors">Pricing</a></li>
+                <li><a href="#why-us" className="hover:text-white transition-colors">Success Stories</a></li>
+              </ul>
+            </div>
+
+            <div>
+              <h4 className="text-white font-semibold mb-6">Platform</h4>
+              <ul className="space-y-4 text-sm">
+                <li><Link to="/login" className="hover:text-white transition-colors">Dashboard Login</Link></li>
+                <li><button onClick={() => navigate("/login?signup=1")} className="hover:text-white transition-colors text-left">Get Started</button></li>
+                <li><a href="#" className="hover:text-white transition-colors">Developer API</a></li>
+                <li><a href="#" className="hover:text-white transition-colors">Integrations</a></li>
+              </ul>
+            </div>
+
+            <div>
+              <h4 className="text-white font-semibold mb-6">Contact</h4>
+              <ul className="space-y-4 text-sm">
+                <li className="flex items-center gap-3">
+                  <Phone className="w-4 h-4 text-stone-600" />
+                  <span>Support Line</span>
+                </li>
+                <li className="flex items-center gap-3 text-stone-500 italic">
+                  <span>Available 24/7 via AI</span>
+                </li>
+              </ul>
+            </div>
           </div>
-          <div className="mt-8 pt-8 border-t border-stone-700 text-center sm:text-left text-sm text-stone-500">
-            © {new Date().getFullYear()} Front Desk. AI phone assistant for your business.
+
+          <div className="pt-12 border-t border-stone-800 flex flex-col md:flex-row items-center justify-between gap-6">
+            <div className="text-sm text-stone-600">
+              © {new Date().getFullYear()} Front Desk Technologies Inc. All rights reserved.
+            </div>
+            <div className="flex items-center gap-8">
+              <a href="#" className="text-stone-600 hover:text-white text-xs transition-colors">Privacy Policy</a>
+              <a href="#" className="text-stone-600 hover:text-white text-xs transition-colors">Terms of Service</a>
+              <a href="#" className="text-stone-600 hover:text-white text-xs transition-colors">Cookie Policy</a>
+            </div>
           </div>
         </div>
       </footer>

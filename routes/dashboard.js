@@ -88,16 +88,27 @@ router.get("/recordings/:id", async (req, res) => {
 
 router.get("/recordings/:id/audio", async (req, res) => {
   try {
-    const r = await db.query("SELECT id, recording_url FROM recordings WHERE id = $1", [req.params.id]);
+    const r = await db.query("SELECT id, tenant_id, recording_url FROM recordings WHERE id = $1", [req.params.id]);
     const rec = r.rows[0];
     if (!rec || !rec.recording_url) return res.status(404).json({ error: "Not found" });
-    const sid = process.env.TWILIO_ACCOUNT_SID;
-    const token = process.env.TWILIO_AUTH_TOKEN;
-    if (!sid || !token) return res.status(502).json({ error: "Recording service not configured" });
+
+    const tenant = await getTenantById(rec.tenant_id);
+    const twilioAuth = require("../lib/twilio").getAuthForTenant(tenant);
+    if (!twilioAuth) return res.status(502).json({ error: "Recording service not configured" });
+
     const url = rec.recording_url.replace(".json", ".mp3");
-    const auth = Buffer.from(`${sid}:${token}`).toString("base64");
-    const resp = await fetch(url, { headers: { Authorization: `Basic ${auth}` } });
-    if (!resp.ok) return res.status(502).send("Failed to fetch recording");
+    const auth = Buffer.from(`${twilioAuth.accountSid}:${twilioAuth.authToken}`).toString("base64");
+
+    // Some older recording URLs might not include api.twilio.com if stored incorrectly, handle it cleanly
+    const fullUrl = url.startsWith("http") ? url : `https://api.twilio.com${url}`;
+
+    const resp = await fetch(fullUrl, { headers: { Authorization: `Basic ${auth}` } });
+    if (!resp.ok) {
+      const errBody = await resp.text();
+      console.error("[Recordings] Fetch failed:", resp.status, errBody);
+      return res.status(502).send("Failed to fetch recording");
+    }
+
     res.setHeader("Content-Type", "audio/mpeg");
     Readable.fromWeb(resp.body).pipe(res);
   } catch (e) {

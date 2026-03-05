@@ -108,7 +108,7 @@ router.post("/status", (req, res) => {
   const CallSid = req.body && req.body.CallSid;
   const CallStatus = req.body && req.body.CallStatus;
   if (CallSid && (CallStatus === "completed" || CallStatus === "busy" || CallStatus === "failed" || CallStatus === "no-answer")) {
-    updateCallByTwilioSid(CallSid, { status: CallStatus, ended_at: new Date().toISOString() }).catch(() => { });
+    updateCallByTwilioSid(CallSid, { status: CallStatus, ended_at: new Date().toISOString() }).catch(() => {});
   }
 });
 
@@ -140,14 +140,10 @@ router.get("/recovery-call", (req, res) => {
 });
 
 // Status callback for recovery outbound calls — logs the outcome.
-// Twilio requires response body < 64KB. Return minimal valid TwiML.
+// Twilio requires response body < 64KB. Send empty 200 immediately with raw Node to avoid any middleware adding body.
 router.post("/recovery-call-status", (req, res) => {
-  const twiml = '<?xml version="1.0" encoding="UTF-8"?><Response/>';
-  res.writeHead(200, {
-    "Content-Type": "text/xml",
-    "Content-Length": Buffer.byteLength(twiml).toString(),
-  });
-  res.end(twiml);
+  res.writeHead(200, { "Content-Length": "0" });
+  res.end();
 
   const CallSid = req.body && req.body.CallSid;
   const CallStatus = req.body && req.body.CallStatus;

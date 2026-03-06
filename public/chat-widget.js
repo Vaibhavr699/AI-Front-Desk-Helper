@@ -1,380 +1,556 @@
 document.addEventListener("DOMContentLoaded", function () {
+
 (function () {
-  const apiBase = "https://ai-front-desk-backend.onrender.com";
 
-  let sessionId = localStorage.getItem("ai_session_id");
-  if (!sessionId) {
-    sessionId = "web-" + crypto.randomUUID();
-    localStorage.setItem("ai_session_id", sessionId);
-  }
+const apiBase = "https://ai-front-desk-backend.onrender.com";
 
-  let hasWelcomed = false;
-  let isOpen = false;
 
-  // ===== Toggle Button =====
-  const toggleButton = document.createElement("div");
-  toggleButton.innerText = "Chat";
-  toggleButton.style.position = "fixed";
-  toggleButton.style.bottom = "20px";
-  toggleButton.style.right = "20px";
-  toggleButton.style.background = "#000";
-  toggleButton.style.color = "#fff";
-  toggleButton.style.padding = "12px 18px";
-  toggleButton.style.borderRadius = "30px";
-  toggleButton.style.cursor = "pointer";
-  toggleButton.style.zIndex = "999999";
-  toggleButton.style.fontFamily = "Arial, sans-serif";
-  toggleButton.style.boxShadow = "0 6px 18px rgba(0,0,0,0.25)";
-  toggleButton.style.transition = "all 0.3s ease";
-  document.body.appendChild(toggleButton);
+// =====================================================
+// SESSION MANAGEMENT
+// =====================================================
 
-  // ===== Chat Container =====
-  const container = document.createElement("div");
-  container.style.position = "fixed";
-  container.style.bottom = "80px";
-  container.style.right = "20px";
-  container.style.width = "340px";
-  container.style.height = "440px";
-  container.style.background = "#ffffff";
-  container.style.border = "1px solid #ddd";
-  container.style.borderRadius = "14px";
-  container.style.boxShadow = "0 12px 40px rgba(0,0,0,0.25)";
-  container.style.display = "none";
-  container.style.flexDirection = "column";
-  container.style.fontFamily = "Arial, sans-serif";
-  container.style.zIndex = "999999";
-  container.style.overflow = "hidden";
-  container.style.opacity = "0";
-  container.style.transition = "opacity 0.25s ease, transform 0.25s ease";
-  container.style.transform = "translateY(10px)";
-  document.body.appendChild(container);
+let sessionId = localStorage.getItem("ai_session_id");
 
-  // ===== Messages Area =====
-  const messages = document.createElement("div");
-  messages.style.flex = "1";
-  messages.style.padding = "12px";
-  messages.style.overflowY = "auto";
-  messages.style.display = "flex";
-  messages.style.flexDirection = "column";
-  container.appendChild(messages);
+if (!sessionId) {
 
-  // ===== Input Area =====
-  const inputContainer = document.createElement("div");
-  inputContainer.style.display = "flex";
-  inputContainer.style.borderTop = "1px solid #eee";
+sessionId = "web-" + crypto.randomUUID();
+localStorage.setItem("ai_session_id", sessionId);
 
-  const input = document.createElement("input");
-  input.type = "text";
-  input.placeholder = "Type your message...";
-  input.style.flex = "1";
-  input.style.border = "none";
-  input.style.padding = "12px";
-  input.style.outline = "none";
-  input.style.fontSize = "14px";
-  input.style.color = "#000";
-  input.style.background = "#fff";
-
-  const button = document.createElement("button");
-  button.innerText = "Send";
-  button.style.background = "#000";
-  button.style.color = "#fff";
-  button.style.border = "none";
-  button.style.padding = "0 18px";
-  button.style.cursor = "pointer";
-
-  inputContainer.appendChild(input);
-  inputContainer.appendChild(button);
-  container.appendChild(inputContainer);
-
-  // ===== Message Bubble =====
-  function addMessage(text, isUser) {
-    const msg = document.createElement("div");
-    msg.innerText = text;
-    msg.style.marginBottom = "10px";
-    msg.style.fontSize = "14px";
-    msg.style.padding = "10px";
-    msg.style.borderRadius = "10px";
-    msg.style.maxWidth = "80%";
-    msg.style.background = isUser ? "#000" : "#f2f2f2";
-    msg.style.color = isUser ? "#fff" : "#000";
-    msg.style.alignSelf = isUser ? "flex-end" : "flex-start";
-    msg.style.animation = "fadeIn 0.2s ease";
-    messages.appendChild(msg);
-    messages.scrollTop = messages.scrollHeight;
-  }
-
-  // ===== Typing Indicator =====
-  function showTypingIndicator() {
-    const typing = document.createElement("div");
-    typing.id = "ai-typing";
-    typing.style.marginBottom = "10px";
-    typing.style.padding = "10px";
-    typing.style.borderRadius = "10px";
-    typing.style.background = "#f2f2f2";
-    typing.style.alignSelf = "flex-start";
-    typing.style.display = "flex";
-    typing.style.gap = "4px";
-
-    for (let i = 0; i < 3; i++) {
-      const dot = document.createElement("div");
-      dot.style.width = "6px";
-      dot.style.height = "6px";
-      dot.style.background = "#888";
-      dot.style.borderRadius = "50%";
-      dot.style.animation = "bounce 1.2s infinite ease-in-out";
-      dot.style.animationDelay = `${i * 0.2}s`;
-      typing.appendChild(dot);
-    }
-
-    messages.appendChild(typing);
-    messages.scrollTop = messages.scrollHeight;
-  }
-
-  function removeTypingIndicator() {
-    const typing = document.getElementById("ai-typing");
-    if (typing) typing.remove();
-  }
-
-  // ===== Toggle Logic =====
-  toggleButton.addEventListener("click", () => {
-    isOpen = !isOpen;
-
-    if (isOpen) {
-      container.style.display = "flex";
-      setTimeout(() => {
-        container.style.opacity = "1";
-        container.style.transform = "translateY(0)";
-      }, 10);
-
-      toggleButton.innerText = "Close";
-
-      if (!hasWelcomed) {
-        addMessage(
-          "Hi there 👋 Welcome to Gladiators Painting! I can help you get a fast quote. Are you looking for interior or exterior painting?",
-          false
-        );
-
-        hasWelcomed = true;
-        requestPhone();
-       showProjectOptions();
-      }
-      
-
-      addMessage("Great 👍 What city is the project in?", false);
-    };
-
-    messages.appendChild(btn);
-  });
 }
-      }
-              function requestPhone() {
-  const phoneButton = document.createElement("button");
-  phoneButton.textContent = "Get Estimate Times by Text";
-  phoneButton.style.marginTop = "10px";
-  phoneButton.style.padding = "10px";
-  phoneButton.style.borderRadius = "8px";
-  phoneButton.style.border = "none";
-  phoneButton.style.background = "#2563eb";
-  phoneButton.style.color = "#fff";
-  phoneButton.style.cursor = "pointer";
 
-  phoneButton.onclick = () => {
-    const phone = prompt("Enter your phone number for estimate times:");
+let isOpen = false;
+let hasWelcomed = false;
 
-    if (phone) {
-      fetch(apiBase + "/lead/phone", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          phone: phone,
-          source: "website_chat"
-        })
-      });
-function showProjectOptions() {
-  const options = ["Interior Painting", "Exterior Painting", "Commercial"];
 
-  options.forEach(option => {
-    const btn = document.createElement("button");
-    btn.textContent = option;
-    btn.style.display = "block";
-    btn.style.marginTop = "8px";
-    btn.style.padding = "10px";
-    btn.style.borderRadius = "8px";
-    btn.style.border = "none";
-    btn.style.background = "#f1f5f9";
-    btn.style.cursor = "pointer";
+// =====================================================
+// CHAT BUTTON
+// =====================================================
 
-    btn.onclick = () => {
-      addMessage(option, true);
+const toggleButton = document.createElement("div");
 
-      fetch(apiBase + "/lead/project-type", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          projectType: option
-        })
-      });
-addMessage("Great 👍 What's the project address?", false);
+toggleButton.innerText = "Chat";
+
+Object.assign(toggleButton.style,{
+position:"fixed",
+bottom:"20px",
+right:"20px",
+background:"#000",
+color:"#fff",
+padding:"12px 18px",
+borderRadius:"30px",
+cursor:"pointer",
+fontFamily:"Arial",
+zIndex:"999999",
+boxShadow:"0 6px 18px rgba(0,0,0,0.25)",
+transition:"all .3s ease"
+});
+
+document.body.appendChild(toggleButton);
+
+
+// =====================================================
+// CHAT WINDOW
+// =====================================================
+
+const container = document.createElement("div");
+
+Object.assign(container.style,{
+position:"fixed",
+bottom:"80px",
+right:"20px",
+width:"360px",
+height:"460px",
+background:"#fff",
+border:"1px solid #ddd",
+borderRadius:"14px",
+boxShadow:"0 12px 40px rgba(0,0,0,0.25)",
+display:"none",
+flexDirection:"column",
+overflow:"hidden",
+fontFamily:"Arial",
+zIndex:"999999",
+opacity:"0",
+transform:"translateY(10px)",
+transition:"all .25s ease"
+});
+
+document.body.appendChild(container);
+
+
+// =====================================================
+// MESSAGE AREA
+// =====================================================
+
+const messages = document.createElement("div");
+
+Object.assign(messages.style,{
+flex:"1",
+padding:"12px",
+overflowY:"auto",
+display:"flex",
+flexDirection:"column"
+});
+
+container.appendChild(messages);
+
+
+// =====================================================
+// INPUT BAR
+// =====================================================
+
+const inputBar = document.createElement("div");
+
+Object.assign(inputBar.style,{
+display:"flex",
+borderTop:"1px solid #eee"
+});
+
+const input = document.createElement("input");
+
+input.placeholder = "Type your message...";
+
+Object.assign(input.style,{
+flex:"1",
+border:"none",
+padding:"12px",
+outline:"none"
+});
+
+const sendButton = document.createElement("button");
+
+sendButton.innerText = "Send";
+
+Object.assign(sendButton.style,{
+background:"#000",
+color:"#fff",
+border:"none",
+padding:"0 18px",
+cursor:"pointer"
+});
+
+inputBar.appendChild(input);
+inputBar.appendChild(sendButton);
+
+container.appendChild(inputBar);
+
+
+// =====================================================
+// MESSAGE FUNCTION
+// =====================================================
+
+function addMessage(text,isUser){
+
+const msg = document.createElement("div");
+
+msg.innerText = text;
+
+Object.assign(msg.style,{
+marginBottom:"10px",
+fontSize:"14px",
+padding:"10px",
+borderRadius:"10px",
+maxWidth:"80%",
+background:isUser ? "#000" : "#f2f2f2",
+color:isUser ? "#fff" : "#000",
+alignSelf:isUser ? "flex-end" : "flex-start"
+});
+
+messages.appendChild(msg);
+
+messages.scrollTop = messages.scrollHeight;
+
+}
+
+
+// =====================================================
+// TYPING INDICATOR
+// =====================================================
+
+function showTyping(){
+
+const typing = document.createElement("div");
+
+typing.id="typing";
+
+Object.assign(typing.style,{
+display:"flex",
+gap:"4px",
+marginBottom:"10px"
+});
+
+for(let i=0;i<3;i++){
+
+const dot=document.createElement("div");
+
+Object.assign(dot.style,{
+width:"6px",
+height:"6px",
+background:"#888",
+borderRadius:"50%",
+animation:"bounce 1.2s infinite",
+animationDelay:(i*0.2)+"s"
+});
+
+typing.appendChild(dot);
+
+}
+
+messages.appendChild(typing);
+messages.scrollTop=messages.scrollHeight;
+
+}
+
+function hideTyping(){
+
+const typing=document.getElementById("typing");
+
+if(typing) typing.remove();
+
+}
+
+
+// =====================================================
+// QUICK ACTION BUTTONS
+// =====================================================
+
+function showQuickActions(){
+
+const wrapper = document.createElement("div");
+
+wrapper.style.marginBottom="10px";
+
+const callBtn = document.createElement("button");
+callBtn.innerText="📞 Call";
+callBtn.onclick=()=>{ window.location.href="tel:+10000000000"; };
+
+const textBtn = document.createElement("button");
+textBtn.innerText="📱 Text";
+textBtn.onclick=()=>{ requestPhone(); };
+
+const chatBtn = document.createElement("button");
+chatBtn.innerText="💬 Chat";
+chatBtn.onclick=()=>{ showProjectOptions(); };
+
+[callBtn,textBtn,chatBtn].forEach(btn=>{
+
+Object.assign(btn.style,{
+marginRight:"6px",
+padding:"8px 10px",
+borderRadius:"6px",
+border:"none",
+cursor:"pointer",
+background:"#f1f5f9"
+});
+
+wrapper.appendChild(btn);
+
+});
+
+messages.appendChild(wrapper);
+
+}
+
+
+// =====================================================
+// PROJECT TYPE
+// =====================================================
+
+function showProjectOptions(){
+
+const options=[
+"Interior Painting",
+"Exterior Painting",
+"Commercial"
+];
+
+options.forEach(option=>{
+
+const btn=document.createElement("button");
+
+btn.textContent=option;
+
+Object.assign(btn.style,{
+display:"block",
+marginTop:"8px",
+padding:"10px",
+borderRadius:"8px",
+border:"none",
+background:"#f1f5f9",
+cursor:"pointer"
+});
+
+btn.onclick=()=>{
+
+addMessage(option,true);
+
+fetch(apiBase+"/lead/project-type",{
+method:"POST",
+headers:{ "Content-Type":"application/json"},
+body:JSON.stringify({projectType:option})
+});
+
+requestPhone();
+
+};
+
+messages.appendChild(btn);
+
+});
+
+}
+
+
+// =====================================================
+// PHONE CAPTURE
+// =====================================================
+
+function requestPhone(){
+
+const phone = prompt("Enter your phone number");
+
+if(!phone) return;
+
+fetch(apiBase+"/lead/phone",{
+method:"POST",
+headers:{ "Content-Type":"application/json"},
+body:JSON.stringify({
+phone:phone,
+source:"website_chat"
+})
+});
+
+addMessage("Great 👍 What is the project address?",false);
+
 requestAddress();
-      
- function requestAddress() {
-  const address = prompt("Enter the project address for your painting estimate:");
 
-  if (address) {
-    fetch(apiBase + "/lead/address", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        address: address
-      })
-    });
-
-    showEstimateTimes();
-  }
-}
-    }
-  };
-                function showEstimateTimes() {
-  const times = [
-    "Tomorrow 10:00 AM",
-    "Tomorrow 2:30 PM",
-    "Thursday 9:00 AM"
-  ];
-
-  addMessage("We have these estimate openings:", false);
-
-  times.forEach(time => {
-    const btn = document.createElement("button");
-
-    btn.textContent = time;
-    btn.style.display = "block";
-    btn.style.marginTop = "8px";
-    btn.style.padding = "10px";
-    btn.style.borderRadius = "8px";
-    btn.style.border = "none";
-    btn.style.background = "#2563eb";
-    btn.style.color = "#fff";
-    btn.style.cursor = "pointer";
-
-    btn.onclick = () => {
-      addMessage(time, true);
-
-      addMessage("You're booked 👍 We'll text confirmation shortly.", false);
-
-      fetch(apiBase + "/lead/appointment", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          appointment: time
-        })
-      });
-    };
-
-    messages.appendChild(btn);
-  });
 }
 
-  messages.appendChild(phoneButton);
+
+// =====================================================
+// ADDRESS CAPTURE
+// =====================================================
+
+function requestAddress(){
+
+const address = prompt("Enter project address");
+
+if(!address) return;
+
+fetch(apiBase+"/lead/address",{
+method:"POST",
+headers:{ "Content-Type":"application/json"},
+body:JSON.stringify({address})
+});
+
+showEstimateTimes();
+
 }
-    } else {
-      container.style.opacity = "0";
-      container.style.transform = "translateY(10px)";
-      setTimeout(() => {
-        container.style.display = "none";
-      }, 250);
-      toggleButton.innerText = "Chat";
-    }
-  });
-setTimeout(() => {
-  if (!isOpen) {
-    const prompt = document.createElement("div");
-    prompt.textContent = "Hi! Want a fast painting estimate?";
-    prompt.style.position = "fixed";
-    prompt.style.bottom = "95px";
-    prompt.style.right = "20px";
-    prompt.style.background = "#fff";
-    prompt.style.padding = "10px 14px";
-    prompt.style.borderRadius = "12px";
-    prompt.style.boxShadow = "0 4px 10px rgba(0,0,0,0.2)";
-    prompt.style.fontFamily = "Arial, sans-serif";
-    prompt.style.cursor = "pointer";
-    prompt.style.zIndex = "999999";
 
-    prompt.onclick = () => {
-      toggleButton.click();
-      prompt.remove();
-    };
 
-    document.body.appendChild(prompt);
+// =====================================================
+// ESTIMATE TIMES
+// =====================================================
 
-    setTimeout(() => prompt.remove(), 15000);
-  }
-}, 8000);
-  // ===== Send Message =====
-  async function sendMessage() {
-    const text = input.value.trim();
-    if (!text) return;
+function showEstimateTimes(){
 
-    addMessage(text, true);
-    input.value = "";
+const times=[
+"Tomorrow 10:00 AM",
+"Tomorrow 2:30 PM",
+"Thursday 9:00 AM"
+];
 
-    showTypingIndicator();
+addMessage("We have these estimate openings:",false);
 
-    try {
-      const response = await fetch(`${apiBase}/website-chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: text,
-          sessionId: sessionId,
-        }),
-      });
+times.forEach(time=>{
 
-      removeTypingIndicator();
+const btn=document.createElement("button");
 
-      if (!response.ok) {
-        addMessage("Sorry, something went wrong. Please try again.", false);
-        return;
-      }
+btn.textContent=time;
 
-      const data = await response.json();
+Object.assign(btn.style,{
+display:"block",
+marginTop:"8px",
+padding:"10px",
+borderRadius:"8px",
+border:"none",
+background:"#2563eb",
+color:"#fff",
+cursor:"pointer"
+});
 
-      // slight delay to feel human
-      setTimeout(() => {
-        addMessage(data.reply || "No response from server.", false);
-      }, 400);
+btn.onclick=()=>{
 
-    } catch (err) {
-      removeTypingIndicator();
-      addMessage("Connection error. Please try again.", false);
-    }
-  }
+addMessage(time,true);
 
-  button.addEventListener("click", sendMessage);
-  input.addEventListener("keypress", function (e) {
-    if (e.key === "Enter") sendMessage();
-  });
+fetch(apiBase+"/lead/appointment",{
+method:"POST",
+headers:{ "Content-Type":"application/json"},
+body:JSON.stringify({appointment:time})
+});
 
-  // ===== Animations =====
-  const style = document.createElement("style");
-  style.innerHTML = `
-    @keyframes bounce {
-      0%, 80%, 100% { transform: scale(0); }
-      40% { transform: scale(1); }
-    }
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(5px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-  `;
-  document.head.appendChild(style);
+addMessage("You're booked 👍 We'll text confirmation shortly.",false);
+
+};
+
+messages.appendChild(btn);
+
+});
+
+}
+
+
+// =====================================================
+// CHAT TO AI
+// =====================================================
+
+async function sendMessage(){
+
+const text=input.value.trim();
+
+if(!text) return;
+
+addMessage(text,true);
+input.value="";
+
+showTyping();
+
+try{
+
+const response=await fetch(apiBase+"/website-chat",{
+method:"POST",
+headers:{ "Content-Type":"application/json"},
+body:JSON.stringify({
+message:text,
+sessionId:sessionId
+})
+});
+
+hideTyping();
+
+const data=await response.json();
+
+setTimeout(()=>{
+addMessage(data.reply || "No response",false);
+},400);
+
+}catch{
+
+hideTyping();
+
+addMessage("Connection error",false);
+
+}
+
+}
+
+sendButton.onclick=sendMessage;
+
+input.addEventListener("keypress",(e)=>{
+if(e.key==="Enter") sendMessage();
+});
+
+
+// =====================================================
+// TOGGLE CHAT
+// =====================================================
+
+toggleButton.onclick=()=>{
+
+isOpen=!isOpen;
+
+if(isOpen){
+
+container.style.display="flex";
+
+setTimeout(()=>{
+container.style.opacity="1";
+container.style.transform="translateY(0)";
+},10);
+
+toggleButton.innerText="Close";
+
+if(!hasWelcomed){
+
+addMessage("Hi 👋 Welcome to Gladiators Painting! I can help you get a fast quote.",false);
+
+showQuickActions();
+
+hasWelcomed=true;
+
+}
+
+}else{
+
+container.style.opacity="0";
+container.style.transform="translateY(10px)";
+
+setTimeout(()=>{
+container.style.display="none";
+},250);
+
+toggleButton.innerText="Chat";
+
+}
+
+};
+
+
+// =====================================================
+// VISITOR PROMPT
+// =====================================================
+
+setTimeout(()=>{
+
+if(!isOpen){
+
+const prompt=document.createElement("div");
+
+prompt.innerText="Want a fast painting estimate?";
+
+Object.assign(prompt.style,{
+position:"fixed",
+bottom:"95px",
+right:"20px",
+background:"#fff",
+padding:"10px 14px",
+borderRadius:"12px",
+boxShadow:"0 4px 10px rgba(0,0,0,0.2)",
+cursor:"pointer",
+zIndex:"999999"
+});
+
+prompt.onclick=()=>{
+toggleButton.click();
+prompt.remove();
+};
+
+document.body.appendChild(prompt);
+
+setTimeout(()=>{ prompt.remove(); },15000);
+
+}
+
+},8000);
+
+
+// =====================================================
+// ANIMATIONS
+// =====================================================
+
+const style=document.createElement("style");
+
+style.innerHTML=`
+
+@keyframes bounce{
+0%,80%,100%{transform:scale(0)}
+40%{transform:scale(1)}
+}
+
+`;
+
+document.head.appendChild(style);
+
+
 })();
+
 });

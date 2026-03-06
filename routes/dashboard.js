@@ -6,7 +6,7 @@ const db = require("../lib/db");
 const auth = require("../lib/auth");
 const { getTenantById } = require("../lib/tenant");
 const { listPlans } = require("../lib/plans");
-const { configurePhoneWebhook, getClientForTenant, getNextAvailableNumber } = require("../lib/twilio");
+const { configurePhoneWebhook, getClientForTenant, purchaseNewNumber, fetchAvailableNumbers } = require("../lib/twilio");
 
 const router = express.Router();
 
@@ -319,13 +319,23 @@ router.post("/tenants", async (req, res) => {
         return res.status(400).json({ error: "A valid phone number is required for BYOT (e.g. +18076055898 or 8076055898)" });
       }
     } else {
-      // Platform flow: auto-assign from pool
-      const available = await getNextAvailableNumber();
-      if (!available) {
-        return res.status(503).json({ error: "No phone numbers available. Please contact support — we need to add more numbers to the pool." });
+      // Platform flow: dynamically purchase a number
+      try {
+        let numberToBuy = body.assigned_number;
+        if (!numberToBuy) {
+          // Fallback if they bypassed the UI selection
+          const available = await fetchAvailableNumbers();
+          if (!available || available.length === 0) throw new Error("No numbers available");
+          numberToBuy = available[0].phoneNumber;
+        }
+
+        const purchased = await purchaseNewNumber(numberToBuy);
+        phone = purchased.phone;
+        twilioSid = purchased.twilioSid;
+      } catch (err) {
+        console.error("Dashboard POST /tenants phone provisioning error:", err);
+        return res.status(503).json({ error: "Could not provision a new phone number. Details: " + err.message });
       }
-      phone = available.phone;
-      twilioSid = available.twilioSid;
     }
 
     // Check if this phone number is already assigned to another tenant
@@ -367,7 +377,7 @@ router.post("/tenants", async (req, res) => {
 
     // Auto-configure Twilio webhook on this number
     const tenantForTwilio = await getTenantById(tenant.id);
-    const webhookResult = await configurePhoneWebhook(phone, tenantForTwilio);
+    const webhookResult = await configurePhoneWebhook(phone, tenant.id, tenantForTwilio);
     if (!webhookResult.success) {
       // Rollback: remove the phone number and tenant since webhook setup failed
       await db.query("DELETE FROM phone_numbers WHERE id = $1", [phoneRow.rows[0].id]);
@@ -503,6 +513,20 @@ router.patch("/tenants/:id", async (req, res) => {
   }
 });
 
+// -------------------- Twilio Utility Endpoints --------------------
+
+router.get("/twilio/available-numbers", async (req, res) => {
+  try {
+    const areaCode = req.query.area_code || null;
+    const limit = parseInt(req.query.limit, 10) || 10;
+    const numbers = await fetchAvailableNumbers(areaCode, limit);
+    res.json({ numbers });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Could not fetch available numbers from Twilio." });
+  }
+});
+
 // -------------------- Phone Numbers --------------------
 
 router.get("/phone-numbers", async (req, res) => {
@@ -542,7 +566,7 @@ router.post("/phone-numbers", async (req, res) => {
     const isPrimary = parseInt(countResult.rows[0].count, 10) === 0;
     // Auto-configure Twilio webhook on this number before saving
     const tenantForTwilio = await getTenantById(tenantId);
-    const webhookResult = await configurePhoneWebhook(phone, tenantForTwilio);
+    const webhookResult = await configurePhoneWebhook(phone, tenantId, tenantForTwilio);
     if (!webhookResult.success) {
       return res.status(400).json({
         error: webhookResult.error || "Could not configure this phone number in Twilio. Make sure it is purchased and active in your Twilio account."

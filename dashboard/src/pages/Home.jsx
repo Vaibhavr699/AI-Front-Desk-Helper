@@ -56,7 +56,7 @@ export default function Home() {
 
       <main className="flex-1">
         {/* Hero */}
-        <div className="flex flex-col overflow-hidden pb-4 md:pt-20">
+        <div className="flex flex-col overflow-hidden pb-4">
           <ContainerScroll
             titleComponent={
               <AnimatedHeroTitle

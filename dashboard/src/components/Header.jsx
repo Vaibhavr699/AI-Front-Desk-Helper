@@ -89,7 +89,7 @@ export default function Header({ tenantId, tenants, onTenantChange, onMenuClick 
                     <p className="text-xs font-medium text-stone-500 uppercase tracking-wider">Signed in as</p>
                     <p className="text-sm font-medium text-stone-900 mt-1 break-all">{user?.email}</p>
                   </div>
-                  <div className="py-1">
+                  <div className="py-1 bg-stone-50/80">
                     <button
                       type="button"
                       onClick={handleLogout}

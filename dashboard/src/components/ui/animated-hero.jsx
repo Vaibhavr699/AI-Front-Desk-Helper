@@ -19,7 +19,7 @@ export function AnimatedHeroTitle({ onStart, onLogin }) {
 
     return (
         <div className="w-full">
-            <div className="flex gap-6 py-4 lg:py-8 items-center justify-center flex-col">
+            <div className="flex gap-6 py-4 lg:py-8 items-center justify-center flex-col mb-4">
                 <div>
                     <Button variant="secondary" size="sm" className="gap-2 text-stone-700 border border-stone-200">
                         Built for home service contractors <MoveRight className="w-4 h-4" />

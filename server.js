@@ -24,6 +24,7 @@ const recordingService = require("./services/recording");
 const transferService = require("./services/transfer");
 const bookingsService = require("./services/bookings");
 const followUpService = require("./services/followUp");
+const estimateRecoveryService = require("./services/estimateRecovery");
 
 const twilioRoutes = require("./routes/twilio");
 const dashboardRoutes = require("./routes/dashboard");
@@ -96,6 +97,58 @@ const REALTIME_TOOLS = [
     type: "function",
     name: "change_language",
     description: "Call this when the caller asks to speak in a different language. Use the ISO 639-1 code: en=English, es=Spanish, fr=French, hi=Hindi, zh=Chinese, ar=Arabic, etc.",
+    parameters: {
+      type: "object",
+      properties: {
+        language: { type: "string" },
+      },
+      required: ["language"],
+    },
+  },
+];
+
+const RECOVERY_TOOLS = [
+  {
+    type: "function",
+    name: "book_appointment",
+    description: "The customer agreed to book! Collect name, phone, address, scope, and finalize. This also marks the recovery as converted.",
+    parameters: {
+      type: "object",
+      properties: {
+        contact_name: { type: "string", description: "Full name" },
+        contact_phone: { type: "string", description: "Phone number" },
+        contact_email: { type: "string", description: "Email if given" },
+        address: { type: "string", description: "Street address" },
+        city: { type: "string", description: "City" },
+        scope: { type: "string", description: "Interior, exterior, both, rooms" },
+        job_type: { type: "string", description: "Residential or commercial" },
+        preferred_date: { type: "string", description: "Preferred date" },
+        notes: { type: "string", description: "Extra notes" },
+      },
+      required: ["contact_phone"],
+    },
+  },
+  {
+    type: "function",
+    name: "detect_objection",
+    description: "Call this when the customer expresses a specific objection. Types: 'price' (they say it's expensive, comparing quotes), 'thinking' (need to think about it, not sure yet), 'spouse' (need to talk to partner/spouse). This adjusts the follow-up sequence after the call.",
+    parameters: {
+      type: "object",
+      properties: {
+        objection_type: {
+          type: "string",
+          enum: ["price", "thinking", "spouse"],
+          description: "The type of objection detected",
+        },
+        details: { type: "string", description: "What exactly they said" },
+      },
+      required: ["objection_type"],
+    },
+  },
+  {
+    type: "function",
+    name: "change_language",
+    description: "Switch to another language if the customer asks.",
     parameters: {
       type: "object",
       properties: {
@@ -1250,6 +1303,44 @@ app.post("/twilio-sms", async (req, res) => {
   }
 });
 
+app.get("/twilio/recovery-call", (req, res) => {
+  const recoveryId = req.query.recoveryId;
+  const script = req.query.script;
+
+  if (!recoveryId || !script) {
+    res.status(400).send("Missing recoveryId or script");
+    return;
+  }
+
+  const requestBaseUrl = resolveBaseUrl(req);
+  if (!requestBaseUrl) {
+    res.status(500).send("Cannot resolve base URL");
+    return;
+  }
+
+  // The wss:// url that Twilio will use to stream audio back to the server
+  // We pass type=recovery so the websocket connection knows how to handle it
+  const wssUrl = `${requestBaseUrl.replace(/^http/, "ws")}/twilio-media?type=recovery&recoveryId=${encodeURIComponent(recoveryId)}&script=${encodeURIComponent(script)}`;
+
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Connect>
+    <Stream url="${wssUrl}" />
+  </Connect>
+</Response>`;
+
+  res.type("text/xml").send(twiml);
+});
+
+app.post("/twilio/recovery-call-status", (req, res) => {
+  const recoveryId = req.query.recoveryId;
+  const callStatus = req.body.CallStatus;
+  const callDuration = req.body.CallDuration;
+
+  console.log(`[Recovery] Call status update for recoveryId=${recoveryId}: ${callStatus} (Duration: ${callDuration}s)`);
+  res.sendStatus(200);
+});
+
 app.use((req, res, next) => {
   if (!/^\/twilio(?:-|\/)/i.test(req.path)) {
     next();
@@ -1277,11 +1368,20 @@ wss.on("connection", (twilioSocket, req) => {
   const rawUrl = req.url || "";
   const parsedUrl = new URL(rawUrl, "http://localhost");
   const pathname = parsedUrl.pathname || "";
+  const q = Object.fromEntries(parsedUrl.searchParams.entries());
+
+  const isRecovery = q.type === "recovery";
+  const recoveryId = q.recoveryId;
+  const recoveryScript = q.script ? decodeURIComponent(q.script) : "";
+
+  console.log("[AI-Desk] Connection path=%s isRecovery=%s recoveryId=%s", pathname, isRecovery, recoveryId);
+
   const pathSegments = pathname.split("/").filter(Boolean);
   const tenantIdFromPath = pathSegments.length >= 2 ? pathSegments[1] : "";
   const tenantId = TENANTS[tenantIdFromPath] ? tenantIdFromPath : "gladiators";
   let tenant = TENANTS[tenantId];
-  if (!tenant) {
+
+  if (!tenant && !isRecovery) {
     console.error("[AI-Desk] No tenant for path segment:", tenantIdFromPath, "- ensure DB is seeded and loadTenants ran.");
     twilioSocket.close();
     return;
@@ -1359,23 +1459,36 @@ wss.on("connection", (twilioSocket, req) => {
         openaiSocket.send(msg);
       }
 
+      let recoveryRecord = null;
+      if (isRecovery && recoveryId) {
+        try {
+          recoveryRecord = await estimateRecoveryService.getRecoveryById(recoveryId);
+          if (recoveryRecord) {
+            tenant = await getTenantById(recoveryRecord.tenant_id);
+            console.log("[AI-Desk] Recovery call loaded recoveryId=%s tenant=%s contact=%s", recoveryId, tenant?.company_name, recoveryRecord.contact_name);
+          }
+        } catch (e) {
+          console.error("[AI-Desk] Recovery load error:", e.message);
+        }
+      }
+
       if (callSid) {
         const call = await callsService.getCallByTwilioSid(callSid);
         if (call) {
           callId = call.id;
-          tenant = await getTenantById(call.tenant_id);
+          if (!tenant) tenant = await getTenantById(call.tenant_id);
         }
         if (!tenant && (to || from)) {
           tenant = await getTenantByPhone(to);
           if (!tenant && from) tenant = await getTenantByPhone(from);
         }
         if (tenant) {
-          console.log("[AI-Desk] Realtime stream ready callSid=%s tenantId=%s callId=%s from=%s to=%s", callSid, tenant?.id, callId || "(none)", from, to);
+          console.log("[AI-Desk] Realtime stream ready callSid=%s tenantId=%s callId=%s from=%s to=%s recovery=%s", callSid, tenant?.id, callId || "(none)", from, to, isRecovery);
           if (tenant.id && callSid) {
             recordingService.startRecording(callSid, tenant).catch((e) => console.error("Start recording error:", e));
           }
         } else {
-          console.log("[AI-Desk] Realtime stream no tenant callSid=%s callFound=%s to=%s from=%s", callSid, !!call, to, from);
+          console.log("[AI-Desk] Realtime stream no tenant callSid=%s callFound=%s to=%s from=%s recovery=%s", callSid, !!call, to, from, isRecovery);
         }
       }
 
@@ -1389,9 +1502,34 @@ wss.on("connection", (twilioSocket, req) => {
         "Do NOT say you are transferring or connecting to someone unless you actually need a live agent. Only use request_human_transfer for: commercial job, project over $10k, caller clearly frustrated or angry, or VIP/repeat customer. For normal residential estimates, always complete the booking with book_appointment.",
         "Repeat back key details (name, phone, address, scope) before finalizing so the caller can correct you if needed.",
       ].join(" ");
-      const instructions = (tenant && tenant.instructions)
+      let instructions = (tenant && tenant.instructions)
         ? tenant.instructions
         : defaultInstructions;
+
+      if (isRecovery && recoveryScript) {
+        instructions = `You are performing an automated outbound follow-up call.
+        START the call by saying EXACTLY this: "${recoveryScript}". 
+        
+        YOUR GOAL: Open conversation and move them toward booking the estimate they received. 
+        
+        OBJECTION HANDLING:
+        1. If they say "I need to think about it" or similar:
+           Your response: "Totally understand — it’s a big decision. Is there anything specific you’re weighing that I can help with?"
+           Immediately call 'detect_objection' with type 'thinking'.
+        
+        2. If they say "The price is high", "Getting other quotes", or similar:
+           Your response: "I completely understand — most homeowners compare 2–3 options. Besides price, is there anything else important in your decision?"
+           Immediately call 'detect_objection' with type 'price'.
+           
+        3. If they say "I need to talk to my wife/spouse/partner" or similar:
+           Your response: "Of course — would it help if I sent over a quick summary you can share?"
+           Immediately call 'detect_objection' with type 'spouse'.
+           
+        4. If they are ready to book:
+           Collect any missing details (name, phone, address, scope, preferred date) and call 'book_appointment'. 
+           
+        Be warm, helpful, and professional. The goal is to open conversation, not pressure them.`;
+      }
 
       const voice = process.env.OPENAI_REALTIME_VOICE || "shimmer";
       const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 800;
@@ -1402,7 +1540,7 @@ wss.on("connection", (twilioSocket, req) => {
           output_audio_format: "g711_ulaw",
           voice,
           instructions: `${instructions}\n\nSpeak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English.`,
-          tools: REALTIME_TOOLS,
+          tools: isRecovery ? RECOVERY_TOOLS : REALTIME_TOOLS,
           turn_detection: {
             type: "server_vad",
             threshold: 0.5,
@@ -1414,6 +1552,17 @@ wss.on("connection", (twilioSocket, req) => {
 
       console.log("[DEBUG] Sending payload to OpenAI:", JSON.stringify(payloadToOpenAI, null, 2));
       sendToOpenAI(payloadToOpenAI);
+
+      if (isRecovery && recoveryScript) {
+        console.log("[AI-Desk] Triggering recovery greeting: %s", recoveryScript);
+        sendToOpenAI({
+          type: "response.create",
+          response: {
+            modalities: ["audio", "text"],
+            instructions: `Greet the user by saying EXACTLY this and nothing else yet: "${recoveryScript}"`
+          }
+        });
+      }
     });
 
     openaiSocket.on("message", async (msg) => {
@@ -1464,13 +1613,25 @@ wss.on("connection", (twilioSocket, req) => {
           }
           try {
             if (name === "book_appointment" && tenant && callId) {
-              console.log("[AI-Desk] Realtime book_appointment callSid=%s tenantId=%s callId=%s", callSid, tenant.id, callId);
+              console.log("[AI-Desk] Realtime book_appointment callSid=%s tenantId=%s callId=%s recovery=%s", callSid, tenant.id, callId, isRecovery);
               const { booking, crmSynced } = await bookingsService.createBooking(tenant.id, callId, args);
               console.log("[AI-Desk] Realtime booking done id=%s crmSynced=%s", booking.id, crmSynced);
+
+              if (isRecovery && recoveryRecord) {
+                await estimateRecoveryService.markConverted(recoveryRecord.id);
+                console.log("[AI-Desk] Recovery CONVERTED id=%s 🎉", recoveryRecord.id);
+              }
+
               const message = crmSynced
                 ? "Estimate scheduled. Details synced to Zapier/DripJobs. Say to the caller: You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye."
                 : "Estimate scheduled and saved. Say to the caller: You're all set—your estimate is scheduled. You'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.";
               output = JSON.stringify({ success: true, message });
+            } else if (name === "detect_objection" && isRecovery && recoveryRecord) {
+              const objType = args.objection_type;
+              console.log("[AI-Desk] Recovery objection detected id=%s type=%s details=%s", recoveryRecord.id, objType, args.details || "(none)");
+              await estimateRecoveryService.setObjection(recoveryRecord.id, objType);
+              await estimateRecoveryService.recordResponse(recoveryRecord.id);
+              output = JSON.stringify({ success: true, message: `Objection ${objType} recorded. Adjusting follow-up sequence.` });
             } else if (name === "request_human_transfer" && callSid && tenant) {
               const result = await transferService.initiateTransfer(
                 callSid,

@@ -139,6 +139,10 @@ export function deletePhoneNumber(phoneId) {
   return api(`/api/phone-numbers/${phoneId}`, { method: "DELETE" });
 }
 
+export function getAvailableNumbers(areaCode = "") {
+  return api(`/api/twilio/available-numbers${areaCode ? `?area_code=${areaCode}` : ""}`);
+}
+
 export async function getRecordingAudioUrl(recordingId) {
   const token = getToken();
   const res = await fetch(`${API_BASE}/api/recordings/${recordingId}/audio`, {

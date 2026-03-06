@@ -838,428 +838,448 @@ async function processFacebookConversation(senderId, messageText) {
   });
 
   return replyText;
-}
-async function sendFacebookMessage(recipientId, messageText, quickReplies = []) {
-  const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+  async function sendTypingIndicator(recipientId, action = "typing_on") {
+    const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+    if (!PAGE_ACCESS_TOKEN) return;
 
-  if (!PAGE_ACCESS_TOKEN) {
-    console.error("Missing FACEBOOK_PAGE_ACCESS_TOKEN");
-    return;
-  }
-
-  const payload = {
-    recipient: { id: recipientId },
-    message: { text: messageText }
-  };
-
-  if (quickReplies.length) {
-    payload.message.quick_replies = quickReplies.map(title => ({
-      content_type: "text",
-      title,
-      payload: title
-    }));
-  }
-
-  try {
-    const response = await fetch(
-      `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      }
-    );
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      console.error("[Facebook] Failed to send message:", response.status, errorBody);
-    } else {
-      console.log(`[Facebook] Successfully sent message to ${recipientId}`);
+    try {
+      await fetch(
+        `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            recipient: { id: recipientId },
+            sender_action: action
+          })
+        }
+      );
+    } catch (err) {
+      console.error("[Facebook] Typing indicator error:", err.message);
     }
-  } catch (err) {
-    console.error("[Facebook] fetch error:", err.message);
   }
-}
-async function runSmsFollowUps() {
-  const now = Date.now();
-  for (const thread of smsThreads.values()) {
-    if (!thread.needsFollowUpAt || thread.needsFollowUpAt > now) continue;
 
-    // Enforce 2-touch limit: Do not follow up if we have already reached out twice
-    if (thread.followUpCount >= 2) {
-      thread.needsFollowUpAt = null; // Mark as done
-      continue;
+  async function sendFacebookMessage(recipientId, messageText, quickReplies = []) {
+    const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+
+    if (!PAGE_ACCESS_TOKEN) {
+      console.error("Missing FACEBOOK_PAGE_ACCESS_TOKEN");
+      return;
     }
 
-    const recentInboundMs = thread.lastInboundAt ? now - thread.lastInboundAt : Infinity;
-    if (recentInboundMs < 10 * 60 * 1000) continue; // Don't follow up if they just messaged us
+    const payload = {
+      recipient: { id: recipientId },
+      message: { text: messageText }
+    };
 
-    const followUpText = thread.bookedEventId
-      ? "Quick follow-up: your appointment is on our schedule. Reply here if you need to reschedule."
-      : "Just checking in — would you like me to help you lock in a time for your estimate?";
+    if (quickReplies.length) {
+      payload.message.quick_replies = quickReplies.map(title => ({
+        content_type: "text",
+        title,
+        payload: title
+      }));
+    }
 
-    let sent = { ok: false };
+    try {
+      const response = await fetch(
+        `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        }
+      );
 
-    // Transition channel logic for Web Widget
-    if (thread.channel === "website") {
-      // If we captured their real phone number during the website chat, we transition to SMS.
-      if (thread.leadCapture.phone) {
-        sent = await sendTwilioSms(thread.leadCapture.phone, followUpText);
+      if (!response.ok) {
+        const errorBody = await response.text();
+        console.error("[Facebook] Failed to send message:", response.status, errorBody);
       } else {
-        // Can't follow up on a web widget if we don't have their phone number, so mark as complete
-        thread.needsFollowUpAt = null;
+        console.log(`[Facebook] Successfully sent message to ${recipientId}`);
+      }
+    } catch (err) {
+      console.error("[Facebook] fetch error:", err.message);
+    }
+  }
+  async function runSmsFollowUps() {
+    const now = Date.now();
+    for (const thread of smsThreads.values()) {
+      if (!thread.needsFollowUpAt || thread.needsFollowUpAt > now) continue;
+
+      // Enforce 2-touch limit: Do not follow up if we have already reached out twice
+      if (thread.followUpCount >= 2) {
+        thread.needsFollowUpAt = null; // Mark as done
         continue;
       }
-    } else if (thread.channel === "facebook") {
-      const fbId = thread.phone.replace("fb-", "");
-      await sendFacebookMessage(fbId, followUpText);
-      sent = { ok: true };
-    } else {
-      // SMS channel
-      sent = await sendTwilioSms(thread.phone, followUpText);
-    }
 
-    if (sent.ok) {
-      thread.history.push({ role: "assistant", text: followUpText, at: new Date().toISOString() });
-      thread.lastOutboundAt = now;
-      thread.followUpCount++;
+      const recentInboundMs = thread.lastInboundAt ? now - thread.lastInboundAt : Infinity;
+      if (recentInboundMs < 10 * 60 * 1000) continue; // Don't follow up if they just messaged us
 
-      // If this was Touch 1, schedule Touch 2 for 24 hours later. Check if it's the 2nd touch, mark completed.
-      if (thread.followUpCount < 2) {
-        thread.needsFollowUpAt = now + 24 * 60 * 60 * 1000;
+      const followUpText = thread.bookedEventId
+        ? "Quick follow-up: your appointment is on our schedule. Reply here if you need to reschedule."
+        : "Just checking in — would you like me to help you lock in a time for your estimate?";
+
+      let sent = { ok: false };
+
+      // Transition channel logic for Web Widget
+      if (thread.channel === "website") {
+        // If we captured their real phone number during the website chat, we transition to SMS.
+        if (thread.leadCapture.phone) {
+          sent = await sendTwilioSms(thread.leadCapture.phone, followUpText);
+        } else {
+          // Can't follow up on a web widget if we don't have their phone number, so mark as complete
+          thread.needsFollowUpAt = null;
+          continue;
+        }
+      } else if (thread.channel === "facebook") {
+        const fbId = thread.phone.replace("fb-", "");
+        await sendFacebookMessage(fbId, followUpText);
+        sent = { ok: true };
       } else {
-        thread.needsFollowUpAt = null;
+        // SMS channel
+        sent = await sendTwilioSms(thread.phone, followUpText);
       }
-    } else {
-      // If it failed, retry in 15 mins
-      thread.needsFollowUpAt = now + 15 * 60 * 1000;
-    }
-  }
-}
-app.get("/setup-facebook-menu", async (req, res) => {
-  const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
 
-  if (!PAGE_ACCESS_TOKEN) {
-    return res.status(400).send("Missing FACEBOOK_PAGE_ACCESS_TOKEN");
-  }
+      if (sent.ok) {
+        thread.history.push({ role: "assistant", text: followUpText, at: new Date().toISOString() });
+        thread.lastOutboundAt = now;
+        thread.followUpCount++;
 
-  const menuData = {
-    get_started: {
-      payload: "GET_STARTED"
-    },
-    persistent_menu: [
-      {
-        locale: "default",
-        composer_input_disabled: false,
-        call_to_actions: [
-          {
-            type: "postback",
-            title: "📝 Get Free Quote",
-            payload: "GET_QUOTE"
-          },
-          {
-            type: "postback",
-            title: "📅 Book Estimate",
-            payload: "BOOK_ESTIMATE"
-          },
-          {
-            type: "postback",
-            title: "👤 Talk to Human",
-            payload: "TALK_HUMAN"
-          }
-        ]
+        // If this was Touch 1, schedule Touch 2 for 24 hours later. Check if it's the 2nd touch, mark completed.
+        if (thread.followUpCount < 2) {
+          thread.needsFollowUpAt = now + 24 * 60 * 60 * 1000;
+        } else {
+          thread.needsFollowUpAt = null;
+        }
+      } else {
+        // If it failed, retry in 15 mins
+        thread.needsFollowUpAt = now + 15 * 60 * 1000;
       }
-    ]
-  };
-
-  try {
-    const response = await fetch(
-      `https://graph.facebook.com/v18.0/me/messenger_profile?access_token=${PAGE_ACCESS_TOKEN}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(menuData)
-      }
-    );
-
-    const result = await response.json();
-    res.json(result);
-  } catch (error) {
-    res.status(500).send(error.message);
-  }
-});
-const DEFAULT_CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID || "primary";
-const BUSINESS_TIMEZONE = process.env.BUSINESS_TIMEZONE || "America/Chicago";
-
-function normalizeTimeString(timeValue) {
-  const raw = String(timeValue || "").trim();
-  if (!raw) return "";
-
-  const ampmMatch = raw.match(/^(\d{1,2})(?::(\d{2}))?\s*([ap]m)$/i);
-  if (ampmMatch) {
-    let hour = Number(ampmMatch[1]);
-    const minutes = Number(ampmMatch[2] || "0");
-    const suffix = ampmMatch[3].toLowerCase();
-    if (suffix === "pm" && hour < 12) hour += 12;
-    if (suffix === "am" && hour === 12) hour = 0;
-    if (hour >= 0 && hour < 24 && minutes >= 0 && minutes < 60) {
-      return `${String(hour).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:00`;
     }
   }
+  app.get("/setup-facebook-menu", async (req, res) => {
+    const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
 
-  const twentyFourHourMatch = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-  if (twentyFourHourMatch) {
-    const hour = Number(twentyFourHourMatch[1]);
-    const minutes = Number(twentyFourHourMatch[2]);
-    const seconds = Number(twentyFourHourMatch[3] || "0");
-    if (hour >= 0 && hour < 24 && minutes >= 0 && minutes < 60 && seconds >= 0 && seconds < 60) {
-      return `${String(hour).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    if (!PAGE_ACCESS_TOKEN) {
+      return res.status(400).send("Missing FACEBOOK_PAGE_ACCESS_TOKEN");
     }
-  }
 
-  return "";
-}
+    const menuData = {
+      get_started: {
+        payload: "GET_STARTED"
+      },
+      persistent_menu: [
+        {
+          locale: "default",
+          composer_input_disabled: false,
+          call_to_actions: [
+            {
+              type: "postback",
+              title: "📝 Get Free Quote",
+              payload: "GET_QUOTE"
+            },
+            {
+              type: "postback",
+              title: "📅 Book Estimate",
+              payload: "BOOK_ESTIMATE"
+            },
+            {
+              type: "postback",
+              title: "👤 Talk to Human",
+              payload: "TALK_HUMAN"
+            }
+          ]
+        }
+      ]
+    };
 
-function buildAppointmentWindow(dateValue, timeValue, durationMinutes = 60) {
-  const normalizedDate = String(dateValue || "").trim();
-  const normalizedTime = normalizeTimeString(timeValue);
-  const duration = Number(durationMinutes) > 0 ? Number(durationMinutes) : 60;
-
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate) || !normalizedTime) {
-    return null;
-  }
-
-  const start = new Date(`${normalizedDate}T${normalizedTime}`);
-  if (Number.isNaN(start.getTime())) return null;
-
-  const end = new Date(start.getTime() + duration * 60 * 1000);
-  return { start, end };
-}
-
-async function checkAvailability(args = {}) {
-  if (!calendar) {
-    return { ok: false, reason: "calendar_not_configured" };
-  }
-
-  const window = buildAppointmentWindow(args.appointment_date, args.appointment_time, args.duration_minutes || 60);
-  if (!window) {
-    return { ok: false, reason: "invalid_datetime", message: "Use appointment_date (YYYY-MM-DD) and appointment_time (HH:MM or 1:30 PM)." };
-  }
-
-  const response = await calendar.freebusy.query({
-    requestBody: {
-      timeMin: window.start.toISOString(),
-      timeMax: window.end.toISOString(),
-      timeZone: BUSINESS_TIMEZONE,
-      items: [{ id: args.calendar_id || DEFAULT_CALENDAR_ID }]
-    }
-  });
-
-  const calendarId = args.calendar_id || DEFAULT_CALENDAR_ID;
-  const busy = response?.data?.calendars?.[calendarId]?.busy || [];
-  return {
-    ok: true,
-    available: busy.length === 0,
-    busySlots: busy,
-    startIso: window.start.toISOString(),
-    endIso: window.end.toISOString(),
-    timezone: BUSINESS_TIMEZONE
-  };
-}
-
-async function bookAppointment(args = {}) {
-  if (!calendar) return { ok: false, reason: "calendar_not_configured" };
-
-  const window = buildAppointmentWindow(args.appointment_date, args.appointment_time, args.duration_minutes || 60);
-  if (!window) {
-    return { ok: false, reason: "invalid_datetime", message: "Use appointment_date (YYYY-MM-DD) and appointment_time (HH:MM or 1:30 PM)." };
-  }
-
-  const event = {
-    summary: args.summary || `Painting Estimate - ${args.full_name || "New Lead"}`,
-    description: args.description || [
-      args.full_name ? `Name: ${args.full_name}` : "",
-      args.phone ? `Phone: ${args.phone}` : "",
-      args.email ? `Email: ${args.email}` : "",
-      args.address ? `Address: ${args.address}` : "",
-      args.project_details ? `Project: ${args.project_details}` : ""
-    ].filter(Boolean).join("\n"),
-    start: { dateTime: window.start.toISOString(), timeZone: BUSINESS_TIMEZONE },
-    end: { dateTime: window.end.toISOString(), timeZone: BUSINESS_TIMEZONE }
-  };
-
-  const response = await calendar.events.insert({
-    calendarId: args.calendar_id || DEFAULT_CALENDAR_ID,
-    requestBody: event
-  });
-
-  return {
-    ok: true,
-    eventId: response?.data?.id,
-    htmlLink: response?.data?.htmlLink,
-    status: response?.data?.status
-  };
-}
-
-async function cancelAppointment(args = {}) {
-  if (!calendar) return { ok: false, reason: "calendar_not_configured" };
-  if (!args.event_id) return { ok: false, reason: "missing_event_id" };
-
-  await calendar.events.delete({
-    calendarId: args.calendar_id || DEFAULT_CALENDAR_ID,
-    eventId: args.event_id
-  });
-
-  return { ok: true, cancelled: true, eventId: args.event_id };
-}
-
-async function rescheduleAppointment(args = {}) {
-  if (!calendar) return { ok: false, reason: "calendar_not_configured" };
-  if (!args.event_id) return { ok: false, reason: "missing_event_id" };
-
-  const window = buildAppointmentWindow(args.appointment_date, args.appointment_time, args.duration_minutes || 60);
-  if (!window) {
-    return { ok: false, reason: "invalid_datetime", message: "Use appointment_date (YYYY-MM-DD) and appointment_time (HH:MM or 1:30 PM)." };
-  }
-
-  const response = await calendar.events.patch({
-    calendarId: args.calendar_id || DEFAULT_CALENDAR_ID,
-    eventId: args.event_id,
-    requestBody: {
-      start: { dateTime: window.start.toISOString(), timeZone: BUSINESS_TIMEZONE },
-      end: { dateTime: window.end.toISOString(), timeZone: BUSINESS_TIMEZONE }
-    }
-  });
-
-  return {
-    ok: true,
-    eventId: response?.data?.id,
-    htmlLink: response?.data?.htmlLink,
-    status: response?.data?.status
-  };
-}
-
-const OPENAI_FUNCTION_HANDLERS = {
-  create_lead: async (args, context) => {
-    await forwardLeadCaptureToCRM(args, context.crmLeadSentRef);
-    return { ok: true, leadForwarded: true };
-  },
-  checkAvailability,
-  bookAppointment,
-  cancelAppointment,
-  rescheduleAppointment
-};
-
-function parsePotentialLeadCapture(rawPayload) {
-  if (!rawPayload) return null;
-
-  let parsed;
-  if (typeof rawPayload === "string") {
     try {
-      parsed = JSON.parse(rawPayload);
-    } catch {
+      const response = await fetch(
+        `https://graph.facebook.com/v18.0/me/messenger_profile?access_token=${PAGE_ACCESS_TOKEN}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(menuData)
+        }
+      );
+
+      const result = await response.json();
+      res.json(result);
+    } catch (error) {
+      res.status(500).send(error.message);
+    }
+  });
+  const DEFAULT_CALENDAR_ID = process.env.GOOGLE_CALENDAR_ID || "primary";
+  const BUSINESS_TIMEZONE = process.env.BUSINESS_TIMEZONE || "America/Chicago";
+
+  function normalizeTimeString(timeValue) {
+    const raw = String(timeValue || "").trim();
+    if (!raw) return "";
+
+    const ampmMatch = raw.match(/^(\d{1,2})(?::(\d{2}))?\s*([ap]m)$/i);
+    if (ampmMatch) {
+      let hour = Number(ampmMatch[1]);
+      const minutes = Number(ampmMatch[2] || "0");
+      const suffix = ampmMatch[3].toLowerCase();
+      if (suffix === "pm" && hour < 12) hour += 12;
+      if (suffix === "am" && hour === 12) hour = 0;
+      if (hour >= 0 && hour < 24 && minutes >= 0 && minutes < 60) {
+        return `${String(hour).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:00`;
+      }
+    }
+
+    const twentyFourHourMatch = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (twentyFourHourMatch) {
+      const hour = Number(twentyFourHourMatch[1]);
+      const minutes = Number(twentyFourHourMatch[2]);
+      const seconds = Number(twentyFourHourMatch[3] || "0");
+      if (hour >= 0 && hour < 24 && minutes >= 0 && minutes < 60 && seconds >= 0 && seconds < 60) {
+        return `${String(hour).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+      }
+    }
+
+    return "";
+  }
+
+  function buildAppointmentWindow(dateValue, timeValue, durationMinutes = 60) {
+    const normalizedDate = String(dateValue || "").trim();
+    const normalizedTime = normalizeTimeString(timeValue);
+    const duration = Number(durationMinutes) > 0 ? Number(durationMinutes) : 60;
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate) || !normalizedTime) {
       return null;
     }
-  } else if (typeof rawPayload === "object") {
-    parsed = rawPayload;
-  } else {
-    return null;
+
+    const start = new Date(`${normalizedDate}T${normalizedTime}`);
+    if (Number.isNaN(start.getTime())) return null;
+
+    const end = new Date(start.getTime() + duration * 60 * 1000);
+    return { start, end };
   }
 
-  const leadCapture = parsed?.lead_capture && typeof parsed.lead_capture === "object"
-    ? parsed.lead_capture
-    : parsed;
+  async function checkAvailability(args = {}) {
+    if (!calendar) {
+      return { ok: false, reason: "calendar_not_configured" };
+    }
 
-  if (!leadCapture || typeof leadCapture !== "object") return null;
+    const window = buildAppointmentWindow(args.appointment_date, args.appointment_time, args.duration_minutes || 60);
+    if (!window) {
+      return { ok: false, reason: "invalid_datetime", message: "Use appointment_date (YYYY-MM-DD) and appointment_time (HH:MM or 1:30 PM)." };
+    }
 
-  const normalized = {};
-  for (const field of LEAD_CAPTURE_FIELDS) {
-    const value = leadCapture[field];
-    normalized[field] = typeof value === "string" ? value.trim() : "";
+    const response = await calendar.freebusy.query({
+      requestBody: {
+        timeMin: window.start.toISOString(),
+        timeMax: window.end.toISOString(),
+        timeZone: BUSINESS_TIMEZONE,
+        items: [{ id: args.calendar_id || DEFAULT_CALENDAR_ID }]
+      }
+    });
+
+    const calendarId = args.calendar_id || DEFAULT_CALENDAR_ID;
+    const busy = response?.data?.calendars?.[calendarId]?.busy || [];
+    return {
+      ok: true,
+      available: busy.length === 0,
+      busySlots: busy,
+      startIso: window.start.toISOString(),
+      endIso: window.end.toISOString(),
+      timezone: BUSINESS_TIMEZONE
+    };
   }
 
-  if (!normalized.full_name || !normalized.phone) return null;
+  async function bookAppointment(args = {}) {
+    if (!calendar) return { ok: false, reason: "calendar_not_configured" };
 
-  return normalized;
-}
+    const window = buildAppointmentWindow(args.appointment_date, args.appointment_time, args.duration_minutes || 60);
+    if (!window) {
+      return { ok: false, reason: "invalid_datetime", message: "Use appointment_date (YYYY-MM-DD) and appointment_time (HH:MM or 1:30 PM)." };
+    }
 
-async function forwardLeadCaptureToCRM(rawPayload, crmLeadSentRef) {
-  if (crmLeadSentRef.sent) return;
-  const leadCapture = parsePotentialLeadCapture(rawPayload);
-  if (!leadCapture) return;
+    const event = {
+      summary: args.summary || `Painting Estimate - ${args.full_name || "New Lead"}`,
+      description: args.description || [
+        args.full_name ? `Name: ${args.full_name}` : "",
+        args.phone ? `Phone: ${args.phone}` : "",
+        args.email ? `Email: ${args.email}` : "",
+        args.address ? `Address: ${args.address}` : "",
+        args.project_details ? `Project: ${args.project_details}` : ""
+      ].filter(Boolean).join("\n"),
+      start: { dateTime: window.start.toISOString(), timeZone: BUSINESS_TIMEZONE },
+      end: { dateTime: window.end.toISOString(), timeZone: BUSINESS_TIMEZONE }
+    };
 
-  crmLeadSentRef.sent = true;
-  await sendToCRM(leadCapture);
-}
+    const response = await calendar.events.insert({
+      calendarId: args.calendar_id || DEFAULT_CALENDAR_ID,
+      requestBody: event
+    });
 
-async function attemptTransfer(callSid, tenant) {
-  if (!callSid || !tenant.transferNumber) return false;
-  if (!hasTwilioCredentials()) {
-    console.error("Twilio transfer skipped: missing TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN.");
-    return false;
+    return {
+      ok: true,
+      eventId: response?.data?.id,
+      htmlLink: response?.data?.htmlLink,
+      status: response?.data?.status
+    };
   }
-  if (!isValidE164(tenant.transferNumber)) {
-    console.error(`Twilio transfer skipped: invalid transfer number ${tenant.transferNumber}`);
-    return false;
+
+  async function cancelAppointment(args = {}) {
+    if (!calendar) return { ok: false, reason: "calendar_not_configured" };
+    if (!args.event_id) return { ok: false, reason: "missing_event_id" };
+
+    await calendar.events.delete({
+      calendarId: args.calendar_id || DEFAULT_CALENDAR_ID,
+      eventId: args.event_id
+    });
+
+    return { ok: true, cancelled: true, eventId: args.event_id };
   }
 
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${callSid}.json`;
-  const twiml = `<Response><Dial>${tenant.transferNumber}</Dial></Response>`;
+  async function rescheduleAppointment(args = {}) {
+    if (!calendar) return { ok: false, reason: "calendar_not_configured" };
+    if (!args.event_id) return { ok: false, reason: "missing_event_id" };
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: buildTwilioAuthHeader(),
-      "Content-Type": "application/x-www-form-urlencoded"
+    const window = buildAppointmentWindow(args.appointment_date, args.appointment_time, args.duration_minutes || 60);
+    if (!window) {
+      return { ok: false, reason: "invalid_datetime", message: "Use appointment_date (YYYY-MM-DD) and appointment_time (HH:MM or 1:30 PM)." };
+    }
+
+    const response = await calendar.events.patch({
+      calendarId: args.calendar_id || DEFAULT_CALENDAR_ID,
+      eventId: args.event_id,
+      requestBody: {
+        start: { dateTime: window.start.toISOString(), timeZone: BUSINESS_TIMEZONE },
+        end: { dateTime: window.end.toISOString(), timeZone: BUSINESS_TIMEZONE }
+      }
+    });
+
+    return {
+      ok: true,
+      eventId: response?.data?.id,
+      htmlLink: response?.data?.htmlLink,
+      status: response?.data?.status
+    };
+  }
+
+  const OPENAI_FUNCTION_HANDLERS = {
+    create_lead: async (args, context) => {
+      await forwardLeadCaptureToCRM(args, context.crmLeadSentRef);
+      return { ok: true, leadForwarded: true };
     },
-    body: new URLSearchParams({ Twiml: twiml }).toString()
-  });
+    checkAvailability,
+    bookAppointment,
+    cancelAppointment,
+    rescheduleAppointment
+  };
 
-  if (!response.ok) {
-    const body = await response.text();
-    console.error("Twilio transfer failed:", response.status, body);
-    return false;
+  function parsePotentialLeadCapture(rawPayload) {
+    if (!rawPayload) return null;
+
+    let parsed;
+    if (typeof rawPayload === "string") {
+      try {
+        parsed = JSON.parse(rawPayload);
+      } catch {
+        return null;
+      }
+    } else if (typeof rawPayload === "object") {
+      parsed = rawPayload;
+    } else {
+      return null;
+    }
+
+    const leadCapture = parsed?.lead_capture && typeof parsed.lead_capture === "object"
+      ? parsed.lead_capture
+      : parsed;
+
+    if (!leadCapture || typeof leadCapture !== "object") return null;
+
+    const normalized = {};
+    for (const field of LEAD_CAPTURE_FIELDS) {
+      const value = leadCapture[field];
+      normalized[field] = typeof value === "string" ? value.trim() : "";
+    }
+
+    if (!normalized.full_name || !normalized.phone) return null;
+
+    return normalized;
   }
 
-  return true;
-}
+  async function forwardLeadCaptureToCRM(rawPayload, crmLeadSentRef) {
+    if (crmLeadSentRef.sent) return;
+    const leadCapture = parsePotentialLeadCapture(rawPayload);
+    if (!leadCapture) return;
 
-function handleTwilioVoice(req, res, tenantId) {
-  const resolvedTenantId = TENANTS[tenantId] ? tenantId : "gladiators";
-  const tenant = TENANTS[resolvedTenantId];
+    crmLeadSentRef.sent = true;
+    await sendToCRM(leadCapture);
+  }
 
-  try {
-    if (!OPENAI_API_KEY) {
-      const fallbackTwiml = buildFallbackTwiml(
-        "Please hold while we connect you to the team.",
-        tenant.transferNumber
-      );
-      res.type("text/xml").send(fallbackTwiml);
-      return;
+  async function attemptTransfer(callSid, tenant) {
+    if (!callSid || !tenant.transferNumber) return false;
+    if (!hasTwilioCredentials()) {
+      console.error("Twilio transfer skipped: missing TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN.");
+      return false;
+    }
+    if (!isValidE164(tenant.transferNumber)) {
+      console.error(`Twilio transfer skipped: invalid transfer number ${tenant.transferNumber}`);
+      return false;
     }
 
-    const requestBaseUrl = resolveBaseUrl(req);
-    if (!requestBaseUrl) {
-      const fallbackTwiml = buildFallbackTwiml(
-        "Please hold while we connect you to the team.",
-        tenant.transferNumber
-      );
-      res.type("text/xml").send(fallbackTwiml);
-      return;
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${callSid}.json`;
+    const twiml = `<Response><Dial>${tenant.transferNumber}</Dial></Response>`;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: buildTwilioAuthHeader(),
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({ Twiml: twiml }).toString()
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      console.error("Twilio transfer failed:", response.status, body);
+      return false;
     }
 
-    const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId);
-    if (!/^wss:\/\//i.test(wsUrl)) {
-      const fallbackTwiml = buildFallbackTwiml(
-        "Please hold while we connect you to the team.",
-        tenant.transferNumber
-      );
-      res.type("text/xml").send(fallbackTwiml);
-      return;
-    }
+    return true;
+  }
 
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+  function handleTwilioVoice(req, res, tenantId) {
+    const resolvedTenantId = TENANTS[tenantId] ? tenantId : "gladiators";
+    const tenant = TENANTS[resolvedTenantId];
+
+    try {
+      if (!OPENAI_API_KEY) {
+        const fallbackTwiml = buildFallbackTwiml(
+          "Please hold while we connect you to the team.",
+          tenant.transferNumber
+        );
+        res.type("text/xml").send(fallbackTwiml);
+        return;
+      }
+
+      const requestBaseUrl = resolveBaseUrl(req);
+      if (!requestBaseUrl) {
+        const fallbackTwiml = buildFallbackTwiml(
+          "Please hold while we connect you to the team.",
+          tenant.transferNumber
+        );
+        res.type("text/xml").send(fallbackTwiml);
+        return;
+      }
+
+      const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId);
+      if (!/^wss:\/\//i.test(wsUrl)) {
+        const fallbackTwiml = buildFallbackTwiml(
+          "Please hold while we connect you to the team.",
+          tenant.transferNumber
+        );
+        res.type("text/xml").send(fallbackTwiml);
+        return;
+      }
+
+      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say>${escapeXml(WARM_GREETING)}</Say>
   <Connect>
@@ -1267,290 +1287,290 @@ function handleTwilioVoice(req, res, tenantId) {
   </Connect>
 </Response>`;
 
-    res.type("text/xml").send(twiml);
-  } catch (error) {
-    console.error("Twilio voice webhook error:", error.message);
-    const fallbackTwiml = buildFallbackTwiml(
-      "Please hold while we connect you to the team.",
-      tenant.transferNumber
-    );
-    res.type("text/xml").send(fallbackTwiml);
-  }
-}
-
-function registerTwilioVoiceRoutes(pathPatterns, tenantScoped) {
-  const handler = (req, res) => {
-    const tenantId = tenantScoped ? req.params.tenantId : "gladiators";
-    handleTwilioVoice(req, res, tenantId);
-  };
-
-  const normalizedPatterns = Array.isArray(pathPatterns) ? pathPatterns : [pathPatterns];
-
-  for (const pathPattern of normalizedPatterns) {
-    app.get(pathPattern, handler);
-    app.post(pathPattern, handler);
-    app.all(pathPattern, handler);
-  }
-}
-
-registerTwilioVoiceRoutes(["/twilio-voice", "/twilio-voice/"], false);
-registerTwilioVoiceRoutes(["/twilio-voice/:tenantId", "/twilio-voice/:tenantId/"], true);
-
-// Backward compatibility with older webhook paths that may still be configured in Twilio.
-registerTwilioVoiceRoutes(["/twilio/voice", "/twilio/voice/"], false);
-registerTwilioVoiceRoutes(["/twilio/voice/:tenantId", "/twilio/voice/:tenantId/"], true);
-
-app.post("/twilio-missed-call", async (req, res) => {
-  const from = normalizePhone(req.body?.From || req.body?.from);
-  const callStatus = String(req.body?.CallStatus || req.body?.call_status || "").toLowerCase();
-
-  if (!from) {
-    res.status(400).json({ ok: false, reason: "missing_from" });
-    return;
+      res.type("text/xml").send(twiml);
+    } catch (error) {
+      console.error("Twilio voice webhook error:", error.message);
+      const fallbackTwiml = buildFallbackTwiml(
+        "Please hold while we connect you to the team.",
+        tenant.transferNumber
+      );
+      res.type("text/xml").send(fallbackTwiml);
+    }
   }
 
-  const isMissed = ["no-answer", "busy", "failed", "canceled", "cancelled"].includes(callStatus);
-  if (!isMissed) {
-    res.status(200).json({ ok: true, skipped: true, reason: "not_missed_call" });
-    return;
+  function registerTwilioVoiceRoutes(pathPatterns, tenantScoped) {
+    const handler = (req, res) => {
+      const tenantId = tenantScoped ? req.params.tenantId : "gladiators";
+      handleTwilioVoice(req, res, tenantId);
+    };
+
+    const normalizedPatterns = Array.isArray(pathPatterns) ? pathPatterns : [pathPatterns];
+
+    for (const pathPattern of normalizedPatterns) {
+      app.get(pathPattern, handler);
+      app.post(pathPattern, handler);
+      app.all(pathPattern, handler);
+    }
   }
 
-  const thread = getOrCreateSmsThread(from);
-  const autoText = "Sorry we missed your call — this is Gladiators Painting. I can help with a fast quote and get your appointment booked. What kind of project are you planning?";
-  const sent = await sendTwilioSms(from, autoText);
+  registerTwilioVoiceRoutes(["/twilio-voice", "/twilio-voice/"], false);
+  registerTwilioVoiceRoutes(["/twilio-voice/:tenantId", "/twilio-voice/:tenantId/"], true);
 
-  if (sent.ok) {
-    thread.history.push({ role: "assistant", text: autoText, at: new Date().toISOString() });
-    thread.lastOutboundAt = Date.now();
-    thread.needsFollowUpAt = Date.now() + SMS_FOLLOW_UP_DELAY_MINUTES * 60 * 1000;
-  }
+  // Backward compatibility with older webhook paths that may still be configured in Twilio.
+  registerTwilioVoiceRoutes(["/twilio/voice", "/twilio/voice/"], false);
+  registerTwilioVoiceRoutes(["/twilio/voice/:tenantId", "/twilio/voice/:tenantId/"], true);
 
-  res.status(200).json({ ok: true, sent: sent.ok });
-});
+  app.post("/twilio-missed-call", async (req, res) => {
+    const from = normalizePhone(req.body?.From || req.body?.from);
+    const callStatus = String(req.body?.CallStatus || req.body?.call_status || "").toLowerCase();
 
-app.post("/twilio-sms", async (req, res) => {
-  const from = normalizePhone(req.body?.From || req.body?.from);
-  const body = String(req.body?.Body || req.body?.body || "").trim();
+    if (!from) {
+      res.status(400).json({ ok: false, reason: "missing_from" });
+      return;
+    }
 
-  if (!from || !body) {
-    res.status(400).send("Missing From or Body");
-    return;
-  }
+    const isMissed = ["no-answer", "busy", "failed", "canceled", "cancelled"].includes(callStatus);
+    if (!isMissed) {
+      res.status(200).json({ ok: true, skipped: true, reason: "not_missed_call" });
+      return;
+    }
 
-  try {
-    const reply = await processSmsConversation(from, body);
-    res.type("text/xml").status(200).send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escapeXml(reply)}</Message></Response>`);
-  } catch (error) {
-    console.error("Twilio SMS webhook error:", error.message);
-    res.type("text/xml").status(200).send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Thanks — we received your message and will text you shortly.</Message></Response>`);
-  }
-});
+    const thread = getOrCreateSmsThread(from);
+    const autoText = "Sorry we missed your call — this is Gladiators Painting. I can help with a fast quote and get your appointment booked. What kind of project are you planning?";
+    const sent = await sendTwilioSms(from, autoText);
 
-app.get("/twilio/recovery-call", (req, res) => {
-  const recoveryId = req.query.recoveryId;
-  const script = req.query.script;
+    if (sent.ok) {
+      thread.history.push({ role: "assistant", text: autoText, at: new Date().toISOString() });
+      thread.lastOutboundAt = Date.now();
+      thread.needsFollowUpAt = Date.now() + SMS_FOLLOW_UP_DELAY_MINUTES * 60 * 1000;
+    }
 
-  if (!recoveryId || !script) {
-    res.status(400).send("Missing recoveryId or script");
-    return;
-  }
+    res.status(200).json({ ok: true, sent: sent.ok });
+  });
 
-  const requestBaseUrl = resolveBaseUrl(req);
-  if (!requestBaseUrl) {
-    res.status(500).send("Cannot resolve base URL");
-    return;
-  }
+  app.post("/twilio-sms", async (req, res) => {
+    const from = normalizePhone(req.body?.From || req.body?.from);
+    const body = String(req.body?.Body || req.body?.body || "").trim();
 
-  // The wss:// url that Twilio will use to stream audio back to the server
-  // We pass type=recovery so the websocket connection knows how to handle it
-  const wssUrl = `${requestBaseUrl.replace(/^http/, "ws")}/twilio-media?type=recovery&recoveryId=${encodeURIComponent(recoveryId)}&script=${encodeURIComponent(script)}`;
+    if (!from || !body) {
+      res.status(400).send("Missing From or Body");
+      return;
+    }
 
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+    try {
+      const reply = await processSmsConversation(from, body);
+      res.type("text/xml").status(200).send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escapeXml(reply)}</Message></Response>`);
+    } catch (error) {
+      console.error("Twilio SMS webhook error:", error.message);
+      res.type("text/xml").status(200).send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Thanks — we received your message and will text you shortly.</Message></Response>`);
+    }
+  });
+
+  app.get("/twilio/recovery-call", (req, res) => {
+    const recoveryId = req.query.recoveryId;
+    const script = req.query.script;
+
+    if (!recoveryId || !script) {
+      res.status(400).send("Missing recoveryId or script");
+      return;
+    }
+
+    const requestBaseUrl = resolveBaseUrl(req);
+    if (!requestBaseUrl) {
+      res.status(500).send("Cannot resolve base URL");
+      return;
+    }
+
+    // The wss:// url that Twilio will use to stream audio back to the server
+    // We pass type=recovery so the websocket connection knows how to handle it
+    const wssUrl = `${requestBaseUrl.replace(/^http/, "ws")}/twilio-media?type=recovery&recoveryId=${encodeURIComponent(recoveryId)}&script=${encodeURIComponent(script)}`;
+
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
     <Stream url="${wssUrl}" />
   </Connect>
 </Response>`;
 
-  res.type("text/xml").send(twiml);
-});
+    res.type("text/xml").send(twiml);
+  });
 
-app.post("/twilio/recovery-call-status", (req, res) => {
-  const recoveryId = req.query.recoveryId;
-  const callStatus = req.body.CallStatus;
-  const callDuration = req.body.CallDuration;
+  app.post("/twilio/recovery-call-status", (req, res) => {
+    const recoveryId = req.query.recoveryId;
+    const callStatus = req.body.CallStatus;
+    const callDuration = req.body.CallDuration;
 
-  console.log(`[Recovery] Call status update for recoveryId=${recoveryId}: ${callStatus} (Duration: ${callDuration}s)`);
-  res.sendStatus(200);
-});
+    console.log(`[Recovery] Call status update for recoveryId=${recoveryId}: ${callStatus} (Duration: ${callDuration}s)`);
+    res.sendStatus(200);
+  });
 
-app.use((req, res, next) => {
-  if (!/^\/twilio(?:-|\/)/i.test(req.path)) {
-    next();
-    return;
-  }
-
-  console.warn(`Unhandled Twilio route: ${req.method} ${req.originalUrl}`);
-  if (req.method !== "GET" && req.method !== "POST") {
-    res.status(405).send("Method Not Allowed");
-    return;
-  }
-
-  const tenant = TENANTS.gladiators;
-  const fallbackTwiml = buildFallbackTwiml(
-    "Please hold while we connect you to the team.",
-    tenant.transferNumber
-  );
-  res.type("text/xml").status(200).send(fallbackTwiml);
-});
-
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
-
-wss.on("connection", (twilioSocket, req) => {
-  const rawUrl = req.url || "";
-  const parsedUrl = new URL(rawUrl, "http://localhost");
-  const pathname = parsedUrl.pathname || "";
-  const q = Object.fromEntries(parsedUrl.searchParams.entries());
-
-  const isRecovery = q.type === "recovery";
-  const recoveryId = q.recoveryId;
-  const recoveryScript = q.script ? decodeURIComponent(q.script) : "";
-
-  console.log("[AI-Desk] Connection path=%s isRecovery=%s recoveryId=%s", pathname, isRecovery, recoveryId);
-
-  const pathSegments = pathname.split("/").filter(Boolean);
-  const tenantIdFromPath = pathSegments.length >= 2 ? pathSegments[1] : "";
-  const tenantId = TENANTS[tenantIdFromPath] ? tenantIdFromPath : "gladiators";
-  let tenant = TENANTS[tenantId];
-
-  if (!tenant && !isRecovery) {
-    console.error("[AI-Desk] No tenant for path segment:", tenantIdFromPath, "- ensure DB is seeded and loadTenants ran.");
-    twilioSocket.close();
-    return;
-  }
-
-  if (!pathname.startsWith("/twilio-media")) {
-    console.error("Invalid Twilio media stream path:", pathname);
-    twilioSocket.close();
-    return;
-  }
-
-  if (!OPENAI_API_KEY) {
-    console.error("❌ Missing OPENAI_API_KEY env var. Closing stream.");
-    twilioSocket.close();
-    return;
-  }
-
-  let callId = crypto.randomUUID();
-  let callSid = null;
-  let streamSid = null;
-  let from = null;
-  let to = null;
-  let transcript = "";
-  let transferAttempted = false;
-
-  const pendingTwilioAudio = [];
-  const openaiQueue = [];
-  let openaiReady = false;
-  let openaiSocket = null;
-  const crmLeadSentRef = { sent: false };
-  const openaiModelCandidates = [...new Set([process.env.OPENAI_MODEL, "gpt-4o-realtime-preview-2024-12-17", "gpt-realtime"])]
-    .filter(Boolean);
-
-  function sendToOpenAI(payload) {
-    const message = typeof payload === "string" ? payload : JSON.stringify(payload);
-    if (!message.includes("input_audio_buffer.append")) {
-      console.log("[DEBUG] sendToOpenAI:", message.slice(0, 500));
-    }
-    if (openaiReady && openaiSocket.readyState === WebSocket.OPEN) {
-      openaiSocket.send(message);
-      return;
-    }
-    openaiQueue.push(message);
-  }
-
-  function sendAudioToTwilio(base64Audio) {
-    if (!streamSid || twilioSocket.readyState !== WebSocket.OPEN) {
-      pendingTwilioAudio.push(base64Audio);
+  app.use((req, res, next) => {
+    if (!/^\/twilio(?:-|\/)/i.test(req.path)) {
+      next();
       return;
     }
 
-    twilioSocket.send(
-      JSON.stringify({
-        event: "media",
-        streamSid,
-        media: { payload: base64Audio }
-      })
+    console.warn(`Unhandled Twilio route: ${req.method} ${req.originalUrl}`);
+    if (req.method !== "GET" && req.method !== "POST") {
+      res.status(405).send("Method Not Allowed");
+      return;
+    }
+
+    const tenant = TENANTS.gladiators;
+    const fallbackTwiml = buildFallbackTwiml(
+      "Please hold while we connect you to the team.",
+      tenant.transferNumber
     );
-  }
+    res.type("text/xml").status(200).send(fallbackTwiml);
+  });
 
-  function connectOpenAI(modelIndex) {
-    const model = openaiModelCandidates[modelIndex] || openaiModelCandidates[0];
-    const url = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`;
-    openaiSocket = new WebSocket(url, {
-      headers: {
-        "Authorization": `Bearer ${OPENAI_API_KEY}`,
-        "OpenAI-Beta": "realtime=v1"
-      },
-    });
-    openaiSocket.on("open", async () => {
-      openaiReady = true;
-      while (openaiQueue.length) {
-        const msg = openaiQueue.shift();
-        console.log("[DEBUG] Flushing from openaiQueue:", msg.slice(0, 500));
-        openaiSocket.send(msg);
+  const server = http.createServer(app);
+  const wss = new WebSocket.Server({ server });
+
+  wss.on("connection", (twilioSocket, req) => {
+    const rawUrl = req.url || "";
+    const parsedUrl = new URL(rawUrl, "http://localhost");
+    const pathname = parsedUrl.pathname || "";
+    const q = Object.fromEntries(parsedUrl.searchParams.entries());
+
+    const isRecovery = q.type === "recovery";
+    const recoveryId = q.recoveryId;
+    const recoveryScript = q.script ? decodeURIComponent(q.script) : "";
+
+    console.log("[AI-Desk] Connection path=%s isRecovery=%s recoveryId=%s", pathname, isRecovery, recoveryId);
+
+    const pathSegments = pathname.split("/").filter(Boolean);
+    const tenantIdFromPath = pathSegments.length >= 2 ? pathSegments[1] : "";
+    const tenantId = TENANTS[tenantIdFromPath] ? tenantIdFromPath : "gladiators";
+    let tenant = TENANTS[tenantId];
+
+    if (!tenant && !isRecovery) {
+      console.error("[AI-Desk] No tenant for path segment:", tenantIdFromPath, "- ensure DB is seeded and loadTenants ran.");
+      twilioSocket.close();
+      return;
+    }
+
+    if (!pathname.startsWith("/twilio-media")) {
+      console.error("Invalid Twilio media stream path:", pathname);
+      twilioSocket.close();
+      return;
+    }
+
+    if (!OPENAI_API_KEY) {
+      console.error("❌ Missing OPENAI_API_KEY env var. Closing stream.");
+      twilioSocket.close();
+      return;
+    }
+
+    let callId = crypto.randomUUID();
+    let callSid = null;
+    let streamSid = null;
+    let from = null;
+    let to = null;
+    let transcript = "";
+    let transferAttempted = false;
+
+    const pendingTwilioAudio = [];
+    const openaiQueue = [];
+    let openaiReady = false;
+    let openaiSocket = null;
+    const crmLeadSentRef = { sent: false };
+    const openaiModelCandidates = [...new Set([process.env.OPENAI_MODEL, "gpt-4o-realtime-preview-2024-12-17", "gpt-realtime"])]
+      .filter(Boolean);
+
+    function sendToOpenAI(payload) {
+      const message = typeof payload === "string" ? payload : JSON.stringify(payload);
+      if (!message.includes("input_audio_buffer.append")) {
+        console.log("[DEBUG] sendToOpenAI:", message.slice(0, 500));
+      }
+      if (openaiReady && openaiSocket.readyState === WebSocket.OPEN) {
+        openaiSocket.send(message);
+        return;
+      }
+      openaiQueue.push(message);
+    }
+
+    function sendAudioToTwilio(base64Audio) {
+      if (!streamSid || twilioSocket.readyState !== WebSocket.OPEN) {
+        pendingTwilioAudio.push(base64Audio);
+        return;
       }
 
-      let recoveryRecord = null;
-      if (isRecovery && recoveryId) {
-        try {
-          recoveryRecord = await estimateRecoveryService.getRecoveryById(recoveryId);
-          if (recoveryRecord) {
-            tenant = await getTenantById(recoveryRecord.tenant_id);
-            console.log("[AI-Desk] Recovery call loaded recoveryId=%s tenant=%s contact=%s", recoveryId, tenant?.company_name, recoveryRecord.contact_name);
+      twilioSocket.send(
+        JSON.stringify({
+          event: "media",
+          streamSid,
+          media: { payload: base64Audio }
+        })
+      );
+    }
+
+    function connectOpenAI(modelIndex) {
+      const model = openaiModelCandidates[modelIndex] || openaiModelCandidates[0];
+      const url = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`;
+      openaiSocket = new WebSocket(url, {
+        headers: {
+          "Authorization": `Bearer ${OPENAI_API_KEY}`,
+          "OpenAI-Beta": "realtime=v1"
+        },
+      });
+      openaiSocket.on("open", async () => {
+        openaiReady = true;
+        while (openaiQueue.length) {
+          const msg = openaiQueue.shift();
+          console.log("[DEBUG] Flushing from openaiQueue:", msg.slice(0, 500));
+          openaiSocket.send(msg);
+        }
+
+        let recoveryRecord = null;
+        if (isRecovery && recoveryId) {
+          try {
+            recoveryRecord = await estimateRecoveryService.getRecoveryById(recoveryId);
+            if (recoveryRecord) {
+              tenant = await getTenantById(recoveryRecord.tenant_id);
+              console.log("[AI-Desk] Recovery call loaded recoveryId=%s tenant=%s contact=%s", recoveryId, tenant?.company_name, recoveryRecord.contact_name);
+            }
+          } catch (e) {
+            console.error("[AI-Desk] Recovery load error:", e.message);
           }
-        } catch (e) {
-          console.error("[AI-Desk] Recovery load error:", e.message);
         }
-      }
 
-      if (callSid) {
-        const call = await callsService.getCallByTwilioSid(callSid);
-        if (call) {
-          callId = call.id;
-          if (!tenant) tenant = await getTenantById(call.tenant_id);
-        }
-        if (!tenant && (to || from)) {
-          tenant = await getTenantByPhone(to);
-          if (!tenant && from) tenant = await getTenantByPhone(from);
-        }
-        if (tenant) {
-          console.log("[AI-Desk] Realtime stream ready callSid=%s tenantId=%s callId=%s from=%s to=%s recovery=%s", callSid, tenant?.id, callId || "(none)", from, to, isRecovery);
-          if (tenant.id && callSid) {
-            recordingService.startRecording(callSid, tenant).catch((e) => console.error("Start recording error:", e));
+        if (callSid) {
+          const call = await callsService.getCallByTwilioSid(callSid);
+          if (call) {
+            callId = call.id;
+            if (!tenant) tenant = await getTenantById(call.tenant_id);
           }
-        } else {
-          console.log("[AI-Desk] Realtime stream no tenant callSid=%s callFound=%s to=%s from=%s recovery=%s", callSid, !!call, to, from, isRecovery);
+          if (!tenant && (to || from)) {
+            tenant = await getTenantByPhone(to);
+            if (!tenant && from) tenant = await getTenantByPhone(from);
+          }
+          if (tenant) {
+            console.log("[AI-Desk] Realtime stream ready callSid=%s tenantId=%s callId=%s from=%s to=%s recovery=%s", callSid, tenant?.id, callId || "(none)", from, to, isRecovery);
+            if (tenant.id && callSid) {
+              recordingService.startRecording(callSid, tenant).catch((e) => console.error("Start recording error:", e));
+            }
+          } else {
+            console.log("[AI-Desk] Realtime stream no tenant callSid=%s callFound=%s to=%s from=%s recovery=%s", callSid, !!call, to, from, isRecovery);
+          }
         }
-      }
 
-      const defaultInstructions = [
-        "You are a professional receptionist. Be warm and helpful.",
-        "Default language is English. If the caller asks to speak in another language (e.g. Spanish, French, Hindi), immediately call the change_language tool with the ISO 639-1 code (es, fr, hi, zh, ar, etc.), then confirm in that language and continue the entire conversation in that language.",
-        "Ask one question at a time. Wait for the caller to finish speaking before you reply—do not interrupt.",
-        "Collect these details before booking: (1) full name, (2) phone number, (3) address or city, (4) what they need—interior, exterior, both, or rooms (scope), (5) preferred date if they give one, (6) any extra notes (pets, access, etc.). Offer a free on-site estimate.",
-        "When you have at least name, phone, and address OR city: call book_appointment with ALL the details the caller gave—include contact_name, contact_phone, address or city, scope, preferred_date, and notes. Do not omit fields they provided.",
-        "Right after calling book_appointment successfully, say clearly and then stop: 'You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.' Then allow the call to end naturally.",
-        "Do NOT say you are transferring or connecting to someone unless you actually need a live agent. Only use request_human_transfer for: commercial job, project over $10k, caller clearly frustrated or angry, or VIP/repeat customer. For normal residential estimates, always complete the booking with book_appointment.",
-        "Repeat back key details (name, phone, address, scope) before finalizing so the caller can correct you if needed.",
-      ].join(" ");
-      let instructions = (tenant && tenant.instructions)
-        ? tenant.instructions
-        : defaultInstructions;
+        const defaultInstructions = [
+          "You are a professional receptionist. Be warm and helpful.",
+          "Default language is English. If the caller asks to speak in another language (e.g. Spanish, French, Hindi), immediately call the change_language tool with the ISO 639-1 code (es, fr, hi, zh, ar, etc.), then confirm in that language and continue the entire conversation in that language.",
+          "Ask one question at a time. Wait for the caller to finish speaking before you reply—do not interrupt.",
+          "Collect these details before booking: (1) full name, (2) phone number, (3) address or city, (4) what they need—interior, exterior, both, or rooms (scope), (5) preferred date if they give one, (6) any extra notes (pets, access, etc.). Offer a free on-site estimate.",
+          "When you have at least name, phone, and address OR city: call book_appointment with ALL the details the caller gave—include contact_name, contact_phone, address or city, scope, preferred_date, and notes. Do not omit fields they provided.",
+          "Right after calling book_appointment successfully, say clearly and then stop: 'You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.' Then allow the call to end naturally.",
+          "Do NOT say you are transferring or connecting to someone unless you actually need a live agent. Only use request_human_transfer for: commercial job, project over $10k, caller clearly frustrated or angry, or VIP/repeat customer. For normal residential estimates, always complete the booking with book_appointment.",
+          "Repeat back key details (name, phone, address, scope) before finalizing so the caller can correct you if needed.",
+        ].join(" ");
+        let instructions = (tenant && tenant.instructions)
+          ? tenant.instructions
+          : defaultInstructions;
 
-      if (isRecovery && recoveryScript) {
-        instructions = `You are performing an automated outbound follow-up call.
+        if (isRecovery && recoveryScript) {
+          instructions = `You are performing an automated outbound follow-up call.
         START the call by saying EXACTLY this: "${recoveryScript}". 
         
         YOUR GOAL: Open conversation and move them toward booking the estimate they received. 
@@ -1572,381 +1592,381 @@ wss.on("connection", (twilioSocket, req) => {
            Collect any missing details (name, phone, address, scope, preferred date) and call 'book_appointment'. 
            
         Be warm, helpful, and professional. The goal is to open conversation, not pressure them.`;
-      }
+        }
 
-      const voice = process.env.OPENAI_REALTIME_VOICE || "shimmer";
-      const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 800;
-      const payloadToOpenAI = {
-        type: "session.update",
-        session: {
-          input_audio_format: "g711_ulaw",
-          output_audio_format: "g711_ulaw",
-          voice,
-          instructions: `${instructions}\n\nSpeak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English.`,
-          tools: isRecovery ? RECOVERY_TOOLS : REALTIME_TOOLS,
-          turn_detection: {
-            type: "server_vad",
-            threshold: 0.5,
-            prefix_padding_ms: 300,
-            silence_duration_ms: silenceMs,
+        const voice = process.env.OPENAI_REALTIME_VOICE || "shimmer";
+        const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 800;
+        const payloadToOpenAI = {
+          type: "session.update",
+          session: {
+            input_audio_format: "g711_ulaw",
+            output_audio_format: "g711_ulaw",
+            voice,
+            instructions: `${instructions}\n\nSpeak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English.`,
+            tools: isRecovery ? RECOVERY_TOOLS : REALTIME_TOOLS,
+            turn_detection: {
+              type: "server_vad",
+              threshold: 0.5,
+              prefix_padding_ms: 300,
+              silence_duration_ms: silenceMs,
+            },
           },
-        },
-      };
+        };
 
-      console.log("[DEBUG] Sending payload to OpenAI:", JSON.stringify(payloadToOpenAI, null, 2));
-      sendToOpenAI(payloadToOpenAI);
+        console.log("[DEBUG] Sending payload to OpenAI:", JSON.stringify(payloadToOpenAI, null, 2));
+        sendToOpenAI(payloadToOpenAI);
 
-      if (isRecovery && recoveryScript) {
-        console.log("[AI-Desk] Triggering recovery greeting: %s", recoveryScript);
-        sendToOpenAI({
-          type: "response.create",
-          response: {
-            modalities: ["audio", "text"],
-            instructions: `Greet the user by saying EXACTLY this and nothing else yet: "${recoveryScript}"`
-          }
-        });
-      }
-    });
+        if (isRecovery && recoveryScript) {
+          console.log("[AI-Desk] Triggering recovery greeting: %s", recoveryScript);
+          sendToOpenAI({
+            type: "response.create",
+            response: {
+              modalities: ["audio", "text"],
+              instructions: `Greet the user by saying EXACTLY this and nothing else yet: "${recoveryScript}"`
+            }
+          });
+        }
+      });
 
-    openaiSocket.on("message", async (msg) => {
-      let data;
-      try {
-        data = JSON.parse(msg.toString());
-      } catch (e) {
-        return;
-      }
-
-      if (data.type === "response.audio.delta" && data.delta) {
-        // console.log("[DEBUG] Received audio delta from OpenAI (length: %d)", data.delta.length);
-        sendAudioToTwilio(data.delta);
-        return;
-      }
-
-      if (data.type === "input_audio_buffer.speech_started") {
-        console.log("[AI-Desk] User started speaking");
-      }
-
-      if (data.type === "response.function_call_arguments.done") {
-        const { name, arguments: argsJson } = data;
-        let output = "";
-        let args = {};
+      openaiSocket.on("message", async (msg) => {
+        let data;
         try {
-          if (argsJson != null) {
-            if (typeof argsJson === "object" && !Array.isArray(argsJson)) {
-              args = argsJson;
-            } else {
-              const raw = typeof argsJson === "string" ? argsJson : String(argsJson);
-              try {
-                args = JSON.parse(raw);
-              } catch (parseErr) {
-                const repaired = raw.trim().replace(/,(\s*[}\]])/g, "$1");
+          data = JSON.parse(msg.toString());
+        } catch (e) {
+          return;
+        }
+
+        if (data.type === "response.audio.delta" && data.delta) {
+          // console.log("[DEBUG] Received audio delta from OpenAI (length: %d)", data.delta.length);
+          sendAudioToTwilio(data.delta);
+          return;
+        }
+
+        if (data.type === "input_audio_buffer.speech_started") {
+          console.log("[AI-Desk] User started speaking");
+        }
+
+        if (data.type === "response.function_call_arguments.done") {
+          const { name, arguments: argsJson } = data;
+          let output = "";
+          let args = {};
+          try {
+            if (argsJson != null) {
+              if (typeof argsJson === "object" && !Array.isArray(argsJson)) {
+                args = argsJson;
+              } else {
+                const raw = typeof argsJson === "string" ? argsJson : String(argsJson);
                 try {
-                  args = JSON.parse(repaired);
-                } catch (_) {
-                  console.error("[AI-Desk] Realtime tool args parse failed name=%s error=%s raw=%s", name, parseErr.message, raw.slice(0, 200));
-                  output = JSON.stringify({ success: false, error: "Invalid format. Please ask the caller again for their name, phone, and address, then complete the booking." });
-                  sendToOpenAI({
-                    type: "conversation.item.create",
-                    item: { type: "function_call_output", call_id: data.call_id, output },
-                  });
-                  return;
+                  args = JSON.parse(raw);
+                } catch (parseErr) {
+                  const repaired = raw.trim().replace(/,(\s*[}\]])/g, "$1");
+                  try {
+                    args = JSON.parse(repaired);
+                  } catch (_) {
+                    console.error("[AI-Desk] Realtime tool args parse failed name=%s error=%s raw=%s", name, parseErr.message, raw.slice(0, 200));
+                    output = JSON.stringify({ success: false, error: "Invalid format. Please ask the caller again for their name, phone, and address, then complete the booking." });
+                    sendToOpenAI({
+                      type: "conversation.item.create",
+                      item: { type: "function_call_output", call_id: data.call_id, output },
+                    });
+                    return;
+                  }
                 }
               }
             }
-          }
-          try {
-            if (name === "book_appointment" && tenant && callId) {
-              console.log("[AI-Desk] Realtime book_appointment callSid=%s tenantId=%s callId=%s recovery=%s", callSid, tenant.id, callId, isRecovery);
-              const { booking, crmSynced } = await bookingsService.createBooking(tenant.id, callId, args);
-              console.log("[AI-Desk] Realtime booking done id=%s crmSynced=%s", booking.id, crmSynced);
+            try {
+              if (name === "book_appointment" && tenant && callId) {
+                console.log("[AI-Desk] Realtime book_appointment callSid=%s tenantId=%s callId=%s recovery=%s", callSid, tenant.id, callId, isRecovery);
+                const { booking, crmSynced } = await bookingsService.createBooking(tenant.id, callId, args);
+                console.log("[AI-Desk] Realtime booking done id=%s crmSynced=%s", booking.id, crmSynced);
 
-              if (isRecovery && recoveryRecord) {
-                await estimateRecoveryService.markConverted(recoveryRecord.id);
-                console.log("[AI-Desk] Recovery CONVERTED id=%s 🎉", recoveryRecord.id);
-              }
+                if (isRecovery && recoveryRecord) {
+                  await estimateRecoveryService.markConverted(recoveryRecord.id);
+                  console.log("[AI-Desk] Recovery CONVERTED id=%s 🎉", recoveryRecord.id);
+                }
 
-              const message = crmSynced
-                ? "Estimate scheduled. Details synced to Zapier/DripJobs. Say to the caller: You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye."
-                : "Estimate scheduled and saved. Say to the caller: You're all set—your estimate is scheduled. You'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.";
-              output = JSON.stringify({ success: true, message });
-            } else if (name === "detect_objection" && isRecovery && recoveryRecord) {
-              const objType = args.objection_type;
-              console.log("[AI-Desk] Recovery objection detected id=%s type=%s details=%s", recoveryRecord.id, objType, args.details || "(none)");
-              await estimateRecoveryService.setObjection(recoveryRecord.id, objType);
-              await estimateRecoveryService.recordResponse(recoveryRecord.id);
-              output = JSON.stringify({ success: true, message: `Objection ${objType} recorded. Adjusting follow-up sequence.` });
-            } else if (name === "request_human_transfer" && callSid && tenant) {
-              const result = await transferService.initiateTransfer(
-                callSid,
-                null,
-                args.reason,
-                args.summary
-              );
-              output = JSON.stringify(result);
-            } else if (name === "change_language" && args.language) {
-              const lang = String(args.language).trim().toLowerCase().slice(0, 2) || "en";
-              sendToOpenAI({
-                type: "session.update",
-                session: {
-                  input_audio_transcription: {
-                    model: "whisper-1",
-                    language: lang,
+                const message = crmSynced
+                  ? "Estimate scheduled. Details synced to Zapier/DripJobs. Say to the caller: You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye."
+                  : "Estimate scheduled and saved. Say to the caller: You're all set—your estimate is scheduled. You'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.";
+                output = JSON.stringify({ success: true, message });
+              } else if (name === "detect_objection" && isRecovery && recoveryRecord) {
+                const objType = args.objection_type;
+                console.log("[AI-Desk] Recovery objection detected id=%s type=%s details=%s", recoveryRecord.id, objType, args.details || "(none)");
+                await estimateRecoveryService.setObjection(recoveryRecord.id, objType);
+                await estimateRecoveryService.recordResponse(recoveryRecord.id);
+                output = JSON.stringify({ success: true, message: `Objection ${objType} recorded. Adjusting follow-up sequence.` });
+              } else if (name === "request_human_transfer" && callSid && tenant) {
+                const result = await transferService.initiateTransfer(
+                  callSid,
+                  null,
+                  args.reason,
+                  args.summary
+                );
+                output = JSON.stringify(result);
+              } else if (name === "change_language" && args.language) {
+                const lang = String(args.language).trim().toLowerCase().slice(0, 2) || "en";
+                sendToOpenAI({
+                  type: "session.update",
+                  session: {
+                    input_audio_transcription: {
+                      model: "whisper-1",
+                      language: lang,
+                    },
                   },
-                },
-              });
-              const langNames = { en: "English", es: "Spanish", fr: "French", hi: "Hindi", zh: "Chinese", ar: "Arabic" };
-              const langName = langNames[lang] || lang;
-              output = JSON.stringify({ success: true, language: lang, message: `Switched to ${langName}. Respond in ${langName} from now on and confirm briefly to the caller.` });
-            } else {
-              console.log("[AI-Desk] Realtime book_appointment skipped (missing context) hasTenant=%s hasCallId=%s", !!tenant, !!callId);
-              output = JSON.stringify({ success: false, error: "Missing context" });
+                });
+                const langNames = { en: "English", es: "Spanish", fr: "French", hi: "Hindi", zh: "Chinese", ar: "Arabic" };
+                const langName = langNames[lang] || lang;
+                output = JSON.stringify({ success: true, language: lang, message: `Switched to ${langName}. Respond in ${langName} from now on and confirm briefly to the caller.` });
+              } else {
+                console.log("[AI-Desk] Realtime book_appointment skipped (missing context) hasTenant=%s hasCallId=%s", !!tenant, !!callId);
+                output = JSON.stringify({ success: false, error: "Missing context" });
+              }
+            } catch (err) {
+              console.error("[AI-Desk] Realtime tool error name=%s error=%s", name, err.message);
+              output = JSON.stringify({ success: false, error: err.message });
             }
           } catch (err) {
             console.error("[AI-Desk] Realtime tool error name=%s error=%s", name, err.message);
             output = JSON.stringify({ success: false, error: err.message });
           }
-        } catch (err) {
-          console.error("[AI-Desk] Realtime tool error name=%s error=%s", name, err.message);
-          output = JSON.stringify({ success: false, error: err.message });
+          if (!output) return;
+          sendToOpenAI({
+            type: "conversation.item.create",
+            item: {
+              type: "function_call_output",
+              call_id: data.call_id,
+              output,
+            },
+          });
+          return;
         }
-        if (!output) return;
-        sendToOpenAI({
-          type: "conversation.item.create",
-          item: {
-            type: "function_call_output",
-            call_id: data.call_id,
-            output,
-          },
-        });
-        return;
-      }
 
-      if (data.type === "response.completed") {
-        const callerAskedHuman = /human|person|representative|manager|transfer/i.test(transcript);
-        if (callerAskedHuman && !transferAttempted && isBusinessHours(tenant)) {
-          transferAttempted = true;
-          await attemptTransfer(callSid, tenant);
+        if (data.type === "response.completed") {
+          const callerAskedHuman = /human|person|representative|manager|transfer/i.test(transcript);
+          if (callerAskedHuman && !transferAttempted && isBusinessHours(tenant)) {
+            transferAttempted = true;
+            await attemptTransfer(callSid, tenant);
+          }
+          await safeUpdateCallSummary(callId, { transcript });
+          return;
         }
-        await safeUpdateCallSummary(callId, { transcript });
-        return;
-      }
 
-      if (data.type && data.type.includes("error")) {
-        console.error("[AI-Desk] OpenAI error type=%s", data.type, data);
-      }
-    });
+        if (data.type && data.type.includes("error")) {
+          console.error("[AI-Desk] OpenAI error type=%s", data.type, data);
+        }
+      });
 
-    openaiSocket.on("error", (err) => console.error("OpenAI socket error:", err));
-    openaiSocket.on("close", () => { openaiReady = false; });
-  }
-  connectOpenAI(0);
-
-  twilioSocket.on("message", async (raw) => {
-    let msg;
-    try {
-      msg = JSON.parse(raw.toString());
-    } catch {
-      return;
+      openaiSocket.on("error", (err) => console.error("OpenAI socket error:", err));
+      openaiSocket.on("close", () => { openaiReady = false; });
     }
+    connectOpenAI(0);
 
-    if (msg.event === "start") {
-      streamSid = msg.start?.streamSid || null;
-      callSid = msg.start?.callSid || null;
-
-      while (pendingTwilioAudio.length && streamSid && twilioSocket.readyState === WebSocket.OPEN) {
-        const chunk = pendingTwilioAudio.shift();
-        twilioSocket.send(
-          JSON.stringify({
-            event: "media",
-            streamSid,
-            media: { payload: chunk }
-          })
-        );
+    twilioSocket.on("message", async (raw) => {
+      let msg;
+      try {
+        msg = JSON.parse(raw.toString());
+      } catch {
+        return;
       }
 
-      const insertRes = await safePoolQuery(
-        `INSERT INTO calls (id, tenant_id, twilio_call_sid, started_at, status)
+      if (msg.event === "start") {
+        streamSid = msg.start?.streamSid || null;
+        callSid = msg.start?.callSid || null;
+
+        while (pendingTwilioAudio.length && streamSid && twilioSocket.readyState === WebSocket.OPEN) {
+          const chunk = pendingTwilioAudio.shift();
+          twilioSocket.send(
+            JSON.stringify({
+              event: "media",
+              streamSid,
+              media: { payload: chunk }
+            })
+          );
+        }
+
+        const insertRes = await safePoolQuery(
+          `INSERT INTO calls (id, tenant_id, twilio_call_sid, started_at, status)
          VALUES ($1, $2, $3, now(), $4)
          ON CONFLICT (twilio_call_sid) DO UPDATE SET status = 'in_progress'
          RETURNING id`,
-        [callId, tenant.id, callSid, "in_progress"]
-      );
+          [callId, tenant.id, callSid, "in_progress"]
+        );
 
-      if (insertRes && insertRes.rows && insertRes.rows.length > 0) {
-        callId = insertRes.rows[0].id;
+        if (insertRes && insertRes.rows && insertRes.rows.length > 0) {
+          callId = insertRes.rows[0].id;
+        }
+        return;
       }
-      return;
-    }
 
-    if (msg.event === "media" && msg.media?.payload) {
-      sendToOpenAI({ type: "input_audio_buffer.append", audio: msg.media.payload });
-      return;
-    }
+      if (msg.event === "media" && msg.media?.payload) {
+        sendToOpenAI({ type: "input_audio_buffer.append", audio: msg.media.payload });
+        return;
+      }
 
-    if (msg.event === "stop") {
+      if (msg.event === "stop") {
+        if (openaiSocket?.readyState === WebSocket.OPEN) {
+          openaiSocket.close();
+        }
+
+        await safeUpdateCallSummary(callId, {
+          status: transferAttempted ? "transferred" : "completed",
+          transcript,
+          markEnded: true
+        });
+      }
+    });
+
+    twilioSocket.on("close", () => {
       if (openaiSocket?.readyState === WebSocket.OPEN) {
         openaiSocket.close();
       }
+    });
 
-      await safeUpdateCallSummary(callId, {
-        status: transferAttempted ? "transferred" : "completed",
-        transcript,
-        markEnded: true
-      });
-    }
+    twilioSocket.on("error", (error) => {
+      console.error("Twilio socket error:", error.message);
+    });
   });
 
-  twilioSocket.on("close", () => {
-    if (openaiSocket?.readyState === WebSocket.OPEN) {
-      openaiSocket.close();
-    }
-  });
+  loadWebsiteContext();
+  setInterval(() => {
+    runSmsFollowUps().catch((error) => {
+      console.error("SMS follow-up loop error:", error.message);
+    });
+  }, Math.max(60000, parseInt(process.env.SMS_FOLLOW_UP_CHECK_INTERVAL_MS, 10) || 60000));
 
-  twilioSocket.on("error", (error) => {
-    console.error("Twilio socket error:", error.message);
-  });
-});
+  app.post("/website-chat", async (req, res) => {
+    const message = String(req.body?.message || "").trim();
 
-loadWebsiteContext();
-setInterval(() => {
-  runSmsFollowUps().catch((error) => {
-    console.error("SMS follow-up loop error:", error.message);
-  });
-}, Math.max(60000, parseInt(process.env.SMS_FOLLOW_UP_CHECK_INTERVAL_MS, 10) || 60000));
-
-app.post("/website-chat", async (req, res) => {
-  const message = String(req.body?.message || "").trim();
-
-  if (!message) {
-    res.status(400).json({ reply: "Missing message." });
-    return;
-  }
-
-  try {
-    // Reuse SMS AI engine for web chat
-    const sessionId = String(req.body?.sessionId || "").trim();
-
-    if (!sessionId) {
-      res.status(400).json({ reply: "Missing session ID." });
+    if (!message) {
+      res.status(400).json({ reply: "Missing message." });
       return;
     }
-    const reply = await processSmsConversation(sessionId, message);
-    res.json({ reply });
-  } catch (error) {
-    console.error("Website chat error:", error.message);
-    res.status(500).json({ reply: "Something went wrong." });
-  }
-});
 
-app.get("/facebook-webhook", (req, res) => {
-  const VERIFY_TOKEN = process.env.FACEBOOK_VERIFY_TOKEN;
+    try {
+      // Reuse SMS AI engine for web chat
+      const sessionId = String(req.body?.sessionId || "").trim();
 
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
+      if (!sessionId) {
+        res.status(400).json({ reply: "Missing session ID." });
+        return;
+      }
+      const reply = await processSmsConversation(sessionId, message);
+      res.json({ reply });
+    } catch (error) {
+      console.error("Website chat error:", error.message);
+      res.status(500).json({ reply: "Something went wrong." });
+    }
+  });
 
-  if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    res.status(200).send(challenge);
-  } else {
-    res.sendStatus(403);
-  }
-});
+  app.get("/facebook-webhook", (req, res) => {
+    const VERIFY_TOKEN = process.env.FACEBOOK_VERIFY_TOKEN;
 
-app.post("/facebook-webhook", async (req, res) => {
-  try {
-    console.log("[Facebook Webhook] Payload:", JSON.stringify(req.body, null, 2));
+    const mode = req.query["hub.mode"];
+    const token = req.query["hub.verify_token"];
+    const challenge = req.query["hub.challenge"];
 
-    const entry = req.body.entry?.[0];
-    const messaging = entry?.messaging?.[0];
-    // 🔥 Handle Persistent Menu / Postback Buttons
-    if (messaging?.postback) {
+    if (mode === "subscribe" && token === VERIFY_TOKEN) {
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
+  });
+
+  app.post("/facebook-webhook", async (req, res) => {
+    try {
+      console.log("[Facebook Webhook] Payload:", JSON.stringify(req.body, null, 2));
+
+      const entry = req.body.entry?.[0];
+      const messaging = entry?.messaging?.[0];
+      // 🔥 Handle Persistent Menu / Postback Buttons
+      if (messaging?.postback) {
+        const senderId = messaging.sender.id;
+        const payload = messaging.postback.payload;
+
+        if (payload === "GET_STARTED") {
+          await sendFacebookMessage(
+            senderId,
+            "👋 Welcome to Gladiators Painting! How can we help you today?"
+          );
+          return res.sendStatus(200);
+        }
+
+        if (payload === "GET_QUOTE") {
+          await sendFacebookMessage(
+            senderId,
+            "Great! What type of painting project are you planning?"
+          );
+          return res.sendStatus(200);
+        }
+
+        if (payload === "BOOK_ESTIMATE") {
+          await sendFacebookMessage(
+            senderId,
+            "Perfect. What day works best for your estimate?"
+          );
+          return res.sendStatus(200);
+        }
+
+        if (payload === "TALK_HUMAN") {
+          await sendFacebookMessage(
+            senderId,
+            "No problem 👍 A team member will reach out shortly."
+          );
+          return res.sendStatus(200);
+        }
+      }
+      if (!messaging || !messaging.message?.text) {
+        return res.sendStatus(200);
+      }
+
       const senderId = messaging.sender.id;
-      const payload = messaging.postback.payload;
+      const messageText = messaging.message.text;
 
-      if (payload === "GET_STARTED") {
-        await sendFacebookMessage(
-          senderId,
-          "👋 Welcome to Gladiators Painting! How can we help you today?"
-        );
-        return res.sendStatus(200);
-      }
+      // Show typing indicator
+      await sendTypingIndicator(senderId, "typing_on");
 
-      if (payload === "GET_QUOTE") {
-        await sendFacebookMessage(
-          senderId,
-          "Great! What type of painting project are you planning?"
-        );
-        return res.sendStatus(200);
-      }
+      // 2–3 second delay
+      await delay(2000 + Math.random() * 1000);
 
-      if (payload === "BOOK_ESTIMATE") {
-        await sendFacebookMessage(
-          senderId,
-          "Perfect. What day works best for your estimate?"
-        );
-        return res.sendStatus(200);
-      }
+      // Stop typing indicator
+      await sendTypingIndicator(senderId, "typing_off");
 
-      if (payload === "TALK_HUMAN") {
-        await sendFacebookMessage(
-          senderId,
-          "No problem 👍 A team member will reach out shortly."
-        );
-        return res.sendStatus(200);
-      }
+      const reply = await processFacebookConversation(senderId, messageText);
+
+      await sendFacebookMessage(
+        senderId,
+        reply,
+        ["Get a Free Quote", "Talk to a Human", "Book Estimate"]
+      );
+
+      res.sendStatus(200);
+    } catch (error) {
+      console.error("Facebook webhook error:", error.message);
+      res.sendStatus(500);
     }
-    if (!messaging || !messaging.message?.text) {
-      return res.sendStatus(200);
-    }
+  });
 
-    const senderId = messaging.sender.id;
-    const messageText = messaging.message.text;
-
-    // Show typing indicator
-    await sendTypingIndicator(senderId, "typing_on");
-
-    // 2–3 second delay
-    await delay(2000 + Math.random() * 1000);
-
-    // Stop typing indicator
-    await sendTypingIndicator(senderId, "typing_off");
-
-    const reply = await processFacebookConversation(senderId, messageText);
-
-    await sendFacebookMessage(
-      senderId,
-      reply,
-      ["Get a Free Quote", "Talk to a Human", "Book Estimate"]
-    );
-
-    res.sendStatus(200);
-  } catch (error) {
-    console.error("Facebook webhook error:", error.message);
-    res.sendStatus(500);
+  function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
-});
 
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+  // -------------------- SERVE_DASHBOARD (optional) --------------------
+  if (SERVE_DASHBOARD) {
+    app.use(express.static(path.join(__dirname, "dashboard", "dist")));
+    app.get("*", (req, res) => {
+      if (req.path.startsWith("/api") || req.path.startsWith("/twilio") || req.path.startsWith("/stripe")) return;
+      res.sendFile(path.join(__dirname, "dashboard", "dist", "index.html"));
+    });
+  }
 
-// -------------------- SERVE_DASHBOARD (optional) --------------------
-if (SERVE_DASHBOARD) {
-  app.use(express.static(path.join(__dirname, "dashboard", "dist")));
-  app.get("*", (req, res) => {
-    if (req.path.startsWith("/api") || req.path.startsWith("/twilio") || req.path.startsWith("/stripe")) return;
-    res.sendFile(path.join(__dirname, "dashboard", "dist", "index.html"));
+  // -------------------- Cron: estimate recovery every 5 min --------------------
+  cron.schedule("*/5 * * * *", () => {
+    estimateRecoveryService.processDueRecoveries().catch((e) => console.error("Recovery cron:", e));
   });
-}
 
-// -------------------- Cron: estimate recovery every 5 min --------------------
-cron.schedule("*/5 * * * *", () => {
-  estimateRecoveryService.processDueRecoveries().catch((e) => console.error("Recovery cron:", e));
-});
-
-// -------------------- Listen --------------------
-loadTenants().then(() => {
-  server.listen(PORT, () => {
-    console.log(`AI front desk backend listening on port ${PORT}`);
+  // -------------------- Listen --------------------
+  loadTenants().then(() => {
+    server.listen(PORT, () => {
+      console.log(`AI front desk backend listening on port ${PORT}`);
+    });
   });
-});

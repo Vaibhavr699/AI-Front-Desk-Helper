@@ -49,7 +49,7 @@ const LEAD_CAPTURE_FIELDS = [
   "appointment_date",
   "appointment_time"
 ];
-const FOLLOW_UP_RESPONSE_DELAY_MS = Number(process.env.FOLLOW_UP_RESPONSE_DELAY_MS || 1600);
+const FOLLOW_UP_RESPONSE_DELAY_MS = Number(process.env.FOLLOW_UP_RESPONSE_DELAY_MS || 700);
 const OPENAI_TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || "gpt-4o-mini";
 const TWILIO_PHONE_NUMBER = String(process.env.TWILIO_PHONE_NUMBER || "").trim();
 const SMS_FOLLOW_UP_DELAY_MINUTES = Number(process.env.SMS_FOLLOW_UP_DELAY_MINUTES || 30);
@@ -1199,6 +1199,8 @@ wss.on("connection", (twilioSocket, req) => {
   let streamSid = null;
   let transcript = "";
   let transferAttempted = false;
+  let callerSpeechStart = 0;
+  let callerSpeechDuration = 0;
 
   const pendingTwilioAudio = [];
   const openaiQueue = [];
@@ -1263,7 +1265,11 @@ wss.on("connection", (twilioSocket, req) => {
           input_audio_format: "g711_ulaw",
           output_audio_format: "g711_ulaw",
           input_audio_transcription: { model: "gpt-4o-mini-transcribe" },
-          turn_detection: { type: "server_vad" },
+          turn_detection: {
+          type: "server_vad",
+          silence_duration_ms: 600,
+          prefix_padding_ms: 200
+        },
           tool_choice: "auto",
           tools: [
             {
@@ -1436,24 +1442,67 @@ wss.on("connection", (twilioSocket, req) => {
         return;
       }
 
+      if (msg.type === "input_audio_buffer.speech_started") {
+  sendToOpenAI({
+    type: "response.cancel"
+  });
+}
+      
       if (msg.type === "conversation.item.input_audio_transcription.completed" && msg.transcript) {
         transcript += `\nCALLER: ${msg.transcript}`;
         return;
       }
-
+if (msg.type === "input_audio_buffer.speech_started") {
+  sendToOpenAI({
+    type: "response.cancel"
+  });
+}
       if (msg.type === "input_audio_buffer.speech_stopped") {
-        setTimeout(() => {
+         callerSpeechDuration = Date.now();
+          sendToOpenAI({
+    type: "response.cancel"
+  });
+
+  return;
+}
+
+  const pacingDelay = Math.min(
+    2200,
+    Math.max(600, callerSpeechDuration * 0.35)
+  );
+       
+      setTimeout(() => {
+          
           sendToOpenAI({
             type: "response.create",
             response: {
               modalities: ["audio", "text"],
               instructions:
-                "Speak only English. Be upbeat, warm, and personable. Keep the conversation natural (not robotic), and focus on getting the caller booked with a confirmed appointment date/time. Do not repeat the greeting or thank-you line. Continue from the caller's last response after a brief pause and ask a helpful next question."
+              `Speak only English. Be upbeat, warm, and personable.
+
+              Speak at a calm natural pace like a real receptionist.
+
+              Pause briefly after the caller finishes speaking.
+
+              Never interrupt the caller.
+
+            If the caller begins speaking while you are talking, stop immediately and allow them to finish.
+
+            If the caller's request is unclear or you are not confident in the answer, politely ask a clarifying question before proceeding.
+
+            Keep responses short and conversational.
+
+            Focus on helping the caller schedule an appointment.
+            Adjust speaking speed based on caller tone.
+            If caller sounds frustrated or stressed, slow down and respond calmly.
+            If caller sounds relaxed, speak normally.
+            `
             }
           });
-        }, Math.max(0, FOLLOW_UP_RESPONSE_DELAY_MS));
+        }, pacingDelay);
+
         return;
-      }
+          }   
 
       if (msg.type === "response.completed") {
         const callerAskedHuman = /human|person|representative|manager|transfer/i.test(transcript);

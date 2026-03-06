@@ -545,6 +545,8 @@ function getOrCreateSmsThread(phone) {
     leadCapture: {},
     bookedEventId: "",
     needsFollowUpAt: null,
+    followUpCount: 0, // 0 = no follow-ups sent yet. Max is 2.
+    channel: normalizedPhone.startsWith("fb-") ? "facebook" : (normalizedPhone.startsWith("web-") ? "website" : "sms"),
     lastInboundAt: null,
     lastOutboundAt: null
   };
@@ -722,9 +724,9 @@ async function processSmsConversation(phone, incomingText) {
 
   if (thread.leadCapture?.full_name || thread.phone) {
     await sendToCRM({
-      source: thread.channel || "unknown",
+      source: thread.channel || "unknown", // explicitly pushing "facebook", "website", or "sms"
       full_name: thread.leadCapture?.full_name || "",
-      phone: thread.phone || thread.leadCapture?.phone || "",
+      phone: thread.leadCapture?.phone || thread.phone || "",
       email: thread.leadCapture?.email || "",
       address: thread.leadCapture?.address || "",
       project_type: thread.leadCapture?.project_type || "",
@@ -733,7 +735,9 @@ async function processSmsConversation(phone, incomingText) {
       timestamp: new Date().toISOString()
     });
   }
-  if (!thread.leadCapture.phone) thread.leadCapture.phone = thread.phone;
+  if (!thread.leadCapture.phone && !thread.phone.startsWith("fb-") && !thread.phone.startsWith("web-")) {
+    thread.leadCapture.phone = thread.phone;
+  }
 
   let replyText = ai.reply || "Thanks for reaching out!";
 
@@ -799,12 +803,13 @@ async function processSmsConversation(phone, incomingText) {
       thread.needsFollowUpAt = Date.now() + 30 * 60 * 1000;
     }
   } else {
-    const followUpMinutes = Number(ai.follow_up_minutes);
-    thread.needsFollowUpAt = Date.now() + (Number.isFinite(followUpMinutes) && followUpMinutes > 0
-      ? followUpMinutes
-      : SMS_FOLLOW_UP_DELAY_MINUTES) * 60 * 1000;
+    // If not booking, default to a 2-hour delay for the primary follow-up unless the AI specified
+    const followUpMinutes = Number(ai.follow_up_minutes) || 120;
+    thread.needsFollowUpAt = Date.now() + followUpMinutes * 60 * 1000;
   }
 
+  // Reset follow up count because they just replied
+  thread.followUpCount = 0;
   await forwardLeadCaptureToCRM(thread.leadCapture, { sent: false });
 
   thread.history.push({ role: "assistant", text: replyText, at: new Date().toISOString() });
@@ -855,40 +860,78 @@ async function sendFacebookMessage(recipientId, messageText, quickReplies = []) 
     }));
   }
 
-  await fetch(
-    `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+  try {
+    const response = await fetch(
+      `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      }
+    );
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error("[Facebook] Failed to send message:", response.status, errorBody);
+    } else {
+      console.log(`[Facebook] Successfully sent message to ${recipientId}`);
     }
-  );
+  } catch (err) {
+    console.error("[Facebook] fetch error:", err.message);
+  }
 }
 async function runSmsFollowUps() {
   const now = Date.now();
   for (const thread of smsThreads.values()) {
     if (!thread.needsFollowUpAt || thread.needsFollowUpAt > now) continue;
+
+    // Enforce 2-touch limit: Do not follow up if we have already reached out twice
+    if (thread.followUpCount >= 2) {
+      thread.needsFollowUpAt = null; // Mark as done
+      continue;
+    }
+
     const recentInboundMs = thread.lastInboundAt ? now - thread.lastInboundAt : Infinity;
-    if (recentInboundMs < 10 * 60 * 1000) continue;
+    if (recentInboundMs < 10 * 60 * 1000) continue; // Don't follow up if they just messaged us
 
     const followUpText = thread.bookedEventId
       ? "Quick follow-up: your appointment is on our schedule. Reply here if you need to reschedule."
       : "Just checking in — would you like me to help you lock in a time for your estimate?";
 
-    let sent;
+    let sent = { ok: false };
 
-    if (thread.phone.startsWith("fb-")) {
+    // Transition channel logic for Web Widget
+    if (thread.channel === "website") {
+      // If we captured their real phone number during the website chat, we transition to SMS.
+      if (thread.leadCapture.phone) {
+        sent = await sendTwilioSms(thread.leadCapture.phone, followUpText);
+      } else {
+        // Can't follow up on a web widget if we don't have their phone number, so mark as complete
+        thread.needsFollowUpAt = null;
+        continue;
+      }
+    } else if (thread.channel === "facebook") {
       const fbId = thread.phone.replace("fb-", "");
       await sendFacebookMessage(fbId, followUpText);
       sent = { ok: true };
     } else {
+      // SMS channel
       sent = await sendTwilioSms(thread.phone, followUpText);
     }
+
     if (sent.ok) {
       thread.history.push({ role: "assistant", text: followUpText, at: new Date().toISOString() });
       thread.lastOutboundAt = now;
-      thread.needsFollowUpAt = now + 24 * 60 * 60 * 1000;
+      thread.followUpCount++;
+
+      // If this was Touch 1, schedule Touch 2 for 24 hours later. Check if it's the 2nd touch, mark completed.
+      if (thread.followUpCount < 2) {
+        thread.needsFollowUpAt = now + 24 * 60 * 60 * 1000;
+      } else {
+        thread.needsFollowUpAt = null;
+      }
     } else {
+      // If it failed, retry in 15 mins
       thread.needsFollowUpAt = now + 15 * 60 * 1000;
     }
   }
@@ -1811,6 +1854,8 @@ app.get("/facebook-webhook", (req, res) => {
 
 app.post("/facebook-webhook", async (req, res) => {
   try {
+    console.log("[Facebook Webhook] Payload:", JSON.stringify(req.body, null, 2));
+
     const entry = req.body.entry?.[0];
     const messaging = entry?.messaging?.[0];
     // 🔥 Handle Persistent Menu / Postback Buttons

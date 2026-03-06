@@ -11,7 +11,7 @@ export default function CreateBusiness() {
   const [companyName, setCompanyName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-
+  
   // BYOT State
   const [showByot, setShowByot] = useState(false);
   const [byotSid, setByotSid] = useState("");
@@ -78,9 +78,9 @@ export default function CreateBusiness() {
           payload.phone = digits.length === 11 ? `+${digits}` : `+1${digits}`;
         }
       } else if (!showByot) {
-        // Platform flow - require a selected number
+        // Use Platform - require a selected number unless fallback on backend kicks in
         if (!selectedNumber) {
-          throw new Error("Please select a dedicated phone number.");
+           throw new Error("Please select a dedicated phone number.");
         }
         payload.assigned_number = selectedNumber;
       }
@@ -101,7 +101,7 @@ export default function CreateBusiness() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-stone-50 to-stone-100 flex items-center justify-center p-4">
-      <div className="w-full max-w-lg overflow-y-auto max-h-full pb-8 pt-8 no-scrollbar">
+      <div className="w-full max-w-lg overflow-y-auto max-h-[90vh] pb-8 pt-8 no-scrollbar">
         {/* Header */}
         <div className="text-center mb-8 mt-4">
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-stone-900 text-white mb-4 shadow-lg">
@@ -130,115 +130,116 @@ export default function CreateBusiness() {
             )}
 
             <div className="space-y-5">
-              {/* Company name */}
-              <div>
+                {/* Company name */}
+                <div>
                 <label htmlFor="company_name" className="block text-sm font-medium text-stone-700 mb-1.5">
-                  Company name <span className="text-red-500">*</span>
+                    Company name <span className="text-red-500">*</span>
                 </label>
                 <input
-                  id="company_name"
-                  type="text"
-                  value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)}
-                  placeholder="Acme Painting Co"
-                  required
-                  className="w-full px-3.5 py-2.5 border border-stone-300 rounded-xl text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-transparent transition-shadow"
+                    id="company_name"
+                    type="text"
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    placeholder="Acme Painting Co"
+                    required
+                    className="w-full px-3.5 py-2.5 border border-stone-300 rounded-xl text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-transparent transition-shadow"
                 />
-              </div>
+                </div>
 
-              {/* Display name */}
-              <div>
+                {/* Display name */}
+                <div>
                 <label htmlFor="name" className="block text-sm font-medium text-stone-700 mb-1.5">
-                  Display name <span className="text-red-500">*</span>
+                    Display name <span className="text-red-500">*</span>
                 </label>
                 <input
-                  id="name"
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Acme Painting"
-                  required
-                  className="w-full px-3.5 py-2.5 border border-stone-300 rounded-xl text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-transparent transition-shadow"
+                    id="name"
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Acme Painting"
+                    required
+                    className="w-full px-3.5 py-2.5 border border-stone-300 rounded-xl text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-transparent transition-shadow"
                 />
                 <p className="mt-1 text-xs text-stone-500">
-                  Shown in the dashboard. Can match company name.
+                    Shown in the dashboard. Can match company name.
                 </p>
-              </div>
+                </div>
             </div>
 
             {/* Number Selection Section */}
             {!showByot && (
-              <div className="space-y-3 pt-4 border-t border-stone-100">
-                <div className="flex justify-between items-center mb-1">
-                  <label className="block text-sm font-medium text-stone-700">
-                    Choose your AI Number <span className="text-red-500">*</span>
-                  </label>
-                </div>
-
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="Area code (e.g. 415)"
-                    value={areaCode}
-                    title="Search by Area Code"
-                    onChange={(e) => setAreaCode(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(e); }}
-                    className="flex-1 px-3 py-2 border border-stone-300 rounded-lg text-sm text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-transparent"
-                    maxLength={3}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleSearch}
-                    disabled={loadingNumbers}
-                    title="Search"
-                    className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-sm font-medium transition disabled:opacity-50 flex items-center"
-                  >
-                    {loadingNumbers ? (
-                      <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                    ) : "Search"}
-                  </button>
-                </div>
-
-                <div className="max-h-48 overflow-y-auto border border-stone-200 rounded-lg bg-stone-50/50">
-                  {loadingNumbers ? (
-                    <div className="p-4 text-center text-sm text-stone-500">Searching inventory...</div>
-                  ) : availableNumbers.length === 0 ? (
-                    <div className="p-4 text-center text-sm text-stone-500">No numbers found matching area code. Try another.</div>
-                  ) : (
-                    <div className="divide-y divide-stone-100">
-                      {availableNumbers.map((num) => (
-                        <label
-                          key={num.phoneNumber}
-                          className={`flex items-center p-3 cursor-pointer transition-colors ${selectedNumber === num.phoneNumber ? "bg-indigo-50/70 border-l-2 border-l-indigo-500" : "hover:bg-white border-l-2 border-l-transparent"
-                            }`}
-                        >
-                          <input
-                            type="radio"
-                            name="ai_number"
-                            value={num.phoneNumber}
-                            checked={selectedNumber === num.phoneNumber}
-                            onChange={() => setSelectedNumber(num.phoneNumber)}
-                            className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300"
-                          />
-                          <div className="ml-3 flex flex-col">
-                            <span className={`text-sm font-medium ${selectedNumber === num.phoneNumber ? "text-indigo-900" : "text-stone-900"}`}>
-                              {num.friendlyName}
-                            </span>
-                            {num.locality && num.region && (
-                              <span className="text-xs text-stone-500">
-                                {num.locality}, {num.region}
-                              </span>
-                            )}
-                          </div>
+                <div className="space-y-3 pt-4 border-t border-stone-100">
+                    <div className="flex justify-between items-center mb-1">
+                        <label className="block text-sm font-medium text-stone-700">
+                            Choose your AI Number <span className="text-red-500">*</span>
                         </label>
-                      ))}
                     </div>
-                  )}
+
+                    <div className="flex gap-2">
+                        <input
+                            type="text"
+                            placeholder="Area code (e.g. 415)"
+                            value={areaCode}
+                            title="Search by Area Code"
+                            onChange={(e) => setAreaCode(e.target.value)}
+                            onKeyDown={(e) => { if(e.key === 'Enter') handleSearch(e); }}
+                            className="flex-1 px-3 py-2 border border-stone-300 rounded-lg text-sm text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-transparent"
+                            maxLength={3}
+                        />
+                        <button 
+                            type="button" 
+                            onClick={handleSearch}
+                            disabled={loadingNumbers}
+                            title="Search"
+                            className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-lg text-sm font-medium transition disabled:opacity-50 flex items-center"
+                        >
+                            {loadingNumbers ? (
+                                <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                </svg>
+                            ) : "Search"}
+                        </button>
+                    </div>
+
+                    <div className="max-h-48 overflow-y-auto border border-stone-200 rounded-lg bg-stone-50/50">
+                        {loadingNumbers ? (
+                            <div className="p-4 text-center text-sm text-stone-500">Searching inventory...</div>
+                        ) : availableNumbers.length === 0 ? (
+                            <div className="p-4 text-center text-sm text-stone-500">No numbers found matching area code. Try another.</div>
+                        ) : (
+                            <div className="divide-y divide-stone-100">
+                                {availableNumbers.map((num) => (
+                                    <label
+                                        key={num.phoneNumber}
+                                        className={`flex items-center p-3 cursor-pointer transition-colors ${
+                                            selectedNumber === num.phoneNumber ? "bg-indigo-50/70 border-l-2 border-l-indigo-500" : "hover:bg-white border-l-2 border-l-transparent"
+                                        }`}
+                                    >
+                                        <input
+                                            type="radio"
+                                            name="ai_number"
+                                            value={num.phoneNumber}
+                                            checked={selectedNumber === num.phoneNumber}
+                                            onChange={() => setSelectedNumber(num.phoneNumber)}
+                                            className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300"
+                                        />
+                                        <div className="ml-3 flex flex-col">
+                                            <span className={`text-sm font-medium ${selectedNumber === num.phoneNumber ? "text-indigo-900" : "text-stone-900"}`}>
+                                                {num.friendlyName}
+                                            </span>
+                                            {num.locality && num.region && (
+                                                <span className="text-xs text-stone-500">
+                                                    {num.locality}, {num.region}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </label>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 </div>
-              </div>
             )}
 
             {/* BYOT Section */}

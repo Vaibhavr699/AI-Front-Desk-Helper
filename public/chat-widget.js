@@ -221,7 +221,7 @@ wrapper.style.marginBottom="10px";
 
 const callBtn = document.createElement("button");
 callBtn.innerText="📞 Call";
-callBtn.onclick=()=>{ window.location.href="tel:+10000000000"; };
+callBtn.onclick=()=>{ window.location.href="tel:+14028171993"; };
 
 const textBtn = document.createElement("button");
 textBtn.innerText="📱 Text";

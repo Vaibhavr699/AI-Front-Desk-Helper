@@ -1,4 +1,4 @@
-
+document.addEventListener("DOMContentLoaded", function () {
 (function () {
   const apiBase = "https://ai-front-desk-backend.onrender.com";
 
@@ -377,3 +377,4 @@ setTimeout(() => {
   `;
   document.head.appendChild(style);
 })();
+});

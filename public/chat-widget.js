@@ -240,6 +240,7 @@ borderRadius:"6px",
 border:"none",
 cursor:"pointer",
 background:"#f1f5f9"
+color:"#000"
 });
 
 wrapper.appendChild(btn);

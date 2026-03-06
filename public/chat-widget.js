@@ -156,10 +156,45 @@
 
         hasWelcomed = true;
         requestPhone();
+       showProjectOptions();
+      }
+      function showProjectOptions() {
+  const options = ["Interior Painting", "Exterior Painting", "Commercial"];
+
+  options.forEach(option => {
+    const btn = document.createElement("button");
+    btn.textContent = option;
+    btn.style.display = "block";
+    btn.style.marginTop = "8px";
+    btn.style.padding = "10px";
+    btn.style.borderRadius = "8px";
+    btn.style.border = "none";
+    btn.style.background = "#f1f5f9";
+    btn.style.cursor = "pointer";
+
+    btn.onclick = () => {
+      addMessage(option, true);
+
+      fetch(apiBase + "/lead/project-type", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          projectType: option
+        })
+      });
+
+      addMessage("Great 👍 What city is the project in?", false);
+    };
+
+    messages.appendChild(btn);
+  });
+}
       }
               function requestPhone() {
   const phoneButton = document.createElement("button");
-  phoneButton.innerText ="📱 Get Estimate Times by Text";
+  phoneButton.textContent = "Get Estimate Times by Text";
   phoneButton.style.marginTop = "10px";
   phoneButton.style.padding = "10px";
   phoneButton.style.borderRadius = "8px";
@@ -183,9 +218,68 @@
         })
       });
 
-      addMessage("Perfect 👍 We'll text you estimate times shortly.", false);
+addMessage("Great 👍 What's the project address?", false);
+requestAddress();
+function requestAddress() {
+  const address = prompt("What is the project address?");
+
+  if (address) {
+    fetch(apiBase + "/lead/address", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        address: address
+      })
+    });
+
+    showEstimateTimes();
+  }
+}
     }
   };
+                function showEstimateTimes() {
+  const times = [
+    "Tomorrow 10:00 AM",
+    "Tomorrow 2:30 PM",
+    "Thursday 9:00 AM"
+  ];
+
+  addMessage("We have these estimate openings:", false);
+
+  times.forEach(time => {
+    const btn = document.createElement("button");
+
+    btn.textContent = time;
+    btn.style.display = "block";
+    btn.style.marginTop = "8px";
+    btn.style.padding = "10px";
+    btn.style.borderRadius = "8px";
+    btn.style.border = "none";
+    btn.style.background = "#2563eb";
+    btn.style.color = "#fff";
+    btn.style.cursor = "pointer";
+
+    btn.onclick = () => {
+      addMessage(time, true);
+
+      addMessage("You're booked 👍 We'll text confirmation shortly.", false);
+
+      fetch(apiBase + "/lead/appointment", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          appointment: time
+        })
+      });
+    };
+
+    messages.appendChild(btn);
+  });
+}
 
   messages.appendChild(phoneButton);
 }

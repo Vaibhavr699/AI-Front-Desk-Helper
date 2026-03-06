@@ -237,10 +237,10 @@ Object.assign(btn.style,{
 marginRight:"6px",
 padding:"8px 10px",
 borderRadius:"6px",
-border:"none",
 cursor:"pointer",
-background:"#f1f5f9"
-color:"#000"
+background:"#f1f5f9",
+color:"#000",
+border:"1px solid #ddd"
 });
 
 wrapper.appendChild(btn);

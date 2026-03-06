@@ -1472,7 +1472,7 @@ setTimeout(() => {
     type: "response.create",
     response: {
       modalities: ["audio", "text"],
-      instructions: `
+    instructions: `
 Speak only English. Be upbeat, warm, and personable.
 
 Pause briefly after the caller finishes speaking.

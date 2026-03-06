@@ -1948,6 +1948,16 @@ app.post("/facebook-webhook", async (req, res) => {
   }
 });
 
+app.post("/data-deletion", (req, res) => {
+  // Facebook requires a data deletion callback url to publish the app.
+  // We just return a mock confirmation code.
+  const confirmationCode = "del_" + Date.now();
+  res.json({
+    url: `${process.env.BASE_URL}/data-deletion?id=${confirmationCode}`,
+    confirmation_code: confirmationCode
+  });
+});
+
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }

@@ -35,8 +35,6 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-realtime";
 const WEBSITE_CONTEXT_URL = process.env.WEBSITE_CONTEXT_URL || "https://www.gladiatorspainting.com";
 const WEBSITE_CONTEXT_MAX_CHARS = Number(process.env.WEBSITE_CONTEXT_MAX_CHARS || 4000);
 const CRM_WEBHOOK_URL = String(process.env.CRM_WEBHOOK_URL || "").trim();
-const WARM_GREETING =
-  "Hi there! Thanks so much for calling Gladiators Painting. We specialize in high-quality interior and exterior painting, and we'd love to help with your project. What can we help you with today?";
 
 const LEAD_CAPTURE_FIELDS = [
   "full_name",
@@ -94,6 +92,10 @@ const TENANTS = {
     voice: "Alloy",
     instructions: [
       "You are the receptionist for Gladiators Painting.",
+      "When a caller first connects, greet them warmly like a human receptionist.",
+      "Only greet the caller once at the start of the call.",
+      "Example greeting: 'Hi! Thanks for calling Gladiators Painting, how can I help you today?'",
+      "Speak naturally and conversationally.",
       "Your goal is to naturally guide a friendly conversation while collecting: full_name, phone, email, address, project_type (interior or exterior), project_details, timeline, preferred appointment_date, and preferred appointment_time.",
       "Keep the conversation natural and flexible: combine related questions when appropriate, acknowledge answers, and avoid sounding like a rigid checklist.",
       "Your main objective is to help the caller get booked on the schedule with a clear appointment date and time window.",
@@ -1065,7 +1067,6 @@ function handleTwilioVoice(req, res, tenantId) {
 
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>${escapeXml(WARM_GREETING)}</Say>
   <Connect>
     <Stream url="${wsUrl}" />
   </Connect>

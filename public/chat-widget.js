@@ -158,32 +158,7 @@
         requestPhone();
        showProjectOptions();
       }
-      function showProjectOptions() {
-  const options = ["Interior Painting", "Exterior Painting", "Commercial"];
-
-  options.forEach(option => {
-    const btn = document.createElement("button");
-    btn.textContent = option;
-    btn.style.display = "block";
-    btn.style.marginTop = "8px";
-    btn.style.padding = "10px";
-    btn.style.borderRadius = "8px";
-    btn.style.border = "none";
-    btn.style.background = "#f1f5f9";
-    btn.style.cursor = "pointer";
-
-    btn.onclick = () => {
-      addMessage(option, true);
-
-      fetch(apiBase + "/lead/project-type", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          projectType: option
-        })
-      });
+      
 
       addMessage("Great 👍 What city is the project in?", false);
     };
@@ -217,11 +192,37 @@
           source: "website_chat"
         })
       });
+function showProjectOptions() {
+  const options = ["Interior Painting", "Exterior Painting", "Commercial"];
 
+  options.forEach(option => {
+    const btn = document.createElement("button");
+    btn.textContent = option;
+    btn.style.display = "block";
+    btn.style.marginTop = "8px";
+    btn.style.padding = "10px";
+    btn.style.borderRadius = "8px";
+    btn.style.border = "none";
+    btn.style.background = "#f1f5f9";
+    btn.style.cursor = "pointer";
+
+    btn.onclick = () => {
+      addMessage(option, true);
+
+      fetch(apiBase + "/lead/project-type", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          projectType: option
+        })
+      });
 addMessage("Great 👍 What's the project address?", false);
 requestAddress();
-function requestAddress() {
-  const address = prompt("What is the project address?");
+      
+ function requestAddress() {
+  const address = prompt("Enter the project address for your painting estimate:");
 
   if (address) {
     fetch(apiBase + "/lead/address", {

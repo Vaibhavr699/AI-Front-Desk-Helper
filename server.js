@@ -782,7 +782,11 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
     parsedDate.setFullYear(parsedDate.getFullYear() + 1);
   }
 
-  ai.appointment_date = parsedDate.toISOString().split("T")[0];
+  // Use local date components to avoid timezone shift from toISOString()
+  const y = parsedDate.getFullYear();
+  const m = String(parsedDate.getMonth() + 1).padStart(2, '0');
+  const d = String(parsedDate.getDate()).padStart(2, '0');
+  ai.appointment_date = `${y}-${m}-${d}`;
 
   if (ai.appointment_time === "morning") ai.appointment_time = "9:00 AM";
   if (ai.appointment_time === "afternoon") ai.appointment_time = "1:00 PM";
@@ -804,7 +808,7 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
         appointment_time: ai.appointment_time,
         duration_minutes: 60,
         full_name: thread.leadCapture.full_name || "New Lead",
-        phone: thread.phone,
+        phone: thread.leadCapture?.phone || thread.phone,
         email: thread.leadCapture.email || "",
         address: thread.leadCapture.address || "",
         project_details: thread.leadCapture.project_details || ""
@@ -824,7 +828,7 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
         if (tenant) {
           await bookingsService.createBooking(tenant.id, null, {
             contact_name: thread.leadCapture.full_name || "New Lead",
-            contact_phone: thread.phone,
+            contact_phone: thread.leadCapture?.phone || thread.phone,
             contact_email: thread.leadCapture.email || "",
             address: thread.leadCapture.address || "",
             city: "",
@@ -893,7 +897,7 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
 
   let replyText = ai.reply || "Thanks for reaching out!";
 
-  const bookingResult = await handleLeadBooking(thread, ai);
+  const bookingResult = await handleLeadBooking(thread, ai, tenant);
   if (bookingResult) {
     replyText = `${replyText} ${bookingResult}`;
   } else if (!ai.should_book) {
@@ -1508,7 +1512,8 @@ app.post("/twilio-sms", async (req, res) => {
   }
 
   try {
-    const reply = await processSmsConversation(from, body);
+    const tenant = await getTenantByPhone(req.body?.To || req.body?.to);
+    const reply = await processSmsConversation(from, body, tenant);
     res.type("text/xml").status(200).send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escapeXml(reply)}</Message></Response>`);
   } catch (error) {
     console.error("Twilio SMS webhook error:", error.message);

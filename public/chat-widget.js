@@ -1,226 +1,226 @@
-
 (function () {
-  const apiBase = "https://ai-front-desk-backend.onrender.com";
+  console.log("[AI-Widget] Script initializing...");
+
+  // Robust script detection to handle defer/async loading
+  let scriptTag = document.currentScript;
+  if (!scriptTag) {
+    const scripts = document.getElementsByTagName("script");
+    for (let i = 0; i < scripts.length; i++) {
+      if (scripts[i].src && scripts[i].src.includes("chat-widget.js")) {
+        scriptTag = scripts[i];
+        break;
+      }
+    }
+  }
+
+  const tenantId = scriptTag ? scriptTag.getAttribute("data-tenant-id") : null;
+  const scriptUrl = scriptTag ? new URL(scriptTag.src) : null;
+  const apiBase = scriptUrl ? scriptUrl.origin : "https://ai-front-desk-backend.onrender.com";
+
+  console.log("[AI-Widget] Context:", { tenantId, apiBase });
 
   let sessionId = localStorage.getItem("ai_session_id");
   if (!sessionId) {
-    sessionId = "web-" + crypto.randomUUID();
+    sessionId = "web-" + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2));
     localStorage.setItem("ai_session_id", sessionId);
   }
 
+  let companyName = "Front Desk";
+  let welcomeMessage = "Hi there 👋 How can we help you today?";
   let hasWelcomed = false;
   let isOpen = false;
 
-  // ===== Toggle Button =====
-  const toggleButton = document.createElement("div");
-  toggleButton.innerText = "Chat";
-  toggleButton.style.position = "fixed";
-  toggleButton.style.bottom = "20px";
-  toggleButton.style.right = "20px";
-  toggleButton.style.background = "#000";
-  toggleButton.style.color = "#fff";
-  toggleButton.style.padding = "12px 18px";
-  toggleButton.style.borderRadius = "30px";
-  toggleButton.style.cursor = "pointer";
-  toggleButton.style.zIndex = "999999";
-  toggleButton.style.fontFamily = "Arial, sans-serif";
-  toggleButton.style.boxShadow = "0 6px 18px rgba(0,0,0,0.25)";
-  toggleButton.style.transition = "all 0.3s ease";
-  document.body.appendChild(toggleButton);
-
-  // ===== Chat Container =====
-  const container = document.createElement("div");
-  container.style.position = "fixed";
-  container.style.bottom = "80px";
-  container.style.right = "20px";
-  container.style.width = "340px";
-  container.style.height = "440px";
-  container.style.background = "#ffffff";
-  container.style.border = "1px solid #ddd";
-  container.style.borderRadius = "14px";
-  container.style.boxShadow = "0 12px 40px rgba(0,0,0,0.25)";
-  container.style.display = "none";
-  container.style.flexDirection = "column";
-  container.style.fontFamily = "Arial, sans-serif";
-  container.style.zIndex = "999999";
-  container.style.overflow = "hidden";
-  container.style.opacity = "0";
-  container.style.transition = "opacity 0.25s ease, transform 0.25s ease";
-  container.style.transform = "translateY(10px)";
-  document.body.appendChild(container);
-
-  // ===== Messages Area =====
-  const messages = document.createElement("div");
-  messages.style.flex = "1";
-  messages.style.padding = "12px";
-  messages.style.overflowY = "auto";
-  messages.style.display = "flex";
-  messages.style.flexDirection = "column";
-  container.appendChild(messages);
-
-  // ===== Input Area =====
-  const inputContainer = document.createElement("div");
-  inputContainer.style.display = "flex";
-  inputContainer.style.borderTop = "1px solid #eee";
-
-  const input = document.createElement("input");
-  input.type = "text";
-  input.placeholder = "Type your message...";
-  input.style.flex = "1";
-  input.style.border = "none";
-  input.style.padding = "12px";
-  input.style.outline = "none";
-  input.style.fontSize = "14px";
-  input.style.color = "#000";
-  input.style.background = "#fff";
-
-  const button = document.createElement("button");
-  button.innerText = "Send";
-  button.style.background = "#000";
-  button.style.color = "#fff";
-  button.style.border = "none";
-  button.style.padding = "0 18px";
-  button.style.cursor = "pointer";
-
-  inputContainer.appendChild(input);
-  inputContainer.appendChild(button);
-  container.appendChild(inputContainer);
-
-  // ===== Message Bubble =====
-  function addMessage(text, isUser) {
-    const msg = document.createElement("div");
-    msg.innerText = text;
-    msg.style.marginBottom = "10px";
-    msg.style.fontSize = "14px";
-    msg.style.padding = "10px";
-    msg.style.borderRadius = "10px";
-    msg.style.maxWidth = "80%";
-    msg.style.background = isUser ? "#000" : "#f2f2f2";
-    msg.style.color = isUser ? "#fff" : "#000";
-    msg.style.alignSelf = isUser ? "flex-end" : "flex-start";
-    msg.style.animation = "fadeIn 0.2s ease";
-    messages.appendChild(msg);
-    messages.scrollTop = messages.scrollHeight;
-  }
-
-  // ===== Typing Indicator =====
-  function showTypingIndicator() {
-    const typing = document.createElement("div");
-    typing.id = "ai-typing";
-    typing.style.marginBottom = "10px";
-    typing.style.padding = "10px";
-    typing.style.borderRadius = "10px";
-    typing.style.background = "#f2f2f2";
-    typing.style.alignSelf = "flex-start";
-    typing.style.display = "flex";
-    typing.style.gap = "4px";
-
-    for (let i = 0; i < 3; i++) {
-      const dot = document.createElement("div");
-      dot.style.width = "6px";
-      dot.style.height = "6px";
-      dot.style.background = "#888";
-      dot.style.borderRadius = "50%";
-      dot.style.animation = "bounce 1.2s infinite ease-in-out";
-      dot.style.animationDelay = `${i * 0.2}s`;
-      typing.appendChild(dot);
+  async function initWidget() {
+    if (!tenantId) {
+      console.error("[AI-Widget] No tenantId found. Script tag must have data-tenant-id attribute.");
+      return;
     }
-
-    messages.appendChild(typing);
-    messages.scrollTop = messages.scrollHeight;
-  }
-
-  function removeTypingIndicator() {
-    const typing = document.getElementById("ai-typing");
-    if (typing) typing.remove();
-  }
-
-  // ===== Toggle Logic =====
-  toggleButton.addEventListener("click", () => {
-    isOpen = !isOpen;
-
-    if (isOpen) {
-      container.style.display = "flex";
-      setTimeout(() => {
-        container.style.opacity = "1";
-        container.style.transform = "translateY(0)";
-      }, 10);
-
-      toggleButton.innerText = "Close";
-
-      if (!hasWelcomed) {
-        addMessage(
-          "Hi there 👋 Welcome to Gladiators Painting! I can help you get a fast quote. Are you looking for interior or exterior painting?",
-          false
-        );
-        hasWelcomed = true;
-      }
-    } else {
-      container.style.opacity = "0";
-      container.style.transform = "translateY(10px)";
-      setTimeout(() => {
-        container.style.display = "none";
-      }, 250);
-      toggleButton.innerText = "Chat";
-    }
-  });
-
-  // ===== Send Message =====
-  async function sendMessage() {
-    const text = input.value.trim();
-    if (!text) return;
-
-    addMessage(text, true);
-    input.value = "";
-
-    showTypingIndicator();
-
     try {
-      const response = await fetch(`${apiBase}/website-chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: text,
-          sessionId: sessionId,
-        }),
-      });
-
-      removeTypingIndicator();
-
-      if (!response.ok) {
-        addMessage("Sorry, something went wrong. Please try again.", false);
-        return;
+      console.log("[AI-Widget] Fetching configuration...");
+      const res = await fetch(`${apiBase}/api/public-tenant/${tenantId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.company_name || data.name) companyName = data.company_name || data.name;
+        if (data.welcome_message) welcomeMessage = data.welcome_message;
+        console.log("[AI-Widget] Loaded config for:", companyName);
+      } else {
+        console.warn("[AI-Widget] Failed to load config, using defaults.");
       }
-
-      const data = await response.json();
-
-      // slight delay to feel human
-      setTimeout(() => {
-        addMessage(data.reply || "No response from server.", false);
-      }, 400);
-
     } catch (err) {
-      removeTypingIndicator();
-      addMessage("Connection error. Please try again.", false);
+      console.error("[AI-Widget] Init error:", err);
     }
   }
 
-  button.addEventListener("click", sendMessage);
-  input.addEventListener("keypress", function (e) {
-    if (e.key === "Enter") sendMessage();
-  });
+  function createUI() {
+    if (!document.body) {
+      console.warn("[AI-Widget] document.body not ready, retrying...");
+      setTimeout(createUI, 50);
+      return;
+    }
+    console.log("[AI-Widget] Creating UI elements...");
 
-  // ===== Animations =====
-  const style = document.createElement("style");
-  style.innerHTML = `
-    @keyframes bounce {
-      0%, 80%, 100% { transform: scale(0); }
-      40% { transform: scale(1); }
+    // Styles for animations
+    const style = document.createElement("style");
+    style.innerHTML = `
+      @keyframes ai-fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+      .ai-chat-bubble { animation: ai-fadeIn 0.3s ease; }
+    `;
+    document.head.appendChild(style);
+
+    // Toggle Button
+    const toggle = document.createElement("div");
+    toggle.id = "ai-chat-toggle";
+    toggle.innerText = "Chat";
+    Object.assign(toggle.style, {
+      position: "fixed", bottom: "20px", right: "20px",
+      background: "#000", color: "#fff", padding: "12px 24px",
+      borderRadius: "30px", cursor: "pointer", zIndex: "2147483647",
+      fontFamily: "Arial, sans-serif", boxShadow: "0 4px 15px rgba(0,0,0,0.2)",
+      transition: "all 0.3s ease", fontWeight: "bold",
+      textAlign: "center"
+    });
+    document.body.appendChild(toggle);
+
+    // Container
+    const container = document.createElement("div");
+    container.id = "ai-chat-container";
+    Object.assign(container.style, {
+      position: "fixed", bottom: "85px", right: "20px",
+      width: "350px", height: "500px", background: "#fff",
+      border: "1px solid #ddd", borderRadius: "12px",
+      boxShadow: "0 10px 40px rgba(0,0,0,0.2)", display: "none",
+      flexDirection: "column", zIndex: "2147483647", overflow: "hidden",
+      fontFamily: "Arial, sans-serif", opacity: "0", transform: "translateY(10px)",
+      transition: "opacity 0.3s ease, transform 0.3s ease"
+    });
+    document.body.appendChild(container);
+
+    // Header
+    const header = document.createElement("div");
+    header.innerText = companyName;
+    Object.assign(header.style, {
+      background: "#000", color: "#fff", padding: "16px",
+      fontWeight: "bold", textAlign: "center", fontSize: "16px"
+    });
+    container.appendChild(header);
+
+    // Messages area
+    const messagesBody = document.createElement("div");
+    Object.assign(messagesBody.style, {
+      flex: "1", padding: "15px", overflowY: "auto",
+      display: "flex", flexDirection: "column", gap: "10px",
+      background: "#f9f9f9"
+    });
+    container.appendChild(messagesBody);
+
+    // Input area
+    const inputArea = document.createElement("div");
+    Object.assign(inputArea.style, {
+      display: "flex", padding: "12px", borderTop: "1px solid #eee",
+      background: "#fff"
+    });
+    container.appendChild(inputArea);
+
+    const input = document.createElement("input");
+    input.placeholder = "Type a message...";
+    Object.assign(input.style, {
+      flex: "1", border: "none", outline: "none", fontSize: "14px",
+      padding: "5px"
+    });
+    inputArea.appendChild(input);
+
+    const sendBtn = document.createElement("button");
+    sendBtn.innerText = "Send";
+    Object.assign(sendBtn.style, {
+      background: "none", border: "none", color: "#000",
+      fontWeight: "bold", cursor: "pointer", padding: "0 10px",
+      fontSize: "14px"
+    });
+    inputArea.appendChild(sendBtn);
+
+    function addMsg(text, isUser) {
+      const bubble = document.createElement("div");
+      bubble.className = "ai-chat-bubble";
+      bubble.innerText = text;
+      Object.assign(bubble.style, {
+        padding: "10px 14px", borderRadius: "18px", fontSize: "14px",
+        maxWidth: "80%", alignSelf: isUser ? "flex-end" : "flex-start",
+        background: isUser ? "#000" : "#fff",
+        color: isUser ? "#fff" : "#333",
+        boxShadow: isUser ? "none" : "0 2px 5px rgba(0,0,0,0.05)",
+        border: isUser ? "none" : "1px solid #eee",
+        lineHeight: "1.4"
+      });
+      messagesBody.appendChild(bubble);
+      messagesBody.scrollTop = messagesBody.scrollHeight;
     }
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(5px); }
-      to { opacity: 1; transform: translateY(0); }
+
+    toggle.onclick = () => {
+      isOpen = !isOpen;
+      if (isOpen) {
+        container.style.display = "flex";
+        setTimeout(() => {
+          container.style.opacity = "1";
+          container.style.transform = "translateY(0)";
+        }, 10);
+        toggle.innerText = "Close";
+        if (!hasWelcomed) {
+          addMsg(welcomeMessage, false);
+          hasWelcomed = true;
+        }
+      } else {
+        container.style.opacity = "0";
+        container.style.transform = "translateY(10px)";
+        setTimeout(() => {
+          container.style.display = "none";
+        }, 300);
+        toggle.innerText = "Chat";
+      }
+    };
+
+    async function handleSend() {
+      const val = input.value.trim();
+      if (!val) return;
+      addMsg(val, true);
+      input.value = "";
+
+      const typing = document.createElement("div");
+      typing.innerText = "AI is thinking...";
+      typing.style.fontSize = "12px";
+      typing.style.color = "#888";
+      typing.style.alignSelf = "flex-start";
+      typing.style.marginLeft = "10px";
+      messagesBody.appendChild(typing);
+      messagesBody.scrollTop = messagesBody.scrollHeight;
+
+      try {
+        const response = await fetch(`${apiBase}/website-chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: val, tenantId, sessionId })
+        });
+        const data = await response.json();
+        typing.remove();
+        addMsg(data.reply || "I'm sorry, I encountered an issue.", false);
+      } catch (err) {
+        typing.remove();
+        addMsg("Connection error. Please check your internet.", false);
+        console.error("[AI-Widget] Send error:", err);
+      }
     }
-  `;
-  document.head.appendChild(style);
+
+    sendBtn.onclick = handleSend;
+    input.onkeypress = (e) => { if (e.key === "Enter") handleSend(); };
+
+    console.log("[AI-Widget] UI Ready.");
+  }
+
+  // Initialization sequence
+  if (document.readyState === "complete" || document.readyState === "interactive") {
+    initWidget().then(createUI);
+  } else {
+    window.addEventListener("DOMContentLoaded", () => {
+      initWidget().then(createUI);
+    });
+  }
 })();

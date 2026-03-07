@@ -222,9 +222,15 @@ function maskTwilioSid(sid) {
   return sid.substring(0, 4) + "***" + sid.slice(-4);
 }
 
+function maskFacebookToken(token) {
+  if (!token || typeof token !== "string") return null;
+  if (token.length <= 12) return "***";
+  return token.substring(0, 6) + "..." + token.slice(-6);
+}
+
 const TENANT_SELECT_TWILIO = `t.twilio_account_sid,
        (t.twilio_account_sid IS NOT NULL AND t.twilio_auth_token IS NOT NULL AND t.twilio_auth_token != '') as has_twilio_credentials,`;
-const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.plan`;
+const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.plan, t.facebook_page_id, t.facebook_page_access_token`;
 const TENANT_SELECT_BASE_LEGACY = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled`;
 
 router.get("/tenants/:id", async (req, res) => {
@@ -254,7 +260,9 @@ router.get("/tenants/:id", async (req, res) => {
     const row = r.rows[0];
     const out = { ...row };
     delete out.twilio_account_sid;
+    delete out.facebook_page_access_token;
     out.twilio_account_sid_masked = maskTwilioSid(row.twilio_account_sid);
+    out.facebook_token_masked = maskFacebookToken(row.facebook_page_access_token);
     out.has_twilio_credentials = row.has_twilio_credentials === true;
     if (out.plan == null) out.plan = "basic";
     res.json(out);
@@ -442,7 +450,7 @@ function normalizeTransferNumbers(value) {
 router.patch("/tenants/:id", async (req, res) => {
   try {
     const id = req.params.id;
-    let allowed = ["welcome_message", "instructions", "transfer_numbers", "transfer_sms_brief", "crm_webhook_url", "crm_type", "follow_up_enabled", "plan", "twilio_account_sid", "twilio_auth_token"];
+    let allowed = ["welcome_message", "instructions", "transfer_numbers", "transfer_sms_brief", "crm_webhook_url", "crm_type", "follow_up_enabled", "plan", "twilio_account_sid", "twilio_auth_token", "facebook_page_id", "facebook_page_access_token"];
     try {
       await db.query("SELECT twilio_account_sid FROM tenants WHERE id = $1 LIMIT 1", [id]);
     } catch (colErr) {
@@ -503,7 +511,9 @@ router.patch("/tenants/:id", async (req, res) => {
     const row = r.rows[0];
     const out = { ...row };
     delete out.twilio_account_sid;
+    delete out.facebook_page_access_token;
     out.twilio_account_sid_masked = maskTwilioSid(row.twilio_account_sid);
+    out.facebook_token_masked = maskFacebookToken(row.facebook_page_access_token);
     out.has_twilio_credentials = row.has_twilio_credentials === true;
     if (out.plan == null) out.plan = "basic";
     res.json(out);

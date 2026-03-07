@@ -22,6 +22,8 @@ export default function Settings({ tenantId }) {
   const [followUpEnabled, setFollowUpEnabled] = useState(true);
   const [twilioAccountSid, setTwilioAccountSid] = useState("");
   const [twilioAuthToken, setTwilioAuthToken] = useState("");
+  const [facebookPageId, setFacebookPageId] = useState("");
+  const [facebookPageAccessToken, setFacebookPageAccessToken] = useState("");
 
   // Phone numbers state
   const [phoneNumbers, setPhoneNumbers] = useState([]);
@@ -48,6 +50,8 @@ export default function Settings({ tenantId }) {
         setFollowUpEnabled(t.follow_up_enabled !== false);
         setTwilioAccountSid("");
         setTwilioAuthToken("");
+        setFacebookPageId(t.facebook_page_id || "");
+        setFacebookPageAccessToken("");
       })
       .catch((e) => {
         setError(e.message);
@@ -118,7 +122,9 @@ export default function Settings({ tenantId }) {
       crm_webhook_url: crmWebhookUrl || null,
       crm_type: crmType,
       follow_up_enabled: followUpEnabled,
+      facebook_page_id: facebookPageId.trim() || null,
     };
+    if (facebookPageAccessToken) payload.facebook_page_access_token = facebookPageAccessToken;
     if (twilioAccountSid.trim()) payload.twilio_account_sid = twilioAccountSid.trim();
     if (twilioAuthToken) payload.twilio_auth_token = twilioAuthToken;
     if (!twilioAccountSid.trim() && !twilioAuthToken && tenant?.has_twilio_credentials) {
@@ -365,6 +371,52 @@ export default function Settings({ tenantId }) {
               placeholder={tenant?.has_twilio_credentials ? "Leave blank to keep current" : "Optional"}
               autoComplete="new-password"
               className="w-full px-3 py-2 border border-stone-300 rounded-md text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent font-mono text-sm"
+            />
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-stone-200 bg-stone-50/50 p-4 space-y-3">
+          <h3 className="text-sm font-medium text-stone-800">Facebook Integration</h3>
+          <p className="text-xs text-stone-500">
+            Connect your Facebook Page so the AI can answer messages on Messenger.
+          </p>
+          <div>
+            <label className="block text-xs font-medium text-stone-600 mb-1">Facebook Page ID</label>
+            <input
+              type="text"
+              value={facebookPageId}
+              onChange={(e) => setFacebookPageId(e.target.value)}
+              placeholder="e.g. 10234567890"
+              className="w-full px-3 py-2 border border-stone-300 rounded-md text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent font-mono text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-stone-600 mb-1">Facebook Page Access Token</label>
+            <input
+              type="password"
+              value={facebookPageAccessToken}
+              onChange={(e) => setFacebookPageAccessToken(e.target.value)}
+              placeholder={tenant?.facebook_token_masked ? "Leave blank to keep current" : "EAAG..."}
+              autoComplete="new-password"
+              className="w-full px-3 py-2 border border-stone-300 rounded-md text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent font-mono text-sm"
+            />
+            {tenant?.facebook_token_masked && !facebookPageAccessToken && (
+              <p className="mt-1 text-xs text-stone-500">Current: {tenant.facebook_token_masked}</p>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-stone-200 bg-stone-50/50 p-4 space-y-3">
+          <h3 className="text-sm font-medium text-stone-800">Website Chat Widget</h3>
+          <p className="text-xs text-stone-500">
+            Copy and paste this script tag into the <code className="bg-stone-200 px-1 rounded">&lt;head&gt;</code> of your website to install the AI chat widget.
+          </p>
+          <div className="relative">
+            <textarea
+              readOnly
+              value={`<script src="http://116.202.210.102:3001/chat-widget.js" data-tenant-id="${tenant?.id || 'loading...'}" defer></script>`}
+              className="w-full px-3 py-2 border border-stone-300 rounded-md text-stone-600 bg-stone-100 font-mono text-xs focus:outline-none resize-none"
+              rows={2}
             />
           </div>
         </div>

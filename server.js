@@ -18,7 +18,7 @@ const calendar = require("./calendar");
 const path = require("path");
 const cron = require("node-cron");
 
-const { getTenantByPhone, getTenantById, getAllTenants } = require("./lib/tenant");
+const { getTenantByPhone, getTenantById, getAllTenants, getTenantByFacebookPageId } = require("./lib/tenant");
 const callsService = require("./services/calls");
 const recordingService = require("./services/recording");
 const transferService = require("./services/transfer");
@@ -219,6 +219,11 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
   }
 });
 
+app.get("/chat-widget.js", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "chat-widget.js"));
+});
+
+app.use(express.static(path.join(__dirname, "public")));
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
@@ -273,6 +278,25 @@ async function loadTenants() {
 }
 
 app.get("/health", (req, res) => res.status(200).send("OK"));
+
+app.get("/api/public-tenant/:id", async (req, res) => {
+  try {
+    const tenant = await getTenantById(req.params.id);
+    if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+
+    // Return only safe fields needed by the website chat widget
+    res.json({
+      id: tenant.id,
+      name: tenant.name,
+      company_name: tenant.company_name,
+      welcome_message: tenant.welcome_message,
+      timezone: tenant.timezone
+    });
+  } catch (error) {
+    console.error("Public tenant API error:", error.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
 app.use("/twilio", twilioRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/stripe", authMiddleware, require("./routes/stripe"));
@@ -535,10 +559,16 @@ async function safeUpdateCallSummary(callId, options = {}) {
   }
 }
 
-async function sendToCRM(leadCapture) {
-  const url = process.env.CRM_WEBHOOK_URL || process.env.ZAPIER_WEBHOOK_URL;
+async function sendToCRM(leadCapture, tenantId = null) {
+  let url = process.env.CRM_WEBHOOK_URL || process.env.ZAPIER_WEBHOOK_URL;
+
+  // If a tenantId is provided, try to use their specific webhook
+  if (tenantId && TENANTS[tenantId] && TENANTS[tenantId].crm_webhook_url) {
+    url = TENANTS[tenantId].crm_webhook_url;
+  }
+
   if (!url) {
-    console.warn("CRM webhook (CRM_WEBHOOK_URL or ZAPIER_WEBHOOK_URL) not configured. Skipping lead push.");
+    console.warn(`CRM webhook not configured for tenant ${tenantId || "global"}. Skipping lead push.`);
     return;
   }
 
@@ -616,20 +646,25 @@ async function sendTwilioSms(to, body) {
   return { ok: true, sid: msg.sid };
 }
 
-function buildSmsSystemPrompt(thread) {
-  return [
-    "You are an SMS receptionist for Gladiators Painting.",
+function buildSmsSystemPrompt(thread, tenant = null) {
+  const companyName = tenant?.company_name || tenant?.name || "Gladiators Painting";
+  const instructions = tenant?.instructions || [
     "Flow: qualify lead, gather full_name, project_type, project_details, address, preferred appointment_date and appointment_time.",
     "Be concise, friendly, and use one short text message.",
-    "If enough details exist to request booking, set should_book true and provide appointment_date/time.",
+    "If enough details exist to request booking, set should_book true and provide appointment_date/time."
+  ].join("\n");
+
+  return [
+    `You are an SMS receptionist for ${companyName}.`,
+    `Instructions: ${instructions}`,
     "Return strict JSON only with keys: reply, lead_capture, should_book, appointment_date, appointment_time, follow_up_minutes.",
     `Known lead data: ${JSON.stringify(thread.leadCapture)}`
   ].join("\n");
 }
 
-async function runSmsAiOrchestrator(thread, incomingText) {
+async function runSmsAiOrchestrator(thread, incomingText, tenant = null) {
   const input = [
-    { role: "system", content: buildSmsSystemPrompt(thread) },
+    { role: "system", content: buildSmsSystemPrompt(thread, tenant) },
     ...thread.history.map((msg) => ({
       role: msg.role,
       content: String(msg.text || "")
@@ -728,7 +763,7 @@ function mergeLeadCapture(thread, incomingLeadCapture) {
   }
 }
 
-async function handleLeadBooking(thread, ai) {
+async function handleLeadBooking(thread, ai, tenantOverride = null) {
   if (!ai.should_book || !ai.appointment_date || !ai.appointment_time) return null;
 
   let parsedDate = new Date(ai.appointment_date);
@@ -759,17 +794,25 @@ async function handleLeadBooking(thread, ai) {
     duration_minutes: 60
   });
 
-  if (availability.ok && availability.available) {
-    const booked = await bookAppointment({
-      appointment_date: ai.appointment_date,
-      appointment_time: ai.appointment_time,
-      duration_minutes: 60,
-      full_name: thread.leadCapture.full_name || "New Lead",
-      phone: thread.phone,
-      email: thread.leadCapture.email || "",
-      address: thread.leadCapture.address || "",
-      project_details: thread.leadCapture.project_details || ""
-    });
+  const isAvailable = (availability.ok && availability.available) || (availability.reason === "calendar_not_configured");
+
+  if (isAvailable) {
+    let booked = { ok: false };
+    if (availability.reason !== "calendar_not_configured") {
+      booked = await bookAppointment({
+        appointment_date: ai.appointment_date,
+        appointment_time: ai.appointment_time,
+        duration_minutes: 60,
+        full_name: thread.leadCapture.full_name || "New Lead",
+        phone: thread.phone,
+        email: thread.leadCapture.email || "",
+        address: thread.leadCapture.address || "",
+        project_details: thread.leadCapture.project_details || ""
+      });
+    } else {
+      // Fallback: assume OK if calendar is disabled
+      booked = { ok: true, fallback: true };
+    }
 
     if (booked.ok) {
       thread.bookedEventId = booked.eventId || "";
@@ -777,7 +820,7 @@ async function handleLeadBooking(thread, ai) {
 
       // PERSIST TO LOCAL DATABASE
       try {
-        const tenant = TENANTS.gladiators;
+        const tenant = tenantOverride || TENANTS.gladiators;
         if (tenant) {
           await bookingsService.createBooking(tenant.id, null, {
             contact_name: thread.leadCapture.full_name || "New Lead",
@@ -805,14 +848,14 @@ async function handleLeadBooking(thread, ai) {
   }
 }
 
-async function processSmsConversation(phone, incomingText) {
+async function processSmsConversation(phone, incomingText, tenant = null) {
   const thread = getOrCreateSmsThread(phone);
   thread.lastInboundAt = Date.now();
   thread.history.push({ role: "user", text: incomingText, at: new Date().toISOString() });
 
   let ai;
   try {
-    ai = await runSmsAiOrchestrator(thread, incomingText);
+    ai = await runSmsAiOrchestrator(thread, incomingText, tenant);
 
     console.log("AI STRUCTURED OUTPUT:", JSON.stringify(ai, null, 2));
 
@@ -830,7 +873,7 @@ async function processSmsConversation(phone, incomingText) {
 
   if (thread.leadCapture?.full_name || thread.phone) {
     await sendToCRM({
-      source: thread.channel || "unknown", // explicitly pushing "facebook", "website", or "sms"
+      source: thread.channel || "unknown",
       full_name: thread.leadCapture?.full_name || "",
       phone: thread.leadCapture?.phone || thread.phone || "",
       email: thread.leadCapture?.email || "",
@@ -838,8 +881,11 @@ async function processSmsConversation(phone, incomingText) {
       project_type: thread.leadCapture?.project_type || "",
       project_details: thread.leadCapture?.project_details || "",
       lead_type: ai.should_book ? "BOOKED" : "INQUIRY",
-      timestamp: new Date().toISOString()
-    });
+      timestamp: new Date().toISOString(),
+      tenant_id: tenant?.id || null,
+      tenant_name: tenant?.name || null,
+      company_name: tenant?.company_name || null
+    }, tenant?.id);
   }
   if (!thread.leadCapture.phone && !thread.phone.startsWith("fb-") && !thread.phone.startsWith("web-")) {
     thread.leadCapture.phone = thread.phone;
@@ -858,14 +904,14 @@ async function processSmsConversation(phone, incomingText) {
 
   // Reset follow up count because they just replied
   thread.followUpCount = 0;
-  await forwardLeadCaptureToCRM(thread.leadCapture, { sent: false });
+  await forwardLeadCaptureToCRM(thread.leadCapture, { sent: false }, tenant?.id);
 
   thread.history.push({ role: "assistant", text: replyText, at: new Date().toISOString() });
   thread.lastOutboundAt = Date.now();
 
   return replyText;
 }
-async function processFacebookConversation(senderId, messageText) {
+async function processFacebookConversation(senderId, messageText, tenant = null) {
   const threadKey = `fb-${senderId}`;
   const thread = getOrCreateSmsThread(threadKey);
 
@@ -878,7 +924,7 @@ async function processFacebookConversation(senderId, messageText) {
   let ai;
   try {
     // We reuse the exact same AI orchestrator as SMS and Web Chat
-    ai = await runSmsAiOrchestrator(thread, messageText);
+    ai = await runSmsAiOrchestrator(thread, messageText, tenant);
     console.log("[Facebook] AI STRUCTURED OUTPUT:", JSON.stringify(ai, null, 2));
   } catch (error) {
     console.error("[Facebook] AI orchestration failed:", error.message);
@@ -907,8 +953,11 @@ async function processFacebookConversation(senderId, messageText) {
       project_type: thread.leadCapture?.project_type || "",
       project_details: thread.leadCapture?.project_details || "",
       lead_type: ai.should_book ? "BOOKED" : "INQUIRY",
-      timestamp: new Date().toISOString()
-    });
+      timestamp: new Date().toISOString(),
+      tenant_id: tenant?.id || null,
+      tenant_name: tenant?.name || null,
+      company_name: tenant?.company_name || null
+    }, tenant?.id);
   }
 
   // Ensure the phone field is hydrated in the lead capture object for future reference
@@ -918,7 +967,7 @@ async function processFacebookConversation(senderId, messageText) {
 
   let replyText = ai.reply || "Thanks for reaching out!";
 
-  const bookingResult = await handleLeadBooking(thread, ai);
+  const bookingResult = await handleLeadBooking(thread, ai, tenant);
   if (bookingResult) {
     replyText = `${replyText} ${bookingResult}`;
   } else if (!ai.should_book) {
@@ -939,8 +988,8 @@ async function processFacebookConversation(senderId, messageText) {
 
 
 
-async function sendTypingIndicator(recipientId, action = "typing_on") {
-  const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+async function sendTypingIndicator(recipientId, action = "typing_on", accessTokenOverride = null) {
+  const PAGE_ACCESS_TOKEN = accessTokenOverride || process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
   if (!PAGE_ACCESS_TOKEN) return;
 
   try {
@@ -960,8 +1009,8 @@ async function sendTypingIndicator(recipientId, action = "typing_on") {
   }
 }
 
-async function sendFacebookMessage(recipientId, messageText, quickReplies = []) {
-  const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+async function sendFacebookMessage(recipientId, messageText, quickReplies = [], accessTokenOverride = null) {
+  const PAGE_ACCESS_TOKEN = accessTokenOverride || process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
 
   if (!PAGE_ACCESS_TOKEN) {
     console.error("Missing FACEBOOK_PAGE_ACCESS_TOKEN");
@@ -1304,13 +1353,13 @@ function parsePotentialLeadCapture(rawPayload) {
   return normalized;
 }
 
-async function forwardLeadCaptureToCRM(rawPayload, crmLeadSentRef) {
+async function forwardLeadCaptureToCRM(rawPayload, crmLeadSentRef, tenantId = null) {
   if (crmLeadSentRef.sent) return;
   const leadCapture = parsePotentialLeadCapture(rawPayload);
   if (!leadCapture) return;
 
   crmLeadSentRef.sent = true;
-  await sendToCRM(leadCapture);
+  await sendToCRM(leadCapture, tenantId);
 }
 
 async function attemptTransfer(callSid, tenant) {
@@ -1937,6 +1986,7 @@ setInterval(() => {
 
 app.post("/website-chat", async (req, res) => {
   const message = String(req.body?.message || "").trim();
+  const tenantId = req.body?.tenantId;
 
   if (!message) {
     res.status(400).json({ reply: "Missing message." });
@@ -1951,7 +2001,14 @@ app.post("/website-chat", async (req, res) => {
       res.status(400).json({ reply: "Missing session ID." });
       return;
     }
-    const reply = await processSmsConversation(sessionId, message);
+
+    const tenant = tenantId ? await getTenantById(tenantId) : null;
+
+    // Explicitly set channel as website
+    const thread = getOrCreateSmsThread(sessionId);
+    thread.channel = "website";
+
+    const reply = await processSmsConversation(sessionId, message, tenant);
     res.json({ reply });
   } catch (error) {
     console.error("Website chat error:", error.message);
@@ -1979,6 +2036,17 @@ app.post("/facebook-webhook", async (req, res) => {
 
     const entry = req.body.entry?.[0];
     const messaging = entry?.messaging?.[0];
+    const pageId = entry?.id; // The Page ID receiving the message
+
+    // Look up the tenant for this Page ID
+    const tenant = pageId ? await getTenantByFacebookPageId(pageId) : null;
+    const pageAccessToken = tenant?.facebook_page_access_token || process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+
+    if (!pageAccessToken) {
+      console.warn("[Facebook] No access token for Page ID:", pageId);
+      return res.sendStatus(200);
+    }
+
     // 🔥 Handle Persistent Menu / Postback Buttons
     if (messaging?.postback) {
       const senderId = messaging.sender.id;
@@ -1987,7 +2055,9 @@ app.post("/facebook-webhook", async (req, res) => {
       if (payload === "GET_STARTED") {
         await sendFacebookMessage(
           senderId,
-          "👋 Welcome to Gladiators Painting! How can we help you today?"
+          "👋 Welcome to Gladiators Painting! How can we help you today?",
+          [],
+          pageAccessToken
         );
         return res.sendStatus(200);
       }
@@ -1995,7 +2065,9 @@ app.post("/facebook-webhook", async (req, res) => {
       if (payload === "GET_QUOTE") {
         await sendFacebookMessage(
           senderId,
-          "Great! What type of painting project are you planning?"
+          "Great! What type of painting project are you planning?",
+          [],
+          pageAccessToken
         );
         return res.sendStatus(200);
       }
@@ -2003,7 +2075,9 @@ app.post("/facebook-webhook", async (req, res) => {
       if (payload === "BOOK_ESTIMATE") {
         await sendFacebookMessage(
           senderId,
-          "Perfect. What day works best for your estimate?"
+          "Perfect. What day works best for your estimate?",
+          [],
+          pageAccessToken
         );
         return res.sendStatus(200);
       }
@@ -2011,7 +2085,9 @@ app.post("/facebook-webhook", async (req, res) => {
       if (payload === "TALK_HUMAN") {
         await sendFacebookMessage(
           senderId,
-          "No problem 👍 A team member will reach out shortly."
+          "No problem 👍 A team member will reach out shortly.",
+          [],
+          pageAccessToken
         );
         return res.sendStatus(200);
       }
@@ -2024,26 +2100,27 @@ app.post("/facebook-webhook", async (req, res) => {
     const messageText = messaging.message.text;
 
     // Show typing indicator
-    await sendTypingIndicator(senderId, "typing_on");
+    await sendTypingIndicator(senderId, "typing_on", pageAccessToken);
 
     // 2–3 second delay
     await delay(2000 + Math.random() * 1000);
 
     // Stop typing indicator
-    await sendTypingIndicator(senderId, "typing_off");
+    await sendTypingIndicator(senderId, "typing_off", pageAccessToken);
 
-    const reply = await processFacebookConversation(senderId, messageText);
+    const reply = await processFacebookConversation(senderId, messageText, tenant);
 
     await sendFacebookMessage(
       senderId,
       reply,
-      ["Get a Free Quote", "Talk to a Human", "Book Estimate"]
+      ["Get a Free Quote", "Talk to a Human", "Book Estimate"],
+      pageAccessToken
     );
 
     res.sendStatus(200);
   } catch (error) {
     console.error("Facebook webhook error:", error.message);
-    res.sendStatus(500);
+    res.sendStatus(200); // Always 200 to FB
   }
 });
 

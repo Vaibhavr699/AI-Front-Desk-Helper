@@ -792,17 +792,20 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
   if (ai.appointment_time === "afternoon") ai.appointment_time = "1:00 PM";
   if (ai.appointment_time === "evening") ai.appointment_time = "6:00 PM";
 
+  console.log("[Booking DEBUG] Calling checkAvailability...");
   const availability = await checkAvailability({
     appointment_date: ai.appointment_date,
     appointment_time: ai.appointment_time,
     duration_minutes: 60
   });
+  console.log("[Booking DEBUG] checkAvailability result:", JSON.stringify(availability));
 
   const isAvailable = (availability.ok && availability.available) || (availability.reason === "calendar_not_configured");
 
   if (isAvailable) {
     let booked = { ok: false };
     if (availability.reason !== "calendar_not_configured") {
+      console.log("[Booking DEBUG] Calling bookAppointment...");
       booked = await bookAppointment({
         appointment_date: ai.appointment_date,
         appointment_time: ai.appointment_time,
@@ -813,6 +816,7 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
         address: thread.leadCapture.address || "",
         project_details: thread.leadCapture.project_details || ""
       });
+      console.log("[Booking DEBUG] bookAppointment result:", JSON.stringify(booked));
     } else {
       // Fallback: assume OK if calendar is disabled
       booked = { ok: true, fallback: true };
@@ -1220,25 +1224,35 @@ async function checkAvailability(args = {}) {
     return { ok: false, reason: "invalid_datetime", message: "Use appointment_date (YYYY-MM-DD) and appointment_time (HH:MM or 1:30 PM)." };
   }
 
-  const response = await calendar.freebusy.query({
-    requestBody: {
-      timeMin: window.start.toISOString(),
-      timeMax: window.end.toISOString(),
-      timeZone: BUSINESS_TIMEZONE,
-      items: [{ id: args.calendar_id || DEFAULT_CALENDAR_ID }]
-    }
-  });
+  try {
+    const response = await calendar.freebusy.query({
+      requestBody: {
+        timeMin: window.start.toISOString(),
+        timeMax: window.end.toISOString(),
+        timeZone: BUSINESS_TIMEZONE,
+        items: [{ id: args.calendar_id || DEFAULT_CALENDAR_ID }]
+      }
+    });
 
-  const calendarId = args.calendar_id || DEFAULT_CALENDAR_ID;
-  const busy = response?.data?.calendars?.[calendarId]?.busy || [];
-  return {
-    ok: true,
-    available: busy.length === 0,
-    busySlots: busy,
-    startIso: window.start.toISOString(),
-    endIso: window.end.toISOString(),
-    timezone: BUSINESS_TIMEZONE
-  };
+    const calendarId = args.calendar_id || DEFAULT_CALENDAR_ID;
+    const busy = response?.data?.calendars?.[calendarId]?.busy || [];
+    return {
+      ok: true,
+      available: busy.length === 0,
+      busySlots: busy,
+      startIso: window.start.toISOString(),
+      endIso: window.end.toISOString(),
+      timezone: BUSINESS_TIMEZONE
+    };
+  } catch (err) {
+    const errMsg = err.message || (err.response && err.response.data && err.response.data.error && err.response.data.error.message) || String(err);
+    console.error("[Calendar] Availability check failed:", errMsg);
+
+    if (errMsg.includes("unregistered callers")) {
+      return { ok: false, reason: "calendar_not_configured" };
+    }
+    return { ok: false, reason: "calendar_error", message: errMsg };
+  }
 }
 
 async function bookAppointment(args = {}) {
@@ -1262,29 +1276,43 @@ async function bookAppointment(args = {}) {
     end: { dateTime: window.end.toISOString(), timeZone: BUSINESS_TIMEZONE }
   };
 
-  const response = await calendar.events.insert({
-    calendarId: args.calendar_id || DEFAULT_CALENDAR_ID,
-    requestBody: event
-  });
+  try {
+    const response = await calendar.events.insert({
+      calendarId: args.calendar_id || DEFAULT_CALENDAR_ID,
+      requestBody: event
+    });
 
-  return {
-    ok: true,
-    eventId: response?.data?.id,
-    htmlLink: response?.data?.htmlLink,
-    status: response?.data?.status
-  };
+    return {
+      ok: true,
+      eventId: response?.data?.id,
+      htmlLink: response?.data?.htmlLink,
+      status: response?.data?.status
+    };
+  } catch (err) {
+    const errMsg = err.message || (err.response && err.response.data && err.response.data.error && err.response.data.error.message) || String(err);
+    console.error("[Calendar] Booking failed:", errMsg);
+    if (errMsg.includes("unregistered callers")) {
+      return { ok: false, reason: "calendar_not_configured" };
+    }
+    return { ok: false, reason: "calendar_error", message: errMsg };
+  }
 }
 
 async function cancelAppointment(args = {}) {
   if (!calendar) return { ok: false, reason: "calendar_not_configured" };
   if (!args.event_id) return { ok: false, reason: "missing_event_id" };
 
-  await calendar.events.delete({
-    calendarId: args.calendar_id || DEFAULT_CALENDAR_ID,
-    eventId: args.event_id
-  });
+  try {
+    await calendar.events.delete({
+      calendarId: args.calendar_id || DEFAULT_CALENDAR_ID,
+      eventId: args.event_id
+    });
 
-  return { ok: true, cancelled: true, eventId: args.event_id };
+    return { ok: true, cancelled: true, eventId: args.event_id };
+  } catch (err) {
+    console.error("[Calendar] Cancel failed:", err.message);
+    return { ok: false, reason: "calendar_error", message: err.message };
+  }
 }
 
 async function rescheduleAppointment(args = {}) {
@@ -1296,21 +1324,25 @@ async function rescheduleAppointment(args = {}) {
     return { ok: false, reason: "invalid_datetime", message: "Use appointment_date (YYYY-MM-DD) and appointment_time (HH:MM or 1:30 PM)." };
   }
 
-  const response = await calendar.events.patch({
-    calendarId: args.calendar_id || DEFAULT_CALENDAR_ID,
-    eventId: args.event_id,
-    requestBody: {
-      start: { dateTime: window.start.toISOString(), timeZone: BUSINESS_TIMEZONE },
-      end: { dateTime: window.end.toISOString(), timeZone: BUSINESS_TIMEZONE }
-    }
-  });
+  try {
+    const response = await calendar.events.patch({
+      calendarId: args.calendar_id || DEFAULT_CALENDAR_ID,
+      eventId: args.event_id,
+      requestBody: {
+        start: { dateTime: window.start.toISOString(), timeZone: BUSINESS_TIMEZONE },
+        end: { dateTime: window.end.toISOString(), timeZone: BUSINESS_TIMEZONE }
+      }
+    });
 
-  return {
-    ok: true,
-    eventId: response?.data?.id,
-    htmlLink: response?.data?.htmlLink,
-    status: response?.data?.status
-  };
+    return {
+      ok: true,
+      eventId: response?.data?.id,
+      status: response?.data?.status
+    };
+  } catch (err) {
+    console.error("[Calendar] Reschedule failed:", err.message);
+    return { ok: false, reason: "calendar_error", message: err.message };
+  }
 }
 
 const OPENAI_FUNCTION_HANDLERS = {
@@ -2124,7 +2156,7 @@ app.post("/facebook-webhook", async (req, res) => {
 
     res.sendStatus(200);
   } catch (error) {
-    console.error("Facebook webhook error:", error.message);
+    console.error("Facebook webhook error:", error.stack || error.message);
     res.sendStatus(200); // Always 200 to FB
   }
 });

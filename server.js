@@ -1,7 +1,7 @@
 "use strict";
 
 require("dotenv").config();
-
+const { handleWebhookEvent, stripe } = require("./lib/stripe");
 // BASE_URL must be the backend root (no /dashboard). Strip if set wrong so Twilio/webhooks work.
 if (process.env.BASE_URL) {
   process.env.BASE_URL = process.env.BASE_URL.replace(/\/dashboard\/?$/, "").replace(/\/$/, "") || process.env.BASE_URL;
@@ -189,6 +189,34 @@ app.post("/twilio/status", (req, res) => {
     } catch (_) { /* ignore parse errors */ }
   });
   req.on("error", () => { });
+});
+
+// --- Stripe Webhook ---
+// Must be handled before express.json() so we can verify the raw body signature
+app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  const sig = req.headers["stripe-signature"];
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  if (!secret || !stripe) {
+    console.error("[Stripe] Webhook error: Missing STRIPE_WEBHOOK_SECRET or missing STRIPE_SECRET_KEY in environment.");
+    return res.status(400).send("Webhook configuration error");
+  }
+
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, secret);
+  } catch (err) {
+    console.error(`[Stripe] Webhook signature verification failed: ${err.message}`);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  try {
+    await handleWebhookEvent(event);
+    res.json({ received: true });
+  } catch (err) {
+    console.error("[Stripe] Webhook handler failed:", err);
+    res.status(500).json({ error: "Webhook handler failed" });
+  }
 });
 
 app.use(express.urlencoded({ extended: false }));
@@ -508,13 +536,14 @@ async function safeUpdateCallSummary(callId, options = {}) {
 }
 
 async function sendToCRM(leadCapture) {
-  if (!process.env.CRM_WEBHOOK_URL) {
-    console.warn("CRM webhook not configured. Skipping lead push.");
+  const url = process.env.CRM_WEBHOOK_URL || process.env.ZAPIER_WEBHOOK_URL;
+  if (!url) {
+    console.warn("CRM webhook (CRM_WEBHOOK_URL or ZAPIER_WEBHOOK_URL) not configured. Skipping lead push.");
     return;
   }
 
   try {
-    const response = await fetch(process.env.CRM_WEBHOOK_URL, {
+    const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(leadCapture)
@@ -821,24 +850,69 @@ async function processFacebookConversation(senderId, messageText) {
   const threadKey = `fb-${senderId}`;
   const thread = getOrCreateSmsThread(threadKey);
 
-  thread.lastInteractionAt = Date.now();
+  // Set the channel explicitly so Zapier/CRM knows it came from Facebook
+  thread.channel = "facebook";
 
-  if (!thread.greeted) {
-    thread.greeted = true;
-    return "👋 Hi! Thanks for messaging Gladiators Painting! Want a fast, free estimate? Tap below to get started.";
+  thread.lastInboundAt = Date.now();
+  thread.history.push({ role: "user", text: messageText, at: new Date().toISOString() });
+
+  let ai;
+  try {
+    // We reuse the exact same AI orchestrator as SMS and Web Chat
+    ai = await runSmsAiOrchestrator(thread, messageText);
+    console.log("[Facebook] AI STRUCTURED OUTPUT:", JSON.stringify(ai, null, 2));
+  } catch (error) {
+    console.error("[Facebook] AI orchestration failed:", error.message);
+    ai = {
+      reply: "Got it 👍 Let me take a closer look at that for you.",
+      should_book: false,
+      follow_up_minutes: SMS_FOLLOW_UP_DELAY_MINUTES,
+      lead_capture: {}
+    };
   }
 
-  // Send directly to AI (NOT SMS fallback)
-  const replyText = await processSmsConversation(threadKey, messageText);
+  // Update thread with any captured lead info
+  mergeLeadCapture(thread, ai.lead_capture);
 
-  thread.history.push({
-    role: "assistant",
-    text: replyText,
-    at: new Date().toISOString()
-  });
+  // If we have a name or an actual phone number (not the fb- thread key), send to CRM/Zapier
+  // We check that thread.phone exists and isn't just the fb- string if we are relying on that
+  const hasPhoneToSend = thread.leadCapture?.phone || (thread.phone && !thread.phone.startsWith("fb-") && !thread.phone.startsWith("web-"));
+
+  if (thread.leadCapture?.full_name || hasPhoneToSend) {
+    await sendToCRM({
+      source: thread.channel || "facebook",
+      full_name: thread.leadCapture?.full_name || "",
+      phone: thread.leadCapture?.phone || thread.phone || "",
+      email: thread.leadCapture?.email || "",
+      address: thread.leadCapture?.address || "",
+      project_type: thread.leadCapture?.project_type || "",
+      project_details: thread.leadCapture?.project_details || "",
+      lead_type: ai.should_book ? "BOOKED" : "INQUIRY",
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  // Ensure the phone field is hydrated in the lead capture object for future reference
+  if (!thread.leadCapture.phone && hasPhoneToSend) {
+    thread.leadCapture.phone = thread.phone;
+  }
+
+  let replyText = ai.reply || "Thanks for reaching out!";
+
+  // We are skipping the complex auto-booking calendar logic here unless requested, 
+  // keeping it simple like the web chat fallback.
+
+  // Reset follow up count because they just replied
+  thread.followUpCount = 0;
+
+  // Record response in history
+  thread.history.push({ role: "assistant", text: replyText, at: new Date().toISOString() });
+  thread.lastOutboundAt = Date.now();
 
   return replyText;
 }
+
+
 
 async function sendTypingIndicator(recipientId, action = "typing_on") {
   const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;

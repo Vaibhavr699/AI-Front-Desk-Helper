@@ -728,6 +728,83 @@ function mergeLeadCapture(thread, incomingLeadCapture) {
   }
 }
 
+async function handleLeadBooking(thread, ai) {
+  if (!ai.should_book || !ai.appointment_date || !ai.appointment_time) return null;
+
+  let parsedDate = new Date(ai.appointment_date);
+  const now = new Date();
+  const currentYear = now.getFullYear();
+
+  if (parsedDate.getFullYear() < currentYear) {
+    parsedDate.setFullYear(currentYear);
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  parsedDate.setHours(0, 0, 0, 0);
+
+  if (parsedDate < now) {
+    parsedDate.setFullYear(parsedDate.getFullYear() + 1);
+  }
+
+  ai.appointment_date = parsedDate.toISOString().split("T")[0];
+
+  if (ai.appointment_time === "morning") ai.appointment_time = "9:00 AM";
+  if (ai.appointment_time === "afternoon") ai.appointment_time = "1:00 PM";
+  if (ai.appointment_time === "evening") ai.appointment_time = "6:00 PM";
+
+  const availability = await checkAvailability({
+    appointment_date: ai.appointment_date,
+    appointment_time: ai.appointment_time,
+    duration_minutes: 60
+  });
+
+  if (availability.ok && availability.available) {
+    const booked = await bookAppointment({
+      appointment_date: ai.appointment_date,
+      appointment_time: ai.appointment_time,
+      duration_minutes: 60,
+      full_name: thread.leadCapture.full_name || "New Lead",
+      phone: thread.phone,
+      email: thread.leadCapture.email || "",
+      address: thread.leadCapture.address || "",
+      project_details: thread.leadCapture.project_details || ""
+    });
+
+    if (booked.ok) {
+      thread.bookedEventId = booked.eventId || "";
+      thread.needsFollowUpAt = Date.now() + 24 * 60 * 60 * 1000;
+
+      // PERSIST TO LOCAL DATABASE
+      try {
+        const tenant = TENANTS.gladiators;
+        if (tenant) {
+          await bookingsService.createBooking(tenant.id, null, {
+            contact_name: thread.leadCapture.full_name || "New Lead",
+            contact_phone: thread.phone,
+            contact_email: thread.leadCapture.email || "",
+            address: thread.leadCapture.address || "",
+            city: "",
+            scope: thread.leadCapture.project_type || "",
+            job_type: "Residential",
+            preferred_date: ai.appointment_date,
+            notes: thread.leadCapture.project_details || ""
+          });
+        }
+      } catch (dbErr) {
+        console.error("[Booking] Local DB persistence failed:", dbErr.message);
+      }
+
+      return `✅ You are booked for ${ai.appointment_date} at ${ai.appointment_time}.`;
+    } else {
+      return "I couldn't complete booking yet. Can I offer another time?";
+    }
+  } else {
+    thread.needsFollowUpAt = Date.now() + 30 * 60 * 1000;
+    return "That time is no longer available. Please share another preferred time.";
+  }
+}
+
 async function processSmsConversation(phone, incomingText) {
   const thread = getOrCreateSmsThread(phone);
   thread.lastInboundAt = Date.now();
@@ -770,68 +847,10 @@ async function processSmsConversation(phone, incomingText) {
 
   let replyText = ai.reply || "Thanks for reaching out!";
 
-  if (ai.should_book && ai.appointment_date && ai.appointment_time) {
-
-    let parsedDate = new Date(ai.appointment_date);
-    const now = new Date();
-    const currentYear = now.getFullYear();
-
-    if (parsedDate.getFullYear() < currentYear) {
-      parsedDate.setFullYear(currentYear);
-    }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    parsedDate.setHours(0, 0, 0, 0);
-
-    if (parsedDate < now) {
-      parsedDate.setFullYear(parsedDate.getFullYear() + 1);
-    }
-
-    ai.appointment_date = parsedDate.toISOString().split("T")[0];
-
-    if (ai.appointment_time === "morning") {
-      ai.appointment_time = "9:00 AM";
-    }
-
-    if (ai.appointment_time === "afternoon") {
-      ai.appointment_time = "1:00 PM";
-    }
-
-    if (ai.appointment_time === "evening") {
-      ai.appointment_time = "6:00 PM";
-    }
-
-    const availability = await checkAvailability({
-      appointment_date: ai.appointment_date,
-      appointment_time: ai.appointment_time,
-      duration_minutes: 60
-    });
-
-    if (availability.ok && availability.available) {
-      const booked = await bookAppointment({
-        appointment_date: ai.appointment_date,
-        appointment_time: ai.appointment_time,
-        duration_minutes: 60,
-        full_name: thread.leadCapture.full_name || "New Lead",
-        phone: thread.phone,
-        email: thread.leadCapture.email || "",
-        address: thread.leadCapture.address || "",
-        project_details: thread.leadCapture.project_details || ""
-      });
-
-      if (booked.ok) {
-        thread.bookedEventId = booked.eventId || "";
-        thread.needsFollowUpAt = Date.now() + 24 * 60 * 60 * 1000;
-        replyText = `${replyText} ✅ You are booked for ${ai.appointment_date} at ${ai.appointment_time}.`;
-      } else {
-        replyText = `${replyText} I couldn't complete booking yet. Can I offer another time?`;
-      }
-    } else {
-      replyText = `${replyText} That time is no longer available. Please share another preferred time.`;
-      thread.needsFollowUpAt = Date.now() + 30 * 60 * 1000;
-    }
-  } else {
+  const bookingResult = await handleLeadBooking(thread, ai);
+  if (bookingResult) {
+    replyText = `${replyText} ${bookingResult}`;
+  } else if (!ai.should_book) {
     // If not booking, default to a 2-hour delay for the primary follow-up unless the AI specified
     const followUpMinutes = Number(ai.follow_up_minutes) || 120;
     thread.needsFollowUpAt = Date.now() + followUpMinutes * 60 * 1000;
@@ -899,8 +918,14 @@ async function processFacebookConversation(senderId, messageText) {
 
   let replyText = ai.reply || "Thanks for reaching out!";
 
-  // We are skipping the complex auto-booking calendar logic here unless requested, 
-  // keeping it simple like the web chat fallback.
+  const bookingResult = await handleLeadBooking(thread, ai);
+  if (bookingResult) {
+    replyText = `${replyText} ${bookingResult}`;
+  } else if (!ai.should_book) {
+    // Default follow up for inquiry
+    const followUpMinutes = Number(ai.follow_up_minutes) || 120;
+    thread.needsFollowUpAt = Date.now() + followUpMinutes * 60 * 1000;
+  }
 
   // Reset follow up count because they just replied
   thread.followUpCount = 0;

@@ -63,35 +63,99 @@
     const style = document.createElement("style");
     style.innerHTML = `
       @keyframes ai-fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+      @keyframes ai-slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+      @keyframes ai-pulse { 0% { transform: scale(1); box-shadow: 0 4px 15px rgba(0,0,0,0.2); } 50% { transform: scale(1.05); box-shadow: 0 6px 20px rgba(0,0,0,0.3); } 100% { transform: scale(1); box-shadow: 0 4px 15px rgba(0,0,0,0.2); } }
+      @keyframes ai-bounce { 0%, 20%, 50%, 80%, 100% {transform: translateY(0);} 40% {transform: translateY(-5px);} 60% {transform: translateY(-3px);} }
+      
       .ai-chat-bubble { animation: ai-fadeIn 0.3s ease; }
+      .ai-pulse-anim { animation: ai-pulse 2s infinite ease-in-out; }
+      .ai-slide-in { animation: ai-slideIn 0.8s cubic-bezier(0.16, 1, 0.3, 1); }
+      .ai-bounce-anim { animation: ai-bounce 2s infinite; }
     `;
     document.head.appendChild(style);
 
     // Toggle Button
     const toggle = document.createElement("div");
     toggle.id = "ai-chat-toggle";
+    toggle.className = "ai-slide-in";
     toggle.innerText = "Chat";
     Object.assign(toggle.style, {
-      position: "fixed", bottom: "20px", right: "20px",
-      background: "#000", color: "#fff", padding: "12px 24px",
+      position: "fixed", bottom: "30px", right: "30px",
+      background: "linear-gradient(135deg, #000 0%, #333 100%)",
+      color: "#fff", padding: "14px 28px",
       borderRadius: "30px", cursor: "pointer", zIndex: "2147483647",
-      fontFamily: "Arial, sans-serif", boxShadow: "0 4px 15px rgba(0,0,0,0.2)",
-      transition: "all 0.3s ease", fontWeight: "bold",
-      textAlign: "center"
+      fontFamily: "'Inter', Arial, sans-serif", boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
+      transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)", fontWeight: "bold",
+      textAlign: "center", fontSize: "16px", letterSpacing: "0.5px"
     });
     document.body.appendChild(toggle);
+
+    const callout = document.createElement("div");
+    callout.id = "ai-chat-callout";
+    callout.innerHTML = `Need help?`;
+    Object.assign(callout.style, {
+      position: "fixed", bottom: "95px", right: "30px",
+      background: "#fff", color: "#000", padding: "10px 18px",
+      borderRadius: "12px", boxShadow: "0 5px 25px rgba(0,0,0,0.15)",
+      zIndex: "2147483646", fontFamily: "'Inter', Arial, sans-serif",
+      fontSize: "14px", fontWeight: "500", display: "none",
+      opacity: "0", transform: "translateY(10px)",
+      transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
+      border: "1px solid #eee"
+    });
+    document.body.appendChild(callout);
+
+    const calloutArrow = document.createElement("div");
+    Object.assign(calloutArrow.style, {
+      position: "absolute", bottom: "-8px", right: "20px",
+      width: "0", height: "0", borderLeft: "8px solid transparent",
+      borderRight: "8px solid transparent", borderTop: "8px solid #fff"
+    });
+    callout.appendChild(calloutArrow);
+
+    const closeBtn = document.getElementById("ai-callout-close");
+    if (closeBtn) {
+      closeBtn.onclick = (e) => {
+        e.stopPropagation();
+        hideCallout();
+      };
+    }
+
+    function showCallout() {
+      if (isOpen) return;
+      callout.style.display = "block";
+      setTimeout(() => {
+        callout.style.opacity = "1";
+        callout.style.transform = "translateY(0)";
+        callout.classList.add("ai-bounce-anim");
+      }, 100);
+    }
+
+    function hideCallout() {
+      callout.style.opacity = "0";
+      callout.style.transform = "translateY(10px)";
+      setTimeout(() => {
+        callout.style.display = "none";
+      }, 400);
+    }
+
+    // Trigger callout and pulse after delays
+    setTimeout(showCallout, 5000);
+    setTimeout(() => {
+      if (!isOpen) toggle.classList.add("ai-pulse-anim");
+    }, 10000);
 
     // Container
     const container = document.createElement("div");
     container.id = "ai-chat-container";
     Object.assign(container.style, {
-      position: "fixed", bottom: "85px", right: "20px",
-      width: "350px", height: "500px", background: "#fff",
-      border: "1px solid #ddd", borderRadius: "12px",
-      boxShadow: "0 10px 40px rgba(0,0,0,0.2)", display: "none",
+      position: "fixed", bottom: "100px", right: "30px",
+      width: "380px", height: "540px", background: "#fff",
+      border: "1px solid #eee", borderRadius: "16px",
+      boxShadow: "0 15px 50px rgba(0,0,0,0.15)", display: "none",
       flexDirection: "column", zIndex: "2147483647", overflow: "hidden",
-      fontFamily: "Arial, sans-serif", opacity: "0", transform: "translateY(10px)",
-      transition: "opacity 0.3s ease, transform 0.3s ease"
+      fontFamily: "'Inter', Arial, sans-serif", opacity: "0", transform: "translateY(20px)",
+      transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)"
     });
     document.body.appendChild(container);
 
@@ -99,33 +163,35 @@
     const header = document.createElement("div");
     header.innerText = companyName;
     Object.assign(header.style, {
-      background: "#000", color: "#fff", padding: "16px",
-      fontWeight: "bold", textAlign: "center", fontSize: "16px"
+      background: "linear-gradient(135deg, #000 0%, #333 100%)",
+      color: "#fff", padding: "20px",
+      fontWeight: "bold", textAlign: "center", fontSize: "18px",
+      letterSpacing: "0.5px"
     });
     container.appendChild(header);
 
     // Messages area
     const messagesBody = document.createElement("div");
     Object.assign(messagesBody.style, {
-      flex: "1", padding: "15px", overflowY: "auto",
-      display: "flex", flexDirection: "column", gap: "10px",
-      background: "#f9f9f9"
+      flex: "1", padding: "20px", overflowY: "auto",
+      display: "flex", flexDirection: "column", gap: "12px",
+      background: "#fcfcfc"
     });
     container.appendChild(messagesBody);
 
     // Input area
     const inputArea = document.createElement("div");
     Object.assign(inputArea.style, {
-      display: "flex", padding: "12px", borderTop: "1px solid #eee",
-      background: "#fff"
+      display: "flex", padding: "15px", borderTop: "1px solid #eee",
+      background: "#fff", alignItems: "center"
     });
     container.appendChild(inputArea);
 
     const input = document.createElement("input");
     input.placeholder = "Type a message...";
     Object.assign(input.style, {
-      flex: "1", border: "none", outline: "none", fontSize: "14px",
-      padding: "5px"
+      flex: "1", border: "none", outline: "none", fontSize: "15px",
+      padding: "10px", background: "#f5f5f5", borderRadius: "8px"
     });
     inputArea.appendChild(input);
 
@@ -133,8 +199,8 @@
     sendBtn.innerText = "Send";
     Object.assign(sendBtn.style, {
       background: "none", border: "none", color: "#000",
-      fontWeight: "bold", cursor: "pointer", padding: "0 10px",
-      fontSize: "14px"
+      fontWeight: "bold", cursor: "pointer", padding: "0 15px",
+      fontSize: "15px"
     });
     inputArea.appendChild(sendBtn);
 
@@ -143,21 +209,35 @@
       bubble.className = "ai-chat-bubble";
       bubble.innerText = text;
       Object.assign(bubble.style, {
-        padding: "10px 14px", borderRadius: "18px", fontSize: "14px",
-        maxWidth: "80%", alignSelf: isUser ? "flex-end" : "flex-start",
+        padding: "12px 16px", borderRadius: "18px", fontSize: "15px",
+        maxWidth: "85%", alignSelf: isUser ? "flex-end" : "flex-start",
         background: isUser ? "#000" : "#fff",
         color: isUser ? "#fff" : "#333",
-        boxShadow: isUser ? "none" : "0 2px 5px rgba(0,0,0,0.05)",
-        border: isUser ? "none" : "1px solid #eee",
-        lineHeight: "1.4"
+        boxShadow: isUser ? "0 4px 10px rgba(0,0,0,0.1)" : "0 2px 8px rgba(0,0,0,0.05)",
+        border: isUser ? "none" : "1px solid #f0f0f0",
+        lineHeight: "1.5"
       });
+      if (isUser) {
+        bubble.style.borderBottomRightRadius = "4px";
+      } else {
+        bubble.style.borderBottomLeftRadius = "4px";
+      }
       messagesBody.appendChild(bubble);
       messagesBody.scrollTop = messagesBody.scrollHeight;
     }
 
+    toggle.onmouseover = () => {
+      toggle.style.transform = "scale(1.05)";
+    };
+    toggle.onmouseout = () => {
+      toggle.style.transform = "scale(1)";
+    };
+
     toggle.onclick = () => {
       isOpen = !isOpen;
       if (isOpen) {
+        hideCallout();
+        toggle.classList.remove("ai-pulse-anim");
         container.style.display = "flex";
         setTimeout(() => {
           container.style.opacity = "1";
@@ -170,10 +250,10 @@
         }
       } else {
         container.style.opacity = "0";
-        container.style.transform = "translateY(10px)";
+        container.style.transform = "translateY(20px)";
         setTimeout(() => {
           container.style.display = "none";
-        }, 300);
+        }, 400);
         toggle.innerText = "Chat";
       }
     };
@@ -186,10 +266,11 @@
 
       const typing = document.createElement("div");
       typing.innerText = "AI is thinking...";
-      typing.style.fontSize = "12px";
-      typing.style.color = "#888";
+      typing.style.fontSize = "13px";
+      typing.style.color = "#999";
       typing.style.alignSelf = "flex-start";
       typing.style.marginLeft = "10px";
+      typing.style.fontStyle = "italic";
       messagesBody.appendChild(typing);
       messagesBody.scrollTop = messagesBody.scrollHeight;
 

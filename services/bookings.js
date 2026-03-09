@@ -36,6 +36,7 @@ function normalizeBookingData(data) {
     job_type: get(data, "job_type", "jobType"),
     preferred_date: preferredDate,
     notes: get(data, "notes"),
+    revenue_cents: data.estimated_value ? Math.round(parseFloat(data.estimated_value) * 100) : null,
   };
 }
 
@@ -48,8 +49,8 @@ async function createBooking(tenantId, callId, data) {
     res = await db.query(
       `INSERT INTO bookings (
         tenant_id, call_id, contact_name, contact_phone, contact_email,
-        address, city, scope, job_type, preferred_date, notes, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'scheduled')
+        address, city, scope, job_type, preferred_date, notes, status, revenue_cents
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'scheduled', $12)
       RETURNING *`,
       [
         tenantId,
@@ -63,6 +64,7 @@ async function createBooking(tenantId, callId, data) {
         norm.job_type,
         norm.preferred_date,
         norm.notes,
+        norm.revenue_cents,
       ]
     );
   } catch (err) {

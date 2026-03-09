@@ -25,6 +25,7 @@ const transferService = require("./services/transfer");
 const bookingsService = require("./services/bookings");
 const followUpService = require("./services/followUp");
 const estimateRecoveryService = require("./services/estimateRecovery");
+const twilioLib = require("./lib/twilio");
 
 const twilioRoutes = require("./routes/twilio");
 const dashboardRoutes = require("./routes/dashboard");
@@ -55,7 +56,7 @@ const REALTIME_TOOLS = [
   {
     type: "function",
     name: "book_appointment",
-    description: "Finalize and save the booking. Call this when you have at least: contact name, contact phone, and address OR city. Include EVERY detail the caller gave: contact_name, contact_phone, address, city, scope (interior/exterior/both/rooms), preferred_date, notes (pets, access, etc.). Do not omit any field the caller provided—all fields are saved to the database and sent to CRM. Use for normal residential estimate requests.",
+    description: "Finalize and save the booking. Call this ONLY when you have real details from the caller: contact name, contact phone, and address OR city. NEVER use placeholder or dummy data (like 'Armando' or '555-1234'). Include EVERY detail the caller gave: contact_name, contact_phone, address, city, scope (interior/exterior/both/rooms), preferred_date, notes (pets, access, etc.). Do not omit any field the caller provided—all fields are saved to the database and sent to CRM. Use for normal residential estimate requests.",
     parameters: {
       type: "object",
       properties: {
@@ -68,8 +69,9 @@ const REALTIME_TOOLS = [
         job_type: { type: "string" },
         preferred_date: { type: "string" },
         notes: { type: "string" },
+        estimated_value: { type: "number", description: "Estimated job value in dollars (e.g. 1500 or 4500.50). Estimate based on job size if not explicitly given." },
       },
-      required: ["contact_phone"],
+      required: ["contact_name", "contact_phone", "address"],
     },
   },
   {
@@ -111,7 +113,7 @@ const RECOVERY_TOOLS = [
   {
     type: "function",
     name: "book_appointment",
-    description: "The customer agreed to book! Collect name, phone, address, scope, and finalize. This also marks the recovery as converted.",
+    description: "The customer agreed to book! Collect name, phone, address, scope, and finalize. IMPORTANT: ONLY use information explicitly provided by the caller in this conversation. NEVER hallucinate or use dummy data. This also marks the recovery as converted.",
     parameters: {
       type: "object",
       properties: {
@@ -124,8 +126,9 @@ const RECOVERY_TOOLS = [
         job_type: { type: "string", description: "Residential or commercial" },
         preferred_date: { type: "string", description: "Preferred date" },
         notes: { type: "string", description: "Extra notes" },
+        estimated_value: { type: "number", description: "Estimated job value in dollars" },
       },
-      required: ["contact_phone"],
+      required: ["contact_name", "contact_phone", "address"],
     },
   },
   {
@@ -254,7 +257,7 @@ const SERVE_DASHBOARD = process.env.SERVE_DASHBOARD === "true";
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || "";
 const smsThreads = new Map();
 let callsTableHasTranscriptColumn = true;
-let callsTableHasDurationColumn = true; // optimistic; set to false if column is missing
+let callsTableHasDurationColumn = true;
 
 // Tenant map by slug/id -> { ...tenant, transferNumber }. Populated at startup so voice/WebSocket routes can resolve tenant.
 let TENANTS = {};
@@ -500,9 +503,11 @@ async function safePoolQuery(query, values) {
 
 
 async function safeUpdateCallSummary(callId, options = {}) {
+  console.log("[AI-Desk] safeUpdateCallSummary callId=%s options=%j", callId, options);
   try {
     if (!pool || !callId) return;
     const status = Object.prototype.hasOwnProperty.call(options, "status") ? options.status : undefined;
+    const disposition = Object.prototype.hasOwnProperty.call(options, "disposition") ? options.disposition : undefined;
     const transcript = typeof options.transcript === "string" ? options.transcript : "";
     const markEnded = Boolean(options.markEnded);
 
@@ -517,6 +522,11 @@ async function safeUpdateCallSummary(callId, options = {}) {
       if (typeof status === "string") {
         values.push(status);
         setParts.push(`status = $${values.length}`);
+      }
+
+      if (typeof disposition === "string") {
+        values.push(disposition);
+        setParts.push(`disposition = $${values.length}`);
       }
 
       if (includeTranscriptColumn) {
@@ -651,7 +661,8 @@ function buildSmsSystemPrompt(thread, tenant = null) {
   const instructions = tenant?.instructions || [
     "Flow: qualify lead, gather full_name, project_type, project_details, address, preferred appointment_date and appointment_time.",
     "Be concise, friendly, and use one short text message.",
-    "If enough details exist to request booking, set should_book true and provide appointment_date/time."
+    "If enough details exist to request booking, set should_book true and provide appointment_date/time.",
+    "REVENUE ESTIMATION: Always provide an estimated_value (number, in dollars) based on the project_details (e.g., Room: 500, Interior: 2500, Exterior: 5000)."
   ].join("\n");
 
   return [
@@ -696,7 +707,8 @@ async function runSmsAiOrchestrator(thread, incomingText, tenant = null) {
                 project_details: { type: ["string", "null"] },
                 timeline: { type: ["string", "null"] },
                 appointment_date: { type: ["string", "null"] },
-                appointment_time: { type: ["string", "null"] }
+                appointment_time: { type: ["string", "null"] },
+                estimated_value: { type: ["number", "null"] }
               },
               required: [
                 "full_name",
@@ -707,7 +719,8 @@ async function runSmsAiOrchestrator(thread, incomingText, tenant = null) {
                 "project_details",
                 "timeline",
                 "appointment_date",
-                "appointment_time"
+                "appointment_time",
+                "estimated_value"
               ]
             },
             should_book: { type: "boolean" },
@@ -792,20 +805,17 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
   if (ai.appointment_time === "afternoon") ai.appointment_time = "1:00 PM";
   if (ai.appointment_time === "evening") ai.appointment_time = "6:00 PM";
 
-  console.log("[Booking DEBUG] Calling checkAvailability...");
   const availability = await checkAvailability({
     appointment_date: ai.appointment_date,
     appointment_time: ai.appointment_time,
     duration_minutes: 60
   });
-  console.log("[Booking DEBUG] checkAvailability result:", JSON.stringify(availability));
 
   const isAvailable = (availability.ok && availability.available) || (availability.reason === "calendar_not_configured");
 
   if (isAvailable) {
     let booked = { ok: false };
     if (availability.reason !== "calendar_not_configured") {
-      console.log("[Booking DEBUG] Calling bookAppointment...");
       booked = await bookAppointment({
         appointment_date: ai.appointment_date,
         appointment_time: ai.appointment_time,
@@ -816,7 +826,6 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
         address: thread.leadCapture.address || "",
         project_details: thread.leadCapture.project_details || ""
       });
-      console.log("[Booking DEBUG] bookAppointment result:", JSON.stringify(booked));
     } else {
       // Fallback: assume OK if calendar is disabled
       booked = { ok: true, fallback: true };
@@ -839,7 +848,8 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
             scope: thread.leadCapture.project_type || "",
             job_type: "Residential",
             preferred_date: ai.appointment_date,
-            notes: thread.leadCapture.project_details || ""
+            notes: thread.leadCapture.project_details || "",
+            estimated_value: thread.leadCapture.estimated_value
           });
         }
       } catch (dbErr) {
@@ -1431,9 +1441,43 @@ async function attemptTransfer(callSid, tenant) {
   return true;
 }
 
-function handleTwilioVoice(req, res, tenantId) {
-  const resolvedTenantId = TENANTS[tenantId] ? tenantId : "gladiators";
-  const tenant = TENANTS[resolvedTenantId];
+async function handleTwilioVoice(req, res, tenantId) {
+  let resolvedTenantId = tenantId;
+  let tenant = TENANTS[tenantId];
+
+  // If not found in memory OR it is the default 'gladiators', try to look up by the 'To' OR 'From' phone number.
+  // This allows multiple phone numbers to use the same generic /twilio/voice webhook.
+  // 'To' is used for inbound; 'From' is often used for outbound testing (Ring mode).
+  const toNum = req.body?.To || req.query?.To;
+  const fromNum = req.body?.From || req.query?.From;
+
+  if (!tenant || resolvedTenantId === "gladiators") {
+    const lookupNum = toNum || fromNum;
+    if (lookupNum) {
+      try {
+        const dbTenant = await getTenantByPhone(lookupNum);
+        if (dbTenant) {
+          tenant = dbTenant;
+          resolvedTenantId = dbTenant.slug || dbTenant.id;
+        } else if (fromNum && !toNum) {
+          // Try 'From' if 'To' wasn't useful (only if they are different)
+          const dbTenantFrom = await getTenantByPhone(fromNum);
+          if (dbTenantFrom) {
+            tenant = dbTenantFrom;
+            resolvedTenantId = dbTenantFrom.slug || dbTenantFrom.id;
+          }
+        }
+      } catch (err) {
+        console.error("[AI-Desk] Tenant lookup by phone failed:", err.message);
+      }
+    }
+  }
+
+  // Final fallback
+  if (!tenant) {
+    tenant = TENANTS["gladiators"];
+    resolvedTenantId = "gladiators";
+  }
 
   try {
     if (!OPENAI_API_KEY) {
@@ -1485,9 +1529,9 @@ function handleTwilioVoice(req, res, tenantId) {
 }
 
 function registerTwilioVoiceRoutes(pathPatterns, tenantScoped) {
-  const handler = (req, res) => {
+  const handler = async (req, res) => {
     const tenantId = tenantScoped ? req.params.tenantId : "gladiators";
-    handleTwilioVoice(req, res, tenantId);
+    await handleTwilioVoice(req, res, tenantId);
   };
 
   const normalizedPatterns = Array.isArray(pathPatterns) ? pathPatterns : [pathPatterns];
@@ -1544,12 +1588,16 @@ app.post("/twilio-sms", async (req, res) => {
   }
 
   try {
-    const tenant = await getTenantByPhone(req.body?.To || req.body?.to);
+    const toNum = req.body?.To || req.body?.to;
+    const tenant = await getTenantByPhone(toNum);
+
     const reply = await processSmsConversation(from, body, tenant);
-    res.type("text/xml").status(200).send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escapeXml(reply)}</Message></Response>`);
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escapeXml(reply)}</Message></Response>`;
+    res.type("text/xml").send(twiml);
   } catch (error) {
-    console.error("Twilio SMS webhook error:", error.message);
-    res.type("text/xml").status(200).send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Thanks — we received your message and will text you shortly.</Message></Response>`);
+    console.error("Twilio SMS webhook error:", error.stack || error.message);
+    const fallbackTwiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Message>Thanks — we received your message and will text you shortly.</Message></Response>`;
+    res.type("text/xml").send(fallbackTwiml);
   }
 });
 
@@ -1628,8 +1676,20 @@ wss.on("connection", (twilioSocket, req) => {
 
   const pathSegments = pathname.split("/").filter(Boolean);
   const tenantIdFromPath = pathSegments.length >= 2 ? pathSegments[1] : "";
-  const tenantId = TENANTS[tenantIdFromPath] ? tenantIdFromPath : "gladiators";
+  let tenantId = tenantIdFromPath || "gladiators";
   let tenant = TENANTS[tenantId];
+
+  // If not in cache, try DB lookup (handles new tenants without server restart)
+  if (!tenant && tenantId !== "gladiators") {
+    // Determine if it's a UUID or a slug
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId);
+    if (isUuid) {
+      getTenantById(tenantId).then(t => { if (t) tenant = t; }).catch(() => { });
+    }
+  }
+
+  // Final fallback to memory cache if still null
+  if (!tenant) tenant = TENANTS[tenantId] || TENANTS["gladiators"];
 
   if (!tenant && !isRecovery) {
     console.error("[AI-Desk] No tenant for path segment:", tenantIdFromPath, "- ensure DB is seeded and loadTenants ran.");
@@ -1656,6 +1716,9 @@ wss.on("connection", (twilioSocket, req) => {
   let to = null;
   let transcript = "";
   let transferAttempted = false;
+  let hasBooked = false;
+  let hasScheduledHangup = false;
+  let shouldIgnoreSpeech = false;
 
   const pendingTwilioAudio = [];
   const openaiQueue = [];
@@ -1745,12 +1808,13 @@ wss.on("connection", (twilioSocket, req) => {
       const defaultInstructions = [
         "You are a professional receptionist. Be warm and helpful.",
         "Default language is English. If the caller asks to speak in another language (e.g. Spanish, French, Hindi), immediately call the change_language tool with the ISO 639-1 code (es, fr, hi, zh, ar, etc.), then confirm in that language and continue the entire conversation in that language.",
-        "Ask one question at a time. Wait for the caller to finish speaking before you reply—do not interrupt.",
-        "Collect these details before booking: (1) full name, (2) phone number, (3) address or city, (4) what they need—interior, exterior, both, or rooms (scope), (5) preferred date if they give one, (6) any extra notes (pets, access, etc.). Offer a free on-site estimate.",
-        "When you have at least name, phone, and address OR city: call book_appointment with ALL the details the caller gave—include contact_name, contact_phone, address or city, scope, preferred_date, and notes. Do not omit fields they provided.",
-        "Right after calling book_appointment successfully, say clearly and then stop: 'You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.' Then allow the call to end naturally.",
+        "STEP-BY-STEP FLOW: Ask EXACTLY one question at a time. Wait for the caller to finish speaking before you reply—do not interrupt. Follow this order: (1) Greet & ask for Full Name, (2) Ask for Phone Number (even if you have it), (3) Ask for the Street Address or City of the property, (4) Ask for the Scope (interior/exterior/both/rooms) and Job Type, (5) Ask for any extra notes (pets, access, etc.).",
+        "Offer a free on-site estimate. Repeat back key details (name, phone, address, scope) before finalizing so the caller can correct you if needed.",
+        "REVENUE ESTIMATION: If the caller doesn't provide a budget, estimate the job value based on their scope (e.g., Small/Room: $500, Medium/Interior: $2500, Large/Full Exterior: $5000+). Use this for the estimated_value field.",
+        "ONLY call book_appointment when you have obtained REAL details from the human for: name, phone, and address/city. Do NOT call it with placeholders or before asking for these details.",
+        "Right after calling book_appointment successfully, say clearly and then stop forever: 'You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.' Then allow the call to end naturally. DO NOT ask any more questions after this.",
         "Do NOT say you are transferring or connecting to someone unless you actually need a live agent. Only use request_human_transfer for: commercial job, project over $10k, caller clearly frustrated or angry, or VIP/repeat customer. For normal residential estimates, always complete the booking with book_appointment.",
-        "Repeat back key details (name, phone, address, scope) before finalizing so the caller can correct you if needed.",
+        "STRICT RULE: NEVER hallucinate or use placeholder/example data (like 'Armando', '555-1234', or 'Cancun') for any tool fields. If you are missing a required field, ASK the caller. Only use data provided by the human on the other end of the line.",
       ].join(" ");
       let instructions = (tenant && tenant.instructions)
         ? tenant.instructions
@@ -1776,7 +1840,7 @@ wss.on("connection", (twilioSocket, req) => {
            Immediately call 'detect_objection' with type 'spouse'.
            
         4. If they are ready to book:
-           Collect any missing details (name, phone, address, scope, preferred date) and call 'book_appointment'. 
+           Collect any missing details (name, phone, address, scope, preferred date) and call 'book_appointment'. Always include an 'estimated_value' based on the job details discussed.
            
         Be warm, helpful, and professional. The goal is to open conversation, not pressure them.`;
       }
@@ -1797,6 +1861,8 @@ wss.on("connection", (twilioSocket, req) => {
             prefix_padding_ms: 300,
             silence_duration_ms: silenceMs,
           },
+          input_audio_transcription: { model: "whisper-1" },
+          control_v2: true, // Some versions might need this, but let's stick to transcription for now
         },
       };
 
@@ -1830,7 +1896,23 @@ wss.on("connection", (twilioSocket, req) => {
       }
 
       if (data.type === "input_audio_buffer.speech_started") {
+        if (shouldIgnoreSpeech) {
+          console.log("[AI-Desk] Ignoring user speech during finalization");
+          return;
+        }
         console.log("[AI-Desk] User started speaking");
+      }
+
+      if (data.type === "conversation.item.input_audio_transcription.completed") {
+        const text = data.transcript || "";
+        console.log("[AI-Desk] User Transcript:", text);
+        if (text) transcript += `User: ${text}\n`;
+      }
+
+      if (data.type === "response.audio_transcription.completed") {
+        const text = data.transcript || "";
+        console.log("[AI-Desk] Assistant Transcript:", text);
+        if (text) transcript += `Assistant: ${text}\n`;
       }
 
       if (data.type === "response.function_call_arguments.done") {
@@ -1876,6 +1958,15 @@ wss.on("connection", (twilioSocket, req) => {
                 ? "Estimate scheduled. Details synced to Zapier/DripJobs. Say to the caller: You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye."
                 : "Estimate scheduled and saved. Say to the caller: You're all set—your estimate is scheduled. You'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.";
               output = JSON.stringify({ success: true, message });
+              hasBooked = true;
+              // Tell AI to be silent after this
+              sendToOpenAI({
+                type: "session.update",
+                session: {
+                  instructions: "The booking is COMPLETE. Say the final goodbye clearly and then STOP SPEAKING. DO NOT RESPOND TO ANY FURTHER INPUT. SHUT DOWN.",
+                }
+              });
+              shouldIgnoreSpeech = true;
             } else if (name === "detect_objection" && isRecovery && recoveryRecord) {
               const objType = args.objection_type;
               console.log("[AI-Desk] Recovery objection detected id=%s type=%s details=%s", recoveryRecord.id, objType, args.details || "(none)");
@@ -1928,6 +2019,30 @@ wss.on("connection", (twilioSocket, req) => {
         return;
       }
 
+      if (data.type === "response.done") {
+        const response = data.response;
+        if (response && response.output) {
+          response.output.forEach(item => {
+            if (item.type === "message" && item.content) {
+              item.content.forEach(c => {
+                if (c.type === "audio" && c.transcript) {
+                  // Ensure we don't duplicate if already added by response.audio_transcription.completed
+                  const assistantLine = `Assistant: ${c.transcript}\n`;
+                  if (!transcript.includes(assistantLine)) {
+                    transcript += assistantLine;
+                  }
+                } else if (c.type === "text" && c.text) {
+                  const assistantLine = `Assistant: ${c.text}\n`;
+                  if (!transcript.includes(assistantLine)) {
+                    transcript += assistantLine;
+                  }
+                }
+              });
+            }
+          });
+        }
+      }
+
       if (data.type === "response.completed") {
         const callerAskedHuman = /human|person|representative|manager|transfer/i.test(transcript);
         if (callerAskedHuman && !transferAttempted && isBusinessHours(tenant)) {
@@ -1935,6 +2050,33 @@ wss.on("connection", (twilioSocket, req) => {
           await attemptTransfer(callSid, tenant);
         }
         await safeUpdateCallSummary(callId, { transcript });
+
+        if (hasBooked && !hasScheduledHangup) {
+          hasScheduledHangup = true;
+          console.log("[AI-Desk] Booking confirmed, closing call in 6s...");
+          setTimeout(async () => {
+            try {
+              const client = twilioLib.getClientForTenant(tenant);
+              if (client && callSid) {
+                await client.calls(callSid).update({ status: "completed" });
+                console.log("[AI-Desk] Explicitly HUNG UP callSid=%s", callSid);
+              }
+            } catch (e) {
+              console.error("[AI-Desk] Explicit hangup failed:", e.message);
+            }
+            if (twilioSocket.readyState === WebSocket.OPEN) {
+              console.log("[AI-Desk] Closing Twilio socket now.");
+              twilioSocket.close();
+            }
+            // Final summary update inside timeout
+            await safeUpdateCallSummary(callId, {
+              transcript,
+              disposition: 'booked',
+              status: 'completed',
+              markEnded: true
+            });
+          }, 6000);
+        }
         return;
       }
 
@@ -1986,7 +2128,9 @@ wss.on("connection", (twilioSocket, req) => {
     }
 
     if (msg.event === "media" && msg.media?.payload) {
-      sendToOpenAI({ type: "input_audio_buffer.append", audio: msg.media.payload });
+      if (!shouldIgnoreSpeech) {
+        sendToOpenAI({ type: "input_audio_buffer.append", audio: msg.media.payload });
+      }
       return;
     }
 
@@ -1997,15 +2141,24 @@ wss.on("connection", (twilioSocket, req) => {
 
       await safeUpdateCallSummary(callId, {
         status: transferAttempted ? "transferred" : "completed",
+        disposition: hasBooked ? "booked" : (transferAttempted ? "transferred" : "completed"),
         transcript,
         markEnded: true
       });
     }
   });
 
-  twilioSocket.on("close", () => {
+  twilioSocket.on("close", async () => {
     if (openaiSocket?.readyState === WebSocket.OPEN) {
       openaiSocket.close();
+    }
+    if (!hasScheduledHangup) {
+      await safeUpdateCallSummary(callId, {
+        status: transferAttempted ? "transferred" : "completed",
+        disposition: hasBooked ? "booked" : (transferAttempted ? "transferred" : "completed"),
+        transcript,
+        markEnded: true
+      });
     }
   });
 

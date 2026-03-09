@@ -1,6 +1,3 @@
-/**
- * Script to check the current webhook configuration of a Twilio phone number.
- */
 const fetch = require("node-fetch");
 require("dotenv").config();
 
@@ -10,36 +7,35 @@ function buildTwilioAuthHeader() {
     return "Basic " + Buffer.from(`${sid}:${token}`).toString("base64");
 }
 
-async function checkPhoneConfig() {
-    const phone = process.env.TWILIO_PHONE_NUMBER || "+14027738795";
-    console.log(`[Twilio] Checking config for ${phone}...`);
+async function checkAllTwilioConfigs() {
+    console.log(`[Twilio] Auditing all incoming phone numbers in account ${process.env.TWILIO_ACCOUNT_SID}...`);
 
     try {
-        // 1. Find the SID for the phone number
-        const listUrl = `https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/IncomingPhoneNumbers.json?PhoneNumber=${encodeURIComponent(phone)}`;
+        const listUrl = `https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/IncomingPhoneNumbers.json`;
         const listRes = await fetch(listUrl, {
             headers: { Authorization: buildTwilioAuthHeader() }
         });
         const listData = await listRes.json();
 
         if (!listData.incoming_phone_numbers || listData.incoming_phone_numbers.length === 0) {
-            console.error("[Error] Number not found in Twilio account.");
+            console.error("[Error] No incoming phone numbers found.");
             return;
         }
 
-        const numberObj = listData.incoming_phone_numbers[0];
-        console.log(`[Config] SID: ${numberObj.sid}`);
-        console.log(`[Config] Voice URL: ${numberObj.voice_url}`);
-        console.log(`[Config] SMS URL: ${numberObj.sms_url}`);
-        console.log(`[Config] SMS Method: ${numberObj.sms_method}`);
+        console.log(`[Twilio] Found ${listData.incoming_phone_numbers.length} numbers:`);
+        console.log("--------------------------------------------------");
 
-        // Check if it matches our local server or Render
-        const currentBase = process.env.BASE_URL;
-        console.log(`[Local .env] BASE_URL: ${currentBase}`);
-
+        for (const num of listData.incoming_phone_numbers) {
+            console.log(`[Number] ${num.phone_number}`);
+            console.log(`[SID]    ${num.sid}`);
+            console.log(`[Voice]  ${num.voice_url}`);
+            console.log(`[SMS]    ${num.sms_url}`);
+            console.log(`[Method] ${num.sms_method}`);
+            console.log("--------------------------------------------------");
+        }
     } catch (err) {
         console.error(`[Error] ${err.message}`);
     }
 }
 
-checkPhoneConfig();
+checkAllTwilioConfigs();

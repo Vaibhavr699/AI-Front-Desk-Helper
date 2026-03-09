@@ -30,11 +30,77 @@
   let hasWelcomed = false;
   let isOpen = false;
 
+  /* =========================
+   VISITOR TRACKING
+========================= */
+
+async function trackVisitor(eventType, extra = {}) {
+  try {
+    await fetch(`${apiBase}/visitor-event`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tenantId,
+        sessionId,
+        event: eventType,
+        url: window.location.href,
+        timestamp: new Date().toISOString(),
+        ...extra
+      })
+    });
+  } catch (err) {
+    console.warn("[AI Widget] Tracking failed:", err);
+  }
+}
+
+
+/* =========================
+   CRM LEAD CAPTURE
+========================= */
+
+async function sendLeadToCRM(lead) {
+  try {
+    await fetch(`${apiBase}/lead-capture`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tenantId,
+        sessionId,
+        lead
+      })
+    });
+  } catch (err) {
+    console.warn("[AI Widget] Lead capture failed:", err);
+  }
+}
+
+
+/* =========================
+   FOLLOW UP ENGINE
+========================= */
+
+async function triggerFollowUp(lead) {
+  try {
+    await fetch(`${apiBase}/estimate_follow_up_engine`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tenantId,
+        sessionId,
+        lead
+      })
+    });
+  } catch (err) {
+    console.warn("[AI Widget] Follow up failed:", err);
+  }
+}
   async function initWidget() {
     if (!tenantId) {
       console.error("[AI-Widget] No tenantId found. Script tag must have data-tenant-id attribute.");
       return;
     }
+     trackVisitor("widget_loaded");
+
     try {
       console.log("[AI-Widget] Fetching configuration...");
       const res = await fetch(`${apiBase}/api/public-tenant/${tenantId}`);
@@ -225,7 +291,36 @@
       messagesBody.appendChild(bubble);
       messagesBody.scrollTop = messagesBody.scrollHeight;
     }
+function showBookingForm() {
 
+  const booking = document.createElement("div");
+
+  booking.innerHTML = `
+  <div style="padding:10px;background:#f5f5f5;border-radius:10px;">
+  <b>Schedule Estimate</b>
+  <input id="ai-name" placeholder="Name" style="width:100%;margin-top:5px">
+  <input id="ai-phone" placeholder="Phone" style="width:100%;margin-top:5px">
+  <input id="ai-date" type="date" style="width:100%;margin-top:5px">
+  <button id="ai-book-btn" style="width:100%;margin-top:8px">Book</button>
+  </div>
+  `;
+
+  messagesBody.appendChild(booking);
+
+  document.getElementById("ai-book-btn").onclick = async () => {
+
+    const lead = {
+      name: document.getElementById("ai-name").value,
+      phone: document.getElementById("ai-phone").value,
+      date: document.getElementById("ai-date").value
+    };
+
+    await sendLeadToCRM(lead);
+    await triggerFollowUp(lead);
+
+    addMsg("✅ Appointment request sent!", false);
+  };
+}
     toggle.onmouseover = () => {
       toggle.style.transform = "scale(1.05)";
     };
@@ -236,6 +331,7 @@
     toggle.onclick = () => {
       isOpen = !isOpen;
       if (isOpen) {
+        trackVisitor("chat_opened");
         hideCallout();
         toggle.classList.remove("ai-pulse-anim");
         container.style.display = "flex";
@@ -281,8 +377,35 @@
           body: JSON.stringify({ message: val, tenantId, sessionId })
         });
         const data = await response.json();
-        typing.remove();
-        addMsg(data.reply || "I'm sorry, I encountered an issue.", false);
+
+typing.remove();
+trackVisitor("message_sent", { message: val });        
+addMsg(data.reply || "I'm sorry, I encountered an issue.", false);
+/* Lead Capture */
+if (data.lead_capture) {
+  console.log("Lead Captured:", data.lead_capture);
+  await sendLeadToCRM(data.lead_capture);
+  await triggerFollowUp(data.lead_capture);
+}
+  if (data.show_booking) {
+  showBookingForm();
+}
+}
+/* Booking */
+if (data.booking_confirmed) {
+  addMsg(
+    `✅ Your appointment is booked for ${data.booking_confirmed.date} at ${data.booking_confirmed.time}.`,
+    false
+  );
+
+}
+
+/* Quote Capture */
+if (data.quote_capture) {
+  const quoteMsg = `📋 Quick quote request received. We'll contact you shortly!`;
+  addMsg(quoteMsg, false);
+
+}
       } catch (err) {
         typing.remove();
         addMsg("Connection error. Please check your internet.", false);
@@ -292,7 +415,6 @@
 
     sendBtn.onclick = handleSend;
     input.onkeypress = (e) => { if (e.key === "Enter") handleSend(); };
-
     console.log("[AI-Widget] UI Ready.");
   }
 

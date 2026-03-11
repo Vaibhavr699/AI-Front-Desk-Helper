@@ -19,7 +19,7 @@ function ask(question) {
 }
 
 // Default tenant/called number for testing (AI calls this number). Override with TEST_RING_NUMBER in .env.
-const DEFAULT_TEST_RING_NUMBER = "+918076055898";
+const DEFAULT_TEST_RING_NUMBER = "+919045986868";
 
 async function placeCall() {
   const ringNumber = (process.env.TEST_RING_NUMBER || DEFAULT_TEST_RING_NUMBER).replace(/\s/g, "");

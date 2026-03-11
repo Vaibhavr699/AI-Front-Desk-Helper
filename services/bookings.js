@@ -35,12 +35,14 @@ function normalizeBookingData(data) {
     scope: get(data, "scope"),
     job_type: get(data, "job_type", "jobType"),
     preferred_date: preferredDate,
+    appointment_time: get(data, "appointment_time", "appointmentTime"),
+    technician_id: get(data, "technician_id", "technicianId"),
     notes: get(data, "notes"),
     revenue_cents: data.estimated_value ? Math.round(parseFloat(data.estimated_value) * 100) : null,
   };
 }
 
-async function createBooking(tenantId, callId, data) {
+async function createBooking(tenantId, callId, data, leadId = null) {
   console.log("[AI-Desk] Booking create start tenantId=%s callId=%s raw_keys=%s", tenantId, callId || "(none)", Object.keys(data || {}).join(","));
   const norm = normalizeBookingData(data);
   console.log("[AI-Desk] Booking normalized name=%s phone=%s address=%s city=%s", norm.contact_name, norm.contact_phone, norm.address || "(none)", norm.city || "(none)");
@@ -48,13 +50,14 @@ async function createBooking(tenantId, callId, data) {
   try {
     res = await db.query(
       `INSERT INTO bookings (
-        tenant_id, call_id, contact_name, contact_phone, contact_email,
-        address, city, scope, job_type, preferred_date, notes, status, revenue_cents
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'scheduled', $12)
+        tenant_id, call_id, lead_id, contact_name, contact_phone, contact_email,
+        address, city, scope, job_type, preferred_date, appointment_time, technician_id, notes, status, revenue_cents
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'Booked', $15)
       RETURNING *`,
       [
         tenantId,
         callId || null,
+        leadId || null,
         norm.contact_name,
         norm.contact_phone,
         norm.contact_email,
@@ -63,6 +66,8 @@ async function createBooking(tenantId, callId, data) {
         norm.scope,
         norm.job_type,
         norm.preferred_date,
+        norm.appointment_time,
+        norm.technician_id,
         norm.notes,
         norm.revenue_cents,
       ]

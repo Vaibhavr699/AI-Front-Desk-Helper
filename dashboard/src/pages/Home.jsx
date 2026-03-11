@@ -27,12 +27,18 @@ export default function Home() {
           <div className="flex items-center justify-between h-16">
             <Link
               to="/"
-              className="flex items-center gap-2 font-semibold text-stone-900 text-lg"
+              className="flex items-center gap-2 group transition-all"
             >
-              <span className="flex items-center justify-center w-9 h-9 rounded-lg bg-stone-800 text-white text-sm font-bold">
-                FD
-              </span>
-              <span>Front Desk</span>
+              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-stone-900 to-stone-700 text-white shadow-lg shadow-stone-200 group-hover:scale-105 transition-transform duration-200">
+                <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 2L14.85 8.65L22 9.25L16.5 13.9L18.1 21L12 17.25L5.9 21L7.5 13.9L2 9.25L9.15 8.65L12 2Z" fill="currentColor" />
+                  <path d="M12 6L13.5 10H10.5L12 6Z" fill="#fff" opacity="0.5" />
+                </svg>
+              </div>
+              <div className="flex flex-col">
+                <span className="font-bold text-stone-900 leading-none">AI Front Desk</span>
+                <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mt-0.5">Helper</span>
+              </div>
             </Link>
             <div className="flex items-center gap-3">
               <Link
@@ -69,8 +75,10 @@ export default function Home() {
               {/* Header */}
               <div className="bg-white border-b border-stone-200 px-6 py-4 flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-brand-600 rounded-lg text-white flex items-center justify-center font-bold text-xs shadow-sm">
-                    FD
+                  <div className="w-9 h-9 bg-gradient-to-br from-stone-900 to-stone-700 rounded-xl text-white flex items-center justify-center shadow-lg">
+                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M12 2L14.85 8.65L22 9.25L16.5 13.9L18.1 21L12 17.25L5.9 21L7.5 13.9L2 9.25L9.15 8.65L12 2Z" fill="currentColor" />
+                    </svg>
                   </div>
                   <div className="text-left">
                     <p className="font-bold text-stone-900 text-sm leading-tight">Gladiators Home Services</p>
@@ -291,7 +299,7 @@ export default function Home() {
                     <span className="inline-block mt-4 text-xs font-bold uppercase tracking-widest text-stone-400">Step 1</span>
                     <h3 className="mt-2 text-xl font-semibold text-stone-900">Connect your number</h3>
                     <p className="mt-3 text-stone-600 leading-relaxed">
-                      Point your Twilio number to Front Desk. No new hardware — works with your current phone system.
+                      Point your Twilio number to AI Front Desk Helper. No new hardware — works with your current phone system.
                     </p>
                   </div>
                   <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-stone-50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
@@ -356,9 +364,10 @@ export default function Home() {
                   Best for small contractors who just want missed calls handled.
                 </p>
                 <div className="mt-4 flex items-baseline gap-1">
-                  <span className="text-3xl font-bold text-stone-900">$29</span>
+                  <span className="text-3xl font-bold text-stone-900">$297</span>
                   <span className="text-stone-500">/month</span>
                 </div>
+                <p className="mt-1 text-xs font-semibold text-brand-600">+$400 setup fee</p>
 
                 <div className="mt-8 pt-6 border-t border-stone-200">
                   <p className="text-xs text-stone-500 mb-3">300 voice min · 500 SMS/mo</p>
@@ -384,9 +393,10 @@ export default function Home() {
                   Everything in Basic plus Google Calendar, website chat, Facebook messaging, and appointment reminders.
                 </p>
                 <div className="mt-4 flex items-baseline gap-1">
-                  <span className="text-3xl font-bold text-stone-900">$79</span>
+                  <span className="text-3xl font-bold text-stone-900">$497</span>
                   <span className="text-stone-500">/month</span>
                 </div>
+                <p className="mt-1 text-xs font-semibold text-brand-600">+$600 setup fee</p>
                 <p className="mt-6 text-xs text-stone-500">800 voice min · 1,500 SMS/mo</p>
                 <button
                   type="button"
@@ -409,9 +419,10 @@ export default function Home() {
                   Everything in Pro plus AI follow-up calls, SMS sequences, no-show recovery, and revenue recovery.
                 </p>
                 <div className="mt-4 flex items-baseline gap-1">
-                  <span className="text-3xl font-bold text-stone-900">$199</span>
+                  <span className="text-3xl font-bold text-stone-900">$997</span>
                   <span className="text-stone-500">/month</span>
                 </div>
+                <p className="mt-1 text-xs font-semibold text-brand-600">+$900 setup fee</p>
                 <p className="mt-6 text-xs text-stone-500">2,000 voice min · 4,000 SMS/mo</p>
                 <button
                   type="button"
@@ -433,7 +444,7 @@ export default function Home() {
                 Built for home service pros
               </h2>
               <p className="mt-4 text-lg text-stone-600 max-w-2xl mx-auto">
-                Contractors, painters, roofers, and field service companies use Front Desk to stop losing leads to voicemail.
+                Contractors, painters, roofers, and field service companies use AI Front Desk Helper to stop losing leads to voicemail.
               </p>
             </div>
             <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-4xl mx-auto">
@@ -490,11 +501,16 @@ export default function Home() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-12 mb-12">
             <div className="md:col-span-1">
-              <Link to="/" className="flex items-center gap-2 mb-6">
-                <span className="flex items-center justify-center w-9 h-9 rounded-xl bg-stone-800 text-white text-sm font-bold shadow-lg shadow-white/5">
-                  FD
-                </span>
-                <span className="font-bold text-xl text-white tracking-tight">Front Desk</span>
+              <Link to="/" className="flex items-center gap-2 mb-6 group">
+                <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-stone-800 to-stone-600 text-white shadow-lg group-hover:scale-105 transition-transform">
+                  <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2L14.85 8.65L22 9.25L16.5 13.9L18.1 21L12 17.25L5.9 21L7.5 13.9L2 9.25L9.15 8.65L12 2Z" fill="currentColor" />
+                  </svg>
+                </div>
+                <div className="flex flex-col">
+                  <span className="font-bold text-lg text-white leading-none">AI Front Desk</span>
+                  <span className="text-[10px] font-bold text-stone-600 uppercase tracking-widest mt-0.5">Helper</span>
+                </div>
               </Link>
               <p className="text-sm leading-relaxed text-stone-500">
                 The intelligent phone assistant for home service companies. Stop losing leads to voicemail and start booking more jobs.
@@ -537,7 +553,7 @@ export default function Home() {
 
           <div className="pt-12 border-t border-stone-800 flex flex-col md:flex-row items-center justify-between gap-6">
             <div className="text-sm text-stone-600">
-              © {new Date().getFullYear()} Front Desk Technologies Inc. All rights reserved.
+              © {new Date().getFullYear()} AI Front Desk Helper Technologies Inc. All rights reserved.
             </div>
             <div className="flex items-center gap-8">
               <a href="#" className="text-stone-600 hover:text-white text-xs transition-colors">Privacy Policy</a>

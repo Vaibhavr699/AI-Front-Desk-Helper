@@ -10,3 +10,7 @@ export { default as Metrics } from "./Metrics";
 export { default as Settings } from "./Settings";
 export { default as Tenants } from "./Tenants";
 export { default as Plans } from "./Plans";
+export { default as Leads } from "./Leads";
+export { default as LeadDetail } from "./LeadDetail";
+export { default as Conversations } from "./Conversations";
+export { default as Billing } from "./Billing";

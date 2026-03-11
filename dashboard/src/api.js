@@ -101,6 +101,12 @@ export function updateTenant(id, body) {
   });
 }
 
+export function resetApiKey(id) {
+  return api(`/api/tenants/${id}/reset-api-key`, {
+    method: "POST",
+  });
+}
+
 export function getCalls(tenantId, params = {}) {
   const q = new URLSearchParams({ tenant_id: tenantId, ...params });
   return api(`/api/calls?${q}`);
@@ -110,18 +116,107 @@ export function getCall(id) {
   return api(`/api/calls/${id}`);
 }
 
+export function updateCall(id, body) {
+  return api(`/api/calls/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
 export function getMetrics(tenantId) {
   return api(`/api/metrics?tenant_id=${tenantId}`);
 }
 
-export function getBookings(tenantId, params = {}) {
-  const q = new URLSearchParams({ tenant_id: tenantId, ...params });
-  return api(`/api/bookings?${q}`);
+export function getUsage(tenantId) {
+  return api(`/api/billing/usage?tenant_id=${tenantId}`);
 }
 
-export function getFollowUps(tenantId, params = {}) {
-  const q = new URLSearchParams({ tenant_id: tenantId, ...params });
-  return api(`/api/follow-ups?${q}`);
+export function getConversations(tenantId) {
+  return api(`/api/conversations?tenant_id=${tenantId}`);
+}
+
+export function getConversationTimeline(leadId) {
+  return api(`/api/conversations/${leadId}/timeline`);
+}
+
+export function getActivityFeed(tenantId) {
+  return api(`/api/activity-feed?tenant_id=${tenantId}`);
+}
+
+export async function getBookings(tenantId) {
+  return api(`/api/bookings?tenant_id=${tenantId}`);
+}
+
+export async function updateBooking(id, data) {
+  return api(`/api/bookings/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getTechnicians(tenantId) {
+  return api(`/api/technicians?tenant_id=${tenantId}`);
+}
+
+export async function createTechnician(tenantId, data) {
+  return api(`/api/technicians?tenant_id=${tenantId}`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateTechnician(id, data) {
+  return api(`/api/technicians/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteTechnician(id) {
+  return api(`/api/technicians/${id}`, { method: "DELETE" });
+}
+
+export function getFollowups(tenantId) {
+  return api(`/api/followups?tenant_id=${tenantId}`);
+}
+
+export function triggerFollowupSms(id) {
+  return api(`/api/followups/${id}/sms`, { method: "POST" });
+}
+
+export function triggerFollowupCall(id) {
+  return api(`/api/followups/${id}/call`, { method: "POST" });
+}
+
+export function updateFollowupStatus(id, status) {
+  return api(`/api/followups/${id}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status })
+  });
+}
+
+export function getSalesWins(tenantId) {
+  return api(`/api/sales-wins?tenant_id=${tenantId}`);
+}
+
+/** CRM / Leads */
+export function getLeadsByTenant(tenantId, limit = 50, offset = 0) {
+  return api(`/api/leads?tenantId=${tenantId}&limit=${limit}&offset=${offset}`);
+}
+
+export function getLeadById(id) {
+  return api(`/api/leads/${id}`);
+}
+
+export function getLeadHistory(id) {
+  return api(`/api/leads/${id}/history`);
+}
+
+export function updateLead(id, data) {
+  return api(`/api/leads/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data)
+  });
 }
 
 export function getPhoneNumbers(tenantId) {

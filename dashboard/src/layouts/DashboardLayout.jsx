@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Outlet } from "react-router-dom";
-import { getTenants } from "../api";
+import { getTenant, getUser } from "../api";
 import { Header, Sidebar } from "../components";
 
 const TENANT_STORAGE_KEY = "tenantId";
@@ -8,18 +8,19 @@ const SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
 
 export default function DashboardLayout() {
   const [tenants, setTenants] = useState([]);
-  const [tenantId, setTenantId] = useState(
-    () => localStorage.getItem(TENANT_STORAGE_KEY) || ""
-  );
+  const user = getUser();
+  const [tenantId, setTenantId] = useState(user?.tenant_id || "");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"
   );
   const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
 
   useEffect(() => {
-    getTenants()
-      .then((data) => setTenants(data.tenants || []))
-      .catch(() => setTenants([]));
+    if (user?.tenant_id) {
+      getTenant(user.tenant_id)
+        .then((data) => setTenants([data]))
+        .catch(() => setTenants([]));
+    }
   }, []);
 
   useEffect(() => {
@@ -49,7 +50,6 @@ export default function DashboardLayout() {
       <Header
         tenantId={tenantId}
         tenants={tenants}
-        onTenantChange={setTenantId}
         onMenuClick={openMobileSidebar}
       />
 
@@ -80,8 +80,8 @@ export default function DashboardLayout() {
         </div>
 
         <main className="flex-1 min-w-0 min-h-0 overflow-auto flex flex-col">
-          <div className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <Outlet context={{ tenantId: tenantId || null, tenants, onTenantChange: setTenantId }} />
+          <div className="flex-1 max-w-full w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            <Outlet context={{ tenantId: tenantId || null, tenants }} />
           </div>
         </main>
       </div>

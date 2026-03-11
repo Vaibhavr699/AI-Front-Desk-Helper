@@ -220,7 +220,7 @@ async function triggerFollowUp(lead) {
       border: "1px solid #eee", borderRadius: "16px",
       boxShadow: "0 15px 50px rgba(0,0,0,0.15)", display: "none",
       flexDirection: "column", zIndex: "2147483647", overflow: "hidden",
-      fontFamily: "'Inter', Arial, sans-serif", opacity: "0", transform: "translateY(20px)",
+      fontFamily: "'Inter', Arial, sans-serif", opacity: "0", transform: "translateY(10px)",
       transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)"
     });
     document.body.appendChild(container);
@@ -338,6 +338,7 @@ function showBookingForm() {
         setTimeout(() => {
           container.style.opacity = "1";
           container.style.transform = "translateY(0)";
+          container.classList.add("ai-bounce-anim");
         }, 10);
         toggle.innerText = "Close";
         if (!hasWelcomed) {
@@ -346,7 +347,8 @@ function showBookingForm() {
         }
       } else {
         container.style.opacity = "0";
-        container.style.transform = "translateY(20px)";
+        container.style.transform = "translateY(10px)";
+        container.classList.remove("ai-bounce-anim");
         setTimeout(() => {
           container.style.display = "none";
         }, 400);

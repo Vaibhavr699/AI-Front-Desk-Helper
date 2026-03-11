@@ -13,44 +13,44 @@ const twilio = require("../lib/twilio");
  */
 const GHOST_SEQUENCE = [
     {
-        step: "day1_sms",
+        step: "estimate_sent",
         channel: "sms",
         delayHours: 0,
         message: (v) =>
-            `Hey ${v.first_name}, just wanted to make sure you received your estimate. Did you have any questions I can clarify?`,
-        next: "day1_call",
+            `Hi ${v.first_name}, I've sent over your estimate from ${v.company_name}! Let me know if you have any questions.`,
+        next: "sms_followup",
     },
     {
-        step: "day1_call",
+        step: "sms_followup",
+        channel: "sms",
+        delayHours: 24,
+        message: (v) =>
+            `Hey ${v.first_name}, just checking in to see if you had a chance to look at that estimate. We'd love to get you on the schedule!`,
+        next: "ai_call_followup",
+    },
+    {
+        step: "ai_call_followup",
         channel: "call",
-        delayHours: 3,
+        delayHours: 48, // 2 days later
         script:
-            "Hey {{first_name}}, just following up on the estimate we sent over. I wanted to see if anything stood out or if you had questions before we move forward.",
-        next: "day3_sms",
+            "Hi {{first_name}}, this is the AI assistant from {{company_name}}. I'm just calling to follow up on the estimate we sent. Did you have any questions, or would you like to get that scheduled?",
+        next: "second_reminder",
     },
     {
-        step: "day3_sms",
+        step: "second_reminder",
         channel: "sms",
-        delayHours: 48, // Day 3
+        delayHours: 72, // 3 days later
         message: (v) =>
-            `We're finalizing next week's schedule. Should I keep this open for you?`,
-        next: "day5_call",
+            `Quick reminder from ${v.company_name} about your project. Our schedule is filling up fast — would you like to lock in your spot?`,
+        next: "final_attempt",
     },
     {
-        step: "day5_call",
-        channel: "call",
-        delayHours: 48, // Day 5
-        voicemail:
-            "Just checking in before we close this file — happy to move forward whenever you're ready.",
-        next: "day7_final",
-    },
-    {
-        step: "day7_final",
+        step: "final_attempt",
         channel: "sms",
-        delayHours: 48, // Day 7
+        delayHours: 72, // 3 more days
         message: (v) =>
-            `I'll close this out for now, but if you'd still like to move forward just reply YES and I'll prioritize your project.`,
-        next: null, // → dormant
+            `Hi ${v.first_name}, I haven't heard back, so I'll go ahead and close this request for now. If you're still interested, just reply YES and I'll jump back in!`,
+        next: null,
     },
 ];
 
@@ -210,8 +210,8 @@ async function startRecovery(tenantId, bookingId, options = {}) {
     const res = await db.query(
         `INSERT INTO estimate_recoveries (
       tenant_id, booking_id, call_id, contact_name, contact_phone, contact_email,
-      status, current_step, estimate_sent_at, next_action_at, lead_source
-    ) VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8, $9, $10)
+      status, current_step, estimate_sent_at, next_action_at, lead_source, lead_id
+    ) VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8, $9, $10, $11)
     RETURNING *`,
         [
             tenantId,
@@ -224,6 +224,7 @@ async function startRecovery(tenantId, bookingId, options = {}) {
             options.estimate_sent_at || now.toISOString(),
             nextActionAt.toISOString(),
             options.lead_source || "phone",
+            b.lead_id || null,
         ]
     );
     console.log("[Recovery] Started id=%s tenant=%s booking=%s phone=%s", res.rows[0].id, tenantId, bookingId, b.contact_phone);
@@ -588,7 +589,12 @@ module.exports = {
     getRecoveryById,
     getTouchesByRecovery,
     getRecoveryStats,
+    // Manual Actions
+    sendRecoverySms,
+    makeRecoveryCall,
+    advanceStep,
     // Constants (for API/UI)
     GHOST_SEQUENCE,
     OBJECTION_SEQUENCES,
+    ALL_STEPS
 };

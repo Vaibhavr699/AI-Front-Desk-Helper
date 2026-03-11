@@ -113,10 +113,11 @@ export default function Login({ onLogin }) {
                   initial={{ scale: 0.5, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
                   transition={{ type: "spring", duration: 0.8 }}
-                  className="mx-auto w-12 h-12 rounded-full border border-stone-200 bg-white flex items-center justify-center relative overflow-hidden shadow-sm"
+                  className="mx-auto w-12 h-12 rounded-xl bg-gradient-to-br from-stone-900 to-stone-700 text-white flex items-center justify-center relative overflow-hidden shadow-lg"
                 >
-                  <span className="text-xl font-bold font-sans text-stone-900 tracking-tight">FD</span>
-                  <div className="absolute inset-0 bg-gradient-to-br from-stone-50 to-transparent opacity-50" />
+                  <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2L14.85 8.65L22 9.25L16.5 13.9L18.1 21L12 17.25L5.9 21L7.5 13.9L2 9.25L9.15 8.65L12 2Z" fill="currentColor" />
+                  </svg>
                 </motion.div>
 
                 <motion.h1
@@ -133,7 +134,7 @@ export default function Login({ onLogin }) {
                   transition={{ delay: 0.3 }}
                   className="text-stone-500 text-sm"
                 >
-                  {isSignup ? "Get started with Front Desk" : "Sign in to continue to Front Desk"}
+                  {isSignup ? "Get started with AI Front Desk Helper" : "Sign in to continue to AI Front Desk Helper"}
                 </motion.p>
               </div>
 

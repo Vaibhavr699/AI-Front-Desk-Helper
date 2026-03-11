@@ -38,9 +38,9 @@ export default function Plans({ tenantId }) {
       .catch((e) => {
         setError(e.message);
         setPlans([
-          { id: "basic", name: "Basic", tagline: "AI Front Desk Starter", whoItIsFor: "Small ops", voiceMinutes: 300, smsLimit: 500, priceMonthly: 29, priceLabel: "/month", includes: [], excludes: [] },
-          { id: "pro", name: "Pro", tagline: "AI Booking Assistant", whoItIsFor: "Growing teams", voiceMinutes: 800, smsLimit: 1500, priceMonthly: 79, priceLabel: "/month", includes: [], excludes: [] },
-          { id: "elite", name: "Elite", tagline: "AI Sales & Follow-Up Engine", whoItIsFor: "Scaling companies", voiceMinutes: 2000, smsLimit: 4000, priceMonthly: 199, priceLabel: "/month", includes: [], excludes: [] },
+          { id: "basic", name: "Basic", tagline: "AI Front Desk Helper Starter", whoItIsFor: "Small ops", voiceMinutes: 300, smsLimit: 500, priceMonthly: 297, setupFee: 400, priceLabel: "/month", includes: [], excludes: [] },
+          { id: "pro", name: "Pro", tagline: "AI Booking Assistant", whoItIsFor: "Growing teams", voiceMinutes: 800, smsLimit: 1500, priceMonthly: 497, setupFee: 600, priceLabel: "/month", includes: [], excludes: [] },
+          { id: "elite", name: "Elite", tagline: "AI Sales & Follow-Up Engine", whoItIsFor: "Scaling companies", voiceMinutes: 2000, smsLimit: 4000, priceMonthly: 997, setupFee: 900, priceLabel: "/month", includes: [], excludes: [] },
         ]);
       })
       .finally(() => setLoading(false));
@@ -113,7 +113,7 @@ export default function Plans({ tenantId }) {
     <div className="px-0">
       <h1 className="text-xl sm:text-2xl font-semibold text-stone-900 mb-1">Plans</h1>
       <p className="text-sm text-stone-500 mb-6">
-        Choose the right AI Front Desk tier for your business. Powered by Stripe.
+        Choose the right AI Front Desk Helper tier for your business. Powered by Stripe.
       </p>
 
       {/* Subscription status banner */}
@@ -151,7 +151,7 @@ export default function Plans({ tenantId }) {
         </div>
       )}
 
-      
+
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {(plans.length ? plans : [{ id: "basic" }, { id: "pro" }, { id: "elite" }]).map((plan) => {
@@ -163,10 +163,10 @@ export default function Plans({ tenantId }) {
             <div
               key={plan.id}
               className={`rounded-xl border-2 shadow-sm overflow-hidden flex flex-col relative ${isCurrent
-                  ? "border-brand-500 bg-brand-50/30"
-                  : isPro
-                    ? "border-stone-800 bg-white"
-                    : "border-stone-200 bg-white hover:border-stone-300"
+                ? "border-brand-500 bg-brand-50/30"
+                : isPro
+                  ? "border-stone-800 bg-white"
+                  : "border-stone-200 bg-white hover:border-stone-300"
                 }`}
             >
               {isPro && !isCurrent && (
@@ -185,14 +185,17 @@ export default function Plans({ tenantId }) {
                   {plan.name || plan.id}
                 </h2>
                 <p className="text-sm text-stone-600 mt-0.5">
-                  {plan.tagline || (plan.id === "basic" ? "AI Front Desk Starter" : plan.id === "pro" ? "AI Booking Assistant" : "AI Sales & Follow-Up Engine")}
+                  {plan.tagline || (plan.id === "basic" ? "AI Front Desk Helper Starter" : plan.id === "pro" ? "AI Booking Assistant" : "AI Sales & Follow-Up Engine")}
                 </p>
                 <div className="mt-4 flex items-baseline gap-1">
                   <span className="text-2xl font-bold text-stone-900">
-                    ${plan.priceMonthly ?? (plan.id === "basic" ? 29 : plan.id === "pro" ? 79 : 199)}
+                    ${plan.priceMonthly ?? (plan.id === "basic" ? 297 : plan.id === "pro" ? 497 : 997)}
                   </span>
                   <span className="text-sm text-stone-500">{plan.priceLabel ?? "/month"}</span>
                 </div>
+                <p className="mt-1 text-xs font-semibold text-brand-600">
+                  +${plan.setupFee ?? (plan.id === "basic" ? 400 : plan.id === "pro" ? 600 : 900)} setup fee
+                </p>
                 <div className="mt-3 flex gap-4 text-sm">
                   <span className="text-stone-600">
                     <span className="font-medium text-stone-900">{plan.voiceMinutes ?? (plan.id === "basic" ? 300 : plan.id === "pro" ? 800 : 2000)}</span> voice min
@@ -261,8 +264,8 @@ export default function Plans({ tenantId }) {
                         onClick={() => handleSelectPlan(plan.id)}
                         disabled={isLoading}
                         className={`w-full py-2.5 rounded-lg text-sm font-medium transition-colors ${isPro
-                            ? "bg-stone-800 text-white hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-stone-600 disabled:opacity-60"
-                            : "bg-stone-800 text-white hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-stone-600 disabled:opacity-60"
+                          ? "bg-stone-800 text-white hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-stone-600 disabled:opacity-60"
+                          : "bg-stone-800 text-white hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-stone-600 disabled:opacity-60"
                           }`}
                       >
                         {isLoading ? "Redirecting to Stripe…" : "Subscribe"}

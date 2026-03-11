@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useOutletContext, useLocation } from "react-router-dom";
 import { getUser } from "./api";
 import { DashboardLayout } from "./layouts";
-import { Home, Login, CreateBusiness, Dashboard, Calls, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans } from "./pages";
+import { Home, Login, CreateBusiness, Dashboard, Calls, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing } from "./pages";
 import "./App.css";
 
 function Protected({ children }) {
@@ -45,10 +45,14 @@ export default function App() {
           <Route path="create-business" element={<CreateBusiness />} />
           <Route path="calls" element={<CallsWithContext />} />
           <Route path="calls/:id" element={<CallDetail />} />
+          <Route path="leads" element={<LeadsWithContext />} />
+          <Route path="leads/:id" element={<LeadDetailWithContext />} />
           <Route path="bookings" element={<BookingsWithContext />} />
           <Route path="follow-ups" element={<FollowUpsWithContext />} />
+          <Route path="conversations" element={<ConversationsWithContext />} />
           <Route path="metrics" element={<MetricsWithContext />} />
           <Route path="plans" element={<PlansWithContext />} />
+          <Route path="billing" element={<BillingWithContext />} />
           <Route path="settings" element={<SettingsWithContext />} />
           <Route path="tenants" element={<Tenants />} />
         </Route>
@@ -90,4 +94,24 @@ function SettingsWithContext() {
 function PlansWithContext() {
   const { tenantId } = useOutletContext();
   return <Plans tenantId={tenantId} />;
+}
+
+function LeadsWithContext() {
+  const { tenantId } = useOutletContext();
+  return <Leads tenantId={tenantId} />;
+}
+
+function LeadDetailWithContext() {
+  const { tenantId } = useOutletContext();
+  return <LeadDetail tenantId={tenantId} />;
+}
+
+function ConversationsWithContext() {
+  const { tenantId } = useOutletContext();
+  return <Conversations tenantId={tenantId} />;
+}
+
+function BillingWithContext() {
+  const { tenantId } = useOutletContext();
+  return <Billing tenantId={tenantId} />;
 }

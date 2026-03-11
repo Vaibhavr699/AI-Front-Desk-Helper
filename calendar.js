@@ -48,4 +48,64 @@ if (clientEmail && privateKey) {
   );
 }
 
-module.exports = calendar;
+/** Check if a date/time is available on Google Calendar (FreeBusy). */
+async function checkAvailability(date, time) {
+  if (!calendar) {
+    console.log("[Calendar] Google Calendar disabled, assuming available.");
+    return true;
+  }
+  
+  try {
+    // Combine date and time for start/end
+    const start = new Date(`${date}T${time}`);
+    const end = new Date(start.getTime() + 60 * 60 * 1000); // Assume 1 hour default
+
+    const res = await calendar.freebusy.query({
+      requestBody: {
+        timeMin: start.toISOString(),
+        timeMax: end.toISOString(),
+        items: [{ id: "primary" }],
+      },
+    });
+
+    const busy = res.data.calendars.primary.busy || [];
+    return busy.length === 0;
+  } catch (error) {
+    console.error("[Calendar] Availability check failed:", error.message);
+    return true; // Fail safe to available if check error
+  }
+}
+
+/** Create an event on Google Calendar from a booking. */
+async function syncToGoogleCalendar(booking) {
+  if (!calendar) return;
+
+  try {
+    const start = new Date(`${booking.preferred_date}T${booking.appointment_time || "09:00:00"}`);
+    const end = new Date(start.getTime() + 60 * 60 * 1000);
+
+    const event = {
+      summary: `Booking: ${booking.contact_name} (${booking.job_type || "Service"})`,
+      description: `Notes: ${booking.notes || "None"}\nScope: ${booking.scope || "N/A"}`,
+      location: booking.address ? `${booking.address}, ${booking.city || ""}` : booking.city || "",
+      start: { dateTime: start.toISOString() },
+      end: { dateTime: end.toISOString() },
+    };
+
+    const res = await calendar.events.insert({
+      calendarId: "primary",
+      requestBody: event,
+    });
+
+    console.log("[Calendar] Event created:", res.data.htmlLink);
+    return res.data;
+  } catch (error) {
+    console.error("[Calendar] Sync failed:", error.message);
+  }
+}
+
+module.exports = {
+  instance: calendar,
+  checkAvailability,
+  syncToGoogleCalendar
+};

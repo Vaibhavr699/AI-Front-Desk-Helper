@@ -9,6 +9,7 @@ const { listPlans } = require("../lib/plans");
 const { configurePhoneWebhook, getClientForTenant, purchaseNewNumber, fetchAvailableNumbers } = require("../lib/twilio");
 
 const router = express.Router();
+const estimateRecovery = require("../services/estimateRecovery");
 
 /** Normalize a US phone to E.164 (+1XXXXXXXXXX). Returns null if invalid. */
 function normalizePhoneInput(raw) {
@@ -43,13 +44,26 @@ router.get("/calls", async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
     const offset = parseInt(req.query.offset, 10) || 0;
     const status = req.query.status;
-    let q = "SELECT * FROM calls WHERE tenant_id = $1";
+    let q = `
+      SELECT c.*, 
+             r.id as recording_id, 
+             r.transcript as transcript_preview
+      FROM calls c
+      LEFT JOIN LATERAL (
+        SELECT id, transcript 
+        FROM recordings 
+        WHERE call_id = c.id 
+        ORDER BY created_at DESC 
+        LIMIT 1
+      ) r ON true
+      WHERE c.tenant_id = $1
+    `;
     const params = [tenantId];
     if (status) {
       params.push(status);
-      q += " AND status = $2";
+      q += " AND c.status = $2";
     }
-    q += " ORDER BY started_at DESC LIMIT $" + (params.length + 1) + " OFFSET $" + (params.length + 2);
+    q += " ORDER BY c.started_at DESC LIMIT $" + (params.length + 1) + " OFFSET $" + (params.length + 2);
     params.push(limit, offset);
     const result = await db.query(q, params);
     res.json({ calls: result.rows });
@@ -68,6 +82,36 @@ router.get("/calls/:id", async (req, res) => {
     const call = r.rows[0];
     if (!call) return res.status(404).json({ error: "Not found" });
     res.json(call);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.patch("/calls/:id", async (req, res) => {
+  try {
+    const { status, metadata, disposition } = req.body || {};
+    const allowed = ["status", "metadata", "disposition"];
+    const setParts = [];
+    const values = [];
+
+    let i = 1;
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) {
+        setParts.push(`${key} = $${i}`);
+        values.push(req.body[key]);
+        i++;
+      }
+    }
+
+    if (setParts.length === 0) return res.status(400).json({ error: "No updates provided" });
+
+    values.push(req.params.id);
+    const query = `UPDATE calls SET ${setParts.join(", ")}, updated_at = now() WHERE id = $${i} RETURNING *`;
+    const result = await db.query(query, values);
+
+    if (result.rows.length === 0) return res.status(404).json({ error: "Not found" });
+    res.json(result.rows[0]);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error" });
@@ -123,7 +167,12 @@ router.get("/bookings", async (req, res) => {
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
     const result = await db.query(
-      "SELECT * FROM bookings WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT $2",
+      `SELECT b.*, t.name as technician_name 
+       FROM bookings b 
+       LEFT JOIN technicians t ON b.technician_id = t.id
+       WHERE b.tenant_id = $1 
+       ORDER BY b.preferred_date DESC, b.appointment_time DESC, b.created_at DESC 
+       LIMIT $2`,
       [tenantId, limit]
     );
     res.json({ bookings: result.rows });
@@ -133,25 +182,187 @@ router.get("/bookings", async (req, res) => {
   }
 });
 
-router.get("/follow-ups", async (req, res) => {
+router.patch("/bookings/:id", async (req, res) => {
   try {
-    const tenantId = getTenantIdFromQuery(req);
-    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
-    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
-    const status = req.query.status;
-    let q = "SELECT * FROM follow_ups WHERE tenant_id = $1";
-    const params = [tenantId];
-    if (status) {
-      params.push(status);
-      q += " AND status = $2";
+    const { status, technician_id, preferred_date, appointment_time, notes } = req.body || {};
+    const allowed = ["status", "technician_id", "preferred_date", "appointment_time", "notes"];
+    const setParts = [];
+    const values = [];
+    let i = 1;
+
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) {
+        setParts.push(`${key} = $${i}`);
+        values.push(req.body[key]);
+        i++;
+      }
     }
-    q += " ORDER BY due_at DESC LIMIT $" + (params.length + 1);
-    params.push(limit);
-    const result = await db.query(q, params);
-    res.json({ follow_ups: result.rows });
+
+    if (setParts.length === 0) return res.status(400).json({ error: "No updates provided" });
+
+    values.push(req.params.id);
+    const query = `UPDATE bookings SET ${setParts.join(", ")}, updated_at = now() WHERE id = $${i} RETURNING *`;
+    const result = await db.query(query, values);
+
+    if (result.rows.length === 0) return res.status(404).json({ error: "Not found" });
+    res.json(result.rows[0]);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error" });
+  }
+});
+
+// -------------------- Technicians --------------------
+
+router.get("/technicians", async (req, res) => {
+  try {
+    const tenantId = getTenantIdFromQuery(req);
+    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+    const result = await db.query(
+      "SELECT * FROM technicians WHERE tenant_id = $1 ORDER BY name ASC",
+      [tenantId]
+    );
+    res.json({ technicians: result.rows });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.post("/technicians", async (req, res) => {
+  try {
+    const tenantId = getTenantIdFromQuery(req);
+    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+    const { name, email, phone } = req.body || {};
+    if (!name) return res.status(400).json({ error: "Name is required" });
+    const result = await db.query(
+      "INSERT INTO technicians (tenant_id, name, email, phone) VALUES ($1, $2, $3, $4) RETURNING *",
+      [tenantId, name, email, phone]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.patch("/technicians/:id", async (req, res) => {
+  try {
+    const { name, email, phone } = req.body || {};
+    const result = await db.query(
+      "UPDATE technicians SET name = COALESCE($1, name), email = COALESCE($2, email), phone = COALESCE($3, phone), updated_at = now() WHERE id = $4 RETURNING *",
+      [name, email, phone, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Not found" });
+    res.json(result.rows[0]);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.delete("/technicians/:id", async (req, res) => {
+  try {
+    await db.query("DELETE FROM technicians WHERE id = $1", [req.params.id]);
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.get("/followups", async (req, res) => {
+  try {
+    const tenantId = getTenantIdFromQuery(req);
+    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+
+    // Join with leads to get estimated revenue and other CRM data
+    const result = await db.query(
+      `SELECT er.*, 
+              l.estimated_revenue_cents,
+              l.name as lead_name,
+              l.status as lead_status,
+              (SELECT MAX(created_at) FROM recovery_touches WHERE recovery_id = er.id) as last_contact
+       FROM estimate_recoveries er
+       LEFT JOIN leads l ON er.lead_id = l.id
+       WHERE er.tenant_id = $1 AND er.status IN ('active', 'paused')
+       ORDER BY er.next_action_at ASC`,
+      [tenantId]
+    );
+
+    res.json({ followups: result.rows });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.post("/followups/:id/sms", async (req, res) => {
+  try {
+    const recovery = await estimateRecovery.getRecoveryById(req.params.id);
+    if (!recovery) return res.status(404).json({ error: "Not found" });
+
+    const tenant = await getTenantById(recovery.tenant_id);
+    const stepDef = estimateRecovery.ALL_STEPS.get(recovery.current_step);
+    
+    const vars = {
+      first_name: recovery.contact_name?.split(/\s+/)[0] || "there",
+      company_name: tenant.company_name || tenant.name
+    };
+
+    await estimateRecovery.sendRecoverySms(recovery, tenant, stepDef, vars);
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/followups/:id/call", async (req, res) => {
+  try {
+    const recovery = await estimateRecovery.getRecoveryById(req.params.id);
+    if (!recovery) return res.status(404).json({ error: "Not found" });
+
+    const tenant = await getTenantById(recovery.tenant_id);
+    const stepDef = estimateRecovery.ALL_STEPS.get(recovery.current_step);
+    
+    const vars = {
+      first_name: recovery.contact_name?.split(/\s+/)[0] || "there",
+      company_name: tenant.company_name || tenant.name
+    };
+
+    await estimateRecovery.makeRecoveryCall(recovery, tenant, stepDef, vars);
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.patch("/followups/:id/status", async (req, res) => {
+  try {
+    const { status } = req.body; // 'booked' or 'lost'
+    const recoveryId = req.params.id;
+
+    if (status === 'booked') {
+      await estimateRecovery.markConverted(recoveryId);
+      // Also update the lead status if linked
+      const rec = await estimateRecovery.getRecoveryById(recoveryId);
+      if (rec.lead_id) {
+        await db.query("UPDATE leads SET status = 'Booked' WHERE id = $1", [rec.lead_id]);
+      }
+    } else if (status === 'lost') {
+      await estimateRecovery.markCancelled(recoveryId);
+      const rec = await estimateRecovery.getRecoveryById(recoveryId);
+      if (rec.lead_id) {
+        await db.query("UPDATE leads SET status = 'Lost' WHERE id = $1", [rec.lead_id]);
+      }
+    }
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -160,55 +371,164 @@ router.get("/metrics", async (req, res) => {
     const tenantId = getTenantIdFromQuery(req);
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
 
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
     const [
-      totalCalls,
-      bookedCalls,
-      transferredCalls,
-      revenue,
-      byDisposition,
+      salesStats,
+      aiStats,
+      sourceStats,
+      trendStats
     ] = await Promise.all([
+      // 1. Sales Metrics
       db.query(
-        "SELECT COUNT(*) as count FROM calls WHERE tenant_id = $1 AND started_at > now() - interval '30 days'",
+        `SELECT 
+          COUNT(DISTINCT l.id) as leads_generated,
+          COUNT(DISTINCT er.id) as estimates_sent,
+          COUNT(DISTINCT b.id) as estimates_accepted,
+          COALESCE(SUM(b.revenue_cents), 0) as revenue_booked
+         FROM leads l
+         LEFT JOIN estimate_recoveries er ON er.lead_id = l.id AND er.created_at > $2
+         LEFT JOIN bookings b ON b.lead_id = l.id AND b.created_at > $2
+         WHERE l.tenant_id = $1 AND l.created_at > $2`,
+        [tenantId, thirtyDaysAgo]
+      ),
+      // 2. AI Performance
+      db.query(
+        `SELECT 
+          COUNT(*) as calls_handled,
+          COUNT(*) FILTER (WHERE transferred = true) as human_transferred,
+          (SELECT COUNT(*) FROM bookings WHERE tenant_id = $1 AND call_id IS NOT NULL AND created_at > $2) as appointments_booked,
+          (SELECT COUNT(*) FROM estimate_recoveries WHERE tenant_id = $1 AND status = 'converted' AND updated_at > $2) as missed_calls_recovered
+         FROM calls 
+         WHERE tenant_id = $1 AND started_at > $2`,
+        [tenantId, thirtyDaysAgo]
+      ),
+      // 3. Lead Sources (Distribution)
+      db.query(
+        `SELECT 
+          COALESCE(channel, 'unknown') as source,
+          COUNT(*) as count
+         FROM messages
+         WHERE tenant_id = $1 AND created_at > $2 AND direction = 'inbound'
+         GROUP BY channel
+         UNION ALL
+         SELECT 'phone' as source, COUNT(*) as count FROM calls WHERE tenant_id = $1 AND started_at > $2
+         ORDER BY count DESC`,
+        [tenantId, thirtyDaysAgo]
+      ),
+      // 4. Trend Data (Last 7 Days)
+      db.query(
+        `SELECT 
+          d.day::date as date,
+          COUNT(l.id) as leads,
+          COUNT(b.id) as bookings
+         FROM generate_series(now() - interval '6 days', now(), interval '1 day') d(day)
+         LEFT JOIN leads l ON l.tenant_id = $1 AND l.created_at::date = d.day::date
+         LEFT JOIN bookings b ON b.tenant_id = $1 AND b.created_at::date = d.day::date
+         GROUP BY d.day
+         ORDER BY d.day ASC`,
+        [tenantId]
+      )
+    ]);
+
+    const sales = salesStats.rows[0];
+    const ai = aiStats.rows[0];
+    
+    // Calculate close rate
+    const closeRate = sales.leads_generated > 0 
+      ? Math.round((sales.estimates_accepted / sales.leads_generated) * 100) 
+      : 0;
+
+    res.json({
+      period: "30d",
+      sales: {
+        leads_generated: parseInt(sales.leads_generated, 10),
+        estimates_sent: parseInt(sales.estimates_sent, 10),
+        estimates_accepted: parseInt(sales.estimates_accepted, 10),
+        revenue_booked: parseInt(sales.revenue_booked, 10),
+        close_rate: closeRate
+      },
+      ai: {
+        calls_handled: parseInt(ai.calls_handled, 10),
+        human_transferred: parseInt(ai.human_transferred, 10),
+        appointments_booked: parseInt(ai.appointments_booked, 10),
+        missed_calls_recovered: parseInt(ai.missed_calls_recovered, 10),
+        ai_success_rate: ai.calls_handled > 0 
+          ? Math.round(((ai.calls_handled - ai.human_transferred) / ai.calls_handled) * 100) 
+          : 0
+      },
+      sources: sourceStats.rows.map(r => ({
+        label: r.source.charAt(0).toUpperCase() + r.source.slice(1),
+        value: parseInt(r.count, 10)
+      })),
+      trends: trendStats.rows.map(r => ({
+        date: r.date,
+        leads: parseInt(r.leads, 10),
+        bookings: parseInt(r.bookings, 10)
+      }))
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+
+router.get("/activity-feed", async (req, res) => {
+  try {
+    const tenantId = getTenantIdFromQuery(req);
+    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+
+    const [calls, bookings, recoveries, followUps] = await Promise.all([
+      db.query(
+        "SELECT id, started_at as at, 'call' as type, disposition, transferred FROM calls WHERE tenant_id = $1 ORDER BY started_at DESC LIMIT 15",
         [tenantId]
       ),
       db.query(
-        "SELECT COUNT(DISTINCT c.id) as count FROM calls c JOIN bookings b ON b.call_id = c.id WHERE c.tenant_id = $1 AND c.started_at > now() - interval '30 days'",
+        "SELECT id, created_at as at, 'booking' as type, contact_name, status FROM bookings WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 15",
         [tenantId]
       ),
       db.query(
-        "SELECT COUNT(*) as count FROM calls WHERE tenant_id = $1 AND transferred = true AND started_at > now() - interval '30 days'",
+        "SELECT id, updated_at as at, 'recovery' as type, status, contact_name FROM estimate_recoveries WHERE tenant_id = $1 ORDER BY updated_at DESC LIMIT 15",
         [tenantId]
       ),
       db.query(
-        "SELECT COALESCE(SUM(revenue_cents), 0) as cents FROM bookings WHERE tenant_id = $1 AND created_at > now() - interval '30 days'",
-        [tenantId]
-      ),
-      db.query(
-        `SELECT disposition, COUNT(*) as count FROM calls
-         WHERE tenant_id = $1 AND started_at > now() - interval '30 days'
-         GROUP BY disposition`,
+        "SELECT id, created_at as at, 'follow_up' as type, follow_up_type, status FROM follow_ups WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 15",
         [tenantId]
       ),
     ]);
 
-    const total = parseInt(totalCalls.rows[0].count, 10) || 0;
-    const booked = parseInt(bookedCalls.rows[0].count, 10) || 0;
-    const transferred = parseInt(transferredCalls.rows[0].count, 10) || 0;
+    const events = [
+      ...calls.rows.map(r => ({
+        id: r.id,
+        at: r.at,
+        type: "call",
+        text: r.transferred ? "AI transferred call to human" : (r.disposition === 'booked' ? "AI booked appointment on call" : "AI answered call")
+      })),
+      ...bookings.rows.map(r => ({
+        id: r.id,
+        at: r.at,
+        type: "booking",
+        text: r.status === 'scheduled' ? `Appointment booked: ${r.contact_name || 'Lead'}` : `Lead captured: ${r.contact_name || 'Lead'}`
+      })),
+      ...recoveries.rows.map(r => ({
+        id: r.id,
+        at: r.at,
+        type: "recovery",
+        text: r.status === 'converted' ? `Missed call recovered: ${r.contact_name || 'Lead'}` : `Recovery sequence active: ${r.contact_name || 'Lead'}`
+      })),
+      ...followUps.rows.map(r => ({
+        id: r.id,
+        at: r.at,
+        type: "follow_up",
+        text: `SMS followup sent: ${r.follow_up_type}`
+      }))
+    ];
 
-    res.json({
-      period: "30d",
-      total_calls: total,
-      booked_count: booked,
-      booked_pct: total ? Math.round((booked / total) * 100) : 0,
-      transferred_count: transferred,
-      transferred_pct: total ? Math.round((transferred / total) * 100) : 0,
-      ai_handled_count: total - transferred,
-      revenue_cents: parseInt(revenue.rows[0].cents, 10) || 0,
-      by_disposition: (byDisposition.rows || []).reduce((acc, r) => {
-        acc[r.disposition || "unknown"] = parseInt(r.count, 10);
-        return acc;
-      }, {}),
-    });
+    events.sort((a, b) => new Date(b.at) - new Date(a.at));
+
+    res.json({ feed: events.slice(0, 25) });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error" });
@@ -228,44 +548,32 @@ function maskFacebookToken(token) {
   return token.substring(0, 6) + "..." + token.slice(-6);
 }
 
-const TENANT_SELECT_TWILIO = `t.twilio_account_sid,
-       (t.twilio_account_sid IS NOT NULL AND t.twilio_auth_token IS NOT NULL AND t.twilio_auth_token != '') as has_twilio_credentials,`;
-const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.plan, t.facebook_page_id, t.facebook_page_access_token`;
+const TENANT_SELECT_TWILIO = `t.twilio_account_sid, t.twilio_auth_token`;
+const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.plan, t.facebook_page_id, t.facebook_page_access_token, t.tone_of_voice, t.objection_handling_config, t.business_hours, t.afterhours_behavior, t.google_calendar_linked, t.google_calendar_id, t.zapier_webhook_url, t.api_key, t.website, t.voice_model`;
 const TENANT_SELECT_BASE_LEGACY = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled`;
 
 router.get("/tenants/:id", async (req, res) => {
   try {
-    let r;
-    try {
-      r = await db.query(
-        `SELECT ${TENANT_SELECT_BASE}, ${TENANT_SELECT_TWILIO}
-         (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1`,
-        [req.params.id]
-      );
-    } catch (colErr) {
-      if (colErr.code === "42703") {
-        r = await db.query(
-          `SELECT ${TENANT_SELECT_BASE_LEGACY}, ${TENANT_SELECT_TWILIO}
-           (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1`,
-          [req.params.id]
-        );
-        if (r.rows[0]) {
-          r.rows[0].twilio_account_sid = null;
-          r.rows[0].has_twilio_credentials = false;
-          r.rows[0].plan = "basic";
-        }
-      } else throw colErr;
-    }
-    if (!r.rows[0]) return res.status(404).json({ error: "Not found" });
-    const row = r.rows[0];
-    const out = { ...row };
-    delete out.twilio_account_sid;
-    delete out.facebook_page_access_token;
-    out.twilio_account_sid_masked = maskTwilioSid(row.twilio_account_sid);
-    out.facebook_token_masked = maskFacebookToken(row.facebook_page_access_token);
-    out.has_twilio_credentials = row.has_twilio_credentials === true;
-    if (out.plan == null) out.plan = "basic";
-    res.json(out);
+    const r = await db.query(
+      `SELECT ${TENANT_SELECT_BASE}, ${TENANT_SELECT_TWILIO},
+       (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1`,
+      [req.params.id]
+    );
+    const tenant = r.rows[0];
+    if (!tenant) return res.status(404).json({ error: "Not found" });
+
+    const masked = { ...tenant };
+    masked.twilio_account_sid_masked = maskTwilioSid(tenant.twilio_account_sid);
+    masked.facebook_token_masked = maskFacebookToken(tenant.facebook_page_access_token);
+    masked.api_key_masked = tenant.api_key ? tenant.api_key.substring(0, 4) + "..." + tenant.api_key.slice(-4) : null;
+    masked.has_twilio_credentials = !!(tenant.twilio_account_sid && tenant.twilio_auth_token);
+    
+    delete masked.twilio_account_sid;
+    delete masked.twilio_auth_token;
+    delete masked.facebook_page_access_token;
+    delete masked.api_key;
+
+    res.json(masked);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error" });
@@ -274,19 +582,31 @@ router.get("/tenants/:id", async (req, res) => {
 
 router.get("/tenants", async (req, res) => {
   try {
-    const userId = req.user?.sub;
+    // If regular user, only show their business
     const userTenantId = req.user?.tenant_id;
-    if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
+    let query = `SELECT ${TENANT_SELECT_BASE}, (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t ORDER BY t.name`;
+    let params = [];
+    
     if (userTenantId) {
-      const r = await db.query(
-        "SELECT t.id, t.name, t.slug, t.company_name, (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1",
-        [userTenantId]
-      );
-      return res.json({ tenants: r.rows });
+      query = `SELECT ${TENANT_SELECT_BASE}, (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1`;
+      params = [userTenantId];
     }
-    res.json({ tenants: [] });
+
+    const r = await db.query(query, params);
+    const tenants = r.rows.map(t => {
+      const masked = { ...t };
+      masked.twilio_account_sid_masked = maskTwilioSid(t.twilio_account_sid);
+      masked.api_key_masked = t.api_key ? t.api_key.substring(0, 4) + "..." + t.api_key.slice(-4) : null;
+      masked.has_twilio_credentials = !!(t.twilio_account_sid && t.twilio_auth_token);
+      
+      delete masked.twilio_account_sid;
+      delete masked.twilio_auth_token;
+      delete masked.facebook_page_access_token;
+      delete masked.api_key;
+      return masked;
+    });
+
+    res.json({ tenants });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error" });
@@ -450,7 +770,14 @@ function normalizeTransferNumbers(value) {
 router.patch("/tenants/:id", async (req, res) => {
   try {
     const id = req.params.id;
-    let allowed = ["welcome_message", "instructions", "transfer_numbers", "transfer_sms_brief", "crm_webhook_url", "crm_type", "follow_up_enabled", "plan", "twilio_account_sid", "twilio_auth_token", "facebook_page_id", "facebook_page_access_token"];
+    let allowed = [
+      "welcome_message", "instructions", "transfer_numbers", "transfer_sms_brief", 
+      "crm_webhook_url", "crm_type", "follow_up_enabled", "plan", 
+      "twilio_account_sid", "twilio_auth_token", "facebook_page_id", "facebook_page_access_token",
+      "tone_of_voice", "objection_handling_config", "business_hours", "afterhours_behavior", 
+      "google_calendar_linked", "google_calendar_id", "zapier_webhook_url",
+      "website", "voice_model"
+    ];
     try {
       await db.query("SELECT twilio_account_sid FROM tenants WHERE id = $1 LIMIT 1", [id]);
     } catch (colErr) {
@@ -489,7 +816,7 @@ router.patch("/tenants/:id", async (req, res) => {
     let r;
     try {
       r = await db.query(
-        `SELECT ${TENANT_SELECT_BASE}, ${TENANT_SELECT_TWILIO}
+        `SELECT ${TENANT_SELECT_BASE}, ${TENANT_SELECT_TWILIO},
          (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1`,
         [id]
       );
@@ -512,8 +839,10 @@ router.patch("/tenants/:id", async (req, res) => {
     const out = { ...row };
     delete out.twilio_account_sid;
     delete out.facebook_page_access_token;
+    delete out.api_key;
     out.twilio_account_sid_masked = maskTwilioSid(row.twilio_account_sid);
     out.facebook_token_masked = maskFacebookToken(row.facebook_page_access_token);
+    out.api_key_masked = row.api_key ? row.api_key.substring(0, 4) + "..." + row.api_key.slice(-4) : null;
     out.has_twilio_credentials = row.has_twilio_credentials === true;
     if (out.plan == null) out.plan = "basic";
     res.json(out);
@@ -628,17 +957,17 @@ router.delete("/phone-numbers/:id", async (req, res) => {
 
 // -------------------- Estimate Recoveries --------------------
 
-const estimateRecovery = require("../services/estimateRecovery");
-
-// List recoveries for tenant
-router.get("/recoveries", async (req, res) => {
+// List sales wins (converted recoveries)
+router.get("/sales-wins", async (req, res) => {
   try {
     const tenantId = getTenantIdFromQuery(req);
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
-    const status = req.query.status || null;
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
-    const rows = await estimateRecovery.getRecoveriesByTenant(tenantId, { status, limit });
-    res.json({ recoveries: rows });
+    const result = await db.query(
+      "SELECT * FROM estimate_recoveries WHERE tenant_id = $1 AND status = 'converted' ORDER BY updated_at DESC LIMIT $2",
+      [tenantId, limit]
+    );
+    res.json({ sales_wins: result.rows });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error" });
@@ -744,4 +1073,79 @@ router.post("/recoveries/:id/cancel", async (req, res) => {
   }
 });
 
+// -------------------- Conversations Center --------------------
+
+router.get("/conversations", async (req, res) => {
+  try {
+    const tenantId = getTenantIdFromQuery(req);
+    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+
+    const result = await db.query(
+      `SELECT l.id, l.name, l.phone, l.status, l.metadata as lead_metadata,
+              act.last_at, act.last_body, act.last_type, act.last_channel
+       FROM leads l
+       JOIN (
+         SELECT lead_id, 
+                MAX(at) as last_at,
+                (ARRAY_AGG(body ORDER BY at DESC))[1] as last_body,
+                (ARRAY_AGG(type ORDER BY at DESC))[1] as last_type,
+                (ARRAY_AGG(channel ORDER BY at DESC))[1] as last_channel
+         FROM (
+           SELECT lead_id, created_at as at, body, 'message' as type, channel FROM messages WHERE tenant_id = $1
+           UNION ALL
+           SELECT lead_id, started_at as at, transcript as body, 'call' as type, 'voice' as channel FROM calls WHERE tenant_id = $1 AND lead_id IS NOT NULL
+         ) t
+         GROUP BY lead_id
+       ) act ON l.id = act.lead_id
+       WHERE l.tenant_id = $1
+       ORDER BY act.last_at DESC`,
+      [tenantId]
+    );
+
+    res.json({ conversations: result.rows });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.get("/conversations/:id/timeline", async (req, res) => {
+  try {
+    const leadId = req.params.id;
+    const result = await db.query(
+      `SELECT 'message' as type, id, channel, direction, body as content, created_at as at, metadata
+       FROM messages
+       WHERE lead_id = $1
+       UNION ALL
+       SELECT 'call' as type, id, 'voice' as channel, 'inbound' as direction, transcript as content, started_at as at, metadata
+       FROM calls
+       WHERE lead_id = $1
+       ORDER BY at ASC`,
+      [leadId]
+    );
+
+    res.json({ timeline: result.rows });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.post("/tenants/:id/reset-api-key", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const newKey = require("crypto").randomBytes(24).toString("base64");
+    const result = await db.query(
+      "UPDATE tenants SET api_key = $1, updated_at = now() WHERE id = $2 RETURNING api_key",
+      [newKey, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Not found" });
+    res.json({ api_key: result.rows[0].api_key });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 module.exports = router;
+

@@ -368,6 +368,7 @@ if (SERVE_DASHBOARD) {
 } else {
   const FRONTEND_URL = process.env.FRONTEND_URL || "";
   app.get("/", (req, res) => {
+if (FRONTEND_URL) return res.redirect(302, FRONTEND_URL);
     res.set("Content-Type", "text/plain").status(200).send(
       "AI Front Desk API. Dashboard is deployed separately. Use your frontend URL to sign in, or set FRONTEND_URL to redirect / here."
     );

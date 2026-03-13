@@ -2143,7 +2143,8 @@ ${oh.spouse ? `- If they need to talk to a spouse: ${oh.spouse}` : ""}
       }
 
       const voice = process.env.OPENAI_REALTIME_VOICE || "shimmer";
-      const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 800;
+      const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 1000;
+      const vadThreshold = parseFloat(process.env.REALTIME_VAD_THRESHOLD) || 0.6;
       const payloadToOpenAI = {
         type: "session.update",
         session: {
@@ -2154,7 +2155,7 @@ ${oh.spouse ? `- If they need to talk to a spouse: ${oh.spouse}` : ""}
           tools: isRecovery ? RECOVERY_TOOLS : REALTIME_TOOLS,
           turn_detection: {
             type: "server_vad",
-            threshold: 0.5,
+            threshold: vadThreshold,
             prefix_padding_ms: 300,
             silence_duration_ms: silenceMs,
           },
@@ -2209,7 +2210,18 @@ ${oh.spouse ? `- If they need to talk to a spouse: ${oh.spouse}` : ""}
           console.log("[AI-Desk] Ignoring user speech during finalization");
           return;
         }
-        console.log("[AI-Desk] User started speaking");
+        console.log("[AI-Desk] User started speaking - interrupting AI");
+        
+        // 1. Tell OpenAI to stop current response
+        sendToOpenAI({ type: "response.cancel" });
+
+        // 2. Tell Twilio to clear any queued audio
+        if (twilioSocket.readyState === WebSocket.OPEN && streamSid) {
+          twilioSocket.send(JSON.stringify({
+            event: "clear",
+            streamSid: streamSid
+          }));
+        }
       }
 
       if (data.type === "conversation.item.input_audio_transcription.completed") {

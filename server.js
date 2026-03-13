@@ -1908,6 +1908,10 @@ app.use((req, res, next) => {
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+server.on("upgrade", (request, socket, head) => {
+  console.log("[DEBUG] WebSocket upgrade request received for URL:", request.url);
+});
+
 wss.on("connection", async (twilioSocket, req) => {
   let instructions = "";
   const rawUrl = req.url || "";
@@ -2030,6 +2034,8 @@ wss.on("connection", async (twilioSocket, req) => {
         "OpenAI-Beta": "realtime=v1"
       },
     });
+    console.log("[DEBUG] Connecting to OpenAI Realtime API:", url);
+
     openaiSocket.on("open", async () => {
       openaiReady = true;
       while (openaiQueue.length) {
@@ -2146,12 +2152,24 @@ ${oh.spouse ? `- If they need to talk to a spouse: ${oh.spouse}` : ""}
             silence_duration_ms: silenceMs,
           },
           input_audio_transcription: { model: "whisper-1" },
-          control_v2: true, // Some versions might need this, but let's stick to transcription for now
         },
       };
 
       console.log("[DEBUG] Sending payload to OpenAI:", JSON.stringify(payloadToOpenAI, null, 2));
       sendToOpenAI(payloadToOpenAI);
+
+      // Trigger initial greeting for non-recovery calls to ensure AI speaks first
+      if (!isRecovery) {
+        console.log("[AI-Desk] Triggering initial greeting");
+        sendToOpenAI({
+          type: "response.create",
+          response: {
+            modalities: ["audio", "text"],
+            instructions: "Greet the user warmly as a professional receptionist. Ask how you can help them today."
+          }
+        });
+      }
+
 
       if (isRecovery && recoveryScript) {
         console.log("[AI-Desk] Triggering recovery greeting: %s", recoveryScript);

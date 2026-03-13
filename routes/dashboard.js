@@ -374,11 +374,15 @@ router.get("/metrics", async (req, res) => {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
+    console.log(`[Metrics] Fetching for tenant=${tenantId}`);
+
     const [
       salesStats,
       aiStats,
       sourceStats,
-      trendStats
+      trendStats,
+      todayStats,
+      pipelineStats
     ] = await Promise.all([
       // 1. Sales Metrics
       db.query(
@@ -429,6 +433,23 @@ router.get("/metrics", async (req, res) => {
          GROUP BY d.day
          ORDER BY d.day ASC`,
         [tenantId]
+      ),
+      // 5. Today Stats
+      db.query(
+        `SELECT
+          (SELECT COUNT(*) FROM calls WHERE tenant_id = $1 AND started_at >= now() - interval '24 hours') as calls,
+          (SELECT COUNT(*) FROM estimate_recoveries WHERE tenant_id = $1 AND status = 'converted' AND updated_at >= now() - interval '24 hours') as recovered,
+          (SELECT COUNT(*) FROM leads WHERE tenant_id = $1 AND created_at >= now() - interval '24 hours') as leads,
+          (SELECT COUNT(*) FROM bookings WHERE tenant_id = $1 AND created_at >= now() - interval '24 hours') as booked`,
+        [tenantId]
+      ),
+      // 6. Pipeline Stats
+      db.query(
+        `SELECT
+          (SELECT COUNT(*) FROM leads WHERE tenant_id = $1 AND status NOT IN ('Closed', 'Lost')) as open_estimates,
+          (SELECT COUNT(*) FROM bookings WHERE tenant_id = $1 AND status = 'scheduled') as jobs_scheduled,
+          (SELECT COALESCE(SUM(revenue_cents), 0) FROM bookings WHERE tenant_id = $1 AND status = 'scheduled') as estimated_revenue`,
+        [tenantId]
       )
     ]);
 
@@ -440,8 +461,26 @@ router.get("/metrics", async (req, res) => {
       ? Math.round((sales.estimates_accepted / sales.leads_generated) * 100) 
       : 0;
 
+    console.log(`[Metrics] Response structure:`, { 
+      period: "30d", 
+      today: !!todayStats.rows[0], 
+      pipeline: !!pipelineStats.rows[0],
+      sales: !!salesStats.rows[0]
+    });
+
     res.json({
       period: "30d",
+      today: {
+        calls: parseInt(todayStats.rows[0].calls || 0, 10),
+        recovered: parseInt(todayStats.rows[0].recovered || 0, 10),
+        leads: parseInt(todayStats.rows[0].leads || 0, 10),
+        booked: parseInt(todayStats.rows[0].booked || 0, 10)
+      },
+      pipeline: {
+        open_estimates: parseInt(pipelineStats.rows[0].open_estimates || 0, 10),
+        jobs_scheduled: parseInt(pipelineStats.rows[0].jobs_scheduled || 0, 10),
+        estimated_revenue: parseInt(pipelineStats.rows[0].estimated_revenue || 0, 10)
+      },
       sales: {
         leads_generated: parseInt(sales.leads_generated, 10),
         estimates_sent: parseInt(sales.estimates_sent, 10),
@@ -549,7 +588,7 @@ function maskFacebookToken(token) {
 }
 
 const TENANT_SELECT_TWILIO = `t.twilio_account_sid, t.twilio_auth_token`;
-const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.plan, t.facebook_page_id, t.facebook_page_access_token, t.tone_of_voice, t.objection_handling_config, t.business_hours, t.afterhours_behavior, t.google_calendar_linked, t.google_calendar_id, t.zapier_webhook_url, t.api_key, t.website, t.voice_model`;
+const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.plan, t.facebook_page_id, t.facebook_page_access_token, t.tone_of_voice, t.objection_handling_config, t.business_hours, t.afterhours_behavior, t.google_calendar_linked, t.google_calendar_id, t.zapier_webhook_url, t.api_key, t.website, t.voice_model, t.faqs, t.plan_overrides, t.promo_label`;
 const TENANT_SELECT_BASE_LEGACY = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled`;
 
 router.get("/tenants/:id", async (req, res) => {
@@ -776,7 +815,7 @@ router.patch("/tenants/:id", async (req, res) => {
       "twilio_account_sid", "twilio_auth_token", "facebook_page_id", "facebook_page_access_token",
       "tone_of_voice", "objection_handling_config", "business_hours", "afterhours_behavior", 
       "google_calendar_linked", "google_calendar_id", "zapier_webhook_url",
-      "website", "voice_model"
+      "website", "voice_model", "faqs"
     ];
     try {
       await db.query("SELECT twilio_account_sid FROM tenants WHERE id = $1 LIMIT 1", [id]);
@@ -806,7 +845,10 @@ router.patch("/tenants/:id", async (req, res) => {
     const set = Object.keys(updates).map((k, i) => `${k} = $${i + 1}`).join(", ");
     const values = Object.keys(updates).map((k) => {
       const v = updates[k];
-      return k === "transfer_numbers" ? JSON.stringify(v) : v;
+      if (["transfer_numbers", "business_hours", "objection_handling_config", "faqs"].includes(k)) {
+        return JSON.stringify(v);
+      }
+      return v;
     });
     values.push(id);
     await db.query(

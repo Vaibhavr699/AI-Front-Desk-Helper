@@ -150,7 +150,7 @@
 
       if (!hasWelcomed) {
         addMessage(
-          "Hi there 👋 Welcome to Gladiators Painting! I can help you get a fast quote. Are you looking for interior or exterior painting?",
+          "Hi there 👋 Welcome! I can help you book an appointment or answer your questions. How can I help you today?",
           false
         );
         hasWelcomed = true;

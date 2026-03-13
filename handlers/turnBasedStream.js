@@ -13,7 +13,7 @@ const BOOK_APPOINTMENT_TOOL = {
   type: "function",
   function: {
     name: "book_appointment",
-    description: "Finalize and save the booking. Call this when you have at least: contact name, contact phone, and address OR city. Include EVERY detail the caller gave: contact_name, contact_phone, address, city, scope (interior/exterior/both/rooms), preferred_date, notes (pets, access, etc.). Do not omit any field the caller provided—all fields are saved to the database and sent to CRM.",
+    description: "Finalize and save the booking. Call this when you have at least: contact name, contact phone, and address OR city. Include EVERY detail the caller gave: contact_name, contact_phone, address, city, scope (what are they looking for), preferred_date, notes (pets, access, etc.). Do not omit any field the caller provided—all fields are saved to the database and sent to CRM.",
     parameters: {
       type: "object",
       properties: {
@@ -22,7 +22,7 @@ const BOOK_APPOINTMENT_TOOL = {
         contact_email: { type: "string", description: "Email if given" },
         address: { type: "string", description: "Street address" },
         city: { type: "string", description: "City" },
-        scope: { type: "string", description: "Interior, exterior, both, rooms, etc." },
+        scope: { type: "string", description: "What services or products they need, specific details about their request, etc." },
         job_type: { type: "string", description: "Residential or commercial" },
         preferred_date: { type: "string", description: "Preferred date if given" },
         notes: { type: "string", description: "Any extra notes" },
@@ -113,6 +113,11 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
       const instructions = (tenant && tenant.instructions)
         ? tenant.instructions
         : "You are a professional receptionist. Be warm and helpful. Capture name, phone, address. Offer a free estimate. Keep responses concise and natural for phone.";
+      
+      const faqText = (tenant && Array.isArray(tenant.faqs) && tenant.faqs.length > 0)
+        ? "\n\nFrequently Asked Questions:\n" + tenant.faqs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n")
+        : "";
+
       const welcome = (tenant && tenant.welcome_message)
         ? tenant.welcome_message
         : "Thanks for calling. What can we help you with today? Would you like to schedule a free estimate?";
@@ -120,7 +125,7 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
       if (conversationMessages.length === 0) {
         conversationMessages.push({
           role: "system",
-          content: `${instructions}\n\nCollect: (1) full name, (2) phone number, (3) address or city, (4) scope (interior/exterior/both/rooms), (5) preferred date if given, (6) any notes. When you have at least name, phone, and address OR city, call book_appointment with ALL details the caller gave. Keep replies short (1-3 sentences) for phone.`,
+          content: `${instructions}${faqText}\n\nCollect: (1) full name, (2) phone number, (3) address or city, (4) scope (what they need help with), (5) preferred date if given, (6) any notes. When you have at least name, phone, and address OR city, call book_appointment with ALL details the caller gave. Keep replies short (1-3 sentences) for phone. Let the conversation flow naturally and prioritize answering any of their questions directly from the Knowledge Base before pressing for appointment details.`,
         });
       }
       conversationMessages.push({ role: "user", content: text });

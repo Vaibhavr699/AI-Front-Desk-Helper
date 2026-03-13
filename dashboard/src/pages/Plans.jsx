@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { getPlans, getTenant, createCheckout, openBillingPortal, getSubscriptionStatus } from "../api";
 import { Loading } from "../components";
+import confetti from "canvas-confetti";
 
 const PLAN_EMOJI = { basic: "🥉", pro: "🥈", elite: "🥇" };
 const STATUS_LABELS = {
@@ -19,6 +20,7 @@ export default function Plans({ tenantId }) {
   const [error, setError] = useState("");
   const [checkoutLoading, setCheckoutLoading] = useState(null);
   const [message, setMessage] = useState("");
+  const [hasFiredConfetti, setHasFiredConfetti] = useState(false);
 
   // Check URL for success/canceled
   useEffect(() => {
@@ -59,6 +61,38 @@ export default function Plans({ tenantId }) {
       .then(setSubStatus)
       .catch(() => setSubStatus(null));
   }, [tenantId]);
+
+  useEffect(() => {
+    if (tenant?.promo_label && tenant?.plan_overrides && !hasFiredConfetti) {
+      // Check if any plan actually has an override applied to make the promo active
+      const hasActiveOverride = Object.values(tenant.plan_overrides).some(
+        plan => plan.monthly != null || plan.setup != null
+      );
+      
+      if (hasActiveOverride) {
+        // Fire confetti!
+        const duration = 2500;
+        const animationEnd = Date.now() + duration;
+        const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 100 };
+
+        const randomInRange = (min, max) => Math.random() * (max - min) + min;
+
+        const interval = setInterval(function() {
+          const timeLeft = animationEnd - Date.now();
+
+          if (timeLeft <= 0) {
+            return clearInterval(interval);
+          }
+
+          const particleCount = 50 * (timeLeft / duration);
+          confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } }));
+          confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } }));
+        }, 250);
+
+        setHasFiredConfetti(true);
+      }
+    }
+  }, [tenant, hasFiredConfetti]);
 
   async function handleSelectPlan(planId) {
     if (!tenantId) return;
@@ -121,11 +155,13 @@ export default function Plans({ tenantId }) {
         <div className="mb-6 rounded-xl border border-stone-200 bg-white shadow-sm p-4">
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div>
-              <p className="text-sm font-medium text-stone-700">
-                Current plan:{" "}
-                <span className="text-stone-900 capitalize font-semibold">{currentPlanId}</span>
-              </p>
-              <div className="flex items-center gap-2 mt-1">
+              {isSubscribed && (
+                <p className="text-sm font-medium text-stone-700">
+                  Current plan:{" "}
+                  <span className="text-stone-900 capitalize font-semibold">{currentPlanId}</span>
+                </p>
+              )}
+              <div className={`flex items-center gap-2 ${isSubscribed ? "mt-1" : ""}`}>
                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${status.color}`}>
                   {status.text}
                 </span>
@@ -159,6 +195,28 @@ export default function Plans({ tenantId }) {
           const isLoading = checkoutLoading === plan.id;
           const emoji = PLAN_EMOJI[plan.id] || "";
           const isPro = plan.id === "pro";
+
+          const originalMonthly = plan.priceMonthly ?? (plan.id === "basic" ? 297 : plan.id === "pro" ? 497 : 997);
+          const originalSetup = plan.setupFee ?? (plan.id === "basic" ? 400 : plan.id === "pro" ? 600 : 900);
+          
+          let displayMonthly = originalMonthly;
+          let displaySetup = originalSetup;
+          let hasMonthlyOverride = false;
+          let hasSetupOverride = false;
+          
+          if (tenant?.plan_overrides && tenant.plan_overrides[plan.id]) {
+            const planOverrides = tenant.plan_overrides[plan.id];
+            
+            if (planOverrides.monthly != null) {
+                displayMonthly = planOverrides.monthly / 100;
+                hasMonthlyOverride = true;
+            }
+            if (planOverrides.setup != null) {
+                displaySetup = planOverrides.setup / 100;
+                hasSetupOverride = true;
+            }
+          }
+          
           return (
             <div
               key={plan.id}
@@ -181,20 +239,56 @@ export default function Plans({ tenantId }) {
                     {plan.whoItIsFor || (plan.id === "basic" ? "Small ops" : plan.id === "pro" ? "Growing teams" : "Scaling companies")}
                   </span>
                 </div>
+                {tenant?.promo_label && (hasMonthlyOverride || hasSetupOverride) && (
+                   <div className="mt-4 relative p-3 rounded-lg border-2 border-dashed border-amber-300 bg-gradient-to-br from-amber-50 to-orange-50 shadow-sm overflow-hidden group">
+                     <div className="absolute -left-2 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full border-r-2 border-dashed border-amber-300"></div>
+                     <div className="absolute -right-2 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full border-l-2 border-dashed border-amber-300"></div>
+
+                     <div className="relative flex items-center justify-center gap-2">
+                       <span className="text-lg">🎟️</span>
+                       <span className="text-xs font-black text-amber-700 uppercase tracking-widest text-center">
+                         {tenant.promo_label}
+                       </span>
+                     </div>
+                   </div>
+                )}
                 <h2 className="mt-2 text-lg font-semibold text-stone-900">
                   {plan.name || plan.id}
                 </h2>
                 <p className="text-sm text-stone-600 mt-0.5">
                   {plan.tagline || (plan.id === "basic" ? "AI Front Desk Helper Starter" : plan.id === "pro" ? "AI Booking Assistant" : "AI Sales & Follow-Up Engine")}
                 </p>
+                
                 <div className="mt-4 flex items-baseline gap-1">
-                  <span className="text-2xl font-bold text-stone-900">
-                    ${plan.priceMonthly ?? (plan.id === "basic" ? 297 : plan.id === "pro" ? 497 : 997)}
-                  </span>
-                  <span className="text-sm text-stone-500">{plan.priceLabel ?? "/month"}</span>
+                  {hasMonthlyOverride ? (
+                    <div className="flex flex-col">
+                      <div className="flex items-baseline gap-2">
+                         <span className="text-2xl font-bold text-emerald-600">
+                           ${displayMonthly}
+                         </span>
+                         <span className="text-sm font-semibold text-emerald-600 tracking-wide uppercase">Offer price</span>
+                      </div>
+                      <div className="flex items-center gap-1 mt-1">
+                        <span className="text-sm text-stone-400 line-through decoration-stone-300">
+                          ${originalMonthly}
+                        </span>
+                        <span className="text-sm text-stone-500">{plan.priceLabel ?? "/month"}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <span className="text-2xl font-bold text-stone-900">
+                        ${displayMonthly}
+                      </span>
+                      <span className="text-sm text-stone-500">{plan.priceLabel ?? "/month"}</span>
+                    </>
+                  )}
                 </div>
-                <p className="mt-1 text-xs font-semibold text-brand-600">
-                  +${plan.setupFee ?? (plan.id === "basic" ? 400 : plan.id === "pro" ? 600 : 900)} setup fee
+                <p className="mt-1 text-xs font-semibold text-brand-600 flex items-center gap-1.5">
+                  {hasSetupOverride && (
+                     <span className="text-stone-400 line-through decoration-stone-300">${originalSetup}</span>
+                  )}
+                  {displaySetup === 0 ? "No setup fee" : `+$${displaySetup} setup fee`}
                 </p>
                 <div className="mt-3 flex gap-4 text-sm">
                   <span className="text-stone-600">

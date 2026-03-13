@@ -43,7 +43,7 @@ router.post("/voice", async (req, res) => {
 
     const wsUrl = (BASE_URL || "")
       .replace("https://", "wss://")
-      .replace("http://", "ws://") + "/twilio-media";
+      .replace("http://", "ws://") + "/twilio-media/" + tenant.id;
     let streamUrl = `${wsUrl}?CallSid=${encodeURIComponent(CallSid)}&From=${encodeURIComponent(fromNumber)}&To=${encodeURIComponent(toNumber)}`;
     const testCallFrom = (process.env.TEST_CALL_FROM || "").replace(/\s/g, "");
     if (testCallFrom && fromNumber && fromNumber.replace(/\D/g, "") === testCallFrom.replace(/\D/g, "")) {

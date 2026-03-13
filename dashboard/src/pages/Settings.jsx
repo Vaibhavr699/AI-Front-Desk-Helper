@@ -1,24 +1,26 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { 
-  getTenant, 
-  updateTenant, 
-  getPhoneNumbers, 
-  addPhoneNumber, 
+import {
+  getTenant,
+  updateTenant,
+  getPhoneNumbers,
+  addPhoneNumber,
   deletePhoneNumber,
-  resetApiKey 
+  getAvailableNumbers,
+  getSubscriptionStatus,
+  resetApiKey
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
-import { 
-  Bot, 
-  Clock, 
-  Link as LinkIcon, 
-  Shield, 
-  Save, 
-  RefreshCw, 
-  Plus, 
-  Trash2, 
-  CheckCircle2, 
+import {
+  Bot,
+  Clock,
+  Link as LinkIcon,
+  Shield,
+  Save,
+  RefreshCw,
+  Plus,
+  Trash2,
+  CheckCircle2,
   AlertCircle,
   Phone,
   MessageSquare,
@@ -26,13 +28,16 @@ import {
   Settings as SettingsIcon,
   ChevronRight,
   ExternalLink,
-  Zap
+  Zap,
+  BookOpen,
+  Search
 } from "lucide-react";
 
 const TENANT_STORAGE_KEY = "tenantId";
 
 const TABS = [
   { id: "ai", label: "AI Behavior", icon: Bot },
+  { id: "knowledge", label: "Knowledge Base", icon: BookOpen },
   { id: "hours", label: "Business Hours", icon: Clock },
   { id: "integrations", label: "Integrations", icon: LinkIcon },
   { id: "security", label: "Security & API", icon: Shield },
@@ -54,6 +59,7 @@ export default function Settings({ tenantId }) {
     transfer_numbers_raw: "",
     transfer_sms_brief: "",
     crm_webhook_url: "",
+    crm_type: "webhook",
     zapier_webhook_url: "",
     follow_up_enabled: true,
     afterhours_behavior: "voicemail",
@@ -66,7 +72,8 @@ export default function Settings({ tenantId }) {
     twilio_account_sid: "",
     twilio_auth_token: "",
     facebook_page_id: "",
-    facebook_page_access_token: ""
+    facebook_page_access_token: "",
+    faqs: []
   });
 
   // Phone numbers state
@@ -74,6 +81,15 @@ export default function Settings({ tenantId }) {
   const [phonesLoading, setPhonesLoading] = useState(false);
   const [newPhone, setNewPhone] = useState("");
   const [phoneError, setPhoneError] = useState("");
+
+  // Provision number state
+  const [subscriptionStatus, setSubscriptionStatus] = useState(null);
+  const [availableNumbers, setAvailableNumbers] = useState([]);
+  const [loadingNumbers, setLoadingNumbers] = useState(false);
+  const [selectedNumber, setSelectedNumber] = useState(null);
+  const [areaCode, setAreaCode] = useState("");
+  const [provisionLoading, setProvisionLoading] = useState(false);
+  const [provisionMessage, setProvisionMessage] = useState("");
 
   const loadTenant = async () => {
     if (!tenantId) return;
@@ -88,6 +104,7 @@ export default function Settings({ tenantId }) {
         transfer_numbers_raw: Array.isArray(t.transfer_numbers) ? t.transfer_numbers.join(", ") : "",
         transfer_sms_brief: t.transfer_sms_brief || "",
         crm_webhook_url: t.crm_webhook_url || "",
+        crm_type: t.crm_type || "webhook",
         zapier_webhook_url: t.zapier_webhook_url || "",
         follow_up_enabled: t.follow_up_enabled !== false,
         afterhours_behavior: t.afterhours_behavior || "voicemail",
@@ -108,7 +125,8 @@ export default function Settings({ tenantId }) {
         twilio_account_sid: "",
         twilio_auth_token: "",
         facebook_page_id: t.facebook_page_id || "",
-        facebook_page_access_token: ""
+        facebook_page_access_token: "",
+        faqs: Array.isArray(t.faqs) ? t.faqs : []
       });
     } catch (e) {
       setError(e.message);
@@ -133,7 +151,48 @@ export default function Settings({ tenantId }) {
   useEffect(() => {
     loadTenant();
     loadPhones();
+    if (tenantId) {
+      getSubscriptionStatus(tenantId)
+        .then((s) => setSubscriptionStatus(s))
+        .catch(() => {});
+    }
   }, [tenantId]);
+
+  const hasActiveSub = subscriptionStatus && ["active", "trialing"].includes(subscriptionStatus.subscription_status);
+
+  const fetchAvailableNumbers = async (code = "") => {
+    setLoadingNumbers(true);
+    setProvisionMessage("");
+    try {
+      const res = await getAvailableNumbers(code);
+      setAvailableNumbers(res.numbers || []);
+      if (res.numbers?.length > 0) setSelectedNumber(res.numbers[0].phoneNumber);
+      else setSelectedNumber(null);
+    } catch (err) {
+      setProvisionMessage("Failed to fetch numbers. Try a different area code.");
+      setAvailableNumbers([]);
+    } finally {
+      setLoadingNumbers(false);
+    }
+  };
+
+  const handleProvisionNumber = async () => {
+    if (!selectedNumber) return;
+    setProvisionLoading(true);
+    setProvisionMessage("");
+    try {
+      await addPhoneNumber(tenantId, selectedNumber);
+      setProvisionMessage("Number provisioned successfully!");
+      setAvailableNumbers([]);
+      setSelectedNumber(null);
+      setAreaCode("");
+      await loadPhones();
+    } catch (err) {
+      setProvisionMessage(`Error: ${err.message}`);
+    } finally {
+      setProvisionLoading(false);
+    }
+  };
 
   const handleUpdateForm = (field, value) => {
     setForm(prev => ({ ...prev, [field]: value }));
@@ -153,6 +212,26 @@ export default function Settings({ tenantId }) {
     setForm(prev => ({
       ...prev,
       objection_handling: { ...prev.objection_handling, [type]: value }
+    }));
+  };
+
+  const handleAddFaq = () => {
+    setForm(prev => ({
+      ...prev,
+      faqs: [...prev.faqs, { question: "", answer: "" }]
+    }));
+  };
+
+  const handleUpdateFaq = (index, field, value) => {
+    const newFaqs = [...form.faqs];
+    newFaqs[index][field] = value;
+    setForm(prev => ({ ...prev, faqs: newFaqs }));
+  };
+
+  const handleRemoveFaq = (index) => {
+    setForm(prev => ({
+      ...prev,
+      faqs: prev.faqs.filter((_, i) => i !== index)
     }));
   };
 
@@ -195,7 +274,7 @@ export default function Settings({ tenantId }) {
     setError("");
     setMessage("");
     setSaving(true);
-    
+
     const transfer_numbers = form.transfer_numbers_raw
       .split(",")
       .map((s) => s.trim())
@@ -209,12 +288,14 @@ export default function Settings({ tenantId }) {
       transfer_numbers,
       transfer_sms_brief: form.transfer_sms_brief || null,
       crm_webhook_url: form.crm_webhook_url || null,
+      crm_type: form.crm_type || "webhook",
       zapier_webhook_url: form.zapier_webhook_url || null,
       follow_up_enabled: form.follow_up_enabled,
       afterhours_behavior: form.afterhours_behavior,
       business_hours: form.business_hours,
       objection_handling_config: form.objection_handling,
       facebook_page_id: form.facebook_page_id.trim() || null,
+      faqs: form.faqs.filter(f => f.question.trim() && f.answer.trim())
     };
 
     if (form.facebook_page_access_token) payload.facebook_page_access_token = form.facebook_page_access_token;
@@ -292,11 +373,10 @@ export default function Settings({ tenantId }) {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-xl transition-all flex-1 lg:flex-none justify-center lg:justify-start ${
-                  activeTab === tab.id
+                className={`flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-xl transition-all flex-1 lg:flex-none justify-center lg:justify-start ${activeTab === tab.id
                     ? "bg-white text-gray-900 shadow-sm ring-1 ring-gray-200"
                     : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
-                }`}
+                  }`}
               >
                 <tab.icon className={`w-5 h-5 ${activeTab === tab.id ? "text-primary" : "text-gray-400"}`} />
                 <span className="hidden md:inline">{tab.label}</span>
@@ -377,17 +457,91 @@ export default function Settings({ tenantId }) {
                       className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-medium focus:ring-2 focus:ring-primary transition-all"
                     />
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-400 mb-1 uppercase tracking-widest pl-1">If they "Need to Talk to Spouse"</label>
-                    <textarea
-                      value={form.objection_handling.spouse}
-                      onChange={(e) => handleUpdateObjection("spouse", e.target.value)}
-                      rows={2}
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-medium focus:ring-2 focus:ring-primary transition-all"
-                    />
-                  </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {activeTab === "knowledge" && (
+            <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-500">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                    <BookOpen className="text-primary w-5 h-5" />
+                    Knowledge Base (FAQs)
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Add specific questions and answers the AI should know how to handle.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAddFaq}
+                  className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800 transition-all"
+                >
+                  <Plus className="w-4 h-4 text-primary" />
+                  ADD QUESTION
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                {form.faqs.length === 0 ? (
+                  <div className="py-12 border-2 border-dashed border-gray-100 rounded-3xl flex flex-col items-center justify-center text-center">
+                    <div className="w-16 h-16 bg-gray-50 rounded-2xl flex items-center justify-center mb-4">
+                      <MessageSquare className="w-8 h-8 text-gray-200" />
+                    </div>
+                    <p className="text-gray-400 font-medium max-w-xs">
+                      No custom FAQs yet. Add common questions your customers ask to improve AI accuracy.
+                    </p>
+                  </div>
+                ) : (
+                  form.faqs.map((faq, index) => (
+                    <div
+                      key={index}
+                      className="p-6 bg-gray-50 border border-gray-100 rounded-3xl space-y-4 relative group hover:border-primary/20 transition-all"
+                    >
+                      <button
+                        onClick={() => handleRemoveFaq(index)}
+                        className="absolute top-4 right-4 p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+
+                      <div className="grid grid-cols-1 gap-4">
+                        <div>
+                          <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 pl-1">Question</label>
+                          <input
+                            type="text"
+                            value={faq.question}
+                            onChange={(e) => handleUpdateFaq(index, "question", e.target.value)}
+                            placeholder="e.g. Do you offer emergency services?"
+                            className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-primary outline-none transition-all"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 pl-1">Answer</label>
+                          <textarea
+                            value={faq.answer}
+                            onChange={(e) => handleUpdateFaq(index, "answer", e.target.value)}
+                            placeholder="Detailed answer for the AI..."
+                            rows={3}
+                            className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary outline-none transition-all"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {form.faqs.length > 0 && (
+                <div className="p-4 bg-primary/5 border border-primary/10 rounded-2xl">
+                  <p className="text-xs text-primary font-bold flex items-center gap-2">
+                    <CheckCircle2 className="w-3 h-3" />
+                    The AI will use these answers to respond to callers when they ask related questions.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -437,11 +591,10 @@ export default function Settings({ tenantId }) {
                       <button
                         type="button"
                         onClick={() => handleUpdateOpeningHours(day, "closed", !config.closed)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-tight transition-all border ${
-                          config.closed 
-                            ? "bg-red-50 text-red-600 border-red-100" 
+                        className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-tight transition-all border ${config.closed
+                            ? "bg-red-50 text-red-600 border-red-100"
                             : "bg-emerald-50 text-emerald-600 border-emerald-100"
-                        }`}
+                          }`}
                       >
                         {config.closed ? "Closed" : "Open"}
                       </button>
@@ -487,7 +640,7 @@ export default function Settings({ tenantId }) {
                       />
                       <p className="text-xs text-gray-500 mt-2">Comma-separated. Where calls go when human transfer is requested.</p>
                     </div>
-                    
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Account SID</label>
@@ -520,14 +673,47 @@ export default function Settings({ tenantId }) {
                   <Zap className="text-yellow-500 w-5 h-5" />
                   Webhooks & CRM
                 </h2>
-                <div className="space-y-4">
+                <div className="space-y-5">
+                  {/* CRM Platform Selector */}
                   <div>
-                    <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Zapier Webhook</label>
+                    <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">CRM Platform</label>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {[
+                        { value: "dripjobs", label: "DripJobs", color: "bg-blue-500" },
+                        { value: "jobber", label: "Jobber", color: "bg-emerald-500" },
+                        { value: "housecall", label: "HouseCall Pro", color: "bg-orange-500" },
+                        { value: "webhook", label: "Other / Zapier", color: "bg-gray-500" },
+                      ].map((crm) => (
+                        <button
+                          key={crm.value}
+                          type="button"
+                          onClick={() => handleUpdateForm("crm_type", crm.value)}
+                          className={`relative flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all text-center ${
+                            form.crm_type === crm.value
+                              ? "border-gray-900 bg-gray-900 text-white shadow-lg scale-[1.02]"
+                              : "border-gray-200 bg-gray-50 text-gray-600 hover:border-gray-300 hover:bg-gray-100"
+                          }`}
+                        >
+                          <div className={`w-8 h-8 rounded-xl ${form.crm_type === crm.value ? "bg-white/20" : crm.color + "/10"} flex items-center justify-center`}>
+                            <Zap className={`w-4 h-4 ${form.crm_type === crm.value ? "text-white" : crm.color.replace("bg-", "text-")}`} />
+                          </div>
+                          <span className="text-xs font-black uppercase tracking-wide">{crm.label}</span>
+                          {form.crm_type === crm.value && (
+                            <CheckCircle2 className="absolute top-2 right-2 w-4 h-4 text-primary" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2 italic">Select your CRM so we can tailor the webhook payload for best results.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">CRM Webhook URL</label>
                     <div className="flex gap-2">
-                       <input
+                      <input
                         type="url"
-                        value={form.zapier_webhook_url}
-                        onChange={(e) => handleUpdateForm("zapier_webhook_url", e.target.value)}
+                        value={form.crm_webhook_url}
+                        onChange={(e) => handleUpdateForm("crm_webhook_url", e.target.value)}
                         placeholder="https://hooks.zapier.com/..."
                         className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-mono text-xs"
                       />
@@ -535,15 +721,7 @@ export default function Settings({ tenantId }) {
                         <ExternalLink className="w-4 h-4 text-gray-600" />
                       </button>
                     </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Alternate CRM URL</label>
-                    <input
-                      type="url"
-                      value={form.crm_webhook_url}
-                      onChange={(e) => handleUpdateForm("crm_webhook_url", e.target.value)}
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-mono text-xs"
-                    />
+                    <p className="text-xs text-gray-500 mt-2">Paste your Zapier Catch Hook URL or direct CRM webhook here.</p>
                   </div>
                 </div>
               </div>
@@ -551,8 +729,8 @@ export default function Settings({ tenantId }) {
               {/* Facebook */}
               <div className="pt-6 border-t border-gray-100">
                 <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2 text-[#1877F2]">
-                   <Globe className="w-5 h-5" />
-                   Facebook Messenger
+                  <Globe className="w-5 h-5" />
+                  Facebook Messenger
                 </h2>
                 <div className="bg-[#1877F2]/5 rounded-2xl p-6 border border-[#1877F2]/10 space-y-4">
                   <div>
@@ -585,7 +763,7 @@ export default function Settings({ tenantId }) {
                   <Shield className="text-primary w-5 h-5" />
                   Business Access & API
                 </h2>
-                
+
                 {/* <div className="bg-gray-900 rounded-3xl p-8 text-white shadow-2xl shadow-gray-200 relative overflow-hidden group">
                   <div className="absolute top-0 right-0 p-8 transform translate-x-4 -translate-y-4 opacity-10 group-hover:scale-110 transition-transform duration-700">
                     <Shield size={160} />
@@ -620,9 +798,95 @@ export default function Settings({ tenantId }) {
               <div className="pt-10 border-t border-gray-100">
                 <h3 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
                   <Phone className="text-primary w-5 h-5" />
+                  Provision AI Number
+                </h3>
+
+                {!hasActiveSub ? (
+                  <div className="p-6 bg-amber-50 border border-amber-200 rounded-2xl mb-8">
+                    <p className="text-sm font-bold text-amber-800 mb-1">📞 Subscription Required</p>
+                    <p className="text-sm text-amber-700">
+                      You need an active plan before you can provision a dedicated AI phone number.{" "}
+                      <Link to="/plans" className="font-bold underline hover:text-amber-900">Choose a plan →</Link>
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mb-8 space-y-4">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Area code (e.g. 415)"
+                        value={areaCode}
+                        onChange={(e) => setAreaCode(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); fetchAvailableNumbers(areaCode); } }}
+                        className="w-32 px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:ring-1 focus:ring-primary"
+                        maxLength={3}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => fetchAvailableNumbers(areaCode)}
+                        disabled={loadingNumbers}
+                        className="px-4 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800 transition-all disabled:opacity-50 flex items-center gap-2"
+                      >
+                        {loadingNumbers ? <LumaSpin className="w-4 h-4 border-white" /> : <Search size={16} />}
+                        Search Numbers
+                      </button>
+                    </div>
+
+                    {availableNumbers.length > 0 && (
+                      <div className="max-h-52 overflow-y-auto border border-gray-200 rounded-xl bg-gray-50/50 divide-y divide-gray-100">
+                        {availableNumbers.map((num) => (
+                          <label
+                            key={num.phoneNumber}
+                            className={`flex items-center p-3 cursor-pointer transition-colors ${selectedNumber === num.phoneNumber ? "bg-blue-50 border-l-2 border-l-blue-500" : "hover:bg-white border-l-2 border-l-transparent"}`}
+                          >
+                            <input
+                              type="radio"
+                              name="provision_number"
+                              value={num.phoneNumber}
+                              checked={selectedNumber === num.phoneNumber}
+                              onChange={() => setSelectedNumber(num.phoneNumber)}
+                              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
+                            />
+                            <div className="ml-3 flex flex-col">
+                              <span className={`text-sm font-bold ${selectedNumber === num.phoneNumber ? "text-blue-900" : "text-gray-900"}`}>
+                                {num.friendlyName}
+                              </span>
+                              {num.locality && num.region && (
+                                <span className="text-xs text-gray-500">{num.locality}, {num.region}</span>
+                              )}
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+
+                    {availableNumbers.length > 0 && selectedNumber && (
+                      <button
+                        type="button"
+                        onClick={handleProvisionNumber}
+                        disabled={provisionLoading}
+                        className="px-6 py-2.5 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 transition-all disabled:opacity-50 flex items-center gap-2"
+                      >
+                        {provisionLoading && <LumaSpin className="w-4 h-4 border-white" />}
+                        Provision {selectedNumber}
+                      </button>
+                    )}
+
+                    {provisionMessage && (
+                      <div className={`text-sm font-bold py-2 px-4 rounded-xl ${provisionMessage.startsWith("Error") ? "bg-red-50 text-red-600" : "bg-green-50 text-green-600"}`}>
+                        {provisionMessage}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-10 border-t border-gray-100">
+                <h3 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
+                  <Phone className="text-primary w-5 h-5" />
                   Linked Phone Numbers
                 </h3>
-                
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                   {phoneNumbers.map((pn) => (
                     <div key={pn.id} className="p-4 bg-gray-50 border border-gray-100 rounded-2xl flex items-center justify-between group hover:border-primary/30 transition-all">
@@ -643,7 +907,7 @@ export default function Settings({ tenantId }) {
                       </button>
                     </div>
                   ))}
-                  
+
                   <div className="p-4 border-2 border-dashed border-gray-200 rounded-2xl flex flex-col gap-3">
                     <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">Add New Forwarder</p>
                     <div className="flex gap-2">

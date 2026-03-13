@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useOutletContext, useLocation } from "react-router-dom";
 import { getUser } from "./api";
 import { DashboardLayout } from "./layouts";
-import { Home, Login, CreateBusiness, Dashboard, Calls, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing } from "./pages";
+import { Home, Login, CreateBusiness, Dashboard, Calls, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin } from "./pages";
 import "./App.css";
 
 function Protected({ children }) {
@@ -25,7 +25,10 @@ function RootElement() {
     if (isRoot) return <Home />;
     return <Navigate to="/" replace />;
   }
-  if (user && !user.tenant_id && pathname !== "/create-business") {
+  if (user && !user.tenant_id && user.is_super_admin && pathname !== "/admin") {
+    return <Navigate to="/admin" replace />;
+  }
+  if (user && !user.tenant_id && !user.is_super_admin && pathname !== "/create-business") {
     return <Navigate to="/create-business" replace />;
   }
   return (
@@ -55,6 +58,7 @@ export default function App() {
           <Route path="billing" element={<BillingWithContext />} />
           <Route path="settings" element={<SettingsWithContext />} />
           <Route path="tenants" element={<Tenants />} />
+          <Route path="admin" element={<AdminWithContext />} />
         </Route>
       </Routes>
     </BrowserRouter>
@@ -114,4 +118,10 @@ function ConversationsWithContext() {
 function BillingWithContext() {
   const { tenantId } = useOutletContext();
   return <Billing tenantId={tenantId} />;
+}
+
+function AdminWithContext() {
+  const user = getUser();
+  if (!user?.is_super_admin) return <Navigate to="/" replace />;
+  return <Admin />;
 }

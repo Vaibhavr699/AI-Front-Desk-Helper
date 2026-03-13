@@ -97,12 +97,61 @@ async function createBooking(tenantId, callId, data, leadId = null) {
   return { booking, crmSynced };
 }
 
-async function getBookingsByTenant(tenantId, limit = 50) {
+async function updateBooking(bookingId, data) {
+  console.log("[AI-Desk] Booking update start bookingId=%s", bookingId);
+  const norm = normalizeBookingData(data);
+  const set = [];
+  const values = [];
+  let i = 1;
+
+  for (const [key, value] of Object.entries(norm)) {
+    if (value !== undefined) {
+      set.push(`${key} = $${i++}`);
+      values.push(value);
+    }
+  }
+
+  if (set.length === 0) return null;
+
+  values.push(bookingId);
   const res = await db.query(
-    `SELECT * FROM bookings WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT $2`,
-    [tenantId, limit]
+    `UPDATE bookings SET ${set.join(", ")}, updated_at = now() WHERE id = $${i} RETURNING *`,
+    values
   );
-  return res.rows;
+
+  const booking = res.rows[0];
+  if (booking) {
+    const tenant = await getTenantById(booking.tenant_id);
+    if (tenant) {
+      // Potentially sync to CRM and send notifications here too
+      crm.syncBookingToCrm(booking.tenant_id, booking).catch(e => console.error("CRM Sync:", e));
+    }
+  }
+  return booking;
 }
 
-module.exports = { createBooking, getBookingsByTenant };
+async function cancelBooking(bookingId) {
+  console.log("[AI-Desk] Booking cancel id=%s", bookingId);
+  const res = await db.query(
+    `UPDATE bookings SET status = 'Cancelled', updated_at = now() WHERE id = $1 RETURNING *`,
+    [bookingId]
+  );
+  const booking = res.rows[0];
+  if (booking) {
+    const tenant = await getTenantById(booking.tenant_id);
+    if (tenant) {
+      crm.syncBookingToCrm(booking.tenant_id, booking).catch(e => console.error("CRM Sync:", e));
+    }
+  }
+  return booking;
+}
+
+async function findLatestBookingByPhone(tenantId, phone) {
+  const res = await db.query(
+    `SELECT * FROM bookings WHERE tenant_id = $1 AND contact_phone = $2 ORDER BY created_at DESC LIMIT 1`,
+    [tenantId, phone]
+  );
+  return res.rows[0] || null;
+}
+
+module.exports = { createBooking, updateBooking, cancelBooking, findLatestBookingByPhone };

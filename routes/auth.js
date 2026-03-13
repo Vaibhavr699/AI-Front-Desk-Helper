@@ -25,6 +25,7 @@ router.post("/login", async (req, res) => {
       email: user.email,
       tenant_id: user.tenant_id,
       role: user.role,
+      is_super_admin: user.is_super_admin === true,
     });
     res.json({
       token,
@@ -33,6 +34,7 @@ router.post("/login", async (req, res) => {
         email: user.email,
         tenant_id: user.tenant_id,
         role: user.role,
+        is_super_admin: user.is_super_admin === true,
       },
     });
   } catch (e) {

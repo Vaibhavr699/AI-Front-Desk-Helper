@@ -68,9 +68,8 @@ export default function DashboardLayout() {
           />
         )}
         <div
-          className={`lg:hidden fixed inset-y-0 left-0 z-50 w-56 shadow-xl transform transition-transform duration-200 ease-out ${
-            sidebarMobileOpen ? "translate-x-0" : "-translate-x-full"
-          }`}
+          className={`lg:hidden fixed inset-y-0 left-0 z-50 w-56 shadow-xl transform transition-transform duration-200 ease-out ${sidebarMobileOpen ? "translate-x-0" : "-translate-x-full"
+            }`}
         >
           <Sidebar
             collapsed={false}

@@ -67,13 +67,17 @@ export default function Header({ tenantId, tenants, onMenuClick }) {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            <div className="hidden sm:block h-6 w-px bg-stone-200" aria-hidden />
-            <div className="flex items-center gap-2 min-w-0 max-w-[200px] sm:max-w-[280px]">
-              <span className="hidden sm:inline text-sm text-stone-500 shrink-0">Business</span>
-              <span className="text-sm font-medium text-stone-900 truncate" title={currentBusinessName}>
-                {currentBusinessName || "—"}
-              </span>
-            </div>
+            {user?.tenant_id && (
+              <>
+                <div className="hidden sm:block h-6 w-px bg-stone-200" aria-hidden />
+                <div className="flex items-center gap-2 min-w-0 max-w-[200px] sm:max-w-[280px]">
+                  <span className="hidden sm:inline text-sm text-stone-500 shrink-0">Business</span>
+                  <span className="text-sm font-medium text-stone-900 truncate" title={currentBusinessName}>
+                    {currentBusinessName || "—"}
+                  </span>
+                </div>
+              </>
+            )}
             <div className="hidden sm:block h-6 w-px bg-stone-200" aria-hidden />
             <div className="relative" ref={userMenuRef}>
               <button

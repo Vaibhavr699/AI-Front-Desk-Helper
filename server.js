@@ -35,7 +35,7 @@ const dashboardRoutes = require("./routes/dashboard");
 const authRoutes = require("./routes/auth");
 const leadRoutes = require("./routes/leads");
 const billingRoutes = require("./routes/billing");
-const { authMiddleware } = require("./lib/auth");
+const { authMiddleware, requireSuperAdmin } = require("./lib/auth");
 
 const WEBSITE_CONTEXT_URL = process.env.WEBSITE_CONTEXT_URL || "https://www.gladiatorspainting.com";
 const WEBSITE_CONTEXT_MAX_CHARS = 10000;
@@ -61,7 +61,7 @@ const REALTIME_TOOLS = [
   {
     type: "function",
     name: "book_appointment",
-    description: "Finalize and save the booking. Call this ONLY when you have real details from the caller: contact name, contact phone, and address OR city. NEVER use placeholder or dummy data (like 'Armando' or '555-1234'). Include EVERY detail the caller gave: contact_name, contact_phone, address, city, scope (interior/exterior/both/rooms), preferred_date, notes (pets, access, etc.). Do not omit any field the caller provided—all fields are saved to the database and sent to CRM. Use for normal residential estimate requests.",
+    description: "Finalize and save the booking. Call this ONLY when you have real details from the caller: contact name, contact phone, and address OR city. NEVER use placeholder or dummy data (like 'Armando' or '555-1234'). Include EVERY detail the caller gave: contact_name, contact_phone, address, city, scope (what service or product they need), preferred_date, notes (pets, access, etc.). Do not omit any field the caller provided—all fields are saved to the database and sent to CRM. Use for normal booking or estimate requests.",
     parameters: {
       type: "object",
       properties: {
@@ -130,6 +130,34 @@ const REALTIME_TOOLS = [
       required: ["language"],
     },
   },
+  {
+    type: "function",
+    name: "cancel_appointment",
+    description: "Cancel an existing appointment. Use this when the caller explicitly wants to cancel. Before calling this, you MUST search for their booking (e.g., by asking for their phone number if not already known) and confirm the details with them.",
+    parameters: {
+      type: "object",
+      properties: {
+        contact_phone: { type: "string", description: "The phone number used for the booking." },
+        reason: { type: "string", description: "Brief reason for cancellation." },
+      },
+      required: ["contact_phone"],
+    },
+  },
+  {
+    type: "function",
+    name: "reschedule_appointment",
+    description: "Reschedule an existing appointment to a new date and time. Use this when the caller wants to change their appointment. Before calling this, you MUST search for their booking and confirm the new details with them.",
+    parameters: {
+      type: "object",
+      properties: {
+        contact_phone: { type: "string", description: "The phone number used for the booking." },
+        new_date: { type: "string", description: "The new date (YYYY-MM-DD)" },
+        new_time: { type: "string", description: "The new time (e.g. 10:30 AM)" },
+        notes: { type: "string", description: "Any additional notes about the reschedule." },
+      },
+      required: ["contact_phone", "new_date", "new_time"],
+    },
+  },
 ];
 
 const SALES_CLOSE_PROMPT = `
@@ -158,7 +186,7 @@ const RECOVERY_TOOLS = [
         contact_email: { type: "string", description: "Email if given" },
         address: { type: "string", description: "Street address" },
         city: { type: "string", description: "City" },
-        scope: { type: "string", description: "Interior, exterior, both, rooms" },
+        scope: { type: "string", description: "What services or products they need, specific details about their request" },
         job_type: { type: "string", description: "Residential or commercial" },
         preferred_date: { type: "string", description: "Preferred date (YYYY-MM-DD)" },
         appointment_time: { type: "string", description: "Preferred time (e.g. 1:30 PM)" },
@@ -358,6 +386,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/billing", authMiddleware, billingRoutes);
 app.use("/api/leads", leadRoutes);
 app.use("/api/stripe", authMiddleware, require("./routes/stripe"));
+app.use("/api/admin", authMiddleware, requireSuperAdmin, require("./routes/admin"));
 app.use("/api", authMiddleware, dashboardRoutes);
 
 if (SERVE_DASHBOARD) {
@@ -443,9 +472,13 @@ function buildRealtimeInstructions(tenant) {
   const companyName = tenant.company_name || "our team";
   const personalizedSalesPrompt = SALES_CLOSE_PROMPT.replace(/{{company_name}}/g, companyName);
 
+  const faqText = (Array.isArray(tenant.faqs) && tenant.faqs.length > 0)
+    ? "\n\nFrequently Asked Questions:\n" + tenant.faqs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n")
+    : "";
+
   return `${tenant.instructions}
 
-${personalizedSalesPrompt}
+${personalizedSalesPrompt}${faqText}
 
 Website knowledge context from ${WEBSITE_CONTEXT_URL}:
 ${websiteKnowledgeContext}`;
@@ -743,14 +776,20 @@ function buildSmsSystemPrompt(thread, tenant = null) {
   const instructions = tenant?.instructions || [
     "Flow: qualify lead, gather full_name, project_type, project_details, address, preferred appointment_date and appointment_time.",
     "Be concise, friendly, and use one short text message.",
-    "If enough details exist to request booking, set should_book true and provide appointment_date/time.",
+    "If enough details exist to request booking, set should_book true.",
+    "If the customer wants to cancel, set should_cancel true.",
+    "If the customer wants to reschedule, set should_reschedule true and provide the new appointment_date/time.",
     "REVENUE ESTIMATION: Always provide an estimated_value (number, in dollars) based on the project_details (e.g., Room: 500, Interior: 2500, Exterior: 5000)."
   ].join("\n");
 
+  const faqText = (tenant && Array.isArray(tenant.faqs) && tenant.faqs.length > 0)
+    ? "\n\nFrequently Asked Questions:\n" + tenant.faqs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n")
+    : "";
+
   return [
     `You are an SMS receptionist for ${companyName}.`,
-    `Instructions: ${instructions}`,
-    "Return strict JSON only with keys: reply, lead_capture, should_book, appointment_date, appointment_time, follow_up_minutes.",
+    `Instructions: ${instructions}${faqText}`,
+    "Return strict JSON only with keys: reply, lead_capture, should_book, should_cancel, should_reschedule, appointment_date, appointment_time, follow_up_minutes.",
     `Known lead data: ${JSON.stringify(thread.leadCapture)}`
   ].join("\n");
 }
@@ -806,6 +845,8 @@ async function runSmsAiOrchestrator(thread, incomingText, tenant = null) {
               ]
             },
             should_book: { type: "boolean" },
+            should_cancel: { type: "boolean" },
+            should_reschedule: { type: "boolean" },
             appointment_date: { type: "string" },
             appointment_time: { type: "string" },
             follow_up_minutes: { type: "number" }
@@ -814,6 +855,8 @@ async function runSmsAiOrchestrator(thread, incomingText, tenant = null) {
             "reply",
             "lead_capture",
             "should_book",
+            "should_cancel",
+            "should_reschedule",
             "appointment_date",
             "appointment_time",
             "follow_up_minutes"
@@ -859,6 +902,31 @@ function mergeLeadCapture(thread, incomingLeadCapture) {
 }
 
 async function handleLeadBooking(thread, ai, tenantOverride = null) {
+  const tenant = tenantOverride || TENANTS.gladiators;
+  if (!tenant) return null;
+
+  // HANDLE CANCELLATION
+  if (ai.should_cancel) {
+    const booking = await bookingsService.findLatestBookingByPhone(tenant.id, thread.leadCapture?.phone || thread.phone);
+    if (!booking) return "I couldn't find an appointment for this phone number to cancel. Could you double-check the number?";
+    
+    await bookingsService.cancelBooking(booking.id);
+    return "✅ Your appointment has been successfully cancelled.";
+  }
+
+  // HANDLE RESCHEDULING
+  if (ai.should_reschedule && ai.appointment_date && ai.appointment_time) {
+    const booking = await bookingsService.findLatestBookingByPhone(tenant.id, thread.leadCapture?.phone || thread.phone);
+    if (!booking) return "I couldn't find an existing appointment to reschedule. Would you like to schedule a new one instead?";
+
+    await bookingsService.updateBooking(booking.id, {
+      preferred_date: ai.appointment_date,
+      appointment_time: ai.appointment_time,
+      notes: ai.lead_capture?.project_details || booking.notes
+    });
+    return `✅ Your appointment has been rescheduled for ${ai.appointment_date} at ${ai.appointment_time}.`;
+  }
+
   if (!ai.should_book || !ai.appointment_date || !ai.appointment_time) return null;
 
   let parsedDate = new Date(ai.appointment_date);
@@ -1878,6 +1946,15 @@ wss.on("connection", async (twilioSocket, req) => {
   // Final fallback to memory cache if still null
   if (!tenant) tenant = TENANTS[tenantId] || TENANTS["gladiators"];
 
+  // If still no tenant, pick the first one from TENANTS as a last resort
+  if (!tenant) {
+    const availableTenantIds = Object.keys(TENANTS);
+    if (availableTenantIds.length > 0) {
+      tenant = TENANTS[availableTenantIds[0]];
+      console.log("[AI-Desk] Tenant lookup fallback to first available:", tenant?.slug);
+    }
+  }
+
   if (!tenant && !isRecovery) {
     console.error("[AI-Desk] No tenant for path segment:", tenantIdFromPath, "- ensure DB is seeded and loadTenants ran.");
     twilioSocket.close();
@@ -1995,23 +2072,21 @@ wss.on("connection", async (twilioSocket, req) => {
       }
 
       const defaultInstructions = [
-        "You are a professional receptionist. Be warm and helpful.",
+        `You are a professional receptionist for ${tenant?.company_name || 'our business'}. Be warm, confident, and helpful.`,
         "Default language is English. If the caller asks to speak in another language (e.g. Spanish, French, Hindi), immediately call the change_language tool with the ISO 639-1 code (es, fr, hi, zh, ar, etc.), then confirm in that language and continue the entire conversation in that language.",
-        "STEP-BY-STEP FLOW: Ask EXACTLY one question at a time. Wait for the caller to finish speaking before you reply—do not interrupt. Follow this order: (1) Greet & ask for Full Name, (2) Ask for Phone Number (even if you have it), (3) Ask for the Street Address or City of the property, (4) Ask for the Scope (interior/exterior/both/rooms) and Job Type, (5) Ask for any extra notes (pets, access, etc.).",
-        "Offer a free on-site estimate. Repeat back key details (name, phone, address, scope) before finalizing so the caller can correct you if needed.",
-        "REVENUE ESTIMATION & LEAD ANALYSIS: If the caller doesn't provide a budget, estimate the job value based on their scope (e.g., Small/Room: $500, Medium/Interior: $2500, Large/Full Exterior: $5000+). Always provide an 'estimated_value', a 'lead_score' (1-100), and a brief 'ai_summary' (1-2 sentences) when calling tools.",
+        "CONVERSATIONAL FLOW: Let the conversation flow naturally like a real human. If they ask a question, answer it directly using the Knowledge Base (FAQs) before steering them back to your questions. Do NOT rigidly fire questions one after another.",
+        "GOAL: When it feels natural, try to collect the following to book an appointment or estimate: Full Name, Phone Number, Address or City, and Scope of what they need.",
+        "Offer a free on-site estimate or appointment. Repeat back key details before finalizing so the caller can correct you if needed.",
+        "APPOINTMENT MANAGEMENT: If the caller wants to CANCEL or RESCHEDULE, ask for their phone number to find their booking. Use 'cancel_appointment' or 'reschedule_appointment' only after confirming the details. For rescheduling, confirm the NEW date and time first.",
+        "REVENUE ESTIMATION & LEAD ANALYSIS: If the caller doesn't provide a budget, estimate the job value reasonably based on their scope. Always provide an 'estimated_value', a 'lead_score' (1-100), and a brief 'ai_summary' (1-2 sentences) when calling tools.",
         "ONLY call book_appointment when you have obtained REAL details from the human for: name, phone, and address/city. Do NOT call it with placeholders or before asking for these details.",
-        "Right after calling book_appointment successfully, say clearly and then stop forever: 'You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.' Then allow the call to end naturally. DO NOT ask any more questions after this.",
-        "Do NOT say you are transferring or connecting to someone unless you actually need a live agent. Only use request_human_transfer for: commercial job, project over $10k, caller clearly frustrated or angry, or VIP/repeat customer. For normal residential estimates, always complete the booking with book_appointment.",
+        "Right after calling book_appointment successfully, say clearly and then stop forever: 'You're all set. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.' Then allow the call to end naturally.",
+        "Do NOT say you are transferring or connecting to someone unless you actually need a live agent. Only use request_human_transfer for: emergencies, situations requiring a manager, frustrated/angry callers, or VIP/repeat customers. For normal requests, always complete the booking with book_appointment.",
         "STRICT RULE: NEVER hallucinate or use placeholder/example data (like 'Armando', '555-1234', or 'Cancun') for any tool fields. If you are missing a required field, ASK the caller. Only use data provided by the human on the other end of the line.",
       ].join(" ");
       instructions = (tenant && tenant.instructions)
         ? tenant.instructions
         : defaultInstructions;
-
-      if (tenant && tenant.tone_of_voice) {
-        instructions = `TONE OF VOICE: ${tenant.tone_of_voice}\n\n${instructions}`;
-      }
 
       if (tenant && tenant.objection_handling_config) {
         const oh = tenant.objection_handling_config;
@@ -2022,6 +2097,11 @@ ${oh.thinking ? `- If they need to think about it: ${oh.thinking}` : ""}
 ${oh.spouse ? `- If they need to talk to a spouse: ${oh.spouse}` : ""}
 `;
         instructions += OH_PROMPT;
+      }
+
+      if (tenant && Array.isArray(tenant.faqs) && tenant.faqs.length > 0) {
+        const faqText = "\n\nKNOWLEDGE BASE (FAQs):\n" + tenant.faqs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n");
+        instructions += faqText;
       }
 
       if (isRecovery && recoveryScript) {
@@ -2168,6 +2248,28 @@ ${oh.spouse ? `- If they need to talk to a spouse: ${oh.spouse}` : ""}
                   ? "That time is available. You can proceed with book_appointment." 
                   : "That time is unfortunately taken. Please ask the caller for another preferred time." 
               });
+            } else if (name === "cancel_appointment" && tenant && callId) {
+              const { contact_phone, reason } = args;
+              const booking = await bookingsService.findLatestBookingByPhone(tenant.id, contact_phone);
+              if (!booking) {
+                output = JSON.stringify({ success: false, message: "No appointment found for this phone number." });
+              } else {
+                await bookingsService.cancelBooking(booking.id);
+                output = JSON.stringify({ success: true, message: "Appointment cancelled successfully." });
+              }
+            } else if (name === "reschedule_appointment" && tenant && callId) {
+              const { contact_phone, new_date, new_time, notes } = args;
+              const booking = await bookingsService.findLatestBookingByPhone(tenant.id, contact_phone);
+              if (!booking) {
+                output = JSON.stringify({ success: false, message: "No appointment found for this phone number." });
+              } else {
+                await bookingsService.updateBooking(booking.id, {
+                  preferred_date: new_date,
+                  appointment_time: new_time,
+                  notes: notes || booking.notes
+                });
+                output = JSON.stringify({ success: true, message: "Appointment rescheduled successfully." });
+              }
             } else if (name === "book_appointment" && tenant && callId) {
               console.log("[AI-Desk] Realtime book_appointment callSid=%s tenantId=%s callId=%s recovery=%s", callSid, tenant.id, callId, isRecovery);
               currentLeadCapture = { ...currentLeadCapture, ...args };

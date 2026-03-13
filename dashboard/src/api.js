@@ -267,3 +267,29 @@ export function openBillingPortal(tenantId) {
 export function getSubscriptionStatus(tenantId) {
   return api(`/api/stripe/status?tenant_id=${tenantId}`);
 }
+
+// ── Admin (Super Admin) ──
+
+export function getAdminStats() {
+  return api("/api/admin/stats");
+}
+
+export function getAdminTenants() {
+  return api("/api/admin/tenants");
+}
+
+export function getAdminTenant(id) {
+  return api(`/api/admin/tenants/${id}`);
+}
+
+export function updateTenantPricing(id, data) {
+  return api(`/api/admin/tenants/${id}/pricing`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export function removeTenantPricing(id) {
+  return api(`/api/admin/tenants/${id}/pricing`, { method: "DELETE" });
+}
+

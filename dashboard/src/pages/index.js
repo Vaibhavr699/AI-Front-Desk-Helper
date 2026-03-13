@@ -14,3 +14,4 @@ export { default as Leads } from "./Leads";
 export { default as LeadDetail } from "./LeadDetail";
 export { default as Conversations } from "./Conversations";
 export { default as Billing } from "./Billing";
+export { default as Admin } from "./Admin";

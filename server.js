@@ -2026,7 +2026,14 @@ wss.on("connection", async (twilioSocket, req) => {
   }
 
   function connectOpenAI(modelIndex) {
-    const model = (tenant && tenant.voice_model) ? tenant.voice_model : (openaiModelCandidates[modelIndex] || openaiModelCandidates[0]);
+    let model = (tenant && tenant.voice_model) ? tenant.voice_model : (openaiModelCandidates[modelIndex] || openaiModelCandidates[0]);
+    
+    // Safeguard: Ensure we use a valid realtime model name
+    if (model === "gpt-4o-realtime") {
+      console.warn(`[AI-Desk] Invalid model "gpt-4o-realtime" detected for tenant ${tenant?.slug || "unknown"}. Falling back to "gpt-4o-realtime-preview".`);
+      model = "gpt-4o-realtime-preview";
+    }
+
     const url = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`;
     openaiSocket = new WebSocket(url, {
       headers: {
@@ -2446,6 +2453,17 @@ ${oh.spouse ? `- If they need to talk to a spouse: ${oh.spouse}` : ""}
 
       if (data.type && data.type.includes("error")) {
         console.error("[AI-Desk] OpenAI error type=%s", data.type, data);
+        
+        // Handle invalid_model error by attempting fallback to a known good model
+        if (data.error && data.error.code === "invalid_model") {
+           console.error("[AI-Desk] Critical: Invalid model error from OpenAI. Attempting fallback to gpt-4o-realtime-preview.");
+           if (openaiSocket && openaiSocket.readyState === WebSocket.OPEN) {
+             openaiSocket.close();
+           }
+           // Force fallback to gpt-4o-realtime-preview explicitly
+           if (tenant) tenant.voice_model = "gpt-4o-realtime-preview";
+           connectOpenAI(0);
+        }
       }
     });
 

@@ -293,3 +293,17 @@ export function removeTenantPricing(id) {
   return api(`/api/admin/tenants/${id}/pricing`, { method: "DELETE" });
 }
 
+export function forgotPassword(email) {
+  return api("/api/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export function resetPassword(token, password) {
+  return api("/api/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, password }),
+  });
+}
+

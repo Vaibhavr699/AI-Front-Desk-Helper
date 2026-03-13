@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, Link } from "react-router-dom";
 import { motion, AnimatePresence, useMotionValue, useTransform } from "framer-motion";
 import { Mail, Lock, Eye, EyeClosed, ArrowRight } from "lucide-react";
 import { login, signup } from "../api";
@@ -201,6 +201,16 @@ export default function Login({ onLogin }) {
                         )}
                       </div>
                     </div>
+                    {!isSignup && (
+                      <div className="flex justify-end pt-1">
+                        <Link
+                          to="/forgot-password"
+                          className="text-xs font-medium text-stone-500 hover:text-stone-900 transition-colors"
+                        >
+                          Forgot Password?
+                        </Link>
+                      </div>
+                    )}
                   </motion.div>
                 </motion.div>
 

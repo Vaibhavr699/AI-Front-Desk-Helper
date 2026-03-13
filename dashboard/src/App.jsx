@@ -43,6 +43,8 @@ export default function App() {
     <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, "")}>
       <Routes>
         <Route path="/login" element={<LoginRoute />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/" element={<RootElement />}>
           <Route index element={<DashboardWithContext />} />
           <Route path="create-business" element={<CreateBusiness />} />

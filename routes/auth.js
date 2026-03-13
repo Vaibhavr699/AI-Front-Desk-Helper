@@ -6,6 +6,8 @@ const db = require("../lib/db");
 
 const router = express.Router();
 
+const emailService = require("../services/email");
+
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body || {};
@@ -80,6 +82,46 @@ router.post("/signup", async (req, res) => {
     });
   } catch (e) {
     console.error("Signup error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.post("/forgot-password", async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    if (!email) return res.status(400).json({ error: "Email required" });
+    const user = await auth.findUserByEmail(email.trim().toLowerCase());
+    if (user) {
+      const token = auth.generateResetToken();
+      const expires = new Date(Date.now() + 3600000); // 1 hour
+      await auth.saveResetToken(user.email, token, expires);
+
+      const resetLink = `${process.env.BASE_URL}/reset-password?token=${token}`;
+      await emailService.sendPasswordResetEmail(user.email, resetLink);
+    }
+    // Always return 200 to prevent email enumeration
+    res.json({ message: "If an account exists with that email, a reset link has been sent." });
+  } catch (e) {
+    console.error("Forgot password error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.post("/reset-password", async (req, res) => {
+  try {
+    const { token, password } = req.body || {};
+    if (!token || !password) {
+      return res.status(400).json({ error: "Token and password required" });
+    }
+    const user = await auth.findUserByResetToken(token);
+    if (!user) {
+      return res.status(400).json({ error: "Invalid or expired reset token" });
+    }
+    const hash = await auth.hashPassword(password);
+    await auth.updatePassword(user.id, hash);
+    res.json({ message: "Password updated successfully" });
+  } catch (e) {
+    console.error("Reset password error:", e);
     res.status(500).json({ error: "Server error" });
   }
 });

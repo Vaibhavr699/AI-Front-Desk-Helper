@@ -15,3 +15,5 @@ export { default as LeadDetail } from "./LeadDetail";
 export { default as Conversations } from "./Conversations";
 export { default as Billing } from "./Billing";
 export { default as Admin } from "./Admin";
+export { default as ForgotPassword } from "./ForgotPassword";
+export { default as ResetPassword } from "./ResetPassword";

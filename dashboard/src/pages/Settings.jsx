@@ -337,9 +337,6 @@ export default function Settings({ tenantId }) {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Link to="/tenants" className="text-sm font-semibold text-gray-600 hover:text-gray-900 flex items-center gap-1 transition-colors px-4 py-2 rounded-xl bg-gray-100/50 hover:bg-gray-100">
-            Switch Business
-          </Link>
           <button
             onClick={handleSubmit}
             disabled={saving}

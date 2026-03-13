@@ -69,6 +69,22 @@ async function sendTransferNotificationEmail(tenant, call, reason, summary, extr
   });
 }
 
+async function sendPasswordResetEmail(email, resetLink) {
+  const html = `
+    <p>Hi,</p>
+    <p>We received a request to reset your password for the AI Front Desk Dashboard.</p>
+    <p>Click the link below to set a new password:</p>
+    <p><a href="${resetLink}">${resetLink}</a></p>
+    <p>If you didn't request this, you can safely ignore this email.</p>
+    <p>Thanks,<br/>AI Front Desk Team</p>
+  `;
+  return sendEmail({
+    to: email,
+    subject: "Reset your AI Front Desk password",
+    html,
+  });
+}
+
 function escapeHtml(s) {
   if (s == null) return "";
   return String(s)
@@ -82,4 +98,5 @@ module.exports = {
   sendEmail,
   sendBookingConfirmationEmail,
   sendTransferNotificationEmail,
+  sendPasswordResetEmail,
 };

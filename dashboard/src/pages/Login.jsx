@@ -201,17 +201,17 @@ export default function Login({ onLogin }) {
                         )}
                       </div>
                     </div>
-                    {!isSignup && (
-                      <div className="flex justify-end pt-1">
-                        <Link
-                          to="/forgot-password"
-                          className="text-xs font-medium text-stone-500 hover:text-blue-700 transition-colors"
-                        >
-                          Forgot Password?
-                        </Link>
-                      </div>
-                    )}
                   </motion.div>
+                  {!isSignup && (
+                    <div className="flex justify-end -mt-2">
+                      <Link
+                        to="/forgot-password"
+                        className="text-xs font-medium text-stone-600 hover:text-stone-900 hover:underline underline-offset-2 transition-all"
+                      >
+                        Forgot Password?
+                      </Link>
+                    </div>
+                  )}
                 </motion.div>
 
                 {error && (

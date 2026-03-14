@@ -72,7 +72,7 @@ export default function ResetPassword() {
           </p>
           <Link
             to="/forgot-password"
-            className="inline-flex items-center gap-2 text-sm font-medium text-stone-900 hover:text-stone-700 transition-colors"
+            className="inline-flex items-center gap-2 text-sm font-medium text-stone-900 hover:text-blue-700 transition-colors"
           >
             Request a new link
           </Link>
@@ -213,7 +213,7 @@ export default function ResetPassword() {
                   </div>
                   <Link
                     to="/login"
-                    className="inline-flex items-center gap-2 text-sm font-medium text-stone-900 hover:text-stone-700 transition-colors"
+                    className="inline-flex items-center gap-2 text-sm font-medium text-stone-900 hover:text-blue-700 transition-colors"
                   >
                     Back to login now
                   </Link>

@@ -205,7 +205,7 @@ export default function Login({ onLogin }) {
                       <div className="flex justify-end pt-1">
                         <Link
                           to="/forgot-password"
-                          className="text-xs font-medium text-stone-500 hover:text-stone-900 transition-colors"
+                          className="text-xs font-medium text-stone-500 hover:text-blue-700 transition-colors"
                         >
                           Forgot Password?
                         </Link>

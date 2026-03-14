@@ -52,7 +52,7 @@ export default function ForgotPassword() {
         <div className="relative group">
           <div className="relative bg-white/90 backdrop-blur-xl rounded-2xl p-6 sm:p-8 border border-stone-200 shadow-sm transition-all duration-300 group-hover:shadow-2xl group-hover:border-stone-300 overflow-hidden">
             
-            <Link to="/login" className="absolute top-6 left-6 text-stone-400 hover:text-stone-900 transition-colors">
+            <Link to="/login" className="absolute top-6 left-6 text-stone-400 hover:text-blue-700 transition-colors">
               <ArrowLeft className="w-5 h-5" />
             </Link>
 
@@ -144,7 +144,7 @@ export default function ForgotPassword() {
                   </div>
                   <Link
                     to="/login"
-                    className="inline-flex items-center gap-2 text-sm font-medium text-stone-900 hover:text-stone-700 transition-colors"
+                    className="inline-flex items-center gap-2 text-sm font-medium text-stone-900 hover:text-blue-700 transition-colors"
                   >
                     <ArrowLeft className="w-4 h-4" />
                     Back to login

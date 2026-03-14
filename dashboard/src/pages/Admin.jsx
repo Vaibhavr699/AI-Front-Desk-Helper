@@ -4,7 +4,9 @@ import {
   getAdminTenants,
   updateTenantPricing,
   removeTenantPricing,
+  suspendTenant,
 } from "../api";
+import * as api from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import {
   Shield,
@@ -64,6 +66,7 @@ export default function Admin() {
     promo_label: "",
     promo_expires_at: "",
     promo_notes: "",
+    plan: "basic",
     plan_overrides: {
       basic: { monthly: "", setup: "", waive_setup: false },
       pro: { monthly: "", setup: "", waive_setup: false },
@@ -108,6 +111,7 @@ export default function Admin() {
       promo_label: tenant.promo_label || "",
       promo_expires_at: tenant.promo_expires_at ? tenant.promo_expires_at.split("T")[0] : "",
       promo_notes: tenant.promo_notes || "",
+      plan: tenant.plan || "basic",
       plan_overrides: {
         basic: buildPlanForm("basic"),
         pro: buildPlanForm("pro"),
@@ -143,6 +147,7 @@ export default function Admin() {
       }
       
       const payload = {
+        plan: overrideForm.plan,
         plan_overrides: formattedOverrides,
         promo_label: overrideForm.promo_label || null,
         promo_expires_at: overrideForm.promo_expires_at || null,
@@ -172,6 +177,32 @@ export default function Admin() {
       setSaveMessage(`Error: ${err.message}`);
     } finally {
       setSaveLoading(false);
+    }
+  }
+
+  async function handleToggleSuspension() {
+    if (!selectedTenant) return;
+    const action = selectedTenant.is_suspended ? "unsuspend" : "suspend";
+    const reason = !selectedTenant.is_suspended ? prompt("Reason for suspension (optional):") : null;
+    
+    setSaveLoading(true);
+    try {
+      await api.suspendTenant(selectedTenant.id, !selectedTenant.is_suspended, reason);
+      setSaveMessage(`Tenant ${action}ed!`);
+      await loadData();
+      setSelectedTenant((prev) => ({ ...prev, is_suspended: !prev.is_suspended }));
+    } catch (err) {
+      setSaveMessage(`Error: ${err.message}`);
+    } finally {
+      setSaveLoading(false);
+    }
+  }
+
+  function handleImpersonate(tenant) {
+    if (confirm(`Switch to viewing ${tenant.company_name || tenant.name} perspective?`)) {
+      localStorage.setItem("impersonate_tenant_id", tenant.id);
+      localStorage.setItem("impersonate_tenant_name", tenant.company_name || tenant.name);
+      window.location.href = "/";
     }
   }
 
@@ -364,7 +395,11 @@ export default function Admin() {
                         )}
                       </td>
                       <td className="px-4 py-4 text-center">
-                        <StatusBadge status={t.subscription_status} />
+                        {t.is_suspended ? (
+                          <span className="inline-flex px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-red-50 text-red-600 border border-red-200">SUSPENDED</span>
+                        ) : (
+                          <StatusBadge status={t.subscription_status} />
+                        )}
                       </td>
                       <td className="px-4 py-4">
                         {t.promo_label ? (
@@ -388,6 +423,12 @@ export default function Admin() {
                           className="px-3.5 py-1.5 text-[10px] font-black tracking-wider uppercase rounded-lg transition-all opacity-0 group-hover:opacity-100 bg-gray-900 text-white hover:bg-black shadow-sm"
                         >
                           Override
+                        </button>
+                        <button
+                          onClick={() => handleImpersonate(t)}
+                          className="px-3.5 py-1.5 text-[10px] font-black tracking-wider uppercase rounded-lg transition-all opacity-0 group-hover:opacity-100 bg-stone-100 text-stone-600 hover:bg-stone-200"
+                        >
+                          View
                         </button>
                       </td>
                     </motion.tr>
@@ -506,6 +547,20 @@ export default function Admin() {
               {/* Form */}
               <div className="flex-1 overflow-y-auto p-6">
                 <form id="override-form" onSubmit={handleSaveOverride} className="space-y-5">
+                  <div className="space-y-4">
+                    <FormGroup label="Active Plan" hint="The base plan for this tenant">
+                      <select
+                        className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-gray-900 focus:border-transparent transition-all font-bold"
+                        value={overrideForm.plan}
+                        onChange={(e) => setOverrideForm({ ...overrideForm, plan: e.target.value })}
+                      >
+                        <option value="basic">Basic Plan</option>
+                        <option value="pro">Pro Plan</option>
+                        <option value="elite">Elite Plan</option>
+                      </select>
+                    </FormGroup>
+                  </div>
+
                   {/* Plan Price Overrides */}
                   <div className="space-y-4">
                     <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 mt-4">Plan Price Overrides</div>
@@ -611,6 +666,33 @@ export default function Admin() {
                     </div>
                   </div>
                 </form>
+
+                <div className="border-t border-gray-100 pt-5 mt-5">
+                  <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Account Status</div>
+                  <div className={`p-4 rounded-xl border ${selectedTenant.is_suspended ? "bg-red-50 border-red-100" : "bg-emerald-50 border-emerald-100"}`}>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className={`text-sm font-black ${selectedTenant.is_suspended ? "text-red-700" : "text-emerald-700"}`}>
+                          {selectedTenant.is_suspended ? "Account Suspended" : "Account Active"}
+                        </div>
+                        {selectedTenant.is_suspended && selectedTenant.suspended_reason && (
+                          <div className="text-xs text-red-600 mt-0.5">{selectedTenant.suspended_reason}</div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleToggleSuspension}
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
+                          selectedTenant.is_suspended 
+                            ? "bg-red-600 text-white hover:bg-red-700 shadow-sm" 
+                            : "bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
+                        }`}
+                      >
+                        {selectedTenant.is_suspended ? "Unsuspend" : "Suspend Account"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
 
                 {(selectedTenant.price_override_monthly != null || selectedTenant.price_override_setup != null) && (
                   <button

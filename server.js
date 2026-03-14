@@ -1965,6 +1965,13 @@ wss.on("connection", async (twilioSocket, req) => {
     return;
   }
 
+  if (tenant && tenant.is_suspended) {
+    console.warn("[AI-Desk] Call blocked for suspended tenant:", tenant.slug);
+    // Optionally play a message before closing, but for now just close to trigger fallback
+    twilioSocket.close();
+    return;
+  }
+
   if (!pathname.startsWith("/twilio-media")) {
     console.error("Invalid Twilio media stream path:", pathname);
     twilioSocket.close();

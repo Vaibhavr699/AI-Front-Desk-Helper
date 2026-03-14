@@ -293,6 +293,13 @@ export function removeTenantPricing(id) {
   return api(`/api/admin/tenants/${id}/pricing`, { method: "DELETE" });
 }
 
+export function suspendTenant(id, isSuspended, reason) {
+  return api(`/api/admin/tenants/${id}/suspend`, {
+    method: "PATCH",
+    body: JSON.stringify({ is_suspended: isSuspended, suspended_reason: reason }),
+  });
+}
+
 export function forgotPassword(email) {
   return api("/api/auth/forgot-password", {
     method: "POST",

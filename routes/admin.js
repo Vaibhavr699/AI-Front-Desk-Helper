@@ -74,6 +74,7 @@ router.get("/tenants", async (req, res) => {
         t.subscription_status, t.stripe_customer_id, t.stripe_subscription_id,
         t.plan_overrides,
         t.promo_label, t.promo_expires_at, t.promo_notes,
+        t.is_suspended, t.suspended_reason,
         t.created_at,
         (SELECT COUNT(*) FROM calls WHERE tenant_id = t.id) as total_calls,
         (SELECT COUNT(*) FROM bookings WHERE tenant_id = t.id) as total_bookings,
@@ -155,6 +156,35 @@ router.get("/tenants/:id", async (req, res) => {
     });
   } catch (e) {
     console.error("[Admin] Tenant detail error:", e.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// -------------------- Suspend Tenant --------------------
+router.patch("/tenants/:id/suspend", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { is_suspended, suspended_reason } = req.body || {};
+
+    await db.query(
+      `UPDATE tenants SET
+        is_suspended = $1,
+        suspended_reason = $2,
+        updated_at = now()
+       WHERE id = $3`,
+      [is_suspended === true, suspended_reason || null, id]
+    );
+
+    console.log(
+      "[Admin] Tenant suspension updated tenantId=%s suspended=%s by=%s",
+      id,
+      is_suspended,
+      req.user.email
+    );
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error("[Admin] Suspend update error:", e.message);
     res.status(500).json({ error: "Server error" });
   }
 });

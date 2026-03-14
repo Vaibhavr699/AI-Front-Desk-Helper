@@ -14,14 +14,40 @@ export default function DashboardLayout() {
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"
   );
   const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
+  const [impersonating, setImpersonating] = useState(
+    () => localStorage.getItem("impersonate_tenant_id")
+  );
+  const impersonateName = localStorage.getItem("impersonate_tenant_name");
 
   useEffect(() => {
-    if (user?.tenant_id) {
-      getTenant(user.tenant_id)
-        .then((data) => setTenants([data]))
+    // Override tenantId if impersonating
+    if (impersonating) {
+      setTenantId(impersonating);
+    }
+  }, [impersonating]);
+
+  function stopImpersonating() {
+    localStorage.removeItem("impersonate_tenant_id");
+    localStorage.removeItem("impersonate_tenant_name");
+    setImpersonating(null);
+    setTenantId(user?.tenant_id || "");
+    window.location.href = "/admin"; // Go back to admin
+  }
+
+  const [tenant, setTenant] = useState(null);
+  const [isSuspended, setIsSuspended] = useState(false);
+
+  useEffect(() => {
+    if (tenantId) {
+      getTenant(tenantId)
+        .then((data) => {
+          setTenants([data]);
+          setTenant(data);
+          setIsSuspended(data.is_suspended && !user?.is_super_admin && !impersonating);
+        })
         .catch(() => setTenants([]));
     }
-  }, []);
+  }, [tenantId]);
 
   useEffect(() => {
     if (tenantId) {
@@ -47,11 +73,53 @@ export default function DashboardLayout() {
 
   return (
     <div className="h-screen bg-stone-100 flex flex-col overflow-hidden">
+      {impersonating && (
+        <div className="bg-amber-500 text-white px-6 py-2 flex items-center justify-between text-sm font-bold shadow-lg relative z-[60]">
+          <div className="flex items-center gap-2">
+            <span className="animate-pulse">⚠️</span>
+            <span>Impersonating: <span className="font-black underline">{impersonateName}</span></span>
+          </div>
+          <button 
+            onClick={stopImpersonating}
+            className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider transition-all"
+          >
+            End Session
+          </button>
+        </div>
+      )}
       <Header
         tenantId={tenantId}
         tenants={tenants}
         onMenuClick={openMobileSidebar}
       />
+
+      {isSuspended && (
+        <div className="fixed inset-0 z-[100] bg-stone-900/60 backdrop-blur-md flex items-center justify-center p-6">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 text-center animate-in fade-in zoom-in duration-300">
+            <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6">
+              <span className="text-3xl">⚠️</span>
+            </div>
+            <h2 className="text-2xl font-black text-stone-900 mb-2">Account Suspended</h2>
+            <p className="text-stone-500 mb-8">
+              Your account has been suspended. Please update your billing information or contact support to restore service.
+            </p>
+            <div className="space-y-3">
+              <a 
+                href="/plans" 
+                className="block w-full bg-stone-900 hover:bg-black text-white py-3 rounded-xl font-bold transition-all shadow-lg"
+              >
+                Go to Billing
+              </a>
+              <button 
+                onClick={() => window.location.href = "/login"}
+                className="block w-full text-stone-400 hover:text-stone-600 font-bold py-2 transition-all"
+              >
+                Sign Out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* Desktop sidebar: fixed height, no scroll */}

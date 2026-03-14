@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { MoveRight, PhoneCall } from "lucide-react";
 import { Button } from "./button";
 
-export function AnimatedHeroTitle({ onStart, onLogin }) {
+export function AnimatedHeroTitle({ onStart, onLogin, onContact }) {
     const [titleNumber, setTitleNumber] = useState(0);
     const titles = useMemo(
         () => ["every call", "more leads", "every booking", "no voicemails", "more revenue"],
@@ -52,11 +52,11 @@ export function AnimatedHeroTitle({ onStart, onLogin }) {
                         your CRM — so you can focus on the work that matters.
                     </p>
                 </div>
-                <div className="flex flex-row gap-3 mt-2">
-                    <Button size="lg" className="gap-3" variant="outline" onClick={onLogin}>
-                        Jump on a call <PhoneCall className="w-4 h-4" />
+                <div className="flex flex-row gap-3 mt-2 relative z-[101] pointer-events-auto isolate">
+                    <Button type="button" size="lg" className="gap-3 relative z-[102]" variant="outline" onClick={onContact}>
+                        Get in touch <PhoneCall className="w-4 h-4" />
                     </Button>
-                    <Button size="lg" className="gap-3" onClick={onStart}>
+                    <Button type="button" size="lg" className="gap-3 relative z-[102]" onClick={onStart}>
                         Start free <MoveRight className="w-4 h-4" />
                     </Button>
                 </div>

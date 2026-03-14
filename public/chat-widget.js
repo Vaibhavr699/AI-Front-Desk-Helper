@@ -225,15 +225,72 @@ async function triggerFollowUp(lead) {
     });
     document.body.appendChild(container);
 
-    // Header
+    // Header with (?) how-it-works tooltip
     const header = document.createElement("div");
-    header.innerText = companyName;
     Object.assign(header.style, {
       background: "linear-gradient(135deg, #000 0%, #333 100%)",
-      color: "#fff", padding: "20px",
-      fontWeight: "bold", textAlign: "center", fontSize: "18px",
-      letterSpacing: "0.5px"
+      color: "#fff", padding: "16px 20px",
+      fontWeight: "bold", fontSize: "18px",
+      letterSpacing: "0.5px",
+      display: "flex", alignItems: "center", justifyContent: "space-between"
     });
+    const headerSpacer = document.createElement("span");
+    headerSpacer.style.width = "26px";
+    header.appendChild(headerSpacer);
+    const headerTitle = document.createElement("span");
+    headerTitle.innerText = companyName;
+    headerTitle.style.flex = "1";
+    headerTitle.style.textAlign = "center";
+    header.appendChild(headerTitle);
+    const scriptUrl = apiBase + "/chat-widget.js";
+    const embedSnippet = "<script src=\"" + scriptUrl + "\"><\/script>";
+    const helpBtn = document.createElement("button");
+    helpBtn.innerText = "?";
+    helpBtn.type = "button";
+    helpBtn.setAttribute("aria-label", "How it works");
+    Object.assign(helpBtn.style, {
+      width: "26px", height: "26px", borderRadius: "50%",
+      border: "1px solid rgba(255,255,255,0.5)", background: "rgba(255,255,255,0.15)",
+      color: "#fff", cursor: "pointer", fontSize: "14px", fontWeight: "bold",
+      display: "flex", alignItems: "center", justifyContent: "center", flexShrink: "0"
+    });
+    const tooltip = document.createElement("div");
+    tooltip.id = "ai-widget-how-it-works";
+    tooltip.style.display = "none";
+    tooltip.style.position = "fixed";
+    tooltip.style.width = "300px";
+    tooltip.style.padding = "14px";
+    tooltip.style.background = "#1a1a1a";
+    tooltip.style.color = "#fff";
+    tooltip.style.fontSize = "12px";
+    tooltip.style.borderRadius = "10px";
+    tooltip.style.boxShadow = "0 8px 24px rgba(0,0,0,0.4)";
+    tooltip.style.zIndex = "2147483647";
+    tooltip.style.lineHeight = "1.5";
+    tooltip.innerHTML = "<strong style=\"display:block;margin-bottom:8px\">How it works</strong>" +
+      "Add this script to your website before <code style=\"background:#333;padding:2px 6px;border-radius:4px\">&lt;/body&gt;</code> to show the chat widget:<br><br>" +
+      "<code style=\"display:block;background:#333;padding:10px;border-radius:6px;font-size:11px;word-break:break-all;white-space:pre-wrap\">" + embedSnippet.replace(/</g, "&lt;").replace(/>/g, "&gt;") + "</code>" +
+      "<br>Script URL: <code style=\"background:#333;padding:2px 6px;border-radius:4px;font-size:11px;word-break:break-all\">" + scriptUrl + "</code>";
+    function showTooltip() {
+      if (!tooltip.parentNode || tooltip.parentNode !== document.body) document.body.appendChild(tooltip);
+      var rect = helpBtn.getBoundingClientRect();
+      tooltip.style.left = Math.max(8, rect.right - 300) + "px";
+      tooltip.style.top = Math.max(8, rect.top - 240) + "px";
+      tooltip.style.display = "block";
+    }
+    function hideTooltip() { tooltip.style.display = "none"; }
+    function toggleTooltip(e) {
+      e.stopPropagation();
+      if (tooltip.style.display === "block") hideTooltip(); else showTooltip();
+    }
+    helpBtn.addEventListener("click", toggleTooltip);
+    document.addEventListener("click", function (e) {
+      if (tooltip.style.display === "block" && e.target !== helpBtn && !tooltip.contains(e.target)) hideTooltip();
+    });
+    const helpWrap = document.createElement("div");
+    helpWrap.style.position = "relative";
+    helpWrap.appendChild(helpBtn);
+    header.appendChild(helpWrap);
     container.appendChild(header);
 
     // Messages area
@@ -373,41 +430,34 @@ function showBookingForm() {
       messagesBody.scrollTop = messagesBody.scrollHeight;
 
       try {
-        const response = await fetch(`${apiBase}/website-chat`, {
+        const response = await fetch(apiBase + "/website-chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: val, tenantId, sessionId })
         });
         const data = await response.json();
 
-typing.remove();
-trackVisitor("message_sent", { message: val });        
-addMsg(data.reply || "I'm sorry, I encountered an issue.", false);
-/* Lead Capture */
-if (data.lead_capture) {
-  console.log("Lead Captured:", data.lead_capture);
-  await sendLeadToCRM(data.lead_capture);
-  await triggerFollowUp(data.lead_capture);
-}
-  if (data.show_booking) {
-  showBookingForm();
-}
-}
-/* Booking */
-if (data.booking_confirmed) {
-  addMsg(
-    `✅ Your appointment is booked for ${data.booking_confirmed.date} at ${data.booking_confirmed.time}.`,
-    false
-  );
+        typing.remove();
+        trackVisitor("message_sent", { message: val });
+        addMsg(data.reply || "I'm sorry, I encountered an issue.", false);
 
-}
-
-/* Quote Capture */
-if (data.quote_capture) {
-  const quoteMsg = `📋 Quick quote request received. We'll contact you shortly!`;
-  addMsg(quoteMsg, false);
-
-}
+        if (data.lead_capture) {
+          console.log("Lead Captured:", data.lead_capture);
+          await sendLeadToCRM(data.lead_capture);
+          await triggerFollowUp(data.lead_capture);
+        }
+        if (data.show_booking) {
+          showBookingForm();
+        }
+        if (data.booking_confirmed) {
+          addMsg(
+            "✅ Your appointment is booked for " + data.booking_confirmed.date + " at " + data.booking_confirmed.time + ".",
+            false
+          );
+        }
+        if (data.quote_capture) {
+          addMsg("📋 Quick quote request received. We'll contact you shortly!", false);
+        }
       } catch (err) {
         typing.remove();
         addMsg("Connection error. Please check your internet.", false);

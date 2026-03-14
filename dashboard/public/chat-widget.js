@@ -49,6 +49,81 @@
   container.style.transform = "translateY(10px)";
   document.body.appendChild(container);
 
+  // ===== Chat header with (?) tooltip =====
+  var scriptUrl = apiBase + "/dashboard/chat-widget.js";
+  var embedSnippet = "<script src=\"" + scriptUrl + "\"><\/script>";
+  var headerBar = document.createElement("div");
+  headerBar.style.display = "flex";
+  headerBar.style.alignItems = "center";
+  headerBar.style.justifyContent = "space-between";
+  headerBar.style.padding = "10px 12px";
+  headerBar.style.borderBottom = "1px solid #eee";
+  headerBar.style.background = "#fafafa";
+  headerBar.style.flexShrink = "0";
+  var headerTitle = document.createElement("span");
+  headerTitle.innerText = "Chat";
+  headerTitle.style.fontWeight = "bold";
+  headerTitle.style.fontSize = "14px";
+  headerTitle.style.color = "#333";
+  headerBar.appendChild(headerTitle);
+  var helpBtn = document.createElement("button");
+  helpBtn.innerText = "?";
+  helpBtn.type = "button";
+  helpBtn.setAttribute("aria-label", "How it works");
+  helpBtn.style.width = "22px";
+  helpBtn.style.height = "22px";
+  helpBtn.style.borderRadius = "50%";
+  helpBtn.style.border = "1px solid #ccc";
+  helpBtn.style.background = "#fff";
+  helpBtn.style.color = "#666";
+  helpBtn.style.cursor = "pointer";
+  helpBtn.style.fontSize = "12px";
+  helpBtn.style.fontWeight = "bold";
+  helpBtn.style.display = "flex";
+  helpBtn.style.alignItems = "center";
+  helpBtn.style.justifyContent = "center";
+  helpBtn.style.flexShrink = "0";
+  var tooltip = document.createElement("div");
+  tooltip.id = "ai-widget-tooltip";
+  tooltip.style.display = "none";
+  tooltip.style.position = "fixed";
+  tooltip.style.width = "280px";
+  tooltip.style.padding = "12px";
+  tooltip.style.background = "#1a1a1a";
+  tooltip.style.color = "#fff";
+  tooltip.style.fontSize = "12px";
+  tooltip.style.borderRadius = "8px";
+  tooltip.style.boxShadow = "0 4px 12px rgba(0,0,0,0.3)";
+  tooltip.style.zIndex = "1000001";
+  tooltip.style.lineHeight = "1.5";
+  tooltip.innerHTML = "<strong style=\"display:block;margin-bottom:6px\">How it works</strong>" +
+    "Add this script to your website before <code style=\"background:#333;padding:1px 4px;border-radius:4px\">&lt;/body&gt;</code> to show the chat widget:<br><br>" +
+    "<code style=\"display:block;background:#333;padding:8px;border-radius:4px;font-size:11px;word-break:break-all;white-space:pre-wrap\">" + embedSnippet.replace(/</g, "&lt;").replace(/>/g, "&gt;") + "</code>" +
+    "<br>Script URL: <code style=\"background:#333;padding:2px 6px;border-radius:4px;font-size:11px;word-break:break-all\">" + scriptUrl + "</code>";
+  function showTooltip() {
+    if (!tooltip.parentNode || tooltip.parentNode !== document.body) document.body.appendChild(tooltip);
+    var rect = helpBtn.getBoundingClientRect();
+    tooltip.style.left = Math.max(8, rect.right - 280) + "px";
+    tooltip.style.top = Math.max(8, rect.top - 220) + "px";
+    tooltip.style.display = "block";
+  }
+  function hideTooltip() {
+    tooltip.style.display = "none";
+  }
+  function toggleTooltip(e) {
+    e.stopPropagation();
+    if (tooltip.style.display === "block") hideTooltip(); else showTooltip();
+  }
+  helpBtn.addEventListener("click", toggleTooltip);
+  document.addEventListener("click", function closeTooltipOnOutside(e) {
+    if (tooltip.style.display === "block" && e.target !== helpBtn && !tooltip.contains(e.target)) hideTooltip();
+  });
+  var helpWrap = document.createElement("div");
+  helpWrap.style.position = "relative";
+  helpWrap.appendChild(helpBtn);
+  headerBar.appendChild(helpWrap);
+  container.appendChild(headerBar);
+
   // ===== Messages Area =====
   const messages = document.createElement("div");
   messages.style.flex = "1";
@@ -149,10 +224,7 @@
       toggleButton.innerText = "Close";
 
       if (!hasWelcomed) {
-        addMessage(
-          "Hi there 👋 Welcome! I can help you book an appointment or answer your questions. How can I help you today?",
-          false
-        );
+        addMessage("Welcome! What's your query?", false);
         hasWelcomed = true;
       }
     } else {
@@ -176,32 +248,25 @@
     showTypingIndicator();
 
     try {
-      const response = await fetch(`${apiBase}/website-chat`, {
+      const response = await fetch(apiBase + "/website-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: text,
-          sessionId: sessionId,
-        }),
+        body: JSON.stringify({ message: text, sessionId: sessionId }),
       });
-
       removeTypingIndicator();
-
       if (!response.ok) {
         addMessage("Sorry, something went wrong. Please try again.", false);
         return;
       }
-
       const data = await response.json();
-
-      // slight delay to feel human
-      setTimeout(() => {
+      setTimeout(function () {
         addMessage(data.reply || "No response from server.", false);
       }, 400);
-
     } catch (err) {
       removeTypingIndicator();
       addMessage("Connection error. Please try again.", false);
+    } finally {
+      /* ensure try block is closed for embedded scripts */
     }
   }
 

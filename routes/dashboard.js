@@ -685,8 +685,8 @@ router.post("/tenants", async (req, res) => {
       if (!phone) {
         return res.status(400).json({ error: "A valid phone number is required for BYOT (e.g. +18076055898 or 8076055898)" });
       }
-    } else {
-      // Platform flow: dynamically purchase a number
+    } else if (body.assigned_number || body.phone || body.phone_number) {
+      // Platform flow: dynamically purchase a number - only if specifically requested
       try {
         let numberToBuy = body.assigned_number;
         if (!numberToBuy) {
@@ -706,9 +706,11 @@ router.post("/tenants", async (req, res) => {
     }
 
     // Check if this phone number is already assigned to another tenant
-    const phoneExists = await db.query("SELECT id FROM phone_numbers WHERE phone = $1", [phone]);
-    if (phoneExists.rows.length > 0) {
-      return res.status(409).json({ error: "This phone number is already assigned to another business." });
+    if (phone) {
+      const phoneExists = await db.query("SELECT id FROM phone_numbers WHERE phone = $1", [phone]);
+      if (phoneExists.rows.length > 0) {
+        return res.status(409).json({ error: "This phone number is already assigned to another business." });
+      }
     }
 
     const finalName = displayName || companyName;
@@ -737,29 +739,23 @@ router.post("/tenants", async (req, res) => {
     }
 
     // Insert the phone number linked to this tenant
-    const phoneRow = await db.query(
-      "INSERT INTO phone_numbers (tenant_id, phone, is_primary, twilio_sid) VALUES ($1, $2, true, $3) RETURNING id",
-      [tenant.id, phone, twilioSid]
-    );
-
-    // Auto-configure Twilio webhook on this number
-    const tenantForTwilio = await getTenantById(tenant.id);
-    const webhookResult = await configurePhoneWebhook(phone, tenant.id, tenantForTwilio);
-    if (!webhookResult.success) {
-      // Rollback: remove the phone number and tenant since webhook setup failed
-      await db.query("DELETE FROM phone_numbers WHERE id = $1", [phoneRow.rows[0].id]);
-      await db.query("DELETE FROM tenants WHERE id = $1", [tenant.id]);
-      await db.query(
-        "UPDATE dashboard_users SET tenant_id = NULL, role = 'viewer', updated_at = now() WHERE id = $1",
-        [userId]
+    if (phone) {
+      const phoneRow = await db.query(
+        "INSERT INTO phone_numbers (tenant_id, phone, is_primary, twilio_sid) VALUES ($1, $2, false, $3) RETURNING id",
+        [tenant.id, phone, twilioSid]
       );
-      return res.status(400).json({
-        error: webhookResult.error || "Could not configure this phone number in Twilio. Please contact support."
-      });
-    }
-    // Update Twilio SID if we didn't already have it (BYOT case)
-    if (webhookResult.twilioSid && !twilioSid) {
-      await db.query("UPDATE phone_numbers SET twilio_sid = $1, updated_at = now() WHERE id = $2", [webhookResult.twilioSid, phoneRow.rows[0].id]);
+
+      // Auto-configure Twilio webhook on this number - NON-FATAL
+      const tenantForTwilio = await getTenantById(tenant.id);
+      const webhookResult = await configurePhoneWebhook(phone, tenant.id, tenantForTwilio);
+      if (webhookResult.success) {
+        // Update Twilio SID if we didn't already have it (BYOT case)
+        if (webhookResult.twilioSid && !twilioSid) {
+          await db.query("UPDATE phone_numbers SET twilio_sid = $1, updated_at = now() WHERE id = $2", [webhookResult.twilioSid, phoneRow.rows[0].id]);
+        }
+      } else {
+        console.warn("[Onboarding] Could not configure webhook for %s: %s", phone, webhookResult.error);
+      }
     }
     await db.query(
       "UPDATE dashboard_users SET tenant_id = $1, role = $2, updated_at = now() WHERE id = $3",
@@ -930,9 +926,12 @@ router.post("/phone-numbers", async (req, res) => {
     const tenantId = getTenantIdFromQuery(req);
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
     const phone = normalizePhoneInput(req.body?.phone);
+    const setPrimary = !!req.body?.is_primary;
+
     if (!phone) {
-      return res.status(400).json({ error: "A valid phone number is required (e.g. +18076055898 or 8076055898)" });
+      return res.status(400).json({ error: "A valid phone number is required (e.g. +14025551234)" });
     }
+
     // Check if already assigned
     const existing = await db.query("SELECT id, tenant_id FROM phone_numbers WHERE phone = $1", [phone]);
     if (existing.rows.length > 0) {
@@ -942,22 +941,30 @@ router.post("/phone-numbers", async (req, res) => {
       }
       return res.status(409).json({ error: "This phone number is already assigned to another business." });
     }
-    // If this is the first number, make it primary
-    const countResult = await db.query("SELECT COUNT(*) as count FROM phone_numbers WHERE tenant_id = $1", [tenantId]);
-    const isPrimary = parseInt(countResult.rows[0].count, 10) === 0;
-    // Auto-configure Twilio webhook on this number before saving
+
+    if (setPrimary) {
+      // Set all other numbers for this tenant to not primary
+      await db.query(
+        "UPDATE phone_numbers SET is_primary = false, updated_at = now() WHERE tenant_id = $1",
+        [tenantId]
+      );
+    }
+
+    // Auto-configure Twilio webhook on this number - NON-FATAL
     const tenantForTwilio = await getTenantById(tenantId);
     const webhookResult = await configurePhoneWebhook(phone, tenantId, tenantForTwilio);
-    if (!webhookResult.success) {
-      return res.status(400).json({
-        error: webhookResult.error || "Could not configure this phone number in Twilio. Make sure it is purchased and active in your Twilio account."
-      });
-    }
+    
+    // Save the record regardless of Twilio success
     const result = await db.query(
       "INSERT INTO phone_numbers (tenant_id, phone, is_primary, twilio_sid) VALUES ($1, $2, $3, $4) RETURNING id, tenant_id, phone, is_primary, twilio_sid, created_at",
-      [tenantId, phone, isPrimary, webhookResult.twilioSid || null]
+      [tenantId, phone, setPrimary, webhookResult.success ? (webhookResult.twilioSid || null) : null]
     );
-    res.status(201).json({ ...result.rows[0], webhook_configured: true });
+
+    res.status(201).json({ 
+      ...result.rows[0], 
+      webhook_configured: webhookResult.success,
+      warning: webhookResult.success ? null : "Number added, but could not be configured in Twilio (External Number)"
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error" });
@@ -977,19 +984,48 @@ router.delete("/phone-numbers/:id", async (req, res) => {
     if (existing.rows.length === 0) {
       return res.status(404).json({ error: "Phone number not found" });
     }
-    // Check if this is the only number — require at least one
-    const countResult = await db.query("SELECT COUNT(*) as count FROM phone_numbers WHERE tenant_id = $1", [tenantId]);
-    if (parseInt(countResult.rows[0].count, 10) <= 1) {
-      return res.status(400).json({ error: "Cannot remove your only phone number. Add another number first." });
-    }
     await db.query("DELETE FROM phone_numbers WHERE id = $1", [phoneId]);
-    // If deleted number was primary, promote the oldest remaining
-    if (existing.rows[0].is_primary) {
+    res.json({ success: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.patch("/phone-numbers/:id", async (req, res) => {
+  try {
+    const tenantId = getTenantIdFromQuery(req);
+    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+    const { is_primary } = req.body;
+    const phoneId = req.params.id;
+
+    // Verify ownership
+    const existing = await db.query(
+      "SELECT id FROM phone_numbers WHERE id = $1 AND tenant_id = $2",
+      [phoneId, tenantId]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: "Phone number not found" });
+    }
+
+    if (is_primary) {
+      // Set all other numbers for this tenant to not primary
       await db.query(
-        "UPDATE phone_numbers SET is_primary = true, updated_at = now() WHERE id = (SELECT id FROM phone_numbers WHERE tenant_id = $1 ORDER BY created_at LIMIT 1)",
+        "UPDATE phone_numbers SET is_primary = false, updated_at = now() WHERE tenant_id = $1",
         [tenantId]
       );
+      // Set this one to primary
+      await db.query(
+        "UPDATE phone_numbers SET is_primary = true, updated_at = now() WHERE id = $1",
+        [phoneId]
+      );
+    } else {
+      await db.query(
+        "UPDATE phone_numbers SET is_primary = false, updated_at = now() WHERE id = $1",
+        [phoneId]
+      );
     }
+
     res.json({ success: true });
   } catch (e) {
     console.error(e);

@@ -223,15 +223,22 @@ export function getPhoneNumbers(tenantId) {
   return api(`/api/phone-numbers?tenant_id=${tenantId}`);
 }
 
-export function addPhoneNumber(tenantId, phone) {
+export function addPhoneNumber(data) {
   return api("/api/phone-numbers", {
     method: "POST",
-    body: JSON.stringify({ phone, tenant_id: tenantId }),
+    body: JSON.stringify(data),
   });
 }
 
 export function deletePhoneNumber(phoneId) {
   return api(`/api/phone-numbers/${phoneId}`, { method: "DELETE" });
+}
+
+export function updatePhoneNumber(phoneId, data) {
+  return api(`/api/phone-numbers/${phoneId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
 }
 
 export function getAvailableNumbers(areaCode = "") {

@@ -8,9 +8,11 @@ import {
   deletePhoneNumber,
   getAvailableNumbers,
   getSubscriptionStatus,
-  resetApiKey
+  resetApiKey,
+  updatePhoneNumber
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
+import { ConfirmationModal } from "../components/ConfirmationModal";
 import {
   Bot,
   Clock,
@@ -30,7 +32,12 @@ import {
   ExternalLink,
   Zap,
   BookOpen,
-  Search
+  Search,
+  Star,
+  HelpCircle,
+  ChevronDown,
+  ChevronUp,
+  Facebook
 } from "lucide-react";
 
 const TENANT_STORAGE_KEY = "tenantId";
@@ -80,6 +87,7 @@ export default function Settings({ tenantId }) {
   const [phoneNumbers, setPhoneNumbers] = useState([]);
   const [phonesLoading, setPhonesLoading] = useState(false);
   const [newPhone, setNewPhone] = useState("");
+  const [newPhoneIsPrimary, setNewPhoneIsPrimary] = useState(false);
   const [phoneError, setPhoneError] = useState("");
 
   // Provision number state
@@ -90,6 +98,18 @@ export default function Settings({ tenantId }) {
   const [areaCode, setAreaCode] = useState("");
   const [provisionLoading, setProvisionLoading] = useState(false);
   const [provisionMessage, setProvisionMessage] = useState("");
+
+  // Facebook integration steps (tooltip / expandable)
+  const [showFbSteps, setShowFbSteps] = useState(false);
+
+  // Confirmation modal state
+  const [confirmModal, setConfirmModal] = useState({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => { },
+    loading: false
+  });
 
   const loadTenant = async () => {
     if (!tenantId) return;
@@ -181,7 +201,7 @@ export default function Settings({ tenantId }) {
     setProvisionLoading(true);
     setProvisionMessage("");
     try {
-      await addPhoneNumber(tenantId, selectedNumber);
+      await addPhoneNumber({ tenant_id: tenantId, phone: selectedNumber });
       setProvisionMessage("Number provisioned successfully!");
       setAvailableNumbers([]);
       setSelectedNumber(null);
@@ -235,13 +255,17 @@ export default function Settings({ tenantId }) {
     }));
   };
 
-  const handleAddPhone = async (e) => {
-    e.preventDefault();
-    if (!newPhone.trim()) return;
+  const handleAddPhone = async () => {
     setPhoneError("");
+    if (!newPhone) return;
     try {
-      await addPhoneNumber(tenantId, newPhone.trim());
+      await addPhoneNumber({
+        tenant_id: tenantId,
+        phone: newPhone,
+        is_primary: newPhoneIsPrimary
+      });
       setNewPhone("");
+      setNewPhoneIsPrimary(false);
       loadPhones();
     } catch (err) {
       setPhoneError(err.message);
@@ -249,9 +273,28 @@ export default function Settings({ tenantId }) {
   };
 
   const handleDeletePhone = async (phoneId) => {
-    if (!confirm("Remove this phone number?")) return;
+    setConfirmModal({
+      isOpen: true,
+      title: "Remove Phone Number?",
+      message: "Are you sure you want to remove this phone number? You won't be able to receive calls on this number anymore.",
+      onConfirm: async () => {
+        setConfirmModal(prev => ({ ...prev, loading: true }));
+        try {
+          await deletePhoneNumber(phoneId);
+          loadPhones();
+          setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        } catch (err) {
+          setPhoneError(err.message);
+        } finally {
+          setConfirmModal(prev => ({ ...prev, loading: false }));
+        }
+      }
+    });
+  };
+
+  const handleSetPrimary = async (phoneId) => {
     try {
-      await deletePhoneNumber(phoneId);
+      await updatePhoneNumber(phoneId, { is_primary: true });
       loadPhones();
     } catch (err) {
       setPhoneError(err.message);
@@ -259,14 +302,24 @@ export default function Settings({ tenantId }) {
   };
 
   const handleResetKey = async () => {
-    if (!confirm("Reset API Key? Any existing integrations using the old key will break.")) return;
-    try {
-      const res = await resetApiKey(tenantId);
-      setTenant(prev => ({ ...prev, api_key_masked: res.api_key.substring(0, 4) + "..." + res.api_key.slice(-4) }));
-      setMessage("API Key reset successfully. New key generated.");
-    } catch (e) {
-      setError(e.message);
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: "Reset API Key?",
+      message: "Are you sure? Any existing integrations using the old key will break immediately.",
+      onConfirm: async () => {
+        setConfirmModal(prev => ({ ...prev, loading: true }));
+        try {
+          const res = await resetApiKey(tenantId);
+          setTenant(prev => ({ ...prev, api_key_masked: res.api_key.substring(0, 4) + "..." + res.api_key.slice(-4) }));
+          setMessage("API Key reset successfully. New key generated.");
+          setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setConfirmModal(prev => ({ ...prev, loading: false }));
+        }
+      }
+    });
   };
 
   const handleSubmit = async (e) => {
@@ -725,10 +778,66 @@ export default function Settings({ tenantId }) {
 
               {/* Facebook */}
               <div className="pt-6 border-t border-gray-100">
-                <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2 text-[#1877F2]">
-                  <Globe className="w-5 h-5" />
-                  Facebook Messenger
-                </h2>
+                <div className="flex items-center justify-between gap-4 mb-4">
+                  <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2 text-[#1877F2]">
+                    <Facebook className="w-5 h-5" />
+                    Facebook Messenger
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setShowFbSteps(!showFbSteps)}
+                    className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-[#1877F2] hover:bg-[#1877F2]/10 rounded-xl transition-colors"
+                    aria-expanded={showFbSteps}
+                  >
+                    <HelpCircle className="w-4 h-4" />
+                    {showFbSteps ? "Hide steps" : "How to connect"}
+                    {showFbSteps ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+                </div>
+
+                {showFbSteps && (
+                  <div className="mb-6 p-6 bg-[#1877F2]/5 border border-[#1877F2]/20 rounded-2xl space-y-4 text-sm">
+                    <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-[#1877F2]" />
+                      Facebook integration steps
+                    </h3>
+                    <ol className="list-decimal list-inside space-y-3 text-gray-700">
+                      <li>
+                        <strong>Create or use a Meta App</strong> — Go to{" "}
+                        <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener noreferrer" className="text-[#1877F2] underline hover:no-underline">
+                          developers.facebook.com/apps
+                        </a>
+                        , create an app (or select existing), then add the <strong>Messenger</strong> product to the app.
+                      </li>
+                      <li>
+                        <strong>Select product → Page</strong> — In the left sidebar, open <strong>Messenger</strong>, then under "Messenger" go to <strong>Settings</strong>. Under "Select a Page", choose the Facebook Page you want the AI to reply on (you need <strong>Page Admin</strong> access). Connect the Page if it isn’t linked yet.
+                      </li>
+                      <li>
+                        <strong>Publish your app</strong> — Make sure your app is <strong>published</strong> (App Dashboard → App Review or App Settings). In development mode only app admins/testers can message; publishing allows your Page followers to use Messenger with the AI.
+                      </li>
+                      <li>
+                        <strong>Set up the webhook</strong> — In Messenger → Settings, under "Webhooks", click "Add Callback URL". Use this exact URL:
+                        <div className="mt-2 p-3 bg-white rounded-xl font-mono text-xs break-all border border-[#1877F2]/20">
+                          https://ai-front-desk-backend.onrender.com/facebook-webhook
+                        </div>
+                        For <strong>Verify Token</strong>, enter a secret phrase (e.g. a random string). Your server must have the same value set in the <code className="bg-white/80 px-1 rounded">FACEBOOK_VERIFY_TOKEN</code> environment variable — ask your administrator if you don’t control the server.
+                      </li>
+                      <li>
+                        <strong>Enable webhook fields</strong> — After adding the callback URL, click "Edit" next to the webhook and subscribe to these fields: <code className="bg-white/80 px-1 rounded">messages</code> and <code className="bg-white/80 px-1 rounded">messaging_postbacks</code>. Save.
+                      </li>
+                      <li>
+                        <strong>Get Page ID & token</strong> — In Messenger → Settings you’ll see your <strong>Page ID</strong> (numeric). Under "Access Tokens", select your Page and generate a token with <code className="bg-white/80 px-1 rounded">pages_messaging</code> and <code className="bg-white/80 px-1 rounded">pages_manage_metadata</code>. Paste the Page ID and token in the fields below.
+                      </li>
+                      <li>
+                        <strong>Save below</strong> — Enter your Page ID and Page Access Token in the form below and click Save. Messages to your Page will then be handled by the AI.
+                      </li>
+                    </ol>
+                    <p className="text-xs text-gray-500 pt-2 border-t border-[#1877F2]/10">
+                      Your backend must be deployed with <code>FACEBOOK_VERIFY_TOKEN</code> set; the same value is used in Meta’s "Verify Token" field when adding the callback URL.
+                    </p>
+                  </div>
+                )}
+
                 <div className="bg-[#1877F2]/5 rounded-2xl p-6 border border-[#1877F2]/10 space-y-4">
                   <div>
                     <label className="block text-sm font-bold text-[#1877F2] mb-2 uppercase tracking-wide">Page ID</label>
@@ -736,17 +845,21 @@ export default function Settings({ tenantId }) {
                       type="text"
                       value={form.facebook_page_id}
                       onChange={(e) => handleUpdateForm("facebook_page_id", e.target.value)}
+                      placeholder="e.g. 123456789012345"
                       className="w-full px-4 py-3 bg-white border border-[#1877F2]/20 rounded-xl font-mono text-xs focus:ring-[#1877F2]"
                     />
+                    <p className="text-xs text-gray-500 mt-1">Numeric ID of your Facebook Page (from Meta for Developers → Messenger → your Page).</p>
                   </div>
                   <div>
-                    <label className="block text-sm font-bold text-[#1877F2] mb-2 uppercase tracking-wide">Page Token</label>
+                    <label className="block text-sm font-bold text-[#1877F2] mb-2 uppercase tracking-wide">Page Access Token</label>
                     <input
                       type="password"
                       value={form.facebook_page_access_token}
                       onChange={(e) => handleUpdateForm("facebook_page_access_token", e.target.value)}
+                      placeholder="Paste token from Meta App → Messenger → Access Tokens"
                       className="w-full px-4 py-3 bg-white border border-[#1877F2]/20 rounded-xl font-mono text-xs focus:ring-[#1877F2]"
                     />
+                    <p className="text-xs text-gray-500 mt-1">Token with pages_messaging and pages_manage_metadata. Never share this token.</p>
                   </div>
                 </div>
               </div>
@@ -799,12 +912,15 @@ export default function Settings({ tenantId }) {
                 </h3>
 
                 {!hasActiveSub ? (
-                  <div className="p-6 bg-amber-50 border border-amber-200 rounded-2xl mb-8">
-                    <p className="text-sm font-bold text-amber-800 mb-1">📞 Subscription Required</p>
-                    <p className="text-sm text-amber-700">
-                      You need an active plan before you can provision a dedicated AI phone number.{" "}
-                      <Link to="/plans" className="font-bold underline hover:text-amber-900">Choose a plan →</Link>
-                    </p>
+                  <div className="p-6 border-2 border-dashed border-gray-200 rounded-3xl text-center">
+                    <div className="w-12 h-12 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                      <Lock className="w-6 h-6 text-gray-400" />
+                    </div>
+                    <p className="text-sm font-bold text-gray-900 mb-1">Subscription Required</p>
+                    <p className="text-xs text-gray-500 mb-4">Choose a plan to get your dedicated AI phone line.</p>
+                    <Link to="/settings?tab=ai" onClick={() => setActiveTab("ai")} className="inline-flex px-4 py-2 bg-primary text-white text-xs font-bold rounded-xl hover:bg-primary/90 transition-all">
+                      Choose a Plan
+                    </Link>
                   </div>
                 ) : (
                   <div className="mb-8 space-y-4">
@@ -878,49 +994,140 @@ export default function Settings({ tenantId }) {
                 )}
               </div>
 
-              <div className="pt-10 border-t border-gray-100">
-                <h3 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-                  <Phone className="text-primary w-5 h-5" />
-                  Linked Phone Numbers
-                </h3>
-
+              <div className="border-t border-gray-100 pt-10">
+                <div className="mb-6">
+                  <h3 className="text-lg font-bold text-gray-900 mb-1">AI Phone Lines</h3>
+                  <p className="text-sm text-gray-500">
+                    These are your dedicated AI voice channels. Any calls to these numbers are handled by your AI assistant.
+                  </p>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                  {phoneNumbers.map((pn) => (
+                  {phoneNumbers.filter(pn => pn.twilio_sid).map((pn) => (
                     <div key={pn.id} className="p-4 bg-gray-50 border border-gray-100 rounded-2xl flex items-center justify-between group hover:border-primary/30 transition-all">
                       <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-white border border-gray-200 flex items-center justify-center">
-                          <Phone size={18} className="text-primary" />
+                        <div className={`w-10 h-10 rounded-xl bg-white border flex items-center justify-center ${pn.is_primary ? "border-primary/30 ring-2 ring-primary/5" : "border-gray-200"}`}>
+                          <Phone size={18} className={pn.is_primary ? "text-primary" : "text-gray-400"} />
                         </div>
                         <div>
-                          <p className="font-bold text-gray-900">{pn.phone}</p>
-                          {pn.is_primary && <span className="text-[10px] font-black text-primary uppercase">Primary Number</span>}
+                          <div className="flex items-center gap-2">
+                            <p className="font-bold text-gray-900">{pn.phone}</p>
+                          </div>
+                          {pn.is_primary && (
+                            <span className="flex items-center gap-1 text-[10px] font-black text-primary uppercase">
+                              <Star size={10} fill="currentColor" />
+                              Primary AI Line
+                            </span>
+                          )}
                         </div>
                       </div>
-                      <button
-                        onClick={() => handleDeletePhone(pn.id)}
-                        className="p-2 opacity-0 group-hover:opacity-100 hover:bg-red-50 hover:text-red-500 rounded-lg transition-all"
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        {!pn.is_primary && (
+                          <button
+                            onClick={() => handleSetPrimary(pn.id)}
+                            className="p-2 bg-white border border-gray-100 hover:border-primary/30 text-gray-400 hover:text-primary rounded-lg shadow-sm transition-all"
+                            title="Set as Primary"
+                          >
+                            <Star size={16} />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDeletePhone(pn.id)}
+                          className="p-2 bg-white border border-gray-100 hover:border-red-200 hover:text-red-500 text-gray-400 rounded-lg shadow-sm transition-all"
+                          title="Delete Number"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-10 mb-6">
+                  <h3 className="text-lg font-bold text-gray-900 mb-1">Business Identity</h3>
+                  <p className="text-sm text-gray-500">
+                    Add the primary business numbers your customers already know. Mark your main number as "Primary" to use it as your business identity.
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-3">
+                  {phoneNumbers.filter(pn => !pn.twilio_sid).map((pn) => (
+                    <div key={pn.id} className={`p-4 rounded-2xl border transition-all flex items-center justify-between ${pn.is_primary ? "bg-primary/5 border-primary/20" : "bg-white border-gray-100 hover:border-gray-200"}`}>
+                      <div className="flex items-center gap-4">
+                        <div className={`p-2 rounded-xl ${pn.is_primary ? "bg-primary text-white" : "bg-gray-100 text-gray-400"}`}>
+                          <Phone size={18} />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="font-bold text-gray-900">{pn.phone}</p>
+                            {!pn.twilio_sid && (
+                              <span className="px-1.5 py-0.5 bg-gray-100 text-gray-500 text-[10px] font-bold rounded uppercase flex items-center gap-1" title="This is your external business number">
+                                Business Number
+                              </span>
+                            )}
+                          </div>
+                          {pn.is_primary && (
+                            <span className="flex items-center gap-1 text-[10px] font-black text-primary uppercase">
+                              <Star size={10} fill="currentColor" />
+                              Primary Identity
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {!pn.is_primary && (
+                          <button
+                            onClick={() => handleSetPrimary(pn.id)}
+                            className="p-2 bg-white border border-gray-100 hover:border-primary/30 text-gray-400 hover:text-primary rounded-lg shadow-sm transition-all"
+                            title="Set as Primary"
+                          >
+                            <Star size={16} />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDeletePhone(pn.id)}
+                          className="p-2 bg-white border border-gray-100 hover:border-red-200 hover:text-red-500 text-gray-400 rounded-lg shadow-sm transition-all"
+                          title="Delete Number"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </div>
                   ))}
 
-                  <div className="p-4 border-2 border-dashed border-gray-200 rounded-2xl flex flex-col gap-3">
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">Add New Forwarder</p>
-                    <div className="flex gap-2">
-                      <input
-                        type="tel"
-                        value={newPhone}
-                        onChange={(e) => setNewPhone(e.target.value)}
-                        placeholder="+1..."
-                        className="flex-1 px-3 py-2 bg-gray-100/50 border-none rounded-xl text-sm font-bold focus:ring-1 focus:ring-primary"
-                      />
-                      <button onClick={handleAddPhone} className="p-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-all">
-                        <Plus size={18} />
-                      </button>
+                  {hasActiveSub && (
+                    <div className="p-4 border-2 border-dashed border-gray-200 rounded-2xl flex flex-col gap-3">
+                      <div className="flex flex-col gap-1">
+                        <p className="text-xs font-bold text-gray-900 uppercase tracking-wide">Add Business Number</p>
+                        <p className="text-[10px] text-gray-500 leading-tight">
+                          Enter the primary number your customers call. You can then forward it to an AI line above.
+                        </p>
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <input
+                          type="tel"
+                          value={newPhone}
+                          onChange={(e) => setNewPhone(e.target.value)}
+                          placeholder="+1 (555) 000-0000"
+                          className="flex-1 px-3 py-2 bg-gray-100/50 border-none rounded-xl text-sm font-bold focus:ring-1 focus:ring-primary"
+                        />
+                        <button onClick={handleAddPhone} className="p-2 bg-gray-900 text-white rounded-xl hover:bg-gray-800 transition-all flex items-center justify-center min-w-[40px]">
+                          <Plus size={18} />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-2 cursor-pointer group">
+                          <input
+                            type="checkbox"
+                            checked={newPhoneIsPrimary}
+                            onChange={(e) => setNewPhoneIsPrimary(e.target.checked)}
+                            className="w-4 h-4 rounded border-gray-300 text-primary focus:ring-primary"
+                          />
+                          <span className="text-xs font-bold text-gray-600 group-hover:text-gray-900">Mark as Primary Identity</span>
+                        </label>
+                      </div>
+                      {phoneError && <p className="text-[10px] text-red-500 font-bold">{phoneError}</p>}
                     </div>
-                    {phoneError && <p className="text-[10px] text-red-500 font-bold">{phoneError}</p>}
-                  </div>
+                  )}
                 </div>
 
                 <div className="mt-8 p-6 bg-blue-50 border border-blue-100 rounded-3xl">
@@ -929,12 +1136,12 @@ export default function Settings({ tenantId }) {
                     Setup Instructions
                   </h4>
                   <p className="text-sm text-blue-800/80 mb-4 font-medium leading-relaxed">
-                    Forward your primary business line to your active forwarder displayed above.
+                    Set up auto-forwarding on your Primary Business Line to your dedicated AI Phone Line.
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="bg-white/50 p-3 rounded-xl border border-blue-100">
                       <p className="text-xs font-black text-blue-900 mb-1">AT&T / VERIZON</p>
-                      <p className="text-xs font-medium text-blue-800">Dial <span className="font-bold">*72</span> then the forwarder number</p>
+                      <p className="text-xs font-medium text-blue-800">Dial <span className="font-bold">*72</span> then the AI number</p>
                     </div>
                     <div className="bg-white/50 p-3 rounded-xl border border-blue-100">
                       <p className="text-xs font-black text-blue-900 mb-1">T-MOBILE</p>
@@ -947,6 +1154,15 @@ export default function Settings({ tenantId }) {
           )}
         </main>
       </div>
+
+      <ConfirmationModal
+        isOpen={confirmModal.isOpen}
+        onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={confirmModal.onConfirm}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        loading={confirmModal.loading}
+      />
     </div>
   );
 }

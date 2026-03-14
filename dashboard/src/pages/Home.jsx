@@ -5,6 +5,8 @@ import { NavBar } from "../components/ui/tubelight-navbar";
 import { PhoneCall, CalendarCheck, MessageSquare, Bot, User, CheckCircle2, Home as HomeIcon, Layers, DollarSign, ShieldCheck, Headphones, CalendarDays, Link2, Smartphone, Phone, Settings, Zap } from "lucide-react";
 import { BentoGrid, BentoCard } from "../components/ui/bento-grid";
 import { ShimmerButton } from "../components/ui/shimmer-button";
+import { ContactModal } from "../components/ContactModal";
+import { useState } from "react";
 
 const NAV_ITEMS = [
   { name: "Features", url: "#features", icon: Layers },
@@ -15,6 +17,7 @@ const NAV_ITEMS = [
 
 export default function Home() {
   const navigate = useNavigate();
+  const [isContactOpen, setIsContactOpen] = useState(false);
 
   return (
     <div className="min-h-screen flex flex-col bg-stone-50">
@@ -61,13 +64,14 @@ export default function Home() {
       </header>
 
       <main className="flex-1">
-        {/* Hero */}
-        <div className="flex flex-col overflow-hidden pb-4">
+        {/* Hero - z-[60] so hero content (and buttons) sit above fixed NavBar (z-50) */}
+        <div className="relative z-[60] flex flex-col overflow-hidden pb-4">
           <ContainerScroll
             titleComponent={
               <AnimatedHeroTitle
                 onStart={() => navigate("/login?signup=1")}
                 onLogin={() => navigate("/login")}
+                onContact={() => setIsContactOpen(true)}
               />
             }
           >
@@ -563,6 +567,11 @@ export default function Home() {
           </div>
         </div>
       </footer>
+
+      <ContactModal 
+        isOpen={isContactOpen} 
+        onClose={() => setIsContactOpen(false)} 
+      />
     </div>
   );
 }

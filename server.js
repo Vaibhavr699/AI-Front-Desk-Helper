@@ -18,7 +18,7 @@ const calendar = require("./calendar");
 const path = require("path");
 const cron = require("node-cron");
 
-const { getTenantByPhone, getTenantById, getAllTenants, getTenantByFacebookPageId } = require("./lib/tenant");
+const { getTenantByPhone, getTenantById, getAllTenants, getTenantByFacebookPageId, getTenantBySlug } = require("./lib/tenant");
 const callsService = require("./services/calls");
 const recordingService = require("./services/recording");
 const transferService = require("./services/transfer");
@@ -29,6 +29,7 @@ const twilioLib = require("./lib/twilio");
 const salesEngine = require("./services/salesEngine");
 const leadsService = require("./services/leads");
 const messagesService = require("./services/messages");
+const emailService = require("./services/email");
 
 const twilioRoutes = require("./routes/twilio");
 const dashboardRoutes = require("./routes/dashboard");
@@ -305,6 +306,9 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
 app.get("/chat-widget.js", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "chat-widget.js"));
 });
+app.get("/dashboard/chat-widget.js", (req, res) => {
+  res.sendFile(path.join(__dirname, "dashboard", "public", "chat-widget.js"));
+});
 
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.urlencoded({ extended: false }));
@@ -337,6 +341,8 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SERVE_DASHBOARD = process.env.SERVE_DASHBOARD === "true";
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || "";
 const smsThreads = new Map();
+const fbProcessedMessageIds = new Map();
+const FB_DEDUPE_MS = 60000;
 let callsTableHasTranscriptColumn = true;
 let callsTableHasDurationColumn = true;
 
@@ -381,6 +387,7 @@ app.get("/api/public-tenant/:id", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+app.use("/api/public", require("./routes/public"));
 app.use("/twilio", twilioRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/billing", authMiddleware, billingRoutes);
@@ -2633,13 +2640,20 @@ app.post("/website-chat", async (req, res) => {
       return;
     }
 
-    const tenant = tenantId ? await getTenantById(tenantId) : null;
+    let tenant = tenantId ? await getTenantById(tenantId) : null;
+    if (!tenant) {
+      tenant = await getTenantBySlug("website-chat") || (await getAllTenants())[0] || null;
+    }
 
     // Explicitly set channel as website
     const thread = getOrCreateSmsThread(sessionId);
     thread.channel = "website";
 
     const reply = await processSmsConversation(sessionId, message, tenant);
+    const tenantName = tenant ? (tenant.company_name || tenant.name) : null;
+    emailService
+      .sendWebsiteChatNotificationEmail({ message, sessionId, reply, tenantName })
+      .catch((err) => console.error("Website chat email to Drew:", err.message));
     res.json({ reply });
   } catch (error) {
     console.error("Website chat error:", error.message);
@@ -2725,6 +2739,21 @@ app.post("/facebook-webhook", async (req, res) => {
     }
     if (!messaging || !messaging.message?.text) {
       return res.sendStatus(200);
+    }
+    // Skip echoes: Facebook sends back our own outbound messages; replying to them would send duplicate replies
+    if (messaging.message.is_echo === true) {
+      return res.sendStatus(200);
+    }
+    const mid = messaging.message.mid;
+    if (mid) {
+      const now = Date.now();
+      for (const [k, t] of fbProcessedMessageIds.entries()) {
+        if (now - t > FB_DEDUPE_MS) fbProcessedMessageIds.delete(k);
+      }
+      if (fbProcessedMessageIds.has(mid)) {
+        return res.sendStatus(200);
+      }
+      fbProcessedMessageIds.set(mid, now);
     }
 
     const senderId = messaging.sender.id;

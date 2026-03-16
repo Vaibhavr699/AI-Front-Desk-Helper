@@ -314,8 +314,10 @@ app.use(express.static(path.join(__dirname, "public")));
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-// CORS: reflect request origin so any frontend origin is allowed (e.g. :3089 → :3001).
-// Required for credentials. Set CORS_ORIGINS to restrict in production (comma-separated list).
+// CORS: allow frontend origin (e.g. dashboard :3089 → API :3001).
+// When CORS_ORIGINS is unset, any origin is allowed. Set CORS_ORIGINS to a comma-separated list to restrict, or "*" to allow all.
+// Same-host origins (e.g. http://HOST:3089 when API is on HOST:3001) are always allowed when BASE_URL host matches.
+const BASE_URL_FOR_CORS = process.env.BASE_URL || "";
 app.use(
   cors({
     origin: (origin, cb) => {
@@ -324,7 +326,13 @@ app.use(
       if (restrict === "*") return cb(null, origin);
       if (restrict) {
         const list = restrict.split(",").map((o) => o.trim()).filter(Boolean);
-        return cb(null, list.includes(origin) ? origin : false);
+        if (list.includes(origin)) return cb(null, origin);
+        try {
+          const reqHost = new URL(origin).hostname;
+          const baseHost = new URL(BASE_URL_FOR_CORS || "http://localhost").hostname;
+          if (reqHost === baseHost) return cb(null, origin);
+        } catch (_) {}
+        return cb(null, false);
       }
       cb(null, origin);
     },
@@ -2117,13 +2125,19 @@ wss.on("connection", async (twilioSocket, req) => {
 
       if (tenant && tenant.objection_handling_config) {
         const oh = tenant.objection_handling_config;
-        const OH_PROMPT = `
-OBJECTION HANDLING STRATEGIES:
-${oh.price ? `- If price is a concern: ${oh.price}` : ""}
-${oh.thinking ? `- If they need to think about it: ${oh.thinking}` : ""}
-${oh.spouse ? `- If they need to talk to a spouse: ${oh.spouse}` : ""}
-`;
-        instructions += OH_PROMPT;
+        let lines = [];
+        if (Array.isArray(oh) && oh.length) {
+          lines = oh
+            .filter(c => c && (c.script || "").trim())
+            .map(c => `- When they say something like "${(c.trigger || "").trim() || "..."}": respond with: ${(c.script || "").trim()}`);
+        } else if (typeof oh === "object") {
+          if (oh.price) lines.push(`- If price is a concern: ${oh.price}`);
+          if (oh.thinking) lines.push(`- If they need to think about it: ${oh.thinking}`);
+          if (oh.spouse) lines.push(`- If they need to talk to a spouse: ${oh.spouse}`);
+        }
+        if (lines.length) {
+          instructions += "\n\nOBJECTION HANDLING STRATEGIES:\n" + lines.join("\n");
+        }
       }
 
       if (tenant && Array.isArray(tenant.faqs) && tenant.faqs.length > 0) {

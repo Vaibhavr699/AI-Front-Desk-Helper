@@ -17,3 +17,6 @@ export { default as Billing } from "./Billing";
 export { default as Admin } from "./Admin";
 export { default as ForgotPassword } from "./ForgotPassword";
 export { default as ResetPassword } from "./ResetPassword";
+export { default as PrivacyPolicy } from "./PrivacyPolicy";
+export { default as TermsOfService } from "./TermsOfService";
+export { default as CookiePolicy } from "./CookiePolicy";

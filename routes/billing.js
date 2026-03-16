@@ -3,9 +3,9 @@ const router = express.Router();
 const db = require("../lib/db");
 
 const PLAN_LIMITS = {
-  basic: { minutes: 300, sms: 500, price: 297 },
-  pro: { minutes: 800, sms: 1500, price: 497 },
-  elite: { minutes: 2000, sms: 4000, price: 997 }
+  basic: { minutes: 500, sms: 500, price: 297 },
+  pro: { minutes: 1200, sms: 1500, price: 497 },
+  elite: { minutes: 3000, sms: 4000, price: 997 }
 };
 
 const OVERAGE_RATES = {

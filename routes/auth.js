@@ -90,16 +90,28 @@ router.post("/forgot-password", async (req, res) => {
   try {
     const { email } = req.body || {};
     if (!email) return res.status(400).json({ error: "Email required" });
-    const user = await auth.findUserByEmail(email.trim().toLowerCase());
-    if (user) {
-      const token = auth.generateResetToken();
-      const expires = new Date(Date.now() + 3600000); // 1 hour
-      await auth.saveResetToken(user.email, token, expires);
-
-      const resetLink = `${process.env.BASE_URL}/reset-password?token=${token}`;
-      await emailService.sendPasswordResetEmail(user.email, resetLink);
+    const normalized = email.trim().toLowerCase();
+    const user = await auth.findUserByEmail(normalized);
+    if (!user) {
+      console.log("[Auth] Forgot password: no user found for", normalized);
+      return res.json({ message: "If an account exists with that email, a reset link has been sent." });
     }
-    // Always return 200 to prevent email enumeration
+    const token = auth.generateResetToken();
+    const expires = new Date(Date.now() + 3600000); // 1 hour
+    await auth.saveResetToken(user.email, token, expires);
+
+    const base = (process.env.DASHBOARD_URL || process.env.BASE_URL || "").replace(/\/$/, "");
+    const resetLink = base ? `${base}/reset-password?token=${token}` : "";
+    if (!resetLink) {
+      console.warn("[Auth] DASHBOARD_URL or BASE_URL not set – password reset email not sent. Set one so the reset link works.");
+      return res.json({ message: "If an account exists with that email, a reset link has been sent." });
+    }
+    const result = await emailService.sendPasswordResetEmail(user.email, resetLink);
+    if (!result.ok) {
+      console.error("[Auth] Password reset email failed for", user.email, ":", result.error);
+    } else {
+      console.log("[Auth] Password reset email sent to", user.email);
+    }
     res.json({ message: "If an account exists with that email, a reset link has been sent." });
   } catch (e) {
     console.error("Forgot password error:", e);

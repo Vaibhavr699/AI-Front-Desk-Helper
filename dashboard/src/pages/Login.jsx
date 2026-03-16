@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { motion, AnimatePresence, useMotionValue, useTransform } from "framer-motion";
-import { Mail, Lock, Eye, EyeClosed, ArrowRight } from "lucide-react";
+import { Mail, Lock, Eye, EyeClosed, ArrowRight, ArrowLeft } from "lucide-react";
 import { login, signup } from "../api";
 import { cn } from "../lib/utils";
 
@@ -67,6 +67,18 @@ export default function Login({ onLogin }) {
 
   return (
     <div className="min-h-screen w-screen bg-stone-50 relative overflow-hidden flex items-center justify-center">
+      {/* Back to home */}
+      <Link
+        to="/"
+        className="fixed top-5 left-5 z-50 flex items-center gap-2 text-stone-600 hover:text-stone-900 font-medium text-sm transition-colors"
+        aria-label="Back to home"
+      >
+        <span className="flex items-center justify-center w-9 h-9 rounded-full bg-white/80 border border-stone-200 shadow-sm hover:bg-white hover:border-stone-300 transition-colors">
+          <ArrowLeft className="w-4 h-4" />
+        </span>
+        <span className="hidden sm:inline">Back to home</span>
+      </Link>
+
       {/* Subtle animated background shapes for light theme */}
       <div className="absolute top-0 left-1/2 transform -translate-x-1/2 w-[120vh] h-[60vh] rounded-b-[50%] bg-stone-200/40 blur-[80px]" />
       <motion.div

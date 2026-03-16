@@ -5,20 +5,32 @@ const { Resend } = require("resend");
 const apiKey = process.env.RESEND_API_KEY;
 const fromEmail = process.env.EMAIL_FROM;
 const resend = apiKey && fromEmail ? new Resend(apiKey) : null;
+if (!resend) {
+  if (!apiKey) console.warn("[Email] RESEND_API_KEY is not set – password reset and contact emails will not be sent.");
+  if (!fromEmail) console.warn("[Email] EMAIL_FROM is not set – password reset and contact emails will not be sent.");
+}
+
+// Home page contact form and website chat notifications go here (sent via Resend).
+const CONTACT_EMAIL = process.env.CONTACT_EMAIL || "drew@aifrontdeskhelper.com";
 
 async function sendEmail({ to, subject, html, text }) {
-  if (!resend) return { ok: false, error: "Email not configured" };
+  if (!resend) {
+    console.warn("[Email] Not sending – Resend not configured (check RESEND_API_KEY and EMAIL_FROM).");
+    return { ok: false, error: "Email not configured" };
+  }
+  const toList = Array.isArray(to) ? to : [to];
   const { data, error } = await resend.emails.send({
     from: fromEmail,
-    to: Array.isArray(to) ? to : [to],
+    to: toList,
     subject,
     html: html || undefined,
     text: text || undefined,
   });
   if (error) {
-    console.error("Resend error:", error.message);
+    console.error("[Email] Resend API error:", error.message, error);
     return { ok: false, error: error.message };
   }
+  console.log("[Email] Sent to", toList.join(", "), "id:", data?.id);
   return { ok: true, id: data?.id };
 }
 
@@ -70,11 +82,12 @@ async function sendTransferNotificationEmail(tenant, call, reason, summary, extr
 }
 
 async function sendPasswordResetEmail(email, resetLink) {
+  const safeLink = escapeHtml(resetLink);
   const html = `
     <p>Hi,</p>
     <p>We received a request to reset your password for the AI Front Desk Dashboard.</p>
     <p>Click the link below to set a new password:</p>
-    <p><a href="${resetLink}">${resetLink}</a></p>
+    <p><a href="${safeLink}">${safeLink}</a></p>
     <p>If you didn't request this, you can safely ignore this email.</p>
     <p>Thanks,<br/>AI Front Desk Team</p>
   `;
@@ -86,7 +99,7 @@ async function sendPasswordResetEmail(email, resetLink) {
 }
 
 async function sendWebsiteChatNotificationEmail(data) {
-  const to = "drew@aifrontdeskhelper.com";
+  const to = CONTACT_EMAIL;
   const message = data.message != null ? String(data.message) : "";
   const reply = data.reply != null ? String(data.reply) : "";
   const sessionId = data.sessionId != null ? String(data.sessionId) : "";
@@ -110,7 +123,7 @@ async function sendWebsiteChatNotificationEmail(data) {
 }
 
 async function sendContactLeadEmail(data) {
-  const to = "drew@aifrontdeskhelper.com";
+  const to = CONTACT_EMAIL;
   const enquiry = data.enquiry != null ? String(data.enquiry) : (data.businessName != null ? String(data.businessName) : "");
   const html = `
     <h2 style="margin:0 0 16px">📩 New enquiry from landing page</h2>

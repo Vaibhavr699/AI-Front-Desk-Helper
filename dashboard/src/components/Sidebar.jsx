@@ -1,13 +1,14 @@
 import { Link, useLocation } from "react-router-dom";
 import { getUser } from "../api";
 
+// Order by SaaS importance: Home first, core activity, pipeline, analytics, account, Settings last.
 const baseNavItems = [
   { to: "/", label: "Home", icon: HomeIcon },
   { to: "/calls", label: "Calls", icon: CallsIcon },
+  { to: "/conversations", label: "AI Conversations", icon: ConversationsIcon },
   { to: "/leads", label: "Leads", icon: LeadsIcon },
   { to: "/bookings", label: "Bookings", icon: BookingsIcon },
   { to: "/follow-ups", label: "Follow-ups", icon: FollowUpsIcon },
-  { to: "/conversations", label: "AI Conversations", icon: ConversationsIcon },
   { to: "/metrics", label: "Metrics", icon: MetricsIcon },
   { to: "/plans", label: "Plans", icon: PlansIcon },
   { to: "/billing", label: "Usage & Billing", icon: BillingIcon },

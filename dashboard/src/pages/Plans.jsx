@@ -40,9 +40,9 @@ export default function Plans({ tenantId }) {
       .catch((e) => {
         setError(e.message);
         setPlans([
-          { id: "basic", name: "Basic", tagline: "AI Front Desk Helper Starter", whoItIsFor: "Small ops", voiceMinutes: 300, smsLimit: 500, priceMonthly: 297, setupFee: 400, priceLabel: "/month", includes: [], excludes: [] },
-          { id: "pro", name: "Pro", tagline: "AI Booking Assistant", whoItIsFor: "Growing teams", voiceMinutes: 800, smsLimit: 1500, priceMonthly: 497, setupFee: 600, priceLabel: "/month", includes: [], excludes: [] },
-          { id: "elite", name: "Elite", tagline: "AI Sales & Follow-Up Engine", whoItIsFor: "Scaling companies", voiceMinutes: 2000, smsLimit: 4000, priceMonthly: 997, setupFee: 900, priceLabel: "/month", includes: [], excludes: [] },
+          { id: "basic", name: "Basic", tagline: "AI Front Desk Helper Starter", whoItIsFor: "Small ops", voiceMinutes: 500, smsLimit: 500, priceMonthly: 297, setupFee: 197, priceLabel: "/month", includes: [], excludes: [] },
+          { id: "pro", name: "Pro", tagline: "AI Booking Assistant", whoItIsFor: "Growing teams", voiceMinutes: 1200, smsLimit: 1500, priceMonthly: 497, setupFee: 297, priceLabel: "/month", includes: [], excludes: [] },
+          { id: "elite", name: "Elite", tagline: "AI Sales & Follow-Up Engine", whoItIsFor: "Scaling companies", voiceMinutes: 3000, smsLimit: 4000, priceMonthly: 997, setupFee: 497, priceLabel: "/month", includes: [], excludes: [] },
         ]);
       })
       .finally(() => setLoading(false));
@@ -197,7 +197,7 @@ export default function Plans({ tenantId }) {
           const isPro = plan.id === "pro";
 
           const originalMonthly = plan.priceMonthly ?? (plan.id === "basic" ? 297 : plan.id === "pro" ? 497 : 997);
-          const originalSetup = plan.setupFee ?? (plan.id === "basic" ? 400 : plan.id === "pro" ? 600 : 900);
+          const originalSetup = plan.setupFee ?? (plan.id === "basic" ? 197 : plan.id === "pro" ? 297 : 497);
           
           let displayMonthly = originalMonthly;
           let displaySetup = originalSetup;
@@ -292,7 +292,7 @@ export default function Plans({ tenantId }) {
                 </p>
                 <div className="mt-3 flex gap-4 text-sm">
                   <span className="text-stone-600">
-                    <span className="font-medium text-stone-900">{plan.voiceMinutes ?? (plan.id === "basic" ? 300 : plan.id === "pro" ? 800 : 2000)}</span> voice min
+                    <span className="font-medium text-stone-900">{plan.voiceMinutes ?? (plan.id === "basic" ? 500 : plan.id === "pro" ? 1200 : 3000)}</span> voice min
                   </span>
                   <span className="text-stone-600">
                     <span className="font-medium text-stone-900">{plan.smsLimit ?? (plan.id === "basic" ? 500 : plan.id === "pro" ? 1500 : 4000)}</span> SMS

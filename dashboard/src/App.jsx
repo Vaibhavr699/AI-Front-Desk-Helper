@@ -1,8 +1,18 @@
+import { useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useOutletContext, useLocation } from "react-router-dom";
 import { getUser } from "./api";
 import { DashboardLayout } from "./layouts";
-import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin } from "./pages";
+import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy } from "./pages";
 import "./App.css";
+
+/** Scroll window to top on every route change so new pages (e.g. policy, login) are not shown at previous scroll position. */
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+  return null;
+}
 
 function Protected({ children }) {
   const user = getUser();
@@ -41,10 +51,14 @@ function RootElement() {
 export default function App() {
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+      <ScrollToTop />
       <Routes>
         <Route path="/login" element={<LoginRoute />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+        <Route path="/terms" element={<TermsOfService />} />
+        <Route path="/cookies" element={<CookiePolicy />} />
         <Route path="/" element={<RootElement />}>
           <Route index element={<DashboardWithContext />} />
           <Route path="create-business" element={<CreateBusiness />} />

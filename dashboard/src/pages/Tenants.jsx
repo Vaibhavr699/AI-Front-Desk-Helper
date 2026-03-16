@@ -15,6 +15,8 @@ import {
   X,
 } from "lucide-react";
 
+const MAX_LOGO_BYTES = 1024 * 1024; // 1MB
+
 export default function Tenants() {
   const [tenants, setTenants] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -50,6 +52,7 @@ export default function Tenants() {
   const handleSave = async (e) => {
     e.preventDefault();
     if (!form) return;
+    setError("");
     setSaveLoading(true);
     try {
       await updateTenant(form.id, {
@@ -64,7 +67,12 @@ export default function Tenants() {
       });
       await fetchTenants();
     } catch (err) {
-      setError(err.message || "Failed to save");
+      // Show a clearer message when the image payload is too large.
+      if (err.message && /413/i.test(err.message)) {
+        setError("Business image is too large. Please upload a smaller image (under 1MB) and try again.");
+      } else {
+        setError(err.message || "Failed to save");
+      }
     } finally {
       setSaveLoading(false);
     }
@@ -161,7 +169,16 @@ export default function Tenants() {
                   className="hidden"
                   onChange={(e) => {
                     const file = e.target?.files?.[0];
-                    if (!file || !file.type.startsWith("image/")) return;
+                    if (!file) return;
+                    if (!file.type.startsWith("image/")) {
+                      setError("Please upload a valid image file (PNG, JPG, or SVG).");
+                      return;
+                    }
+                    if (file.size > MAX_LOGO_BYTES) {
+                      setError("Business image is too large. Please upload an image under 1MB.");
+                      e.target.value = "";
+                      return;
+                    }
                     const reader = new FileReader();
                     reader.onload = () => setField("logo_url", reader.result || "");
                     reader.readAsDataURL(file);
@@ -170,7 +187,7 @@ export default function Tenants() {
                 />
                 <label
                   htmlFor="business-image-upload"
-                  className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg cursor-pointer transition-colors"
+                  className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-white bg-stone-900 hover:bg-black rounded-lg cursor-pointer shadow-sm transition-colors"
                 >
                   {form.logo_url ? "Change image" : "Upload image"}
                 </label>

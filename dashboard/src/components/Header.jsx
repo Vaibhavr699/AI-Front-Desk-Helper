@@ -31,6 +31,7 @@ export default function Header({ tenantId, tenants, onMenuClick }) {
   const initial = user?.email ? user.email.charAt(0).toUpperCase() : "?";
   const currentTenant = tenantId && tenants?.length ? tenants.find((t) => t.id === tenantId) : null;
   const currentBusinessName = currentTenant ? (currentTenant.company_name || currentTenant.name) : null;
+  const currentBusinessLogo = currentTenant?.logo_url || null;
 
   return (
     <header className="bg-white border-b border-stone-200 sticky top-0 z-30 shadow-sm">
@@ -83,12 +84,20 @@ export default function Header({ tenantId, tenants, onMenuClick }) {
               <button
                 type="button"
                 onClick={() => setUserMenuOpen((o) => !o)}
-                className="flex items-center justify-center w-9 h-9 rounded-full bg-stone-200 text-stone-700 text-sm font-medium shrink-0 hover:bg-stone-300 hover:ring-2 hover:ring-stone-300/50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 transition-colors"
+                className="flex items-center justify-center w-9 h-9 rounded-full bg-stone-200 text-stone-700 text-sm font-medium shrink-0 overflow-hidden hover:bg-stone-300 hover:ring-2 hover:ring-stone-300/50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 transition-colors"
                 aria-expanded={userMenuOpen}
                 aria-haspopup="true"
                 aria-label="Account menu"
               >
-                {initial}
+                {currentBusinessLogo ? (
+                  <img
+                    src={currentBusinessLogo}
+                    alt={currentBusinessName || "Business logo"}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  initial
+                )}
               </button>
               {userMenuOpen && (
                 <div

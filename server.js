@@ -314,8 +314,9 @@ app.get("/dashboard/chat-widget.js", (req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, "public")));
-app.use(express.urlencoded({ extended: false }));
-app.use(express.json());
+// Increase body size limits slightly to support small logo uploads (e.g. base64 images) in dashboard settings.
+app.use(express.urlencoded({ extended: true, limit: "2mb" }));
+app.use(express.json({ limit: "2mb" }));
 
 // CORS: allow frontend origin (e.g. dashboard :3089 → API :3001).
 // When CORS_ORIGINS is unset, any origin is allowed. Set CORS_ORIGINS to a comma-separated list to restrict, or "*" to allow all.

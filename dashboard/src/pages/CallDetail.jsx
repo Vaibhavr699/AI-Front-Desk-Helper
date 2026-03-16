@@ -36,7 +36,7 @@ export default function CallDetail() {
   const primaryRec = recordings.find((r) => r.transcript) || recordings[0];
 
   return (
-    <div className="px-0 max-w-3xl">
+    <div className="px-0 max-w-full">
       <p className="mb-4">
         <Link to="/calls" className="text-sm font-medium text-stone-600 hover:text-stone-900">← Back to calls</Link>
       </p>

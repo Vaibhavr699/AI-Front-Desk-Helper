@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { getConversations } from '../api';
 import ConversationViewer from '../components/ConversationViewer';
 import { Search, Filter, Phone, MessageSquare, Globe, Facebook, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
@@ -7,31 +7,40 @@ import { format, isToday, isYesterday } from 'date-fns';
 const Conversations = ({ tenantId }) => {
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterChannel, setFilterChannel] = useState('all');
 
-  useEffect(() => {
-    if (tenantId) {
-      loadConversations();
-    }
-  }, [tenantId]);
-
-  const loadConversations = async () => {
+  const loadConversations = useCallback(async () => {
+    if (!tenantId) return;
     setLoading(true);
     try {
       const data = await getConversations(tenantId);
-      setConversations(data.conversations || []);
-      // Auto-select first if none selected
-      if (data.conversations?.length > 0 && !selectedId) {
-        setSelectedId(data.conversations[0].id);
+      const list = data.conversations || [];
+      setConversations(list);
+      setError("");
+      if (list.length > 0) {
+        setSelectedId((prev) => (list.some((c) => c.id === prev) ? prev : list[0].id));
+      } else {
+        setSelectedId(null);
       }
     } catch (err) {
       console.error('Failed to load conversations:', err);
+      setError(err.message || 'Failed to load conversations');
+      setConversations([]);
+      setSelectedId(null);
     } finally {
       setLoading(false);
     }
-  };
+  }, [tenantId]);
+
+  useEffect(() => {
+    if (tenantId) {
+      setSelectedId(null);
+      loadConversations();
+    }
+  }, [tenantId, loadConversations]);
 
   const filtered = useMemo(() => {
     return conversations.filter(c => {
@@ -73,7 +82,7 @@ const Conversations = ({ tenantId }) => {
         <div className="p-4 border-b border-gray-100 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-bold text-gray-900">Conversations</h2>
-            <div className="px-2 py-1 bg-primary/10 text-primary text-xs font-bold rounded-full">
+            <div className="px-2 py-1 bg-brand-100 text-brand-700 text-xs font-bold rounded-full">
               {conversations.length}
             </div>
           </div>
@@ -83,7 +92,7 @@ const Conversations = ({ tenantId }) => {
             <input 
               type="text"
               placeholder="Search leads or phone..."
-              className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+              className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 transition-all"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -96,7 +105,7 @@ const Conversations = ({ tenantId }) => {
                 onClick={() => setFilterChannel(c)}
                 className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all whitespace-nowrap border ${
                   filterChannel === c 
-                    ? 'bg-primary border-primary text-black' 
+                    ? 'bg-brand-500 border-brand-500 text-white' 
                     : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
                 }`}
               >
@@ -107,6 +116,12 @@ const Conversations = ({ tenantId }) => {
         </div>
 
         <div className="flex-1 overflow-y-auto">
+          {error && (
+            <div className="mx-4 mt-4 p-3 bg-red-50 border border-red-100 text-red-600 rounded-lg text-sm flex items-center gap-2">
+              <AlertCircle size={18} />
+              {error}
+            </div>
+          )}
           {loading ? (
             <div className="p-10 space-y-4">
               {[1, 2, 3, 4].map(i => (
@@ -123,7 +138,7 @@ const Conversations = ({ tenantId }) => {
                 key={c.id}
                 onClick={() => setSelectedId(c.id)}
                 className={`p-4 border-b border-gray-50 transition-all cursor-pointer hover:bg-gray-50 ${
-                  selectedId === c.id ? 'bg-primary/5 border-l-4 border-l-primary' : 'bg-white'
+                  selectedId === c.id ? 'bg-brand-50 border-l-4 border-l-brand-500' : 'bg-white'
                 }`}
               >
                 <div className="flex justify-between items-start mb-1">
@@ -136,7 +151,7 @@ const Conversations = ({ tenantId }) => {
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5 min-w-0">
-                    <span className={`flex-shrink-0 ${selectedId === c.id ? 'text-primary' : 'text-gray-400'}`}>
+                    <span className={`flex-shrink-0 ${selectedId === c.id ? 'text-brand-600' : 'text-gray-400'}`}>
                       {getChannelIcon(c.last_channel)}
                     </span>
                     <p className="text-xs text-gray-500 truncate italic pr-4">

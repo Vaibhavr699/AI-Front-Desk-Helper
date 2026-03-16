@@ -10,6 +10,7 @@ const { configurePhoneWebhook, getClientForTenant, purchaseNewNumber, fetchAvail
 
 const router = express.Router();
 const estimateRecovery = require("../services/estimateRecovery");
+const emailService = require("../services/email");
 
 /** Normalize a US phone to E.164 (+1XXXXXXXXXX). Returns null if invalid. */
 function normalizePhoneInput(raw) {
@@ -205,7 +206,25 @@ router.patch("/bookings/:id", async (req, res) => {
     const result = await db.query(query, values);
 
     if (result.rows.length === 0) return res.status(404).json({ error: "Not found" });
-    res.json(result.rows[0]);
+    const booking = result.rows[0];
+
+    if (technician_id != null && technician_id !== "") {
+      const tenantId = booking.tenant_id;
+      const [tenantResult, techResult] = await Promise.all([
+        getTenantById(tenantId),
+        db.query("SELECT id, name, email, phone FROM technicians WHERE id = $1", [technician_id]),
+      ]);
+      const technician = techResult.rows[0];
+      const tenant = tenantResult;
+      if (technician && tenant) {
+        emailService.sendTechnicianAssignmentEmail(tenant, technician, booking).then((r) => {
+          if (r.ok) console.log("[Bookings] Technician assignment email sent to", technician.email);
+          else console.warn("[Bookings] Technician assignment email failed:", r.error);
+        }).catch((e) => console.error("[Bookings] Technician assignment email error:", e));
+      }
+    }
+
+    res.json(booking);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error" });

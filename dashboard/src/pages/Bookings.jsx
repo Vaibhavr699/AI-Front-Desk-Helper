@@ -20,6 +20,14 @@ export default function Bookings({ tenantId }) {
     loadData();
   }, [tenantId]);
 
+  // Refetch bookings + technicians when switching to Table or Calendar so the technician dropdown has the latest crew (e.g. after adding someone in Crew tab).
+  useEffect(() => {
+    if (!tenantId) return;
+    if (view === "table" || view === "calendar") {
+      loadData();
+    }
+  }, [view]);
+
   async function loadData() {
     setLoading(true);
     try {
@@ -46,10 +54,11 @@ export default function Bookings({ tenantId }) {
   }
 
   async function handleTechAssign(id, techId) {
+    const value = techId === "" ? null : techId;
     try {
-      await updateBooking(id, { technician_id: techId });
-      const tech = technicians.find(t => t.id === techId);
-      setBookings(prev => prev.map(b => b.id === id ? { ...b, technician_id: techId, technician_name: tech?.name } : b));
+      await updateBooking(id, { technician_id: value });
+      const tech = value ? technicians.find(t => t.id === value) : null;
+      setBookings(prev => prev.map(b => b.id === id ? { ...b, technician_id: value, technician_name: tech?.name } : b));
     } catch (e) {
       alert("Failed to assign technician: " + e.message);
     }
@@ -233,11 +242,11 @@ export default function Bookings({ tenantId }) {
                         </select>
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-3 translate-x-2 opacity-0 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200">
+                        <div className="flex items-center justify-end gap-3">
                           {b.call_id && (
                             <Link
                               to={`/calls/${b.call_id}`}
-                              className="text-stone-400 hover:text-stone-900 flex items-center gap-1 text-xs font-medium"
+                              className="text-black hover:text-stone-900 flex items-center gap-1 text-xs font-medium"
                             >
                               View Call
                               <ChevronRight className="w-3 h-3" />

@@ -197,6 +197,69 @@ async function sendContactLeadEmail(data) {
   });
 }
 
+/** Send job assignment details to a technician (when assigned in Bookings). */
+async function sendTechnicianAssignmentEmail(tenant, technician, booking) {
+  const to = (technician.email || "").trim();
+  if (!to) return { ok: false, error: "Technician has no email" };
+  const company = (tenant && (tenant.company_name || tenant.name)) || "Your company";
+  const techName = (technician.name || "there").trim() || "there";
+  const dateStr = booking.preferred_date
+    ? new Date(booking.preferred_date).toLocaleDateString("en-US", { weekday: "short", year: "numeric", month: "short", day: "numeric" })
+    : "TBD";
+  const timeStr = booking.appointment_time || "Not set";
+  const addressParts = [booking.address, booking.city].filter(Boolean);
+  const addressLine = addressParts.length ? addressParts.join(", ") : "—";
+  const notesHtml = booking.notes
+    ? `<div style="margin-top: 20px; padding: 14px 16px; background-color: #f8fafc; border-radius: 8px; border-left: 4px solid #94a3b8; font-size: 14px; line-height: 1.6; color: #334155; white-space: pre-wrap; word-break: break-word;">${escapeHtml(booking.notes)}</div>`
+    : "";
+  const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Job assigned</title></head>
+<body style="margin:0; padding:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f4f5; color: #1f2937;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f4f4f5;">
+    <tr><td align="center" style="padding: 32px 20px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 560px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.07); overflow: hidden;">
+        <tr><td style="padding: 28px 32px 20px; border-bottom: 1px solid #e5e7eb;">
+          <span style="font-size: 18px; font-weight: 700; color: #111827;">Job assigned – ${escapeHtml(company)}</span>
+        </td></tr>
+        <tr><td style="padding: 24px 32px;">
+          <p style="margin: 0 0 20px; font-size: 16px; line-height: 1.5; color: #374151;">Hi ${escapeHtml(techName)},</p>
+          <p style="margin: 0 0 20px; font-size: 15px; line-height: 1.5; color: #4b5563;">You've been assigned to the following job. Details are below.</p>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font-size: 14px; line-height: 1.6; border-collapse: collapse;">
+            <tr><td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; font-weight: 600; color: #6b7280; width: 140px;">Customer</td><td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #111827;">${escapeHtml(booking.contact_name || "—")}</td></tr>
+            <tr><td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; font-weight: 600; color: #6b7280;">Phone</td><td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #111827;">${escapeHtml(booking.contact_phone || "—")}</td></tr>
+            <tr><td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; font-weight: 600; color: #6b7280;">Email</td><td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #111827;">${escapeHtml(booking.contact_email || "—")}</td></tr>
+            <tr><td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; font-weight: 600; color: #6b7280;">Address</td><td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #111827;">${escapeHtml(addressLine)}</td></tr>
+            <tr><td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; font-weight: 600; color: #6b7280;">Date</td><td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #111827;">${escapeHtml(dateStr)}</td></tr>
+            <tr><td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; font-weight: 600; color: #6b7280;">Time</td><td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #111827;">${escapeHtml(timeStr)}</td></tr>
+            ${booking.job_type ? `<tr><td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; font-weight: 600; color: #6b7280;">Job type</td><td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #111827;">${escapeHtml(booking.job_type)}</td></tr>` : ""}
+            ${booking.scope ? `<tr><td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; font-weight: 600; color: #6b7280;">Scope</td><td style="padding: 10px 0; border-bottom: 1px solid #f3f4f6; color: #111827;">${escapeHtml(booking.scope)}</td></tr>` : ""}
+          </table>
+          ${notesHtml}
+          <div style="margin-top: 28px; padding-top: 24px; border-top: 1px solid #e5e7eb;">
+            <p style="margin: 0 0 12px; font-size: 13px; font-weight: 600; color: #475569;">What to do next</p>
+            <ul style="margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.7; color: #64748b;">
+              <li>Reach out to the customer to confirm the date and time if needed.</li>
+              <li>Reply to this email or contact the office if you have questions or need to reschedule.</li>
+            </ul>
+          </div>
+          <p style="margin: 24px 0 0; font-size: 14px; color: #374151;">Thank you for your hard work.</p>
+          <p style="margin: 8px 0 0; font-size: 13px; color: #6b7280;">— ${escapeHtml(company)}</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+  return sendEmail({
+    to,
+    subject: `Job assigned – ${company} – ${booking.contact_name || "Customer"} – ${dateStr}`,
+    html,
+    text: "",
+  });
+}
+
 function escapeHtml(s) {
   if (s == null) return "";
   return String(s)
@@ -211,6 +274,7 @@ module.exports = {
   sendBookingConfirmationEmail,
   sendTransferNotificationEmail,
   sendPasswordResetEmail,
+  sendTechnicianAssignmentEmail,
   sendTestEmail,
   sendContactLeadEmail,
   sendWebsiteChatNotificationEmail,

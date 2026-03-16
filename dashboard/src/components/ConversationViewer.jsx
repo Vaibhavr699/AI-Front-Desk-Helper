@@ -57,10 +57,10 @@ const ConversationViewer = ({ leadId, leadName }) => {
     );
   }
 
-  if (loading) {
+      if (loading) {
     return (
       <div className="h-full flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-500"></div>
       </div>
     );
   }
@@ -70,7 +70,7 @@ const ConversationViewer = ({ leadId, leadName }) => {
       {/* Header */}
       <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-white sticky top-0 z-10">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
+          <div className="w-10 h-10 rounded-full bg-brand-100 flex items-center justify-center text-brand-600 font-bold">
             {leadName ? leadName.charAt(0).toUpperCase() : 'U'}
           </div>
           <div>
@@ -147,13 +147,13 @@ const ConversationViewer = ({ leadId, leadName }) => {
               className={`flex ${isAssistant ? 'justify-end' : 'justify-start'}`}
             >
               <div className={`flex gap-3 max-w-[80%] ${isAssistant ? 'flex-row-reverse' : ''}`}>
-                <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center ${isAssistant ? 'bg-primary text-white' : 'bg-gray-200 text-gray-600'}`}>
+                <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center ${isAssistant ? 'bg-brand-500 text-white' : 'bg-gray-200 text-gray-600'}`}>
                   {isAssistant ? <Bot size={16} /> : <User size={16} />}
                 </div>
                 <div>
                   <div className={`p-3 rounded-2xl text-sm shadow-sm ${
                     isAssistant 
-                      ? 'bg-primary text-blue-700 rounded-tr-none' 
+                      ? 'bg-brand-500 text-white rounded-tr-none' 
                       : 'bg-white text-gray-800 border border-gray-100 rounded-tl-none'
                   }`}>
                     {item.content}

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { Outlet } from "react-router-dom";
+import { Outlet, Link } from "react-router-dom";
+import CookieConsent from "react-cookie-consent";
 import { getTenant, getUser } from "../api";
 import { Header, Sidebar } from "../components";
 
@@ -152,6 +153,64 @@ export default function DashboardLayout() {
           </div>
         </main>
       </div>
+
+      <CookieConsent
+        location="bottom"
+        cookieName="ai_front_desk_cookie_consent"
+        enableDeclineButton
+        buttonText="Accept"
+        declineButtonText="Decline"
+        expires={365}
+        style={{
+          background: "#292524",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "8px 14px",
+          flexWrap: "wrap",
+          gap: "10px",
+          left: "50%",
+          transform: "translateX(-50%)",
+          right: "auto",
+          width: "max-content",
+          maxWidth: "min(680px, 96vw)",
+          bottom: "16px",
+          borderRadius: "8px",
+          boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
+          zIndex: 99998,
+          marginBottom: "4px",
+        }}
+        contentStyle={{
+          flex: "1 1 280px",
+          margin: 0,
+          fontSize: "13px",
+          lineHeight: 1.4,
+          minWidth: 0,
+        }}
+        buttonWrapperClasses="flex shrink-0 gap-1"
+        buttonStyle={{
+          background: "#1c1917",
+          color: "#fafaf9",
+          fontWeight: 600,
+          padding: "4px 10px",
+          borderRadius: "6px",
+          border: "1px solid #57534e",
+          fontSize: "12px",
+        }}
+        declineButtonStyle={{
+          background: "transparent",
+          color: "#a8a29e",
+          fontWeight: 500,
+          padding: "4px 10px",
+          borderRadius: "6px",
+          border: "1px solid #57534e",
+          fontSize: "12px",
+        }}
+      >
+        We use cookies to improve your experience, keep you signed in, and understand how you use the dashboard. By continuing you agree to our use of cookies.{" "}
+        <Link to="/cookies" className="underline text-stone-300 hover:text-white">
+          Cookie policy
+        </Link>
+      </CookieConsent>
     </div>
   );
 }

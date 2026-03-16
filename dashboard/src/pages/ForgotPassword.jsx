@@ -142,13 +142,6 @@ export default function ForgotPassword() {
                       We've sent a password reset link to <span className="font-medium text-stone-900">{email}</span>.
                     </p>
                   </div>
-                  <Link
-                    to="/login"
-                    className="inline-flex items-center gap-2 text-sm font-medium text-stone-600 hover:text-stone-900 hover:underline underline-offset-4 transition-all"
-                  >
-                    <ArrowLeft className="w-4 h-4" />
-                    Back to login
-                  </Link>
                 </motion.div>
               )}
             </AnimatePresence>

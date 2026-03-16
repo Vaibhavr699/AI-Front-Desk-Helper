@@ -93,7 +93,7 @@ router.post("/forgot-password", async (req, res) => {
     const normalized = email.trim().toLowerCase();
     const user = await auth.findUserByEmail(normalized);
     if (!user) {
-      console.log("[Auth] Forgot password: no user found for", normalized);
+      console.log("[Auth] Forgot password: NOT SENDING – no user in DB for", normalized);
       return res.json({ message: "If an account exists with that email, a reset link has been sent." });
     }
     const token = auth.generateResetToken();
@@ -103,9 +103,10 @@ router.post("/forgot-password", async (req, res) => {
     const base = (process.env.DASHBOARD_URL || process.env.BASE_URL || "").replace(/\/$/, "");
     const resetLink = base ? `${base}/reset-password?token=${token}` : "";
     if (!resetLink) {
-      console.warn("[Auth] DASHBOARD_URL or BASE_URL not set – password reset email not sent. Set one so the reset link works.");
+      console.warn("[Auth] Forgot password: NOT SENDING – DASHBOARD_URL and BASE_URL are both unset. Set one so the reset link works.");
       return res.json({ message: "If an account exists with that email, a reset link has been sent." });
     }
+    console.log("[Auth] Sending password reset email to", user.email, "| base:", base);
     const result = await emailService.sendPasswordResetEmail(user.email, resetLink);
     if (!result.ok) {
       console.error("[Auth] Password reset email failed for", user.email, ":", result.error);
@@ -115,6 +116,28 @@ router.post("/forgot-password", async (req, res) => {
     res.json({ message: "If an account exists with that email, a reset link has been sent." });
   } catch (e) {
     console.error("Forgot password error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+/** Send one test email to verify Resend from this server. Set EMAIL_TEST_SECRET in env, then POST { secret, to? }. */
+router.post("/send-test-email", async (req, res) => {
+  try {
+    const expected = process.env.EMAIL_TEST_SECRET;
+    if (!expected) {
+      return res.status(400).json({ error: "Test email disabled (EMAIL_TEST_SECRET not set)" });
+    }
+    const { secret, to } = req.body || {};
+    if (secret !== expected) {
+      return res.status(403).json({ error: "Invalid secret" });
+    }
+    const result = await emailService.sendTestEmail(to);
+    if (!result.ok) {
+      return res.status(500).json({ error: result.error || "Send failed" });
+    }
+    res.json({ message: "Test email sent", id: result.id });
+  } catch (e) {
+    console.error("Send test email error:", e);
     res.status(500).json({ error: "Server error" });
   }
 });

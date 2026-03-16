@@ -1,6 +1,7 @@
 "use strict";
 
-require("dotenv").config();
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 const { handleWebhookEvent, stripe } = require("./lib/stripe");
 // BASE_URL must be the backend root (no /dashboard). Strip if set wrong so Twilio/webhooks work.
 if (process.env.BASE_URL) {
@@ -15,7 +16,6 @@ const fetch = require("node-fetch");
 const db = require("./lib/db");
 const pool = db.pool;
 const calendar = require("./calendar");
-const path = require("path");
 const cron = require("node-cron");
 
 const { getTenantByPhone, getTenantById, getAllTenants, getTenantByFacebookPageId, getTenantBySlug } = require("./lib/tenant");
@@ -30,6 +30,9 @@ const salesEngine = require("./services/salesEngine");
 const leadsService = require("./services/leads");
 const messagesService = require("./services/messages");
 const emailService = require("./services/email");
+
+const _resetBase = (process.env.DASHBOARD_URL || process.env.BASE_URL || "").replace(/\/$/, "");
+console.log("[Startup] Password reset: Resend=" + (process.env.RESEND_API_KEY && process.env.EMAIL_FROM ? "yes" : "no") + ", ResetLinkBase=" + (_resetBase || "NOT SET – set DASHBOARD_URL or BASE_URL"));
 
 const twilioRoutes = require("./routes/twilio");
 const dashboardRoutes = require("./routes/dashboard");
@@ -451,6 +454,23 @@ app.get("/health/sms", (_req, res) => {
     hasTwilioCredentials: hasTwilioCredentials(),
     hasTwilioPhoneNumber: Boolean(TWILIO_PHONE_NUMBER),
     activeThreads: smsThreads.size
+  });
+});
+
+app.get("/health/email", (_req, res) => {
+  const hasResendKey = Boolean(process.env.RESEND_API_KEY);
+  const fromRaw = (process.env.EMAIL_FROM || "").trim();
+  const hasEmailFrom = fromRaw.length > 0;
+  const fromDomain = fromRaw.includes("@") ? fromRaw.split("@")[1] : "";
+  const base = (process.env.DASHBOARD_URL || process.env.BASE_URL || "").replace(/\/$/, "");
+  res.status(200).json({
+    status: "ok",
+    resendConfigured: hasResendKey && hasEmailFrom,
+    hasResendApiKey: hasResendKey,
+    hasEmailFrom,
+    fromDomain: fromDomain || "(not set)",
+    hasResetBaseUrl: base.length > 0,
+    resetBaseUrlPreview: base ? `${base}/reset-password?token=...` : "(not set – set DASHBOARD_URL or BASE_URL)"
   });
 });
 

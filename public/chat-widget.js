@@ -305,6 +305,7 @@ async function triggerFollowUp(lead) {
     // Input area
     const inputArea = document.createElement("div");
     Object.assign(inputArea.style, {
+      input.style.color = "#0E5A66";
       display: "flex", padding: "15px", borderTop: "1px solid #eee",
       background: "#fff", alignItems: "center"
     });

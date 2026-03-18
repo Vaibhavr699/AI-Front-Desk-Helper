@@ -1828,6 +1828,7 @@ registerTwilioVoiceRoutes(["/twilio/voice/:tenantId", "/twilio/voice/:tenantId/"
 
 app.post("/twilio-missed-call", async (req, res) => {
   const from = normalizePhone(req.body?.From || req.body?.from);
+  const to = normalizePhone(req.body?.To || req.body?.to);
   const callStatus = String(req.body?.CallStatus || req.body?.call_status || "").toLowerCase();
 
   if (!from) {
@@ -1841,6 +1842,7 @@ app.post("/twilio-missed-call", async (req, res) => {
     return;
   }
 
+  const tenant = to ? await getTenantByPhone(to) : null;
   const thread = getOrCreateSmsThread(from);
   const companyName = tenant?.company_name || "our team";
   const autoText = `Sorry we missed your call — this is ${companyName}. I can help with a fast quote and get your appointment booked. What kind of project are you planning?`;
@@ -1849,6 +1851,11 @@ app.post("/twilio-missed-call", async (req, res) => {
   if (sent.ok) {
     thread.history.push({ role: "assistant", text: autoText, at: new Date().toISOString() });
     thread.lastOutboundAt = Date.now();
+    thread.needsFollowUpAt = Date.now() + SMS_FOLLOW_UP_DELAY_MINUTES * 60 * 1000;
+  }
+
+  res.status(200).json({ ok: true, sent: sent.ok });
+});
 
     // CRM: Save outbound message
     if (tenant && thread.leadId) {

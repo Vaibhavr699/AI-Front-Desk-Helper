@@ -1862,7 +1862,6 @@ app.post("/twilio-missed-call", async (req, res) => {
       messagesService.saveMessage(tenant.id, thread.leadId, "sms", "outbound", autoText, { is_auto_reply: true });
     }
     thread.needsFollowUpAt = Date.now() + SMS_FOLLOW_UP_DELAY_MINUTES * 60 * 1000;
-  }
 
   res.status(200).json({ ok: true, sent: sent.ok });
 });

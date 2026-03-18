@@ -2682,10 +2682,24 @@ app.post("/website-chat", async (req, res) => {
       return;
     }
 
-    let tenant = tenantId ? await getTenantById(tenantId) : null;
-    if (!tenant) {
-      tenant = await getTenantBySlug("website-chat") || (await getAllTenants())[0] || null;
-    }
+let tenant = null;
+
+if (tenantId) {
+  tenant = await getTenantById(tenantId).catch(() => null);
+
+  if (!tenant) {
+    tenant = await getTenantBySlug(tenantId).catch(() => null);
+  }
+}
+
+if (!tenant) {
+  tenant = await getTenantBySlug("website-chat").catch(() => null);
+}
+
+if (!tenant) {
+  const tenants = await getAllTenants();
+  tenant = tenants[0] || null;
+}
 
     // Explicitly set channel as website
     const thread = getOrCreateSmsThread(sessionId);

@@ -305,7 +305,6 @@ async function triggerFollowUp(lead) {
     // Input area
     const inputArea = document.createElement("div");
     Object.assign(inputArea.style, {
-      input.style.color = "#0E5A66";
       display: "flex", padding: "15px", borderTop: "1px solid #eee",
       background: "#fff", alignItems: "center"
     });
@@ -315,7 +314,7 @@ async function triggerFollowUp(lead) {
     input.placeholder = "Type a message...";
     Object.assign(input.style, {
       flex: "1", border: "none", outline: "none", fontSize: "15px",
-      padding: "10px", background: "#f5f5f5", borderRadius: "8px"
+      padding: "10px", background: "#f5f5f5", borderRadius: "8px", color: "#000"
     });
     inputArea.appendChild(input);
 

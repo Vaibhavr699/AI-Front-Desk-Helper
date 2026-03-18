@@ -422,7 +422,7 @@ function showBookingForm() {
       const typing = document.createElement("div");
       typing.innerText = "AI is thinking...";
       typing.style.fontSize = "13px";
-      typing.style.color = "#999";
+      typing.style.color = "#000";
       typing.style.alignSelf = "flex-start";
       typing.style.marginLeft = "10px";
       typing.style.fontStyle = "italic";

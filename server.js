@@ -1857,15 +1857,6 @@ app.post("/twilio-missed-call", async (req, res) => {
   res.status(200).json({ ok: true, sent: sent.ok });
 });
 
-    // CRM: Save outbound message
-    if (tenant && thread.leadId) {
-      messagesService.saveMessage(tenant.id, thread.leadId, "sms", "outbound", autoText, { is_auto_reply: true });
-    }
-    thread.needsFollowUpAt = Date.now() + SMS_FOLLOW_UP_DELAY_MINUTES * 60 * 1000;
-
-  res.status(200).json({ ok: true, sent: sent.ok });
-});
-
 app.post("/twilio-sms", async (req, res) => {
   const from = normalizePhone(req.body?.From || req.body?.from);
   const body = String(req.body?.Body || req.body?.body || "").trim();

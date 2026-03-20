@@ -3021,8 +3021,8 @@ app.post("/facebook-webhook", async (req, res) => {
       if (payload === "GET_STARTED") {
         await sendFacebookMessage(
           senderId,
-          `👋 Welcome to ${tenant.company_name || "our team"}! How can we help you today?`,
-          [],
+          `Hi 👋 Thanks for reaching out to ${tenant?.company_name || "us"}! Need a quote or want to schedule a service? I can help you right away.`,
+          ["Get a Free Quote", "Book Estimate", "Talk to a Human"],
           pageAccessToken
         );
         return res.sendStatus(200);

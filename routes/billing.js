@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../lib/db");
+const { getTenantIdFromQuery } = require("../lib/auth");
 
 const PLAN_LIMITS = {
   basic: { minutes: 500, sms: 500, price: 297 },
@@ -13,9 +14,6 @@ const OVERAGE_RATES = {
   sms: 0.10
 };
 
-function getTenantIdFromQuery(req) {
-  return req.query.tenant_id || (req.user && req.user.tenant_id);
-}
 
 router.get("/usage", async (req, res) => {
   try {

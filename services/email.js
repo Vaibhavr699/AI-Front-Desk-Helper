@@ -140,6 +140,61 @@ async function sendPasswordResetEmail(email, resetLink) {
   });
 }
 
+async function sendAdminInvitationEmail(email, inviteLink) {
+  const safeLink = escapeHtml(inviteLink);
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Invitation</title>
+</head>
+<body style="margin:0; padding:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f4f5; color: #1f2937;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f4f4f5;">
+    <tr>
+      <td align="center" style="padding: 40px 20px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 520px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07); overflow: hidden;">
+          <tr>
+            <td style="padding: 32px 40px 24px; text-align: center; border-bottom: 1px solid #e5e7eb; background-color: #111827;">
+              <span style="font-size: 20px; font-weight: 700; color: #ffffff;">AI Front Desk | Platform Console</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 32px 40px;">
+              <p style="margin: 0 0 16px; font-size: 16px; line-height: 1.6; color: #374151;">Hello,</p>
+              <p style="margin: 0 0 24px; font-size: 16px; line-height: 1.6; color: #374151;">You have been invited to join the <strong>AI Front Desk</strong> platform as a Super Admin.</p>
+              <p style="margin: 0 0 24px; font-size: 16px; line-height: 1.6; color: #374151;">Click the button below to set up your account and password:</p>
+              <table role="presentation" cellspacing="0" cellpadding="0" style="margin: 0 auto;">
+                <tr>
+                  <td style="border-radius: 8px; background-color: #111827;">
+                    <a href="${inviteLink}" target="_blank" rel="noopener" style="display: inline-block; padding: 14px 28px; font-size: 16px; font-weight: 600; color: #ffffff; text-decoration: none;">Accept Invitation</a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin: 24px 0 0; font-size: 13px; line-height: 1.5; color: #6b7280;">If the button doesn't work, copy and paste this link into your browser:</p>
+              <p style="margin: 8px 0 0; font-size: 12px; line-height: 1.5; word-break: break-all; color: #9ca3af;">${safeLink}</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 24px 40px 32px; border-top: 1px solid #e5e7eb;">
+              <p style="margin: 0; font-size: 14px; line-height: 1.5; color: #374151;">Welcome to the team,<br><strong>AI Front Desk Admins</strong></p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  return sendEmail({
+    to: email,
+    subject: "Invitation to join AI Front Desk as Admin",
+    html,
+    text: `You have been invited as an admin. Set your password here: ${inviteLink}`,
+  });
+}
+
 /** Send a single test email to verify Resend is working (e.g. from deployed server). */
 async function sendTestEmail(to) {
   const address = (to || CONTACT_EMAIL || "").trim();
@@ -260,6 +315,95 @@ async function sendTechnicianAssignmentEmail(tenant, technician, booking) {
   });
 }
 
+/** Nurturing: post-service follow-up (1 day after Completed). */
+async function sendPostServiceFollowUpEmail(companyName, customerName, to) {
+  const name = (customerName || "there").trim() || "there";
+  const company = (companyName || "We").trim() || "We";
+  const html = `
+    <p>Hi ${escapeHtml(name)},</p>
+    <p>Quick follow-up from <strong>${escapeHtml(company)}</strong> — we hope you're happy with the work we did. If you have any questions or need a follow-up, just reply to this email or give us a call.</p>
+    <p>Thanks,<br/>${escapeHtml(company)}</p>
+  `;
+  const body = `Quick follow-up from ${company} — we hope you're happy with the work we did.`;
+  const result = await sendEmail({
+    to,
+    subject: `Quick follow-up – ${company}`,
+    html,
+  });
+  return { ok: result.ok, body, error: result.error };
+}
+
+/** Nurturing: referral request (e.g. 5 days after service). */
+async function sendReferralRequestEmail(companyName, customerName, to) {
+  const name = (customerName || "there").trim() || "there";
+  const company = (companyName || "We").trim() || "We";
+  const html = `
+    <p>Hi ${escapeHtml(name)},</p>
+    <p>Quick favor from <strong>${escapeHtml(company)}</strong> — know anyone who could use our help? Reply with their name and number and we'll reach out. Thank you!</p>
+    <p>Thanks,<br/>${escapeHtml(company)}</p>
+  `;
+  const body = `Quick favor — know anyone who could use our help? Reply with their name and number.`;
+  const result = await sendEmail({
+    to,
+    subject: `Quick favor – ${company}`,
+    html,
+  });
+  return { ok: result.ok, body, error: result.error };
+}
+
+/** Nurturing: maintenance reminder (e.g. 6 months after service). */
+async function sendMaintenanceReminderEmail(companyName, customerName, to) {
+  const name = (customerName || "there").trim() || "there";
+  const company = (companyName || "We").trim() || "We";
+  const html = `
+    <p>Hi ${escapeHtml(name)},</p>
+    <p>It's been a while since we last saw you. <strong>${escapeHtml(company)}</strong> is here when you're ready for your next project or a quick check-in. Reply to this email or give us a call.</p>
+    <p>Thanks,<br/>${escapeHtml(company)}</p>
+  `;
+  const body = "Maintenance reminder — we're here when you're ready for your next project.";
+  const result = await sendEmail({
+    to,
+    subject: `We're here when you're ready – ${company}`,
+    html,
+  });
+  return { ok: result.ok, body, error: result.error };
+}
+
+/** Nurturing: re-engagement / dormant (e.g. 12 months after service). */
+async function sendReengagementEmail(companyName, customerName, to) {
+  const name = (customerName || "there").trim() || "there";
+  const company = (companyName || "We").trim() || "We";
+  const html = `
+    <p>Hi ${escapeHtml(name)},</p>
+    <p>Quick check-in from <strong>${escapeHtml(company)}</strong> — we'd love to hear how things are going and if you have any upcoming needs. Just reply or give us a call.</p>
+    <p>Thanks,<br/>${escapeHtml(company)}</p>
+  `;
+  const body = "Quick check-in — we'd love to hear how things are going.";
+  const result = await sendEmail({
+    to,
+    subject: `Quick check-in – ${company}`,
+    html,
+  });
+  return { ok: result.ok, body, error: result.error };
+}
+
+/** Nurturing: seasonal campaign (month-based). */
+async function sendSeasonalCampaignEmail(companyName, customerName, subjectLine, bodyHtml, to) {
+  const name = (customerName || "there").trim() || "there";
+  const company = (companyName || "We").trim() || "We";
+  const html = `
+    <p>Hi ${escapeHtml(name)},</p>
+    <p>${bodyHtml}</p>
+    <p>Thanks,<br/>${escapeHtml(company)}</p>
+  `;
+  const result = await sendEmail({
+    to,
+    subject: subjectLine || `News from ${company}`,
+    html,
+  });
+  return { ok: result.ok, error: result.error };
+}
+
 function escapeHtml(s) {
   if (s == null) return "";
   return String(s)
@@ -278,4 +422,10 @@ module.exports = {
   sendTestEmail,
   sendContactLeadEmail,
   sendWebsiteChatNotificationEmail,
+  sendPostServiceFollowUpEmail,
+  sendReferralRequestEmail,
+  sendMaintenanceReminderEmail,
+  sendReengagementEmail,
+  sendSeasonalCampaignEmail,
+  sendAdminInvitationEmail,
 };

@@ -35,8 +35,9 @@ function RootElement() {
     if (isRoot) return <Home />;
     return <Navigate to="/" replace />;
   }
-  if (user && !user.tenant_id && user.is_super_admin && pathname !== "/admin") {
-    return <Navigate to="/admin" replace />;
+  const isImpersonating = !!localStorage.getItem("impersonate_tenant_id");
+  if (user && !user.tenant_id && user.is_super_admin && !pathname.startsWith("/admin") && !isImpersonating) {
+    return <Navigate to="/admin/tenants" replace />;
   }
   if (user && !user.tenant_id && !user.is_super_admin && pathname !== "/create-business") {
     return <Navigate to="/create-business" replace />;
@@ -74,7 +75,9 @@ export default function App() {
           <Route path="billing" element={<BillingWithContext />} />
           <Route path="settings" element={<SettingsWithContext />} />
           <Route path="tenants" element={<Tenants />} />
-          <Route path="admin" element={<AdminWithContext />} />
+          <Route path="admin" element={<Navigate to="/admin/tenants" replace />} />
+          <Route path="admin/tenants" element={<AdminWithContext view="tenants" />} />
+          <Route path="admin/admins" element={<AdminWithContext view="admins" />} />
         </Route>
       </Routes>
     </BrowserRouter>
@@ -136,8 +139,8 @@ function BillingWithContext() {
   return <Billing tenantId={tenantId} />;
 }
 
-function AdminWithContext() {
+function AdminWithContext({ view }) {
   const user = getUser();
   if (!user?.is_super_admin) return <Navigate to="/" replace />;
-  return <Admin />;
+  return <Admin view={view} />;
 }

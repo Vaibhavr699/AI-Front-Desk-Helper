@@ -68,7 +68,7 @@ export default function Header({ tenantId, tenants, onMenuClick }) {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            {user?.tenant_id && (
+            {tenantId && (
               <>
                 <div className="hidden sm:block h-6 w-px bg-stone-200" aria-hidden />
                 <div className="flex items-center gap-2 min-w-0 max-w-[200px] sm:max-w-[280px]">
@@ -93,7 +93,7 @@ export default function Header({ tenantId, tenants, onMenuClick }) {
                   <img
                     src={currentBusinessLogo}
                     alt={currentBusinessName || "Business logo"}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-cover border border-stone-200 rounded-full"
                   />
                 ) : (
                   initial

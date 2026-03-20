@@ -17,7 +17,11 @@ export async function api(path, options = {}) {
   if (res.status === 401) {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
-    window.location.href = "/";
+    // Don't redirect on login/signup — let the form show the error and stay on the page
+    const isAuthAttempt = path === "/api/auth/login" || path === "/api/auth/signup";
+    if (!isAuthAttempt) {
+      window.location.href = "/";
+    }
     throw new Error("Unauthorized");
   }
   if (!res.ok) {
@@ -307,6 +311,23 @@ export function suspendTenant(id, isSuspended, reason) {
   });
 }
 
+export function getAdmins() {
+  return api("/api/admin/admins");
+}
+
+export function inviteAdmin(email) {
+  return api("/api/admin/invite", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export function removeAdmin(id) {
+  return api(`/api/admin/admins/${id}`, {
+    method: "DELETE",
+  });
+}
+
 export function forgotPassword(email) {
   return api("/api/auth/forgot-password", {
     method: "POST",
@@ -321,3 +342,8 @@ export function resetPassword(token, password) {
   });
 }
 
+export function disconnectGoogleCalendar(tenantId) {
+  return api(`/api/google-calendar/disconnect?tenantId=${tenantId}`, {
+    method: "POST",
+  });
+}

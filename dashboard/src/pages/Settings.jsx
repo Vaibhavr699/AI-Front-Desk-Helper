@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+import googleCalendarLogo from "../assets/google-calendar-icon.svg";
 import {
   getTenant,
   updateTenant,
@@ -8,7 +9,13 @@ import {
   deletePhoneNumber,
   getAvailableNumbers,
   getSubscriptionStatus,
-  updatePhoneNumber
+  updatePhoneNumber,
+  updateBooking,
+  getFollowups,
+  triggerFollowupSms,
+  triggerFollowupCall,
+  updateFollowupStatus,
+  disconnectGoogleCalendar,
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import { ConfirmationModal } from "../components/ConfirmationModal";
@@ -36,16 +43,57 @@ import {
   ChevronDown,
   ChevronUp,
   Facebook,
-  Lock
+  Calendar,
+  Lock,
+  CalendarDays,
+  UserPlus
 } from "lucide-react";
 
 const TENANT_STORAGE_KEY = "tenantId";
+
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+const DEFAULT_CAMPAIGN_PLACEHOLDERS = {
+  1: "interior_refresh",
+  2: "pre_spring_planning",
+  3: "exterior_season_opening",
+  4: "spring_project_ideas",
+  5: "summer_prep",
+  6: "mid_year_refresh",
+  7: "summer_projects",
+  8: "back_to_school_touchups",
+  9: "fall_projects",
+  10: "holiday_prep",
+  11: "year_end_projects",
+  12: "year_in_review",
+};
+
+
+const MONTH_PLACEHOLDERS = {
+  1: "e.g. New year refresh",
+  2: "e.g. Pre-spring planning",
+  3: "e.g. Exterior season kickoff",
+  4: "e.g. Spring projects",
+  5: "e.g. Summer prep",
+  6: "e.g. Mid-year check-in",
+  7: "e.g. Summer projects",
+  8: "e.g. Back-to-school",
+  9: "e.g. Fall projects",
+  10: "e.g. Holiday prep",
+  11: "e.g. Year-end projects",
+  12: "e.g. Year in review",
+};
+
+const GoogleCalendarIcon = ({ className = "w-6 h-6" }) => (
+  <img src={googleCalendarLogo} className={className} alt="Google Calendar" />
+);
 
 const TABS = [
   { id: "numbers", label: "Phone & voice", icon: Phone },
   { id: "ai", label: "AI behavior", icon: Bot },
   { id: "knowledge", label: "Knowledge base", icon: BookOpen },
   { id: "hours", label: "Business hours", icon: Clock },
+  { id: "nurturing", label: "Nurturing & referrals", icon: UserPlus },
   { id: "integrations", label: "Integrations", icon: LinkIcon },
 ];
 
@@ -75,7 +123,18 @@ export default function Settings({ tenantId }) {
     twilio_auth_token: "",
     facebook_page_id: "",
     facebook_page_access_token: "",
-    faqs: []
+    google_calendar_linked: false,
+    google_calendar_email: "",
+    faqs: [],
+    nurturing_enabled: false,
+    referral_enabled: false,
+    seasonal_campaigns_enabled: false,
+    maintenance_reminder_months: 6,
+    reengagement_reminder_months: 12,
+    referral_request_days_after_service: 5,
+    nurturing_campaign_calendar: {},
+    maintenance_touchpoints: [{ months: 6, header: "" }],
+    reengagement_touchpoints: [{ months: 12, header: "" }]
   });
 
   // Phone numbers state
@@ -83,6 +142,7 @@ export default function Settings({ tenantId }) {
   const [phonesLoading, setPhonesLoading] = useState(false);
   const [newPhone, setNewPhone] = useState("");
   const [newPhoneIsPrimary, setNewPhoneIsPrimary] = useState(false);
+  const [newPhoneLabel, setNewPhoneLabel] = useState("Main Business");
   const [phoneError, setPhoneError] = useState("");
 
   // Provision number state
@@ -93,6 +153,7 @@ export default function Settings({ tenantId }) {
   const [areaCode, setAreaCode] = useState("");
   const [provisionLoading, setProvisionLoading] = useState(false);
   const [provisionMessage, setProvisionMessage] = useState("");
+  const [suggestedNumbers, setSuggestedNumbers] = useState([]);
 
   // Facebook integration steps (tooltip / expandable)
   const [showFbSteps, setShowFbSteps] = useState(false);
@@ -148,7 +209,24 @@ export default function Settings({ tenantId }) {
         twilio_auth_token: "",
         facebook_page_id: t.facebook_page_id || "",
         facebook_page_access_token: "",
-        faqs: Array.isArray(t.faqs) ? t.faqs : []
+        google_calendar_linked: t.google_calendar_linked === true,
+        google_calendar_email: t.google_calendar_email || "",
+        faqs: Array.isArray(t.faqs) ? t.faqs : [],
+        nurturing_enabled: t.nurturing_enabled === true,
+        referral_enabled: t.referral_enabled === true,
+        seasonal_campaigns_enabled: t.seasonal_campaigns_enabled === true,
+        maintenance_reminder_months: t.maintenance_reminder_months ?? 6,
+        reengagement_reminder_months: t.reengagement_reminder_months ?? 12,
+        referral_request_days_after_service: t.referral_request_days_after_service ?? 5,
+        nurturing_campaign_calendar: t.nurturing_campaign_calendar && typeof t.nurturing_campaign_calendar === "object"
+          ? { ...t.nurturing_campaign_calendar }
+          : {},
+        maintenance_touchpoints: Array.isArray(t.maintenance_touchpoints) && t.maintenance_touchpoints.length > 0
+          ? t.maintenance_touchpoints.slice(0, 3)
+          : [{ months: t.maintenance_reminder_months ?? 6, header: "" }],
+        reengagement_touchpoints: Array.isArray(t.reengagement_touchpoints) && t.reengagement_touchpoints.length > 0
+          ? t.reengagement_touchpoints.slice(0, 3)
+          : [{ months: t.reengagement_reminder_months ?? 12, header: "" }],
       });
     } catch (e) {
       setError(e.message);
@@ -157,7 +235,7 @@ export default function Settings({ tenantId }) {
     }
   };
 
-  const loadPhones = async () => {
+  const fetchPhoneNumbers = async () => {
     if (!tenantId) return;
     setPhonesLoading(true);
     try {
@@ -170,9 +248,27 @@ export default function Settings({ tenantId }) {
     }
   };
 
+  const fetchSuggestedNumbers = async () => {
+    try {
+      const res = await getAvailableNumbers(""); // No area code = fetch unassigned owned
+      const raw = res.numbers || res || [];
+      const list = Array.isArray(raw) ? raw.filter(n => n.isOwned).map(n => ({
+        phoneNumber: n.phoneNumber,
+        friendlyName: n.friendlyName,
+        locality: n.locality,
+        region: n.region,
+        isOwned: true
+      })) : [];
+      setSuggestedNumbers(list);
+    } catch (e) {
+      console.error("Suggested numbers fetch failed:", e);
+    }
+  };
+
   useEffect(() => {
     loadTenant();
-    loadPhones();
+    fetchPhoneNumbers();
+    fetchSuggestedNumbers();
     if (tenantId) {
       getSubscriptionStatus(tenantId)
         .then((s) => setSubscriptionStatus(s))
@@ -187,12 +283,20 @@ export default function Settings({ tenantId }) {
     setProvisionMessage("");
     try {
       const res = await getAvailableNumbers(code);
-      setAvailableNumbers(res.numbers || []);
-      if (res.numbers?.length > 0) setSelectedNumber(res.numbers[0].phoneNumber);
-      else setSelectedNumber(null);
+      const raw = res.numbers || res || [];
+      const list = Array.isArray(raw) ? raw.map((n) => ({
+        phoneNumber: n.phoneNumber || n.phone_number || n.phone || "",
+        friendlyName: n.friendlyName || n.friendly_name || n.phoneNumber || n.phone_number || n.phone || "—",
+        locality: n.locality || "",
+        region: n.region || "",
+      })).filter((n) => n.phoneNumber) : [];
+      setAvailableNumbers(list);
+      setSelectedNumber(list.length > 0 ? list[0] : null);
+      if (list.length === 0 && !res.error) setProvisionMessage("no_numbers");
     } catch (err) {
-      setProvisionMessage("Failed to fetch numbers. Try a different area code.");
+      setProvisionMessage(err?.message || "Failed to fetch numbers. Try a different area code.");
       setAvailableNumbers([]);
+      setSelectedNumber(null);
     } finally {
       setLoadingNumbers(false);
     }
@@ -203,17 +307,27 @@ export default function Settings({ tenantId }) {
     setProvisionLoading(true);
     setProvisionMessage("");
     try {
-      await addPhoneNumber({ tenant_id: tenantId, phone: selectedNumber });
+      // selectedNumber is now the object { phoneNumber, isOwned, ... }
+      await addPhoneNumber({ 
+        tenant_id: tenantId, 
+        phone: selectedNumber.phoneNumber,
+        is_owned: !!selectedNumber.isOwned,
+        is_purchasable: true // Coming from the search/buy flow
+      });
       setProvisionMessage("Number provisioned successfully!");
       setAvailableNumbers([]);
       setSelectedNumber(null);
       setAreaCode("");
-      await loadPhones();
+      await fetchPhoneNumbers();
     } catch (err) {
       setProvisionMessage(`Error: ${err.message}`);
     } finally {
       setProvisionLoading(false);
     }
+  };
+
+  const handleManualAddPhone = () => {
+    handleAddPhone({ is_owned: false, is_purchasable: false }); // Manual entry is always external or "owned elsewhere"
   };
 
   const handleUpdateForm = (field, value) => {
@@ -281,14 +395,25 @@ export default function Settings({ tenantId }) {
     setPhoneError("");
     if (!newPhone) return;
     try {
-      await addPhoneNumber({
+      const result = await addPhoneNumber({
         tenant_id: tenantId,
         phone: newPhone,
-        is_primary: newPhoneIsPrimary
+        is_primary: newPhoneIsPrimary,
+        label: newPhoneLabel
       });
       setNewPhone("");
       setNewPhoneIsPrimary(false);
-      loadPhones();
+      setNewPhoneLabel("Main Business");
+
+      if (result.webhook_configured) {
+        setMessage(`Success! ${newPhone} added and configured as an AI phone line.`);
+      } else {
+        setMessage(`Number ${newPhone} added. (External business number)`);
+      }
+
+      fetchPhoneNumbers();
+      // Clear success message after 5s
+      setTimeout(() => setMessage(""), 5000);
     } catch (err) {
       setPhoneError(err.message);
     }
@@ -303,7 +428,7 @@ export default function Settings({ tenantId }) {
         setConfirmModal(prev => ({ ...prev, loading: true }));
         try {
           await deletePhoneNumber(phoneId);
-          loadPhones();
+          fetchPhoneNumbers();
           setConfirmModal(prev => ({ ...prev, isOpen: false }));
         } catch (err) {
           setPhoneError(err.message);
@@ -317,9 +442,20 @@ export default function Settings({ tenantId }) {
   const handleSetPrimary = async (phoneId) => {
     try {
       await updatePhoneNumber(phoneId, { is_primary: true });
-      loadPhones();
-    } catch (err) {
-      setPhoneError(err.message);
+      fetchPhoneNumbers();
+    } catch (e) {
+      console.error(e);
+      setPhoneError("Failed to update primary status");
+    }
+  };
+
+  const handleUpdateLabel = async (phoneId, label) => {
+    try {
+      await updatePhoneNumber(phoneId, { label });
+      fetchPhoneNumbers();
+    } catch (e) {
+      console.error(e);
+      setPhoneError("Failed to update label");
     }
   };
 
@@ -349,7 +485,16 @@ export default function Settings({ tenantId }) {
       business_hours: form.business_hours,
       objection_handling_config: form.objection_handling,
       facebook_page_id: form.facebook_page_id.trim() || null,
-      faqs: form.faqs.filter(f => f.question.trim() && f.answer.trim())
+      faqs: form.faqs.filter(f => f.question.trim() && f.answer.trim()),
+      nurturing_enabled: form.nurturing_enabled,
+      referral_enabled: form.referral_enabled,
+      seasonal_campaigns_enabled: form.seasonal_campaigns_enabled,
+      maintenance_reminder_months: form.maintenance_reminder_months,
+      reengagement_reminder_months: form.reengagement_reminder_months,
+      referral_request_days_after_service: form.referral_request_days_after_service,
+      nurturing_campaign_calendar: form.nurturing_campaign_calendar,
+      maintenance_touchpoints: form.maintenance_touchpoints,
+      reengagement_touchpoints: form.reengagement_touchpoints
     };
 
     if (form.facebook_page_access_token) payload.facebook_page_access_token = form.facebook_page_access_token;
@@ -361,6 +506,46 @@ export default function Settings({ tenantId }) {
       setTenant(updated);
       setMessage("Settings saved successfully.");
       window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleFacebookSave = async () => {
+    if (!tenantId) return;
+    setSaving(true);
+    setMessage(""); // Use setMessage for success
+    setError("");
+    try {
+      await updateTenant(tenantId, {
+        facebook_page_id: form.facebook_page_id,
+        facebook_page_access_token: form.facebook_page_access_token,
+      });
+      setMessage("Facebook settings saved!"); // Use setMessage for success
+      loadTenant();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleConnectCalendar = () => {
+    if (!tenantId) return;
+    // API_BASE is internal to api.js, but we need the backend URL here
+    const backendUrl = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+    window.location.href = `${backendUrl}/auth/google/calendar/initiate?tenantId=${tenantId}`;
+  };
+
+  const handleDisconnectCalendar = async () => {
+    if (!tenantId) return;
+    setSaving(true);
+    try {
+      await disconnectGoogleCalendar(tenantId);
+      setMessage("Google Calendar disconnected."); // Use setMessage for success
+      loadTenant();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -420,7 +605,7 @@ export default function Settings({ tenantId }) {
         {/* Tabs Sidebar */}
         <aside className="lg:w-64 shrink-0">
           <nav className="flex flex-row lg:flex-col gap-1 p-1 bg-gray-100/50 rounded-2xl md:p-1.5 lg:bg-transparent lg:p-0">
-            {TABS.map((tab) => (
+            {TABS.filter((tab) => tab.id !== "nurturing" || tenant?.has_nurturing_referral).map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
@@ -455,66 +640,229 @@ export default function Settings({ tenantId }) {
                   </div>
                 ) : (
                   <>
-                    <div className="mb-6">
-                      <h3 className="text-sm font-semibold text-gray-900 mb-3">Get a new AI line</h3>
-                      <div className="flex flex-wrap gap-2 items-center">
-                        <input
-                          type="text"
-                          placeholder="Area code (e.g. 415)"
-                          value={areaCode}
-                          onChange={(e) => setAreaCode(e.target.value)}
-                          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); fetchAvailableNumbers(areaCode); } }}
-                          className="w-28 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-gray-900/10 focus:border-gray-300"
-                          maxLength={3}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => fetchAvailableNumbers(areaCode)}
-                          disabled={loadingNumbers}
-                          className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 disabled:opacity-50 flex items-center gap-2"
-                        >
-                          {loadingNumbers ? <LumaSpin className="w-4 h-4 border-white" /> : <Search size={16} />}
-                          Search
-                        </button>
+                    <div className="mb-10 p-8 bg-slate-50 border border-slate-100 rounded-[2.5rem] shadow-sm">
+                      <div className="flex items-center gap-3 mb-6">
+                        <div className="w-10 h-10 rounded-2xl bg-slate-900 flex items-center justify-center text-white shadow-lg shadow-slate-200">
+                          <Zap size={20} />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">Get a new AI line</h3>
+                          <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">Buy a new number or connect one you already own</p>
+                        </div>
                       </div>
-                      {availableNumbers.length > 0 && (
-                        <div className="mt-3 max-h-48 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
-                          {availableNumbers.map((num) => (
-                            <label
-                              key={num.phoneNumber}
-                              className={`flex items-center p-3 cursor-pointer ${selectedNumber === num.phoneNumber ? "bg-gray-100" : "hover:bg-gray-50"}`}
-                            >
-                              <input
-                                type="radio"
-                                name="provision_number"
-                                value={num.phoneNumber}
-                                checked={selectedNumber === num.phoneNumber}
-                                onChange={() => setSelectedNumber(num.phoneNumber)}
-                                className="h-4 w-4 text-gray-900 border-gray-300"
-                              />
-                              <span className="ml-3 text-sm font-medium text-gray-900">{num.friendlyName}</span>
-                              {num.locality && num.region && (
-                                <span className="ml-2 text-xs text-gray-500">{num.locality}, {num.region}</span>
-                              )}
-                            </label>
-                          ))}
+
+                      <div className="space-y-6">
+                        {/* Option 1: Search & Buy / Ready to Connect */}
+                        <div className="p-8 bg-white border border-slate-100 rounded-[2.5rem] shadow-sm hover:shadow-md transition-all duration-500">
+                          <div className="flex items-center gap-4 mb-6">
+                            <div className="w-12 h-12 rounded-2xl bg-slate-900 flex items-center justify-center text-white shadow-xl shadow-slate-900/20">
+                              <Search size={24} />
+                            </div>
+                            <div>
+                              <h3 className="text-lg font-black text-slate-900 tracking-tight">Search & Provision</h3>
+                              <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-0.5">Find a new number or claim an unassigned one</p>
+                            </div>
+                          </div>
+
+                          <div className="space-y-6">
+                            <div className="flex gap-3">
+                              <div className="relative flex-1">
+                                <input
+                                  type="text"
+                                  placeholder="Area code (e.g. 415)"
+                                  value={areaCode}
+                                  onChange={(e) => setAreaCode(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); fetchAvailableNumbers(areaCode); } }}
+                                  className="w-full px-4 py-2.5 bg-slate-50 border-none rounded-xl text-xs font-bold focus:ring-4 focus:ring-slate-900/5 transition-all placeholder:text-slate-300 shadow-sm"
+                                  maxLength={3}
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => fetchAvailableNumbers(areaCode)}
+                                disabled={loadingNumbers}
+                                className="px-6 py-2.5 bg-slate-900 text-white text-[10px] font-black rounded-xl hover:bg-black disabled:opacity-50 flex items-center gap-2 transition-all uppercase tracking-widest shadow-lg shadow-slate-900/10"
+                              >
+                                {loadingNumbers ? <LumaSpin className="w-3.5 h-3.5 border-white" /> : <Search size={14} />}
+                                Find Numbers
+                              </button>
+                            </div>
+
+                            {!loadingNumbers && availableNumbers.length === 0 && provisionMessage === "no_numbers" && (
+                              <div className="p-5 rounded-2xl bg-amber-50 border border-amber-100/50 text-amber-800 animate-in fade-in slide-in-from-top-4">
+                                <p className="text-xs font-black uppercase tracking-wider mb-1">No numbers found</p>
+                                <p className="text-[11px] text-amber-600 font-bold leading-relaxed">We couldn't find any numbers for "{areaCode}". Try another area code like 212, 310, or 415.</p>
+                              </div>
+                            )}
+
+                            {/* Suggested (Owned) Numbers - Premium Card In Card */}
+                            {availableNumbers.length === 0 && !loadingNumbers && !provisionMessage && suggestedNumbers.length > 0 && (
+                              <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
+                                <div className="flex items-center gap-2 mb-4">
+                                  <div className="h-[1px] flex-1 bg-slate-100"></div>
+                                  <span className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.2em] px-2">Ready to Connect</span>
+                                  <div className="h-[1px] flex-1 bg-slate-100"></div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  {suggestedNumbers.map((num) => (
+                                    <label
+                                      key={num.phoneNumber}
+                                      className={`group relative flex flex-col p-4 cursor-pointer rounded-2xl border-2 transition-all duration-300 ${selectedNumber?.phoneNumber === num.phoneNumber ? "border-emerald-600 bg-emerald-50/30 ring-4 ring-emerald-600/5" : "border-slate-50 bg-slate-50/50 hover:border-slate-200"}`}
+                                    >
+                                      <input
+                                        type="radio"
+                                        name="provision_number_suggested"
+                                        value={num.phoneNumber}
+                                        checked={selectedNumber?.phoneNumber === num.phoneNumber}
+                                        onChange={() => setSelectedNumber(num)}
+                                        className="sr-only"
+                                      />
+                                      <div className="flex items-center justify-between mb-2">
+                                        <span className="text-base font-black text-slate-900 tracking-tight">{num.friendlyName}</span>
+                                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${selectedNumber?.phoneNumber === num.phoneNumber ? "border-emerald-600 bg-emerald-600" : "border-slate-300 bg-white"}`}>
+                                          {selectedNumber?.phoneNumber === num.phoneNumber && <div className="w-2 h-2 rounded-full bg-white" />}
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <span className="px-2 py-0.5 bg-emerald-600 text-white text-[9px] font-black uppercase tracking-widest rounded-md">In Account</span>
+                                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{num.locality || "Owned"}, {num.region}</span>
+                                      </div>
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {availableNumbers.length > 0 && (
+                              <div className="space-y-3 animate-in fade-in duration-500">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Search Results</span>
+                                  <div className="h-[1px] flex-1 bg-slate-100"></div>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+                                  {availableNumbers.map((num) => (
+                                    <label
+                                      key={num.phoneNumber}
+                                      className={`group flex flex-col p-4 cursor-pointer rounded-2xl border-2 transition-all duration-300 ${selectedNumber?.phoneNumber === num.phoneNumber ? "border-slate-900 bg-slate-50/50 ring-4 ring-slate-900/5" : "border-slate-50 bg-slate-50/30 hover:border-slate-200"}`}
+                                    >
+                                      <input
+                                        type="radio"
+                                        name="provision_number"
+                                        value={num.phoneNumber}
+                                        checked={selectedNumber?.phoneNumber === num.phoneNumber}
+                                        onChange={() => setSelectedNumber(num)}
+                                        className="sr-only"
+                                      />
+                                      <div className="flex items-center justify-between mb-1">
+                                        <span className="text-base font-black text-slate-900 tracking-tight">{num.friendlyName}</span>
+                                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${selectedNumber?.phoneNumber === num.phoneNumber ? "border-slate-900 bg-slate-900" : "border-slate-300 bg-white"}`}>
+                                          {selectedNumber?.phoneNumber === num.phoneNumber && <div className="w-2 h-2 rounded-full bg-white" />}
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-2 mt-1">
+                                        {num.isOwned && <span className="px-2 py-0.5 bg-emerald-600 text-white text-[9px] font-black uppercase tracking-widest rounded-md">In Account</span>}
+                                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest truncate">{num.locality}, {num.region}</span>
+                                      </div>
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {(availableNumbers.length > 0 || (suggestedNumbers.length > 0 && !areaCode)) && selectedNumber && (
+                              <button
+                                type="button"
+                                onClick={handleProvisionNumber}
+                                disabled={provisionLoading}
+                                className={`w-full py-3 text-white text-xs font-black rounded-xl disabled:opacity-50 flex items-center justify-center gap-2 transition-all uppercase tracking-[0.1em] shadow-xl hover:-translate-y-0.5 active:translate-y-0 ${selectedNumber?.isOwned ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20" : "bg-slate-900 hover:bg-black shadow-slate-900/20"}`}
+                              >
+                                {provisionLoading ? <LumaSpin className="w-4 h-4 border-white" /> : <Phone size={16} />}
+                                {selectedNumber?.isOwned ? "Connect " : "Purchase "} {selectedNumber?.phoneNumber}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Option 2: Connect Existing Business Number - Separate Card */}
+                        <div className="p-8 bg-slate-50/50 border border-slate-100 rounded-[2.5rem] shadow-sm hover:shadow-md transition-all duration-500 flex flex-col">
+                          <div className="flex items-center gap-4 mb-6">
+                            <div className="w-12 h-12 rounded-2xl bg-white flex items-center justify-center text-slate-900 shadow-xl shadow-slate-200/50 border border-slate-100">
+                              <Globe size={24} />
+                            </div>
+                            <div>
+                              <h3 className="text-lg font-black text-slate-900 tracking-tight">External Forwarding</h3>
+                              <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-0.5">Connect a number from another provider</p>
+                            </div>
+                          </div>
+
+                          <div className="flex-1 space-y-6">
+                            <p className="text-xs text-slate-500 font-medium leading-relaxed bg-white/50 p-4 rounded-2xl border border-white">
+                              Use this if you already have a business number elsewhere and want to forward its calls to your AI assistant.
+                            </p>
+                            
+                            <div className="space-y-4">
+                              <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Phone Number</label>
+                                <input
+                                  type="text"
+                                  placeholder="+1 (555) 000-0000"
+                                  value={newPhone}
+                                  onChange={(e) => setNewPhone(e.target.value)}
+                                  className="w-full px-4 py-2.5 bg-white border border-slate-100 rounded-xl text-xs font-bold focus:ring-4 focus:ring-slate-900/5 transition-all outline-none shadow-sm"
+                                />
+                              </div>
+
+                              <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Assign Label</label>
+                                <div className="relative group/select">
+                                  <select
+                                    value={newPhoneLabel}
+                                    onChange={(e) => setNewPhoneLabel(e.target.value)}
+                                    className="w-full px-4 py-2.5 bg-white border border-slate-100 rounded-xl text-xs font-bold focus:ring-4 focus:ring-slate-900/5 transition-all outline-none appearance-none shadow-sm pr-10 cursor-pointer"
+                                  >
+                                    <option value="Main Business">Main Business Number</option>
+                                    <option value="Office">Office Line</option>
+                                    <option value="Mobile">Mobile Number</option>
+                                    <option value="Support">Support</option>
+                                  </select>
+                                  <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 group-hover/select:text-slate-600 transition-colors">
+                                    <ChevronDown size={14} />
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={handleManualAddPhone}
+                            disabled={phonesLoading || !newPhone}
+                            className="w-full mt-6 py-3 bg-white border-2 border-slate-900 text-slate-900 text-xs font-black rounded-xl hover:bg-slate-900 hover:text-white disabled:opacity-50 transition-all uppercase tracking-[0.1em] flex items-center justify-center gap-2"
+                          >
+                            {phonesLoading ? <LumaSpin className="w-4 h-4 border-slate-900" /> : <Globe size={18} />}
+                            Register Number
+                          </button>
+                        </div>
+                      </div>
+
+                      {provisionMessage && provisionMessage !== "no_numbers" && (
+                        <div className={`mt-6 p-4 rounded-2xl border ${provisionMessage.startsWith("Error") ? "bg-red-50 border-red-100 text-red-700" : "bg-emerald-50 border-emerald-100 text-emerald-700"} animate-in fade-in slide-in-from-top-2`}>
+                           <p className="text-[11px] font-bold uppercase tracking-wide">{provisionMessage}</p>
                         </div>
                       )}
-                      {availableNumbers.length > 0 && selectedNumber && (
-                        <button
-                          type="button"
-                          onClick={handleProvisionNumber}
-                          disabled={provisionLoading}
-                          className="mt-3 px-4 py-2 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2"
-                        >
-                          {provisionLoading && <LumaSpin className="w-4 h-4 border-white" />}
-                          Add {selectedNumber}
-                        </button>
+                      
+                      {phoneError && (
+                        <div className="mt-6 p-4 bg-red-50 border border-red-100 rounded-2xl flex items-start gap-3 text-red-700 animate-in fade-in slide-in-from-top-2">
+                          <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                          <p className="text-[11px] font-bold uppercase tracking-wide leading-relaxed">{phoneError}</p>
+                        </div>
                       )}
-                      {provisionMessage && (
-                        <p className={`mt-2 text-sm ${provisionMessage.startsWith("Error") ? "text-red-600" : "text-emerald-600"}`}>
-                          {provisionMessage}
-                        </p>
+
+                      {message && message.includes("successfully") && (
+                         <div className="mt-6 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-start gap-3 text-emerald-700 animate-in fade-in slide-in-from-top-2">
+                           <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5" />
+                           <p className="text-[11px] font-bold uppercase tracking-wide leading-relaxed">{message}</p>
+                         </div>
                       )}
                     </div>
 
@@ -547,71 +895,100 @@ export default function Settings({ tenantId }) {
                             </div>
                           ))
                         )}
-                      </div>
                     </div>
-
-                    <div className="border-t border-gray-200 pt-6">
-                      <h3 className="text-sm font-semibold text-gray-900 mb-2">Business numbers</h3>
-                      <p className="text-xs text-gray-500 mb-4">Numbers your customers already use. Forward them to an AI line so the assistant can answer.</p>
-                      <div className="space-y-3">
+                    <div className="border-t border-gray-100 pt-8 mt-4">
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center text-white shadow-lg shadow-slate-200">
+                          <Plus size={20} />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">Existing numbers</h3>
+                          <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">Connect your own hardware or Twilio lines</p>
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-4">
                         {phoneNumbers.filter(pn => !pn.twilio_sid).map((pn) => (
-                          <div key={pn.id} className={`flex items-center justify-between p-4 rounded-lg border ${pn.is_primary ? "border-amber-200 bg-amber-50/50" : "border-gray-200 bg-white"}`}>
-                            <div className="flex items-center gap-3">
-                              <Phone size={18} className="text-gray-500" />
+                          <div key={pn.id} className={`group flex items-center justify-between p-4 rounded-2xl border transition-all ${pn.is_primary ? "border-slate-900 bg-slate-50 ring-1 ring-slate-900/5 shadow-sm" : "border-slate-100 bg-white hover:border-slate-200"}`}>
+                            <div className="flex items-center gap-4">
+                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${pn.is_primary ? "bg-slate-900 text-white" : "bg-slate-50 text-slate-400 group-hover:bg-slate-100 group-hover:text-slate-600"}`}>
+                                <Phone size={18} />
+                              </div>
                               <div>
-                                <p className="font-medium text-gray-900">{pn.phone}</p>
-                                {pn.is_primary && <span className="text-xs text-amber-700">Primary identity</span>}
+                                <div className="flex items-center gap-2">
+                                  <p className="font-bold text-slate-900 text-sm tracking-tight">{pn.phone}</p>
+                                  {pn.label && (
+                                    <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[9px] font-black uppercase tracking-widest rounded-md border border-slate-200">
+                                      {pn.label}
+                                    </span>
+                                  )}
+                                </div>
+                                {pn.is_primary ? (
+                                  <div className="flex items-center gap-1.5 mt-0.5">
+                                    <Shield size={10} className="text-slate-900" />
+                                    <span className="text-[10px] text-slate-900 font-black uppercase tracking-widest">Primary identity</span>
+                                  </div>
+                                ) : (
+                                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">External number</span>
+                                )}
                               </div>
                             </div>
-                            <div className="flex gap-1">
+                            <div className="flex gap-2">
                               {!pn.is_primary && (
-                                <button type="button" onClick={() => handleSetPrimary(pn.id)} className="p-2 text-gray-400 hover:text-gray-700 rounded-lg" title="Set as primary">
-                                  <Star size={16} />
+                                <button type="button" onClick={() => handleSetPrimary(pn.id)} className="px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-900 transition-colors" title="Set as primary">
+                                  Set as Primary
                                 </button>
                               )}
-                              <button type="button" onClick={() => handleDeletePhone(pn.id)} className="p-2 text-gray-400 hover:text-red-600 rounded-lg" title="Remove">
+                              <button type="button" onClick={() => handleDeletePhone(pn.id)} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all" title="Remove">
                                 <Trash2 size={16} />
                               </button>
                             </div>
                           </div>
                         ))}
-                        <div className="p-4 border border-dashed border-gray-200 rounded-lg">
-                          <p className="text-xs font-medium text-gray-700 mb-2">Add business number</p>
-                          <div className="flex gap-2">
-                            <input
-                              type="tel"
-                              value={newPhone}
-                              onChange={(e) => setNewPhone(e.target.value)}
-                              placeholder="+1 555 000 0000"
-                              className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-gray-900/10 focus:border-gray-300"
-                            />
-                            <button type="button" onClick={handleAddPhone} className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 flex items-center gap-1">
-                              <Plus size={16} /> Add
-                            </button>
-                          </div>
-                          <label className="mt-2 flex items-center gap-2 cursor-pointer">
-                            <input type="checkbox" checked={newPhoneIsPrimary} onChange={(e) => setNewPhoneIsPrimary(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-gray-900" />
-                            <span className="text-xs text-gray-600">Set as primary identity</span>
-                          </label>
-                          {phoneError && <p className="mt-1 text-xs text-red-600">{phoneError}</p>}
-                        </div>
                       </div>
                     </div>
 
-                    <div className="border-t border-gray-200 mt-8 pt-6 p-4 bg-sky-50 rounded-lg">
-                      <h3 className="text-sm font-semibold text-gray-900 mb-2">Forward your main line</h3>
-                      <p className="text-xs text-gray-600 mb-3">Forward busy/no-answer from your primary business number to your AI line so no call is missed.</p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                        <div className="p-3 bg-white/80 border border-sky-100 rounded-lg">
-                          <p className="font-medium text-gray-900 mb-0.5">AT&T / Verizon</p>
-                          <p className="text-gray-600">Dial *72, then your AI line number.</p>
+                    {phoneNumbers.some(pn => pn.twilio_sid) && (
+                      <div className="mt-10 p-8 bg-slate-900 rounded-[2rem] text-white shadow-2xl shadow-slate-900/20 relative overflow-hidden group">
+                        <div className="absolute top-0 right-0 p-8 text-white/5 group-hover:text-white/10 transition-colors">
+                          <Zap size={120} weight="fill" />
                         </div>
-                        <div className="p-3 bg-white/80 border border-sky-100 rounded-lg">
-                          <p className="font-medium text-gray-900 mb-0.5">T-Mobile</p>
-                          <p className="text-gray-600">Settings → Calls → Call forwarding.</p>
+                        
+                        <div className="relative z-10">
+                          <div className="flex items-center gap-2 mb-4">
+                            <span className="px-3 py-1 bg-white/10 rounded-full text-[10px] font-black uppercase tracking-[0.2em] border border-white/5">Configuration Guide</span>
+                          </div>
+                          <h3 className="text-xl font-black mb-2">Forward your main line</h3>
+                          <p className="text-sm text-slate-400 font-medium mb-8 max-w-md italic">
+                            Forward busy or no-answer calls from your <span className="text-slate-200 font-bold decoration-slate-500 underline underline-offset-4 decoration-2">{phoneNumbers.find(pn => pn.label === "Main Business")?.phone || "primary business number"}</span> to your dedicated AI line so no call ever goes unanswered.
+                          </p>
+                          
+                          <div className="mb-8 p-4 bg-white/5 rounded-2xl border border-white/10 inline-flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-emerald-500 flex items-center justify-center text-white">
+                              <Phone size={16} />
+                            </div>
+                            <div>
+                              <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-0.5">Your AI Line</p>
+                              <p className="text-base font-black tracking-tighter">
+                                {phoneNumbers.find(pn => pn.twilio_sid)?.phone || "Provisioned line"}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="p-5 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all">
+                              <p className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-2">AT&T / Verizon</p>
+                              <p className="text-sm font-medium text-slate-200">Dial <span className="text-emerald-400 font-black">*72</span> followed by your AI line number.</p>
+                            </div>
+                            <div className="p-5 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all">
+                              <p className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-2">T-Mobile / Others</p>
+                              <p className="text-sm font-medium text-slate-200">Go to <span className="text-emerald-400 font-black">Settings → Call Forwarding</span> in your phone app.</p>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    )}
+ </div>
                   </>
                 )}
               </div>
@@ -876,6 +1253,259 @@ export default function Settings({ tenantId }) {
             </div>
           )}
 
+          {activeTab === "nurturing" && (
+            <div className="space-y-10 max-w-4xl">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900 mb-1 flex items-center gap-2">
+                  <UserPlus className="w-5 h-5 text-emerald-600" />
+                  Nurturing & referral campaigns
+                </h2>
+                <p className="text-sm text-gray-500 mb-6">Post-service follow-ups, referral requests, maintenance reminders, and seasonal campaigns. Requires an Elite plan or add-on.</p>
+
+                <div className="space-y-6">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.nurturing_enabled}
+                      onChange={(e) => handleUpdateForm("nurturing_enabled", e.target.checked)}
+                      className="w-4 h-4 rounded border-gray-300 text-gray-900"
+                    />
+                    <span className="font-medium text-gray-900">Enable nurturing campaigns</span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.referral_enabled}
+                      onChange={(e) => handleUpdateForm("referral_enabled", e.target.checked)}
+                      className="w-4 h-4 rounded border-gray-300 text-gray-900"
+                    />
+                    <span className="font-medium text-gray-900">Enable referral requests</span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.seasonal_campaigns_enabled}
+                      onChange={(e) => handleUpdateForm("seasonal_campaigns_enabled", e.target.checked)}
+                      className="w-4 h-4 rounded border-gray-300 text-gray-900"
+                    />
+                    <span className="font-medium text-gray-900">Enable seasonal campaigns</span>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8">
+                  <div>
+                    <label className="block text-sm font-bold text-gray-700 mb-2">Referral request (days after service)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={90}
+                      value={form.referral_request_days_after_service}
+                      onChange={(e) => handleUpdateForm("referral_request_days_after_service", parseInt(e.target.value, 10) || 5)}
+                      className="w-full px-4 py-2 border border-gray-200 rounded-xl"
+                    />
+                  </div>
+                </div>
+
+                {/* ── Maintenance Touchpoints ── */}
+                <div className="mt-10 pt-8 border-t border-gray-200">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                        🔧 Maintenance reminders
+                      </h3>
+                      <p className="text-sm text-gray-500 mt-1">Up to 3 touchpoints. Set months to 0 to disable a touchpoint. Add a header/theme and the AI crafts the message.</p>
+                    </div>
+                    {form.maintenance_touchpoints.length < 3 && (
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateForm("maintenance_touchpoints", [...form.maintenance_touchpoints, { months: 0, header: "" }])}
+                        className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl hover:bg-emerald-100 transition-colors"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Add touchpoint
+                      </button>
+                    )}
+                  </div>
+                  <div className="space-y-4">
+                    {form.maintenance_touchpoints.map((tp, idx) => (
+                      <div key={idx} className="p-5 bg-gray-50 border border-gray-200 rounded-2xl relative group">
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-xs font-black text-gray-400 uppercase tracking-widest">Touchpoint {idx + 1}</span>
+                          {form.maintenance_touchpoints.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = form.maintenance_touchpoints.filter((_, i) => i !== idx);
+                                handleUpdateForm("maintenance_touchpoints", next);
+                              }}
+                              className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                          <div>
+                            <label className="block text-xs font-bold text-gray-600 mb-1">Months after service</label>
+                            <input
+                              type="number"
+                              min={0}
+                              max={36}
+                              value={tp.months}
+                              onChange={(e) => {
+                                const next = [...form.maintenance_touchpoints];
+                                next[idx] = { ...next[idx], months: parseInt(e.target.value, 10) || 0 };
+                                handleUpdateForm("maintenance_touchpoints", next);
+                              }}
+                              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-bold"
+                            />
+                            {tp.months === 0 && <p className="text-[10px] text-amber-600 font-bold mt-1">Disabled (set &gt; 0 to activate)</p>}
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-bold text-gray-600 mb-1">Header / theme (AI uses this)</label>
+                            <input
+                              type="text"
+                              value={tp.header}
+                              onChange={(e) => {
+                                const next = [...form.maintenance_touchpoints];
+                                next[idx] = { ...next[idx], header: e.target.value };
+                                handleUpdateForm("maintenance_touchpoints", next);
+                              }}
+                              placeholder="e.g. Spring AC Tune-Up, Annual Paint Touch-Up"
+                              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm placeholder:text-gray-400"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* ── Re-Engagement Touchpoints ── */}
+                <div className="mt-10 pt-8 border-t border-gray-200">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                        🔄 Re-engagement touchpoints
+                      </h3>
+                      <p className="text-sm text-gray-500 mt-1">Up to 3 touchpoints for dormant customers. Set months to 0 to disable.</p>
+                    </div>
+                    {form.reengagement_touchpoints.length < 3 && (
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateForm("reengagement_touchpoints", [...form.reengagement_touchpoints, { months: 0, header: "" }])}
+                        className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-xl hover:bg-blue-100 transition-colors"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Add touchpoint
+                      </button>
+                    )}
+                  </div>
+                  <div className="space-y-4">
+                    {form.reengagement_touchpoints.map((tp, idx) => (
+                      <div key={idx} className="p-5 bg-gray-50 border border-gray-200 rounded-2xl relative group">
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-xs font-black text-gray-400 uppercase tracking-widest">Touchpoint {idx + 1}</span>
+                          {form.reengagement_touchpoints.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = form.reengagement_touchpoints.filter((_, i) => i !== idx);
+                                handleUpdateForm("reengagement_touchpoints", next);
+                              }}
+                              className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                          <div>
+                            <label className="block text-xs font-bold text-gray-600 mb-1">Months after service</label>
+                            <input
+                              type="number"
+                              min={0}
+                              max={36}
+                              value={tp.months}
+                              onChange={(e) => {
+                                const next = [...form.reengagement_touchpoints];
+                                next[idx] = { ...next[idx], months: parseInt(e.target.value, 10) || 0 };
+                                handleUpdateForm("reengagement_touchpoints", next);
+                              }}
+                              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-bold"
+                            />
+                            {tp.months === 0 && <p className="text-[10px] text-amber-600 font-bold mt-1">Disabled (set &gt; 0 to activate)</p>}
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-xs font-bold text-gray-600 mb-1">Header / theme (AI uses this)</label>
+                            <input
+                              type="text"
+                              value={tp.header}
+                              onChange={(e) => {
+                                const next = [...form.reengagement_touchpoints];
+                                next[idx] = { ...next[idx], header: e.target.value };
+                                handleUpdateForm("reengagement_touchpoints", next);
+                              }}
+                              placeholder="e.g. We miss you!, Quick check-in"
+                              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm placeholder:text-gray-400"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-8 pt-8 border-t border-gray-200">
+                  <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+                    <div>
+                      <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                        <CalendarDays className="w-5 h-5 text-emerald-600" />
+                        12-month campaign calendar
+                      </h3>
+                      <p className="text-sm text-gray-500 mt-1">Give each month a short name so you can see which seasonal message was sent. Leave blank to use the default message.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = { ...form.nurturing_campaign_calendar };
+                        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].forEach((m) => { next[String(m)] = DEFAULT_CAMPAIGN_PLACEHOLDERS[m]; });
+                        handleUpdateForm("nurturing_campaign_calendar", next);
+                      }}
+                      className="px-4 py-2 text-sm font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl hover:bg-emerald-100 transition-colors"
+                    >
+                      Use painting example defaults
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {MONTH_NAMES.map((name, i) => {
+                      const monthNum = i + 1;
+                      const key = String(monthNum);
+                      const value = form.nurturing_campaign_calendar[key] ?? "";
+                      const placeholder = MONTH_PLACEHOLDERS[monthNum] || "Optional campaign name";
+                      return (
+                        <div key={key} className="bg-gray-50/80 rounded-xl border border-gray-100 p-4">
+                          <label className="block text-sm font-semibold text-gray-700 mb-2">{name}</label>
+                          <input
+                            type="text"
+                            value={value}
+                            onChange={(e) => {
+                              const next = { ...form.nurturing_campaign_calendar };
+                              const v = e.target.value.trim();
+                              if (v) next[key] = v;
+                              else delete next[key];
+                              handleUpdateForm("nurturing_campaign_calendar", next);
+                            }}
+                            placeholder={placeholder}
+                            className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg bg-white placeholder:text-gray-400 focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition-colors"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeTab === "integrations" && (
             <div className="space-y-10">
               {/* Twilio */}
@@ -981,6 +1611,69 @@ export default function Settings({ tenantId }) {
                     <p className="text-xs text-gray-500 mt-2">Paste your Zapier Catch Hook URL or direct CRM webhook here.</p>
                   </div>
                 </div>
+              </div>
+              {/* Google Calendar */}
+              <div className="pt-6 border-t border-gray-100">
+                <div className="flex items-center justify-between gap-4 mb-6">
+                  <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                    <GoogleCalendarIcon className="w-6 h-6" />
+                    Google Calendar
+                  </h2>
+                  {form.google_calendar_linked ? (
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-full text-xs font-bold border border-emerald-100">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      CONNECTED
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 text-gray-500 rounded-full text-xs font-bold border border-gray-100">
+                      <Clock className="w-3.5 h-3.5" />
+                      NOT CONNECTED
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-gray-50 border border-gray-200 rounded-2xl p-6">
+                  {form.google_calendar_linked ? (
+                    <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-white rounded-xl border border-gray-200 flex items-center justify-center shadow-sm">
+                          <GoogleCalendarIcon className="w-7 h-7" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-gray-900">Connected to Google Calendar</p>
+                          <p className="text-xs text-gray-500">{form.google_calendar_email || "Active association"}</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleDisconnectCalendar}
+                        className="px-6 py-2.5 bg-white border border-red-200 text-red-600 font-bold text-xs uppercase tracking-widest rounded-xl hover:bg-red-50 transition-all shadow-sm"
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+                      <div className="max-w-md">
+                        <p className="text-sm font-bold text-gray-900 mb-1">Sync with your Google Calendar</p>
+                        <p className="text-xs text-gray-500 leading-relaxed">
+                          Allow the AI to check your availability in real-time and automatically book appointments on your calendar.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleConnectCalendar}
+                        className="px-8 py-3 bg-white border-2 border-gray-200 font-bold text-xs uppercase tracking-widest rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm active:scale-95 flex items-center gap-3 text-gray-700"
+                      >
+                        <GoogleCalendarIcon className="w-5 h-5" />
+                        Connect Google Calendar
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500 mt-4 leading-relaxed">
+                  Once connected, the AI will use your primary calendar to verify availability before confirming a booking with a customer.
+                </p>
               </div>
 
               {/* Facebook */}

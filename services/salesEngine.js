@@ -41,7 +41,7 @@ async function createEstimateFollowUp(lead, tenantId = null) {
             [
                 crypto.randomUUID(),
                 tenantId,
-                lead.full_name || "",
+                lead.name || "",
                 phone,
                 new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString() // 2 hours from now
             ]
@@ -146,7 +146,7 @@ async function triggerOutboundEstimateCall(lead) {
     }
 
     const wsHost = baseUrl.replace(/^https?:\/\//, "");
-    const script = `Hey ${lead.full_name || ""}, this is the AI assistant from ${companyName}. I'm calling to see if you had any questions about the estimate we sent over...`;
+    const script = `Hey ${lead.name || ""}, this is the AI assistant from ${companyName}. I'm calling to see if you had any questions about the estimate we sent over...`;
 
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>

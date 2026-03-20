@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { getConversationTimeline } from '../api';
-import { Phone, MessageSquare, Globe, Facebook, User, Bot, Calendar, Clock, ChevronDown, ChevronUp } from 'lucide-react';
+import { Phone, MessageSquare, Globe, Facebook, User, Bot, Calendar, Clock, ChevronDown, ChevronUp, Mail } from 'lucide-react';
 import { format } from 'date-fns';
 
 const ConversationViewer = ({ leadId, leadName }) => {
@@ -41,6 +41,7 @@ const ConversationViewer = ({ leadId, leadName }) => {
     switch (channel) {
       case 'voice': return <Phone size={16} className="text-blue-500" />;
       case 'sms': return <MessageSquare size={16} className="text-green-500" />;
+      case 'email': return <Mail size={16} className="text-amber-600" />;
       case 'website': return <Globe size={16} className="text-purple-500" />;
       case 'facebook': return <Facebook size={16} className="text-blue-600" />;
       default: return <MessageSquare size={16} />;

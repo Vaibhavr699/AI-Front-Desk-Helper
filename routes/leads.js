@@ -5,7 +5,7 @@ const router = express.Router();
 const leadsService = require("../services/leads");
 const messagesService = require("../services/messages");
 const callsService = require("../services/calls");
-const { authMiddleware } = require("../lib/auth");
+const { authMiddleware, getTenantIdFromQuery } = require("../lib/auth");
 const db = require("../lib/db");
 
 // All routes require authentication
@@ -14,7 +14,7 @@ router.use(authMiddleware);
 /** GET /api/leads - List all leads for a tenant */
 router.get("/", async (req, res) => {
   try {
-    const tenantId = req.query.tenantId; // In a real app, this might come from the user's token
+    const tenantId = getTenantIdFromQuery(req);
     if (!tenantId) return res.status(400).json({ error: "Missing tenantId" });
     
     const limit = parseInt(req.query.limit) || 50;
@@ -33,6 +33,12 @@ router.get("/:id", async (req, res) => {
   try {
     const lead = await leadsService.getLeadById(req.params.id);
     if (!lead) return res.status(404).json({ error: "Lead not found" });
+
+    // Authorization check
+    if (lead.tenant_id !== req.user?.tenant_id && !req.user?.is_super_admin) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
     res.json(lead);
   } catch (err) {
     console.error("[Leads API] Get failed:", err.message);
@@ -43,8 +49,15 @@ router.get("/:id", async (req, res) => {
 /** PATCH /api/leads/:id - Update lead profile or status */
 router.patch("/:id", async (req, res) => {
   try {
+    const lead = await leadsService.getLeadById(req.params.id);
+    if (!lead) return res.status(404).json({ error: "Lead not found" });
+
+    // Authorization check
+    if (lead.tenant_id !== req.user?.tenant_id && !req.user?.is_super_admin) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
     const updated = await leadsService.updateLeadInfo(req.params.id, req.body);
-    if (!updated) return res.status(404).json({ error: "Lead not found" });
     res.json(updated);
   } catch (err) {
     console.error("[Leads API] Update failed:", err.message);

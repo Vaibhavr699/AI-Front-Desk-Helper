@@ -2,6 +2,8 @@
 
 const express = require("express");
 const db = require("../lib/db");
+const auth = require("../lib/auth");
+const emailService = require("../services/email");
 const { getPlan, listPlans } = require("../lib/plans");
 
 const router = express.Router();
@@ -290,6 +292,86 @@ router.delete("/tenants/:id/pricing", async (req, res) => {
 
 router.get("/plans", async (req, res) => {
   res.json({ plans: listPlans() });
+});
+
+// -------------------- Platform Admin Management --------------------
+
+router.get("/admins", async (req, res) => {
+  try {
+    const r = await db.query(
+      "SELECT id, email, role, created_at FROM dashboard_users WHERE is_super_admin = true ORDER BY created_at ASC"
+    );
+    res.json({ admins: r.rows });
+  } catch (e) {
+    console.error("[Admin] List admins error:", e.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.post("/invite", async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    if (!email) return res.status(400).json({ error: "Email required" });
+
+    const normalized = email.trim().toLowerCase();
+    
+    // Check if user already exists
+    const existing = await auth.findUserByEmail(normalized);
+    if (existing) {
+      if (existing.is_super_admin) {
+        return res.status(400).json({ error: "User is already an admin" });
+      }
+      // If they exist but aren't super admin, we could upgrade them, 
+      // but for "Invite" let's stick to new users or explicit upgrade later.
+      // For now, let's just say they exist.
+      return res.status(400).json({ error: "A user with this email already exists" });
+    }
+
+    // Create a "pending" admin user with a random password hash (they'll set it via reset link)
+    const tempPass = require("crypto").randomBytes(16).toString("hex");
+    const hash = await auth.hashPassword(tempPass);
+    
+    const r = await db.query(
+      "INSERT INTO dashboard_users (email, password_hash, is_super_admin, role) VALUES ($1, $2, true, 'admin') RETURNING id, email",
+      [normalized, hash]
+    );
+    const user = r.rows[0];
+
+    // Generate reset token
+    const token = auth.generateResetToken();
+    const expires = new Date(Date.now() + 48 * 3600000); // 48 hours for invitation
+    await auth.saveResetToken(user.email, token, expires);
+
+    // Send invitation email
+    const base = (process.env.DASHBOARD_URL || process.env.BASE_URL || "").replace(/\/$/, "");
+    const inviteLink = `${base}/reset-password?token=${token}`;
+    
+    await emailService.sendAdminInvitationEmail(user.email, inviteLink);
+
+    res.json({ success: true, user });
+  } catch (e) {
+    console.error("[Admin] Invite error:", e.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.delete("/admins/:id", async (req, res) => {
+  try {
+    const targetId = req.params.id;
+    
+    // Prevent self-deletion
+    if (targetId === req.user.sub) {
+      return res.status(400).json({ error: "You cannot remove yourself" });
+    }
+
+    const r = await db.query("DELETE FROM dashboard_users WHERE id = $1 AND is_super_admin = true RETURNING id", [targetId]);
+    if (r.rows.length === 0) return res.status(404).json({ error: "Admin not found" });
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error("[Admin] Delete admin error:", e.message);
+    res.status(500).json({ error: "Server error" });
+  }
 });
 
 module.exports = router;

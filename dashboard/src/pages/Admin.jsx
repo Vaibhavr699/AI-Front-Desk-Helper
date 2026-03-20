@@ -30,6 +30,9 @@ import {
   BarChart3,
   ArrowUpRight,
   ArrowDownRight,
+  UserPlus,
+  Mail,
+  UserCheck,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -50,16 +53,26 @@ function centsToMRR(cents) {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
-export default function Admin() {
+export default function Admin({ view = "tenants" }) {
   const [stats, setStats] = useState(null);
   const [tenants, setTenants] = useState([]);
+  const [admins, setAdmins] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTenant, setSelectedTenant] = useState(null);
   const [saveLoading, setSaveLoading] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [filterPlan, setFilterPlan] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
+  const [impersonateConfirm, setImpersonateConfirm] = useState(null);
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [adminToDelete, setAdminToDelete] = useState(null);
+  const [suspensionConfirm, setSuspensionConfirm] = useState(null);
+  const [removalConfirm, setRemovalConfirm] = useState(null);
+  const [alertConfig, setAlertConfig] = useState(null);
   const ROWS_PER_PAGE = 10;
 
   const [overrideForm, setOverrideForm] = useState({
@@ -71,7 +84,8 @@ export default function Admin() {
       basic: { monthly: "", setup: "", waive_setup: false },
       pro: { monthly: "", setup: "", waive_setup: false },
       elite: { monthly: "", setup: "", waive_setup: false },
-    }
+    },
+    addons: { customerNurturingReferral: false },
   });
 
   useEffect(() => {
@@ -80,14 +94,72 @@ export default function Admin() {
 
   async function loadData() {
     setLoading(true);
+    setError(null);
     try {
-      const [s, t] = await Promise.all([getAdminStats(), getAdminTenants()]);
+      const [s, t, a] = await Promise.all([
+        api.getAdminStats(),
+        api.getAdminTenants(),
+        api.getAdmins()
+      ]);
+
       setStats(s);
       setTenants(t.tenants || []);
+      setAdmins(a.admins || []);
+      
+      if (!t.tenants || t.tenants.length === 0) {
+        console.warn("Tenant list is empty from server.");
+      }
     } catch (e) {
       console.error("Admin load error:", e);
+      setError(`Failed to load data: ${e.message}`);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleInviteAdmin(e) {
+    e.preventDefault();
+    if (!inviteEmail) return;
+    setInviteLoading(true);
+    try {
+      await api.inviteAdmin(inviteEmail);
+      setInviteEmail("");
+      setIsInviteModalOpen(false);
+      await loadData();
+    } catch (err) {
+      setAlertConfig({
+        title: "Invitation Error",
+        message: err.message,
+        variant: "danger",
+        icon: <UserCheck size={32} />
+      });
+    } finally {
+      setInviteLoading(false);
+    }
+  }
+
+  async function handleRemoveAdmin(admin) {
+    const user = JSON.parse(localStorage.getItem("user") || "{}");
+    if (admin.id === user.id) {
+      setAlertConfig({
+        title: "Action Restricted",
+        message: "You cannot remove yourself from the platform console.",
+        variant: "warning",
+        icon: <Shield size={32} />
+      });
+      return;
+    }
+    setAdminToDelete(admin);
+  }
+
+  async function confirmRemoveAdmin() {
+    if (!adminToDelete) return;
+    try {
+      await api.removeAdmin(adminToDelete.id);
+      await loadData();
+      setAdminToDelete(null);
+    } catch (err) {
+      setError(`Error: ${err.message}`);
     }
   }
 
@@ -107,6 +179,7 @@ export default function Admin() {
       };
     };
 
+    const addons = existingOverrides.addons && typeof existingOverrides.addons === "object" ? existingOverrides.addons : {};
     setOverrideForm({
       promo_label: tenant.promo_label || "",
       promo_expires_at: tenant.promo_expires_at ? tenant.promo_expires_at.split("T")[0] : "",
@@ -116,7 +189,10 @@ export default function Admin() {
         basic: buildPlanForm("basic"),
         pro: buildPlanForm("pro"),
         elite: buildPlanForm("elite"),
-      }
+      },
+      addons: {
+        customerNurturingReferral: !!addons.customerNurturingReferral,
+      },
     });
     setSaveMessage("");
   }
@@ -145,6 +221,11 @@ export default function Admin() {
           }
         }
       }
+      if (overrideForm.addons && typeof overrideForm.addons === "object") {
+        formattedOverrides.addons = Object.fromEntries(
+          Object.entries(overrideForm.addons).map(([k, v]) => [k, !!v])
+        );
+      }
       
       const payload = {
         plan: overrideForm.plan,
@@ -166,13 +247,21 @@ export default function Admin() {
 
   async function handleRemoveOverride() {
     if (!selectedTenant) return;
-    if (!confirm(`Remove all pricing overrides for "${selectedTenant.company_name || selectedTenant.name}"?`)) return;
+    setRemovalConfirm({
+      tenantId: selectedTenant.id,
+      name: selectedTenant.company_name || selectedTenant.name
+    });
+  }
+
+  async function confirmRemoveOverride() {
+    if (!removalConfirm) return;
     setSaveLoading(true);
     try {
-      await removeTenantPricing(selectedTenant.id);
+      await removeTenantPricing(removalConfirm.tenantId);
       setSaveMessage("Overrides removed.");
       await loadData();
       setSelectedTenant(null);
+      setRemovalConfirm(null);
     } catch (err) {
       setSaveMessage(`Error: ${err.message}`);
     } finally {
@@ -182,15 +271,23 @@ export default function Admin() {
 
   async function handleToggleSuspension() {
     if (!selectedTenant) return;
-    const action = selectedTenant.is_suspended ? "unsuspend" : "suspend";
-    const reason = !selectedTenant.is_suspended ? prompt("Reason for suspension (optional):") : null;
+    setSuspensionConfirm({
+      tenant: selectedTenant,
+      action: selectedTenant.is_suspended ? "unsuspend" : "suspend"
+    });
+  }
+
+  async function confirmSuspension(reason = null) {
+    if (!suspensionConfirm) return;
+    const { tenant, action } = suspensionConfirm;
     
     setSaveLoading(true);
     try {
-      await api.suspendTenant(selectedTenant.id, !selectedTenant.is_suspended, reason);
+      await api.suspendTenant(tenant.id, action === "suspend", reason);
       setSaveMessage(`Tenant ${action}ed!`);
       await loadData();
-      setSelectedTenant((prev) => ({ ...prev, is_suspended: !prev.is_suspended }));
+      setSelectedTenant((prev) => ({ ...prev, is_suspended: action === "suspend" }));
+      setSuspensionConfirm(null);
     } catch (err) {
       setSaveMessage(`Error: ${err.message}`);
     } finally {
@@ -199,11 +296,14 @@ export default function Admin() {
   }
 
   function handleImpersonate(tenant) {
-    if (confirm(`Switch to viewing ${tenant.company_name || tenant.name} perspective?`)) {
-      localStorage.setItem("impersonate_tenant_id", tenant.id);
-      localStorage.setItem("impersonate_tenant_name", tenant.company_name || tenant.name);
-      window.location.href = "/";
-    }
+    setImpersonateConfirm(tenant);
+  }
+
+  function confirmImpersonate() {
+    if (!impersonateConfirm) return;
+    localStorage.setItem("impersonate_tenant_id", impersonateConfirm.id);
+    localStorage.setItem("impersonate_tenant_name", impersonateConfirm.company_name || impersonateConfirm.name);
+    window.location.href = "/";
   }
 
   const filteredTenants = tenants.filter((t) => {
@@ -234,266 +334,281 @@ export default function Admin() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50">
-      {/* Hero Header */}
-      <div className="bg-gradient-to-r from-gray-900 via-gray-800 to-gray-900 text-white">
-        <div className="max-w-7xl mx-auto px-6 py-8">
-          <div className="flex items-center gap-4 mb-6">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-red-500 to-orange-500 flex items-center justify-center shadow-lg shadow-red-500/20">
-              <Shield size={24} className="text-white" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-black tracking-tight">Admin Console</h1>
-              <p className="text-gray-400 text-sm font-medium">Platform management & pricing control</p>
-            </div>
-          </div>
+    <div className="min-h-screen bg-slate-50/30">
 
-          {/* Stats Row */}
-          {stats && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-              <StatCard
-                icon={<Users size={18} />}
-                label="Total Tenants"
-                value={stats.total_tenants}
-                iconBg="bg-blue-500/20"
-                iconColor="text-blue-400"
-              />
-              <StatCard
-                icon={<CheckCircle2 size={18} />}
-                label="Active Subs"
-                value={stats.active_subs}
-                iconBg="bg-emerald-500/20"
-                iconColor="text-emerald-400"
-                accent="emerald"
-              />
-              <StatCard
-                icon={<TrendingUp size={18} />}
-                label="Platform MRR"
-                value={centsToMRR(stats.mrr_cents)}
-                iconBg="bg-violet-500/20"
-                iconColor="text-violet-400"
-                accent="violet"
-                large
-              />
-              <StatCard
-                icon={<AlertCircle size={18} />}
-                label="Churned"
-                value={stats.churned}
-                iconBg="bg-red-500/20"
-                iconColor="text-red-400"
-              />
-              <StatCard
-                icon={<Tag size={18} />}
-                label="Overrides"
-                value={stats.with_overrides}
-                iconBg="bg-amber-500/20"
-                iconColor="text-amber-400"
-              />
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-6 -mt-4">
-        {/* Plan Distribution + Controls Bar */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={() => setFilterPlan("all")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all ${filterPlan === "all" ? "bg-gray-900 text-white shadow-sm" : "bg-gray-50 text-gray-500 hover:bg-gray-100"}`}
-            >
-              All ({tenants.length})
-            </button>
-            {stats?.plan_breakdown?.map((p) => {
-              const pc = PLAN_COLORS[p.plan] || PLAN_COLORS.basic;
-              return (
-                <button
-                  key={p.plan}
-                  onClick={() => setFilterPlan(p.plan)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-all flex items-center gap-1.5 ${filterPlan === p.plan ? "bg-gray-900 text-white shadow-sm" : "hover:bg-gray-100"}`}
-                  style={filterPlan !== p.plan ? { backgroundColor: pc.bg, color: pc.text, border: `1px solid ${pc.border}` } : {}}
-                >
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: filterPlan === p.plan ? "#fff" : pc.dot }} />
-                  {p.plan} {p.count}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="relative w-full md:w-72">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300" />
-            <input
-              type="text"
-              placeholder="Search tenants…"
-              className="pl-9 pr-4 py-2.5 w-full bg-gray-50 border border-gray-100 rounded-xl text-sm focus:ring-2 focus:ring-gray-900 focus:border-transparent focus:bg-white transition-all"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
-        </div>
-
-        {/* Tenants Table */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-8">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="px-6 py-4 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Business</th>
-                  <th className="px-4 py-4 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Plan</th>
-                  <th className="px-4 py-4 text-right text-[10px] font-black text-gray-400 uppercase tracking-widest">Monthly</th>
-                  <th className="px-4 py-4 text-right text-[10px] font-black text-gray-400 uppercase tracking-widest">Setup</th>
-                  <th className="px-4 py-4 text-center text-[10px] font-black text-gray-400 uppercase tracking-widest">Status</th>
-                  <th className="px-4 py-4 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Promo</th>
-                  <th className="px-4 py-4 text-right text-[10px] font-black text-gray-400 uppercase tracking-widest">Calls</th>
-                  <th className="px-4 py-4 text-right text-[10px] font-black text-gray-400 uppercase tracking-widest">Bookings</th>
-                  <th className="px-4 py-4" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {paginatedTenants.map((t, i) => {
-                  const pc = PLAN_COLORS[t.plan] || PLAN_COLORS.basic;
-                  return (
-                    <motion.tr
-                      key={t.id}
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.03 }}
-                      className="hover:bg-gray-50/60 transition-colors group"
-                    >
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center text-gray-500 text-xs font-black shrink-0">
-                            {(t.company_name || t.name || "?").charAt(0).toUpperCase()}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="font-bold text-gray-900 text-sm truncate">{t.company_name || t.name}</div>
-                            <div className="text-[11px] text-gray-400 font-mono truncate">{t.slug}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-4">
-                        <span
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider"
-                          style={{ backgroundColor: pc.bg, color: pc.text, border: `1px solid ${pc.border}` }}
-                        >
-                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: pc.dot }} />
-                          {t.plan || "basic"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-4 text-right">
-                        <div className="text-sm font-black text-gray-900">{centsToDisplay(t.effective_monthly)}</div>
-                        {t.override_active && (
-                          <div className="text-[10px] text-gray-400 line-through">{centsToDisplay(t.default_monthly)}</div>
-                        )}
-                      </td>
-                      <td className="px-4 py-4 text-right">
-                        {t.price_override_setup === 0 ? (
-                          <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md">WAIVED</span>
-                        ) : (
-                          <span className="text-sm font-bold text-gray-700">{centsToDisplay(t.effective_setup)}</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-4 text-center">
-                        {t.is_suspended ? (
-                          <span className="inline-flex px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-red-50 text-red-600 border border-red-200">SUSPENDED</span>
-                        ) : (
-                          <StatusBadge status={t.subscription_status} />
-                        )}
-                      </td>
-                      <td className="px-4 py-4">
-                        {t.promo_label ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black border" style={{ backgroundColor: "rgba(245,158,11,0.06)", color: "#b45309", borderColor: "rgba(245,158,11,0.2)" }}>
-                            <Tag size={9} />
-                            {t.promo_label}
-                          </span>
-                        ) : (
-                          <span className="text-gray-200">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-4 text-right">
-                        <span className="text-sm font-mono font-bold text-gray-700">{t.total_calls}</span>
-                      </td>
-                      <td className="px-4 py-4 text-right">
-                        <span className="text-sm font-mono font-bold text-gray-700">{t.total_bookings}</span>
-                      </td>
-                      <td className="px-4 py-4">
-                        <button
-                          onClick={() => openOverrideDrawer(t)}
-                          className="px-3.5 py-1.5 text-[10px] font-black tracking-wider uppercase rounded-lg transition-all opacity-0 group-hover:opacity-100 bg-gray-900 text-white hover:bg-black shadow-sm"
-                        >
-                          Override
-                        </button>
-                        <button
-                          onClick={() => handleImpersonate(t)}
-                          className="px-3.5 py-1.5 text-[10px] font-black tracking-wider uppercase rounded-lg transition-all opacity-0 group-hover:opacity-100 bg-stone-100 text-stone-600 hover:bg-stone-200"
-                        >
-                          View
-                        </button>
-                      </td>
-                    </motion.tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {filteredTenants.length === 0 && (
-            <div className="py-20 text-center">
-              <Search size={32} className="mx-auto text-gray-200 mb-3" />
-              <p className="text-sm text-gray-400 font-medium">No tenants match your search.</p>
+      <div className="max-w-7xl mx-auto px-6 py-10">
+        {/* Dynamic Content Area */}
+        <main className="flex-1">
+          {error && (
+            <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-3 text-red-600">
+              <AlertCircle size={20} />
+              <div className="text-sm font-medium">{error}</div>
             </div>
           )}
 
-          {/* Pagination */}
-          {filteredTenants.length > ROWS_PER_PAGE && (
-            <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
-              <p className="text-xs text-gray-400 font-medium">
-                Showing <span className="font-bold text-gray-600">{(safePage - 1) * ROWS_PER_PAGE + 1}–{Math.min(safePage * ROWS_PER_PAGE, filteredTenants.length)}</span> of{" "}
-                <span className="font-bold text-gray-600">{filteredTenants.length}</span> tenants
-              </p>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                  disabled={safePage <= 1}
-                  className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                >
-                  <ChevronLeft size={16} className="text-gray-600" />
-                </button>
-                {Array.from({ length: totalPages }, (_, i) => i + 1)
-                  .filter((p) => p === 1 || p === totalPages || Math.abs(p - safePage) <= 2)
-                  .reduce((acc, p, idx, arr) => {
-                    if (idx > 0 && p - arr[idx - 1] > 1) acc.push("...");
-                    acc.push(p);
-                    return acc;
-                  }, [])
-                  .map((p, idx) =>
-                    p === "..." ? (
-                      <span key={`dot-${idx}`} className="px-1.5 text-xs text-gray-300">…</span>
-                    ) : (
+          {view === 'tenants' ? (
+            <div className="space-y-6 max-w-6xl">
+              {/* Stats Section */}
+              {stats && (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-10 h-10 rounded-xl bg-slate-50 text-slate-600 flex items-center justify-center">
+                        <Building2 size={20} />
+                      </div>
+                      <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Total Tenants</div>
+                    </div>
+                    <div className="text-2xl font-black text-slate-900 tracking-tight">{stats.total_tenants}</div>
+                  </div>
+                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                        <CheckCircle2 size={20} />
+                      </div>
+                      <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Active Subs</div>
+                    </div>
+                    <div className="text-2xl font-black text-slate-900 tracking-tight">{stats.active_subs}</div>
+                  </div>
+                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                        <DollarSign size={20} />
+                      </div>
+                      <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">Monthly Revenue</div>
+                    </div>
+                    <div className="text-2xl font-black text-slate-900 tracking-tight">{centsToMRR(stats.mrr_cents)}</div>
+                  </div>
+                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
+                        <Tag size={20} />
+                      </div>
+                      <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">With Overrides</div>
+                    </div>
+                    <div className="text-2xl font-black text-slate-900 tracking-tight">{stats.with_overrides}</div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-black text-slate-900 tracking-tight">Tenants</h2>
+                  <p className="text-xs text-slate-500 font-medium">Manage business accounts and pricing</p>
+                </div>
+                
+                <div className="flex items-center gap-3 w-full md:w-auto">
+                  <div className="relative flex-1 md:w-72">
+                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
+                    <input
+                      type="text"
+                      placeholder="Search tenants…"
+                      className="pl-9 pr-4 py-2.5 w-full bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-slate-900 focus:border-transparent transition-all"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                  </div>
+                  <select 
+                    value={filterPlan}
+                    onChange={(e) => setFilterPlan(e.target.value)}
+                    className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:ring-2 focus:ring-slate-900 focus:border-transparent outline-none transition-all"
+                  >
+                    <option value="all">All Plans</option>
+                    <option value="basic">Basic</option>
+                    <option value="pro">Pro</option>
+                    <option value="elite">Elite</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Tenants Table */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden min-h-[400px]">
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50/50">
+                        <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Business</th>
+                        <th className="px-4 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Plan</th>
+                        <th className="px-4 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">Monthly</th>
+                        <th className="px-4 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Status</th>
+                        <th className="px-4 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">Usage</th>
+                        <th className="px-4 py-4" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {paginatedTenants.map((t, i) => {
+                        const pc = PLAN_COLORS[t.plan] || PLAN_COLORS.basic;
+                        return (
+                          <motion.tr
+                            key={t.id}
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: i * 0.03 }}
+                            className="hover:bg-slate-50/60 transition-colors group"
+                          >
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-3">
+                                <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 text-xs font-black shrink-0">
+                                  {(t.company_name || t.name || "?").charAt(0).toUpperCase()}
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="font-bold text-slate-900 text-sm truncate">{t.company_name || t.name}</div>
+                                  <div className="text-[11px] text-slate-400 font-medium truncate">{t.slug}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-4 py-4">
+                              <span
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider"
+                                style={{ backgroundColor: pc.bg, color: pc.text, border: `1px solid ${pc.border}` }}
+                              >
+                                {t.plan || "basic"}
+                              </span>
+                            </td>
+                            <td className="px-4 py-4 text-right">
+                              <div className="text-sm font-black text-slate-900">{centsToDisplay(t.effective_monthly)}</div>
+                              {t.override_active && (
+                                <div className="text-[10px] text-amber-600 font-bold">OVERRIDE</div>
+                              )}
+                            </td>
+                            <td className="px-4 py-4 text-center">
+                              {t.is_suspended ? (
+                                <span className="inline-flex px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-red-50 text-red-600 border border-red-200">SUSPENDED</span>
+                              ) : (
+                                <StatusBadge status={t.subscription_status} />
+                              )}
+                            </td>
+                            <td className="px-4 py-4 text-right">
+                              <div className="text-xs font-bold text-slate-700">{t.total_calls} calls</div>
+                              <div className="text-[10px] text-slate-400 font-medium">{t.total_bookings} bookings</div>
+                            </td>
+                            <td className="px-4 py-4 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  onClick={() => openOverrideDrawer(t)}
+                                  className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all shadow-sm"
+                                  title="Pricing Settings"
+                                >
+                                  <Tag size={14} />
+                                </button>
+                                <button
+                                  onClick={() => handleImpersonate(t)}
+                                  className="px-3 py-1.5 text-[10px] font-black tracking-wider uppercase rounded-lg bg-slate-900 text-white hover:bg-black transition-all shadow-sm shadow-slate-900/10"
+                                >
+                                  View
+                                </button>
+                              </div>
+                            </td>
+                          </motion.tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Empty State */}
+                {filteredTenants.length === 0 && (
+                  <div className="py-20 text-center">
+                    <Building2 size={32} className="mx-auto text-slate-200 mb-3" />
+                    <p className="text-sm text-slate-400 font-medium">No tenants found</p>
+                  </div>
+                )}
+
+                {/* Pagination */}
+                {filteredTenants.length > ROWS_PER_PAGE && (
+                  <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between">
+                    <p className="text-xs text-slate-400 font-medium">
+                      Page <span className="font-bold text-slate-600">{safePage}</span> of <span className="font-bold text-slate-600">{totalPages}</span>
+                    </p>
+                    <div className="flex items-center gap-2">
                       <button
-                        key={p}
-                        onClick={() => setCurrentPage(p)}
-                        className={`w-8 h-8 rounded-lg text-xs font-bold transition-all ${
-                          p === safePage
-                            ? "bg-gray-900 text-white shadow-sm"
-                            : "text-gray-500 hover:bg-gray-100"
-                        }`}
+                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                        disabled={safePage <= 1}
+                        className="px-3 py-1.5 text-[10px] font-bold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-30 transition-all uppercase"
                       >
-                        {p}
+                        Prev
                       </button>
-                    )
-                  )}
-                <button
-                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={safePage >= totalPages}
-                  className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                      <button
+                        onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                        disabled={safePage >= totalPages}
+                        className="px-3 py-1.5 text-[10px] font-bold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-30 transition-all uppercase"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-6 max-w-5xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-2xl font-black text-slate-900 tracking-tight">Platform Admins</h2>
+                  <p className="text-xs text-slate-500 font-medium">Manage people with access to this platform console</p>
+                </div>
+                <button 
+                  onClick={() => setIsInviteModalOpen(true)}
+                  className="flex items-center justify-center gap-2 px-6 py-3 bg-slate-900 border border-slate-900 text-white rounded-2xl text-[11px] font-black uppercase tracking-wider hover:bg-black transition-all shadow-xl shadow-slate-900/10"
                 >
-                  <ChevronRightIcon size={16} className="text-gray-600" />
+                  <UserPlus size={16} />
+                  Invite New Admin
                 </button>
+              </div>
+
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-slate-50/50">
+                        <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Admin</th>
+                        <th className="px-4 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Role</th>
+                        <th className="px-4 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Joined</th>
+                        <th className="px-4 py-4" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {admins.map((admin, i) => (
+                        <motion.tr
+                          key={admin.id}
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: i * 0.03 }}
+                          className="hover:bg-slate-50/60 transition-colors"
+                        >
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-9 h-9 rounded-xl bg-red-50 text-red-600 flex items-center justify-center shadow-sm border border-red-100">
+                                <Shield size={16} />
+                              </div>
+                              <div className="font-bold text-slate-900 text-sm">{admin.email}</div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-4">
+                            <span className="inline-flex px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-slate-100 text-slate-600 border border-slate-200">
+                              SUPER ADMIN
+                            </span>
+                          </td>
+                          <td className="px-4 py-4 text-sm text-slate-500 font-medium">
+                            {new Date(admin.created_at).toLocaleDateString()}
+                          </td>
+                          <td className="px-4 py-4 text-right">
+                            <button
+                              onClick={() => setAdminToDelete(admin)}
+                              className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-all"
+                              title="Remove access"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </td>
+                        </motion.tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}
-        </div>
+        </main>
       </div>
 
       {/* Override Drawer */}
@@ -632,6 +747,23 @@ export default function Admin() {
                   </div>
 
                   <div className="border-t border-gray-100 pt-5">
+                    <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Add-ons</div>
+                    <p className="text-xs text-gray-500 mb-3">Grant feature add-ons without changing plan. Customer Nurturing is included on Elite; use this to enable it on Basic/Pro.</p>
+                    <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 bg-gray-50/50 cursor-pointer hover:bg-gray-50">
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                        checked={overrideForm.addons?.customerNurturingReferral ?? false}
+                        onChange={(e) => setOverrideForm({
+                          ...overrideForm,
+                          addons: { ...overrideForm.addons, customerNurturingReferral: e.target.checked },
+                        })}
+                      />
+                      <span className="text-sm font-medium text-gray-800">Customer Nurturing & Referral</span>
+                    </label>
+                  </div>
+
+                  <div className="border-t border-gray-100 pt-5 mt-5">
                     <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Promotion Details</div>
 
                     <div className="space-y-4">
@@ -681,7 +813,7 @@ export default function Admin() {
                       </div>
                       <button
                         type="button"
-                        onClick={handleToggleSuspension}
+                        onClick={() => setSuspensionConfirm({ tenant: selectedTenant, action: selectedTenant.is_suspended ? "unsuspend" : "suspend" })}
                         className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
                           selectedTenant.is_suspended 
                             ? "bg-red-600 text-white hover:bg-red-700 shadow-sm" 
@@ -696,7 +828,7 @@ export default function Admin() {
 
                 {(selectedTenant.price_override_monthly != null || selectedTenant.price_override_setup != null) && (
                   <button
-                    onClick={handleRemoveOverride}
+                    onClick={() => setRemovalConfirm(selectedTenant)}
                     disabled={saveLoading}
                     className="mt-5 w-full flex items-center justify-center gap-2 px-4 py-2.5 text-red-600 border border-red-200 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-red-50 transition-colors"
                   >
@@ -740,27 +872,125 @@ export default function Admin() {
           </div>
         )}
       </AnimatePresence>
+
+       <ConfirmModal
+         isOpen={!!impersonateConfirm}
+         onClose={() => setImpersonateConfirm(null)}
+         onConfirm={confirmImpersonate}
+         title="Switch Perspective"
+         message={`Switch to viewing ${impersonateConfirm?.company_name || impersonateConfirm?.name} perspective?`}
+         confirmText="View Dashboard"
+         icon={<Users size={32} />}
+       />
+
+      <ConfirmModal
+        isOpen={!!adminToDelete}
+        onClose={() => setAdminToDelete(null)}
+        onConfirm={confirmRemoveAdmin}
+        title="Remove Admin Access"
+        message={`Are you sure you want to remove access for ${adminToDelete?.email}? This action cannot be undone.`}
+        confirmText="Remove Access"
+        variant="danger"
+        icon={<Trash2 size={32} />}
+      />
+
+      <ConfirmModal
+        isOpen={!!removalConfirm}
+        onClose={() => setRemovalConfirm(null)}
+        onConfirm={confirmRemoveOverride}
+        title="Remove Pricing Overrides"
+        message={`This will clear all custom pricing for ${removalConfirm?.name} and revert them to default plan pricing. Proceed?`}
+        confirmText="Clear Overrides"
+        variant="danger"
+        icon={<Tag size={32} />}
+      />
+
+      {suspensionConfirm && (
+        <SuspensionModal
+          isOpen={!!suspensionConfirm}
+          onClose={() => setSuspensionConfirm(null)}
+          onConfirm={confirmSuspension}
+          tenantName={suspensionConfirm.tenant.company_name || suspensionConfirm.tenant.name}
+          action={suspensionConfirm.action}
+        />
+      )}
+
+      <ConfirmModal
+        isOpen={!!alertConfig}
+        onClose={() => setAlertConfig(null)}
+        onConfirm={() => setAlertConfig(null)}
+        title={alertConfig?.title || "Notification"}
+        message={alertConfig?.message}
+        confirmText="Understood"
+        variant={alertConfig?.variant || "primary"}
+        icon={alertConfig?.icon}
+        isAlert
+      />
+
+       {/* Invite Admin Modal */}
+      <AnimatePresence>
+        {isInviteModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-sm w-full overflow-hidden"
+            >
+              <form onSubmit={handleInviteAdmin} className="p-8">
+                <div className="w-16 h-16 bg-red-50 text-red-500 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-sm border border-red-100/50">
+                  <UserPlus size={32} />
+                </div>
+                <h3 className="text-xl font-black text-slate-900 text-center mb-2">Invite Platform Admin</h3>
+                <p className="text-sm text-slate-500 text-center font-medium leading-relaxed mb-6">
+                  Enter an email address to send an invitation to join the platform console.
+                </p>
+                
+                <div className="space-y-4 mb-8">
+                  <div className="relative">
+                    <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      autoFocus
+                      type="email"
+                      required
+                      placeholder="admin@example.com"
+                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-slate-900 focus:border-transparent outline-none transition-all font-medium"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-3">
+                  <button
+                    type="submit"
+                    disabled={inviteLoading}
+                    className="w-full bg-slate-900 hover:bg-black text-white py-3.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all shadow-xl shadow-slate-900/10 flex items-center justify-center gap-2"
+                  >
+                    {inviteLoading && <LumaSpin className="w-4 h-4 border-white" />}
+                    Send Invitation
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsInviteModalOpen(false);
+                      setInviteEmail("");
+                    }}
+                    className="w-full bg-white text-slate-400 hover:text-slate-600 font-bold text-xs py-2 transition-all uppercase tracking-wide"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
 /* ─── Sub-components ───────────────────────────────────────── */
-
-function StatCard({ icon, label, value, iconBg, iconColor, accent, large }) {
-  return (
-    <div className="bg-white/5 backdrop-blur-sm rounded-xl border border-white/10 p-4 hover:bg-white/10 transition-all">
-      <div className="flex items-center gap-3">
-        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${iconBg}`}>
-          <span className={iconColor}>{icon}</span>
-        </div>
-        <div>
-          <div className={`font-black text-white ${large ? "text-xl" : "text-lg"}`}>{value}</div>
-          <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">{label}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function StatusBadge({ status }) {
   const map = {
@@ -773,11 +1003,130 @@ function StatusBadge({ status }) {
   const s = map[status] || map.inactive;
   return (
     <span
-      className="inline-flex px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider"
+      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider"
       style={{ backgroundColor: s.bg, color: s.text, border: `1px solid ${s.border}` }}
     >
       {s.label}
     </span>
+  );
+}
+
+function ConfirmModal({ isOpen, onClose, onConfirm, title, message, confirmText, variant = "primary", icon, isAlert }) {
+  const isDanger = variant === "danger";
+  const isWarning = variant === "warning";
+  
+  const getColors = () => {
+    if (isDanger) return "bg-red-50 text-red-500 border-red-100/50";
+    if (isWarning) return "bg-amber-50 text-amber-500 border-amber-100/50";
+    return "bg-blue-50 text-blue-500 border-blue-100/50";
+  };
+
+  const getButtonColors = () => {
+    if (isDanger) return "bg-red-600 hover:bg-red-700 text-white shadow-red-600/10";
+    if (isWarning) return "bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/10";
+    return "bg-slate-900 hover:bg-black text-white shadow-slate-900/10";
+  };
+  
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-md">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            className="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-sm w-full overflow-hidden"
+          >
+            <div className="p-8 text-center">
+              <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-sm border ${getColors()}`}>
+                {icon || <Users size={32} />}
+              </div>
+              <h3 className="text-xl font-black text-slate-900 mb-2">{title}</h3>
+              <p className="text-sm text-slate-500 font-medium leading-relaxed mb-8">
+                {message}
+              </p>
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={onConfirm}
+                  className={`w-full py-3.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all shadow-xl ${getButtonColors()}`}
+                >
+                  {confirmText}
+                </button>
+                {!isAlert && (
+                  <button
+                    onClick={onClose}
+                    className="w-full bg-white text-slate-400 hover:text-slate-600 font-bold text-xs py-2 transition-all uppercase tracking-wide"
+                  >
+                    Go Back
+                  </button>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+function SuspensionModal({ isOpen, onClose, onConfirm, tenantName, action }) {
+  const [reason, setReason] = useState("");
+  const isSuspended = action === "suspend";
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-md">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            className="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-sm w-full overflow-hidden"
+          >
+            <div className="p-8">
+              <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-sm border ${isSuspended ? "bg-amber-50 text-amber-500 border-amber-100/50" : "bg-emerald-50 text-emerald-500 border-emerald-100/50"}`}>
+                <AlertCircle size={32} />
+              </div>
+              <h3 className="text-xl font-black text-slate-900 text-center mb-2">
+                {isSuspended ? "Suspend Tenant" : "Unsuspend Tenant"}
+              </h3>
+              <p className="text-sm text-slate-500 text-center font-medium leading-relaxed mb-6">
+                Are you sure you want to {action} <strong>{tenantName}</strong>?
+                {isSuspended && " Access to their dashboard will be restricted."}
+              </p>
+
+              {isSuspended && (
+                <div className="mb-8">
+                  <FormGroup label="Reason (Optional)" compact>
+                    <textarea
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-slate-900 focus:border-transparent outline-none transition-all font-medium min-h-[100px]"
+                      placeholder="e.g. Non-payment, violation of terms..."
+                      value={reason}
+                      onChange={(e) => setReason(e.target.value)}
+                    />
+                  </FormGroup>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-3">
+                <button
+                  onClick={() => onConfirm(reason)}
+                  className={`w-full py-3.5 rounded-2xl text-xs font-black uppercase tracking-wider transition-all shadow-xl ${isSuspended ? "bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/10" : "bg-emerald-500 hover:bg-emerald-600 text-white shadow-emerald-500/10"}`}
+                >
+                  Confirm {action === "suspend" ? "Suspension" : "Unsuspension"}
+                </button>
+                <button
+                  onClick={onClose}
+                  className="w-full bg-white text-slate-400 hover:text-slate-600 font-bold text-xs py-2 transition-all uppercase tracking-wide text-center"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
   );
 }
 

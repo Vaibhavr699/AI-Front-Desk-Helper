@@ -16,6 +16,7 @@ const fetch = require("node-fetch");
 const db = require("./lib/db");
 const pool = db.pool;
 const calendar = require("./calendar");
+const { getCalendarForTenant } = require("./calendar");
 const cron = require("node-cron");
 
 const { getTenantByPhone, getTenantById, getAllTenants, getTenantByFacebookPageId, getTenantBySlug } = require("./lib/tenant");
@@ -24,6 +25,7 @@ const recordingService = require("./services/recording");
 const transferService = require("./services/transfer");
 const bookingsService = require("./services/bookings");
 const followUpService = require("./services/followUp");
+const nurturingService = require("./services/nurturing");
 const estimateRecoveryService = require("./services/estimateRecovery");
 const twilioLib = require("./lib/twilio");
 const salesEngine = require("./services/salesEngine");
@@ -306,6 +308,56 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
   }
 });
 
+// Resend inbound webhook: must receive raw body for signature verification (Svix)
+app.post("/webhooks/resend/inbound", express.raw({ type: "application/json", limit: "1mb" }), async (req, res) => {
+  const secret = process.env.RESEND_WEBHOOK_SECRET;
+  const rawBody = req.body;
+  if (secret && Buffer.isBuffer(rawBody)) {
+    try {
+      const { Webhook } = require("svix");
+      const wh = new Webhook(secret);
+      wh.verify(rawBody, {
+        "svix-id": req.headers["svix-id"],
+        "svix-timestamp": req.headers["svix-timestamp"],
+        "svix-signature": req.headers["svix-signature"],
+      });
+    } catch (e) {
+      console.error("[Resend Inbound] Webhook signature verification failed:", e.message);
+      return res.status(401).send("Invalid signature");
+    }
+  }
+  let event;
+  try {
+    event = typeof rawBody === "object" && !Buffer.isBuffer(rawBody) ? rawBody : JSON.parse(rawBody.toString());
+  } catch (_) {
+    return res.status(400).send("Invalid JSON");
+  }
+  res.status(200).send();
+  if (!event || event.type !== "email.received" || !event.data) return;
+  const data = event.data;
+  const fromRaw = data.from || "";
+  const toList = Array.isArray(data.to) ? data.to : [data.to].filter(Boolean);
+  const subject = data.subject || "(No subject)";
+  const emailId = data.email_id;
+  const fromEmail = fromRaw.includes("<") ? fromRaw.replace(/^.*<([^>]+)>.*$/, "$1").trim() : fromRaw.trim();
+  if (!fromEmail || !fromEmail.includes("@")) return;
+  try {
+    const leadRow = await db.query(
+      "SELECT id, tenant_id FROM leads WHERE email = $1 ORDER BY updated_at DESC LIMIT 1",
+      [fromEmail]
+    ).then((r) => r.rows[0]);
+    if (!leadRow) {
+      console.log("[Resend Inbound] No lead found for reply from:", fromEmail, "subject:", subject);
+      return;
+    }
+    const body = `Re: ${subject}\n\n[Email reply from ${fromEmail}. Full body can be fetched via Resend Received API if needed.]`;
+    await messagesService.saveMessage(leadRow.tenant_id, leadRow.id, "email", "inbound", body, { resend_email_id: emailId, from: fromEmail, to: toList });
+    console.log("[Resend Inbound] Saved email reply for lead:", leadRow.id, "tenant:", leadRow.tenant_id);
+  } catch (e) {
+    console.error("[Resend Inbound] Error:", e.message);
+  }
+});
+
 app.get("/chat-widget.js", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "chat-widget.js"));
 });
@@ -407,6 +459,8 @@ app.use("/api/leads", leadRoutes);
 app.use("/api/stripe", authMiddleware, require("./routes/stripe"));
 app.use("/api/admin", authMiddleware, requireSuperAdmin, require("./routes/admin"));
 app.use("/api", authMiddleware, dashboardRoutes);
+app.use("/auth/google/calendar", require("./routes/google-calendar"));
+app.use("/api/google-calendar", authMiddleware, require("./routes/google-calendar"));
 
 if (SERVE_DASHBOARD) {
   app.use(express.static(path.join(__dirname, "dashboard", "dist")));
@@ -764,6 +818,7 @@ function getOrCreateSmsThread(phone) {
     leadCapture: {},
     bookedEventId: "",
     leadId: null,
+    tenantId: null,
     needsFollowUpAt: null,
     followUpCount: 0, // 0 = no follow-ups sent yet. Max is 2.
     channel: normalizedPhone.startsWith("fb-") ? "facebook" : (normalizedPhone.startsWith("web-") ? "website" : "sms"),
@@ -774,24 +829,54 @@ function getOrCreateSmsThread(phone) {
   return created;
 }
 
-async function sendTwilioSms(to, body) {
-  if (!hasTwilioCredentials() || !TWILIO_PHONE_NUMBER) {
-    console.warn("Twilio SMS skipped: missing credentials or TWILIO_PHONE_NUMBER.");
+async function sendTwilioSms(to, body, tenantId = null) {
+  // Try tenant-specific credentials and phone number first
+  let accountSid = process.env.TWILIO_ACCOUNT_SID || "";
+  let authToken = process.env.TWILIO_AUTH_TOKEN || "";
+  let fromNumber = TWILIO_PHONE_NUMBER;
+
+  if (tenantId) {
+    try {
+      // Get tenant's primary phone number
+      const phoneRow = await db.query(
+        `SELECT phone FROM phone_numbers WHERE tenant_id = $1 AND twilio_sid IS NOT NULL ORDER BY is_primary DESC NULLS LAST LIMIT 1`,
+        [tenantId]
+      );
+      if (phoneRow.rows.length > 0) {
+        fromNumber = phoneRow.rows[0].phone;
+      }
+      // Check for tenant-specific Twilio credentials
+      const tenantRow = await db.query(
+        `SELECT twilio_account_sid, twilio_auth_token FROM tenants WHERE id = $1 LIMIT 1`,
+        [tenantId]
+      );
+      if (tenantRow.rows.length > 0 && tenantRow.rows[0].twilio_account_sid && tenantRow.rows[0].twilio_auth_token) {
+        accountSid = tenantRow.rows[0].twilio_account_sid;
+        authToken = tenantRow.rows[0].twilio_auth_token;
+      }
+    } catch (e) {
+      console.error("[SMS] Tenant lookup error:", e.message);
+    }
+  }
+
+  if (!accountSid || !authToken || !fromNumber) {
+    console.warn("Twilio SMS skipped: missing credentials or from number.", { accountSid: !!accountSid, authToken: !!authToken, fromNumber });
     return { ok: false, reason: "missing_sms_configuration" };
   }
 
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
   const payload = new URLSearchParams({
     To: to,
-    From: TWILIO_PHONE_NUMBER,
+    From: fromNumber,
     Body: body
   }).toString();
+
+  const authHeader = `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`;
 
   const response = await fetch(url, {
     method: "POST",
     headers: {
-      Authorization: buildTwilioAuthHeader(),
+      Authorization: authHeader,
       "Content-Type": "application/x-www-form-urlencoded"
     },
     body: payload
@@ -799,33 +884,64 @@ async function sendTwilioSms(to, body) {
 
   if (!response.ok) {
     const errBody = await response.text();
-    console.error("Twilio SMS failed:", response.status, errBody);
+    console.error("Twilio SMS failed:", response.status, errBody, { from: fromNumber, to, tenantId });
     return { ok: false, reason: "twilio_sms_error", status: response.status };
   }
 
   const msg = await response.json();
+  console.log("[SMS] Sent sid=%s from=%s to=%s tenant=%s", msg.sid, fromNumber, to, tenantId || "global");
   return { ok: true, sid: msg.sid };
 }
 
 function buildSmsSystemPrompt(thread, tenant = null) {
   const companyName = tenant?.company_name || tenant?.name || "our team";
-  const instructions = tenant?.instructions || [
+  const toneOfVoice = tenant?.tone_of_voice || "professional";
+
+  // 1. CORE SMS RULES
+  const coreSmsRules = [
+    `You are an SMS receptionist for ${companyName}.`,
+    `TONE OF VOICE: Your tone of voice is ${toneOfVoice}. Maintain this personality in your texts.`,
     "Flow: qualify lead, gather full_name, project_type, project_details, address, preferred appointment_date and appointment_time.",
-    "Be concise, friendly, and use one short text message.",
+    "Be concise, friendly, and use one short text message. Avoid long paragraphs.",
     "If enough details exist to request booking, set should_book true.",
     "If the customer wants to cancel, set should_cancel true.",
     "If the customer wants to reschedule, set should_reschedule true and provide the new appointment_date/time.",
     "REVENUE ESTIMATION: Always provide an estimated_value (number, in dollars) based on the project_details (e.g., Room: 500, Interior: 2500, Exterior: 5000)."
   ].join("\n");
 
-  const faqText = (tenant && Array.isArray(tenant.faqs) && tenant.faqs.length > 0)
-    ? "\n\nFrequently Asked Questions:\n" + tenant.faqs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n")
-    : "";
+  // 2. TENANT CUSTOM INSTRUCTIONS
+  let combinedInstructions = coreSmsRules;
+  if (tenant?.instructions) {
+    combinedInstructions += "\n\nBUSINESS SPECIFIC INSTRUCTIONS:\n" + tenant.instructions;
+  }
+
+  // 3. OBJECTION HANDLING
+  if (tenant && tenant.objection_handling_config) {
+    const oh = tenant.objection_handling_config;
+    let lines = [];
+    if (Array.isArray(oh) && oh.length) {
+      lines = oh
+        .filter(c => c && (c.script || "").trim())
+        .map(c => `- If they say "${(c.trigger || "").trim() || "..."}": respond with: ${(c.script || "").trim()}`);
+    } else if (typeof oh === "object") {
+      if (oh.price) lines.push(`- If price is a concern: ${oh.price}`);
+      if (oh.thinking) lines.push(`- If they need to think about it: ${oh.thinking}`);
+      if (oh.spouse) lines.push(`- If they need to talk to a spouse: ${oh.spouse}`);
+    }
+    if (lines.length) {
+      combinedInstructions += "\n\nOBJECTION HANDLING STRATEGIES:\n" + lines.join("\n");
+    }
+  }
+
+  // 4. KNOWLEDGE BASE (FAQs)
+  if (tenant && Array.isArray(tenant.faqs) && tenant.faqs.length > 0) {
+    const faqText = "\n\nFrequently Asked Questions:\n" + tenant.faqs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n");
+    combinedInstructions += faqText;
+  }
 
   return [
-    `You are an SMS receptionist for ${companyName}.`,
-    `Instructions: ${instructions}${faqText}`,
-    "Return strict JSON only with keys: reply, lead_capture, should_book, should_cancel, should_reschedule, appointment_date, appointment_time, follow_up_minutes.",
+    combinedInstructions,
+    "\nReturn strict JSON only with keys: reply, lead_capture, should_book, should_cancel, should_reschedule, appointment_date, appointment_time, follow_up_minutes.",
     `Known lead data: ${JSON.stringify(thread.leadCapture)}`
   ].join("\n");
 }
@@ -995,13 +1111,18 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
     appointment_date: ai.appointment_date,
     appointment_time: ai.appointment_time,
     duration_minutes: 60
-  });
+  }, tenant);
 
-  const isAvailable = (availability.ok && availability.available) || (availability.reason === "calendar_not_configured");
+  // Allow booking if: (1) calendar says available, (2) calendar not configured, or (3) calendar errored (don't block bookings due to calendar issues)
+  const calendarSkipped = ["calendar_not_configured", "calendar_error"].includes(availability.reason);
+  const isAvailable = (availability.ok && availability.available) || calendarSkipped;
+  if (calendarSkipped && availability.reason === "calendar_error") {
+    console.warn("[Booking] Calendar error — proceeding with booking anyway:", availability.message || "unknown");
+  }
 
   if (isAvailable) {
     let booked = { ok: false };
-    if (availability.reason !== "calendar_not_configured") {
+    if (!calendarSkipped) {
       booked = await bookAppointment({
         appointment_date: ai.appointment_date,
         appointment_time: ai.appointment_time,
@@ -1013,7 +1134,7 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
         project_details: thread.leadCapture.project_details || ""
       });
     } else {
-      // Fallback: assume OK if calendar is disabled
+      // Fallback: assume OK if calendar is disabled or errored
       booked = { ok: true, fallback: true };
     }
 
@@ -1065,13 +1186,35 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
     const lead = await leadsService.getOrCreateLead(tenant.id, thread.phone, thread.leadCapture?.full_name);
     if (lead) {
       thread.leadId = lead.id;
+      thread.tenantId = tenant.id;
       messagesService.saveMessage(tenant.id, lead.id, thread.channel || "sms", "inbound", incomingText);
+      try {
+        const parsed = await nurturingService.tryParseReferralReply(tenant.id, lead.id, incomingText);
+        if (parsed.isReferralReply && parsed.referralPhone) {
+          const recentRef = await db.query(
+            "SELECT booking_id FROM campaign_log WHERE tenant_id = $1 AND lead_id = $2 AND campaign_type = 'referral_request' ORDER BY sent_at DESC LIMIT 1",
+            [tenant.id, lead.id]
+          ).then((r) => r.rows[0]);
+          await nurturingService.createReferralAndOutreach(
+            tenant.id, lead.id, recentRef?.booking_id || null,
+            parsed.referralName, parsed.referralPhone, parsed.referralEmail, null
+          );
+          thread.referralReplyHandled = true;
+          thread.referralReplyText = "Thanks! We'll reach out to them.";
+        }
+      } catch (e) {
+        console.error("[Nurturing] Referral parse/outreach:", e.message || e);
+      }
     }
   }
 
   let ai;
   try {
-    ai = await runSmsAiOrchestrator(thread, incomingText, tenant);
+    if (thread.referralReplyHandled) {
+      ai = { reply: thread.referralReplyText, should_book: false, follow_up_minutes: SMS_FOLLOW_UP_DELAY_MINUTES, lead_capture: thread.leadCapture || {} };
+    } else {
+      ai = await runSmsAiOrchestrator(thread, incomingText, tenant);
+    }
 
     console.log("AI STRUCTURED OUTPUT:", JSON.stringify(ai, null, 2));
 
@@ -1311,7 +1454,7 @@ async function runSmsFollowUps() {
     if (thread.channel === "website") {
       // If we captured their real phone number during the website chat, we transition to SMS.
       if (thread.leadCapture.phone) {
-        sent = await sendTwilioSms(thread.leadCapture.phone, followUpText);
+        sent = await sendTwilioSms(thread.leadCapture.phone, followUpText, thread.tenantId);
       } else {
         // Can't follow up on a web widget if we don't have their phone number, so mark as complete
         thread.needsFollowUpAt = null;
@@ -1323,7 +1466,7 @@ async function runSmsFollowUps() {
       sent = { ok: true };
     } else {
       // SMS channel
-      sent = await sendTwilioSms(thread.phone, followUpText);
+      sent = await sendTwilioSms(thread.phone, followUpText, thread.tenantId);
     }
 
     if (sent.ok) {
@@ -1458,8 +1601,9 @@ function buildAppointmentWindow(dateValue, timeValue, durationMinutes = 60) {
   return { start, end };
 }
 
-async function checkAvailability(args = {}) {
-  if (!calendar) {
+async function checkAvailability(args = {}, tenant = null) {
+  const cal = tenant ? getCalendarForTenant(tenant) : calendar.instance;
+  if (!cal) {
     return { ok: false, reason: "calendar_not_configured" };
   }
 
@@ -1468,17 +1612,18 @@ async function checkAvailability(args = {}) {
     return { ok: false, reason: "invalid_datetime", message: "Use appointment_date (YYYY-MM-DD) and appointment_time (HH:MM or 1:30 PM)." };
   }
 
+  const calendarId = (tenant && tenant.google_calendar_id) || args.calendar_id || DEFAULT_CALENDAR_ID;
+
   try {
-    const response = await calendar.freebusy.query({
+    const response = await cal.freebusy.query({
       requestBody: {
         timeMin: window.start.toISOString(),
         timeMax: window.end.toISOString(),
         timeZone: BUSINESS_TIMEZONE,
-        items: [{ id: args.calendar_id || DEFAULT_CALENDAR_ID }]
+        items: [{ id: calendarId }]
       }
     });
 
-    const calendarId = args.calendar_id || DEFAULT_CALENDAR_ID;
     const busy = response?.data?.calendars?.[calendarId]?.busy || [];
     return {
       ok: true,
@@ -1499,16 +1644,20 @@ async function checkAvailability(args = {}) {
   }
 }
 
-async function bookAppointment(args = {}) {
-  if (!calendar) return { ok: false, reason: "calendar_not_configured" };
+async function bookAppointment(args = {}, tenant = null) {
+  const cal = tenant ? getCalendarForTenant(tenant) : calendar.instance;
+  if (!cal) return { ok: false, reason: "calendar_not_configured" };
 
   const window = buildAppointmentWindow(args.appointment_date, args.appointment_time, args.duration_minutes || 60);
   if (!window) {
     return { ok: false, reason: "invalid_datetime", message: "Use appointment_date (YYYY-MM-DD) and appointment_time (HH:MM or 1:30 PM)." };
   }
 
+  const calendarId = (tenant && tenant.google_calendar_id) || args.calendar_id || DEFAULT_CALENDAR_ID;
+  const companyName = (tenant && tenant.company_name) || "Service";
+
   const event = {
-    summary: args.summary || `Painting Estimate - ${args.full_name || "New Lead"}`,
+    summary: args.summary || `${companyName} Estimate - ${args.full_name || "New Lead"}`,
     description: args.description || [
       args.full_name ? `Name: ${args.full_name}` : "",
       args.phone ? `Phone: ${args.phone}` : "",
@@ -1521,8 +1670,8 @@ async function bookAppointment(args = {}) {
   };
 
   try {
-    const response = await calendar.events.insert({
-      calendarId: args.calendar_id || DEFAULT_CALENDAR_ID,
+    const response = await cal.events.insert({
+      calendarId,
       requestBody: event
     });
 
@@ -1846,7 +1995,7 @@ app.post("/twilio-missed-call", async (req, res) => {
   const thread = getOrCreateSmsThread(from);
   const companyName = tenant?.company_name || "our team";
   const autoText = `Sorry we missed your call — this is ${companyName}. I can help with a fast quote and get your appointment booked. What kind of project are you planning?`;
-  const sent = await sendTwilioSms(from, autoText);
+  const sent = await sendTwilioSms(from, autoText, tenant?.id);
 
   if (sent.ok) {
     thread.history.push({ role: "assistant", text: autoText, at: new Date().toISOString() });
@@ -1918,6 +2067,39 @@ app.post("/twilio/recovery-call-status", (req, res) => {
   res.sendStatus(200);
 });
 
+app.get("/twilio/nurturing-call", (req, res) => {
+  const scheduleId = req.query.scheduleId;
+  const script = req.query.script;
+
+  if (!scheduleId || !script) {
+    res.status(400).send("Missing scheduleId or script");
+    return;
+  }
+
+  const requestBaseUrl = resolveBaseUrl(req);
+  if (!requestBaseUrl) {
+    res.status(500).send("Cannot resolve base URL");
+    return;
+  }
+
+  const wssUrl = `${requestBaseUrl.replace(/^http/, "ws")}/twilio-media?type=nurturing&scheduleId=${encodeURIComponent(scheduleId)}&script=${encodeURIComponent(script)}`;
+
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Connect>
+    <Stream url="${wssUrl}" />
+  </Connect>
+</Response>`;
+
+  res.type("text/xml").send(twiml);
+});
+
+app.post("/twilio/nurturing-call-status", (req, res) => {
+  const scheduleId = req.query.scheduleId;
+  console.log(`[Nurturing] Call status update for scheduleId=${scheduleId}:`, req.body?.CallStatus);
+  res.sendStatus(200);
+});
+
 app.use((req, res, next) => {
   if (!/^\/twilio(?:-|\/)/i.test(req.path)) {
     next();
@@ -1953,10 +2135,12 @@ wss.on("connection", async (twilioSocket, req) => {
   const q = Object.fromEntries(parsedUrl.searchParams.entries());
 
   const isRecovery = q.type === "recovery";
+  const isNurturing = q.type === "nurturing";
   const recoveryId = q.recoveryId;
+  const scheduleId = q.scheduleId;
   const recoveryScript = q.script ? decodeURIComponent(q.script) : "";
 
-  console.log("[AI-Desk] Connection path=%s isRecovery=%s recoveryId=%s", pathname, isRecovery, recoveryId);
+  console.log("[AI-Desk] Connection path=%s isRecovery=%s isNurturing=%s recoveryId=%s scheduleId=%s", pathname, isRecovery, isNurturing, recoveryId, scheduleId);
 
   const pathSegments = pathname.split("/").filter(Boolean);
   const tenantIdFromPath = pathSegments.length >= 2 ? pathSegments[1] : "";
@@ -1992,15 +2176,28 @@ wss.on("connection", async (twilioSocket, req) => {
     }
   }
 
-  if (!tenant && !isRecovery) {
+  if (!tenant && !isRecovery && !isNurturing) {
     console.error("[AI-Desk] No tenant for path segment:", tenantIdFromPath, "- ensure DB is seeded and loadTenants ran.");
     twilioSocket.close();
     return;
   }
 
+  // RELOAD TENANT FROM DB to ensure we have the latest Settings (instructions, FAQs, etc.)
+  if (tenant && tenant.id) {
+    try {
+      const freshTenant = await getTenantById(tenant.id);
+      if (freshTenant) {
+        // Carry over transferNumber which is calculated in loadTenants
+        const transferNumber = (freshTenant.transfer_numbers && freshTenant.transfer_numbers[0]) || null;
+        tenant = { ...freshTenant, transferNumber };
+      }
+    } catch (e) {
+      console.error("[AI-Desk] Failed to refresh tenant data:", e.message);
+    }
+  }
+
   if (tenant && tenant.is_suspended) {
     console.warn("[AI-Desk] Call blocked for suspended tenant:", tenant.slug);
-    // Optionally play a message before closing, but for now just close to trigger fallback
     twilioSocket.close();
     return;
   }
@@ -2103,6 +2300,22 @@ wss.on("connection", async (twilioSocket, req) => {
           console.error("[AI-Desk] Recovery load error:", e.message);
         }
       }
+      if (isNurturing && scheduleId) {
+        try {
+          const scheduleRow = await db.query(
+            "SELECT tenant_id, lead_id FROM nurturing_schedule WHERE id = $1",
+            [scheduleId]
+          ).then((r) => r.rows[0]);
+          if (scheduleRow) {
+            tenant = await getTenantById(scheduleRow.tenant_id);
+            leadId = scheduleRow.lead_id;
+            console.log("[AI-Desk] Nurturing call loaded scheduleId=%s tenant=%s leadId=%s", scheduleId, tenant?.company_name, leadId);
+          }
+        } catch (e) {
+          console.error("[AI-Desk] Nurturing schedule load error:", e.message);
+        }
+      }
+      const useRecoveryFlow = isRecovery || (isNurturing && recoveryScript);
 
       if (callSid) {
         const call = await callsService.getCallByTwilioSid(callSid);
@@ -2124,8 +2337,10 @@ wss.on("connection", async (twilioSocket, req) => {
         }
       }
 
-      const defaultInstructions = [
+      // 1. CORE SYSTEM RULES (Always included to protect tool usage and flow)
+      const coreSystemRules = [
         `You are a professional receptionist for ${tenant?.company_name || 'our business'}. Be warm, confident, and helpful.`,
+        `TONE OF VOICE: Your tone of voice is ${tenant?.tone_of_voice || 'professional'}. Maintain this personality throughout the call.`,
         "Default language is English. If the caller asks to speak in another language (e.g. Spanish, French, Hindi), immediately call the change_language tool with the ISO 639-1 code (es, fr, hi, zh, ar, etc.), then confirm in that language and continue the entire conversation in that language.",
         "CONVERSATIONAL FLOW: Let the conversation flow naturally like a real human. If they ask a question, answer it directly using the Knowledge Base (FAQs) before steering them back to your questions. Do NOT rigidly fire questions one after another.",
         "GOAL: When it feels natural, try to collect the following to book an appointment or estimate: Full Name, Phone Number, Address or City, and Scope of what they need.",
@@ -2136,11 +2351,15 @@ wss.on("connection", async (twilioSocket, req) => {
         "Right after calling book_appointment successfully, say clearly and then stop forever: 'You're all set. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.' Then allow the call to end naturally.",
         "Do NOT say you are transferring or connecting to someone unless you actually need a live agent. Only use request_human_transfer for: emergencies, situations requiring a manager, frustrated/angry callers, or VIP/repeat customers. For normal requests, always complete the booking with book_appointment.",
         "STRICT RULE: NEVER hallucinate or use placeholder/example data (like 'Armando', '555-1234', or 'Cancun') for any tool fields. If you are missing a required field, ASK the caller. Only use data provided by the human on the other end of the line.",
-      ].join(" ");
-      instructions = (tenant && tenant.instructions)
-        ? tenant.instructions
-        : defaultInstructions;
+      ].join("\n");
 
+      // 2. TENANT CUSTOM INSTRUCTIONS
+      let combinedInstructions = coreSystemRules;
+      if (tenant?.instructions) {
+        combinedInstructions += "\n\nBUSINESS SPECIFIC INSTRUCTIONS:\n" + tenant.instructions;
+      }
+
+      // 3. OBJECTION HANDLING
       if (tenant && tenant.objection_handling_config) {
         const oh = tenant.objection_handling_config;
         let lines = [];
@@ -2154,17 +2373,23 @@ wss.on("connection", async (twilioSocket, req) => {
           if (oh.spouse) lines.push(`- If they need to talk to a spouse: ${oh.spouse}`);
         }
         if (lines.length) {
-          instructions += "\n\nOBJECTION HANDLING STRATEGIES:\n" + lines.join("\n");
+          combinedInstructions += "\n\nOBJECTION HANDLING STRATEGIES:\n" + lines.join("\n");
         }
       }
 
+      // 4. KNOWLEDGE BASE (FAQs)
       if (tenant && Array.isArray(tenant.faqs) && tenant.faqs.length > 0) {
         const faqText = "\n\nKNOWLEDGE BASE (FAQs):\n" + tenant.faqs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n");
-        instructions += faqText;
+        combinedInstructions += faqText;
       }
 
-      if (isRecovery && recoveryScript) {
-        instructions = `You are performing an automated outbound follow-up call.
+      instructions = combinedInstructions;
+
+      if (useRecoveryFlow && recoveryScript) {
+        instructions = `You are a professional receptionist for ${tenant?.company_name || 'our business'}. 
+        TONE OF VOICE: Your tone of voice is ${tenant?.tone_of_voice || 'professional'}. Maintain this personality throughout the call.
+
+        You are performing an automated outbound follow-up call.
         START the call by saying EXACTLY this: "${recoveryScript}". 
         
         YOUR GOAL: Open conversation and move them toward booking the estimate they received. 
@@ -2198,7 +2423,7 @@ wss.on("connection", async (twilioSocket, req) => {
           output_audio_format: "g711_ulaw",
           voice,
           instructions: `${instructions}\n\nSpeak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English.`,
-          tools: isRecovery ? RECOVERY_TOOLS : REALTIME_TOOLS,
+          tools: useRecoveryFlow ? RECOVERY_TOOLS : REALTIME_TOOLS,
           turn_detection: {
             type: "server_vad",
             threshold: vadThreshold,
@@ -2213,7 +2438,7 @@ wss.on("connection", async (twilioSocket, req) => {
       sendToOpenAI(payloadToOpenAI);
 
       // Trigger initial greeting for non-recovery calls to ensure AI speaks first
-      if (!isRecovery) {
+      if (!useRecoveryFlow) {
         console.log("[AI-Desk] Triggering initial greeting");
         sendToOpenAI({
           type: "response.create",
@@ -2225,8 +2450,8 @@ wss.on("connection", async (twilioSocket, req) => {
       }
 
 
-      if (isRecovery && recoveryScript) {
-        console.log("[AI-Desk] Triggering recovery greeting: %s", recoveryScript);
+      if (useRecoveryFlow && recoveryScript) {
+        console.log("[AI-Desk] Triggering recovery/nurturing greeting: %s", recoveryScript);
         sendToOpenAI({
           type: "response.create",
           response: {
@@ -2869,6 +3094,101 @@ app.post("/webhooks/sales/stop", async (req, res) => {
   }
 });
 
+// -------------------- Webhook: CRM Job Completed (DripJobs → Zapier → here) --------------------
+app.post("/webhooks/crm/job-completed", async (req, res) => {
+  const phone = normalizePhone(req.body?.phone || req.body?.contact_phone);
+  const contactName = req.body?.contact_name || null;
+  const serviceDate = req.body?.service_date || new Date().toISOString().slice(0, 10);
+  const jobType = req.body?.job_type || null;
+  let tenantId = req.body?.tenant_id || null;
+
+  if (!phone) {
+    return res.status(400).json({ ok: false, error: "Missing phone or contact_phone" });
+  }
+
+  // Auth: Bearer <api_key> → look up tenant by api_key
+  const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+  if (authHeader) {
+    try {
+      const tenantRow = await db.query(
+        "SELECT id FROM tenants WHERE api_key = $1 LIMIT 1",
+        [authHeader]
+      );
+      if (tenantRow.rows.length > 0) {
+        tenantId = tenantRow.rows[0].id;
+      }
+    } catch (e) {
+      console.error("[CRM Webhook] api_key lookup error:", e.message);
+    }
+  }
+
+  if (!tenantId) {
+    return res.status(401).json({ ok: false, error: "Could not identify tenant. Provide Authorization: Bearer <api_key> or tenant_id in body." });
+  }
+
+  try {
+    // 1. Find the lead by phone + tenant
+    const leadResult = await db.query(
+      "SELECT id, name FROM leads WHERE tenant_id = $1 AND phone = $2 LIMIT 1",
+      [tenantId, phone]
+    );
+    if (leadResult.rows.length === 0) {
+      console.log("[CRM Webhook] No lead found for phone=%s tenantId=%s", phone, tenantId);
+      return res.status(404).json({ ok: false, error: "No lead found for this phone number" });
+    }
+    const lead = leadResult.rows[0];
+
+    // 2. Update last_service_date on the lead
+    await db.query(
+      "UPDATE leads SET last_service_date = $1::date, updated_at = now() WHERE id = $2",
+      [serviceDate, lead.id]
+    );
+    console.log("[CRM Webhook] Updated last_service_date=%s for leadId=%s", serviceDate, lead.id);
+
+    // 3. Find the latest booking for this lead and mark it Completed (if not already)
+    const bookingResult = await db.query(
+      "SELECT id, status, lead_id, tenant_id, preferred_date FROM bookings WHERE tenant_id = $1 AND lead_id = $2 ORDER BY created_at DESC LIMIT 1",
+      [tenantId, lead.id]
+    );
+    let booking = bookingResult.rows[0] || null;
+    if (booking && booking.status !== "Completed") {
+      await db.query(
+        "UPDATE bookings SET status = 'Completed', updated_at = now() WHERE id = $1",
+        [booking.id]
+      );
+      console.log("[CRM Webhook] Marked booking=%s as Completed", booking.id);
+    }
+
+    // 4. Schedule post-service nurturing campaigns (same as PATCH /api/bookings/:id)
+    if (booking) {
+      nurturingService.schedulePostServiceCampaigns(tenantId, booking).catch((e) =>
+        console.error("[CRM Webhook] Schedule nurturing campaigns:", e)
+      );
+    } else {
+      // No booking found — create a minimal one so nurturing can still work
+      console.log("[CRM Webhook] No booking found for lead=%s, scheduling nurturing directly", lead.id);
+      nurturingService.schedulePostServiceCampaigns(tenantId, {
+        id: null,
+        lead_id: lead.id,
+        preferred_date: serviceDate,
+      }).catch((e) =>
+        console.error("[CRM Webhook] Schedule nurturing campaigns (no booking):", e)
+      );
+    }
+
+    res.json({
+      ok: true,
+      lead_id: lead.id,
+      booking_id: booking?.id || null,
+      last_service_date: serviceDate,
+      nurturing_scheduled: true,
+    });
+  } catch (error) {
+    console.error("[CRM Webhook] job-completed error:", error.message);
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
 // -------------------- Cron: estimate recovery every 5 min --------------------
 cron.schedule("*/5 * * * *", () => {
   estimateRecoveryService.processDueRecoveries().catch((e) => console.error("Recovery cron:", e));
@@ -2877,6 +3197,21 @@ cron.schedule("*/5 * * * *", () => {
 // -------------------- Cron: Sales Engine follow-up every 10 min --------------------
 cron.schedule("*/10 * * * *", () => {
   salesEngine.runEstimateFollowUps().catch((e) => console.error("Sales Engine cron:", e));
+});
+
+// -------------------- Cron: Follow-ups (24h, 3d, 5d, 10d after booking) every 10 min --------------------
+cron.schedule("*/10 * * * *", () => {
+  followUpService.processDueFollowUps().catch((e) => console.error("Follow-up cron:", e));
+});
+
+cron.schedule("*/10 * * * *", () => {
+  nurturingService.processDueNurturing().catch((e) => console.error("Nurturing cron:", e));
+});
+
+cron.schedule("0 9 * * *", () => {
+  nurturingService.processMaintenanceReminders().catch((e) => console.error("Nurturing maintenance:", e));
+  nurturingService.processReengagement().catch((e) => console.error("Nurturing reengagement:", e));
+  nurturingService.processSeasonalCampaigns().catch((e) => console.error("Nurturing seasonal:", e));
 });
 
 // -------------------- Listen --------------------

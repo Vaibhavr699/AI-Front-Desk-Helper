@@ -373,6 +373,45 @@ export default function Plans({ tenantId }) {
         })}
       </div>
 
+      {/* Add-ons: for Basic/Pro show Nurturing add-on option */}
+      {tenantId && tenant && (currentPlanId === "basic" || currentPlanId === "pro") && (
+        <div className="mt-10 pt-10 border-t border-stone-200">
+          <h2 className="text-lg font-semibold text-stone-900 mb-1">Add-ons</h2>
+          <p className="text-sm text-stone-500 mb-6">Extend your plan with optional features. Included free on Elite.</p>
+          <div className="rounded-2xl border-2 border-stone-200 bg-white p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-semibold text-stone-900">Customer Nurturing & Referral</h3>
+                {tenant.has_nurturing_referral && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    Enabled
+                  </span>
+                )}
+              </div>
+              <p className="text-sm text-stone-600 mt-1">
+                Post-service follow-ups, referral requests, seasonal campaigns, maintenance reminders, and AI follow-up calls. Configure in Settings → Nurturing & referrals.
+              </p>
+            </div>
+            <div className="shrink-0">
+              {tenant.has_nurturing_referral ? (
+                <span className="text-sm font-medium text-stone-500">Add-on active</span>
+              ) : (
+                <>
+                  <p className="text-xs text-stone-500 mb-2">Contact us to add this to your plan, or upgrade to Elite to get it included.</p>
+                  <button
+                    type="button"
+                    onClick={handleManageSubscription}
+                    className="w-full sm:w-auto px-4 py-2 rounded-lg text-sm font-medium bg-stone-100 text-stone-700 hover:bg-stone-200 border border-stone-200 transition-colors"
+                  >
+                    Manage subscription
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {!tenantId && (
         <p className="mt-6 text-sm text-stone-500">
           Select a business in Home or Businesses to subscribe to a plan.

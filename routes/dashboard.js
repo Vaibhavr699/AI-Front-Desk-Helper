@@ -5,12 +5,14 @@ const express = require("express");
 const db = require("../lib/db");
 const auth = require("../lib/auth");
 const { getTenantById } = require("../lib/tenant");
-const { listPlans } = require("../lib/plans");
-const { configurePhoneWebhook, getClientForTenant, purchaseNewNumber, fetchAvailableNumbers } = require("../lib/twilio");
+const { listPlans, hasNurturingReferralAccess } = require("../lib/plans");
+const { configurePhoneWebhook, getClientForTenant, purchaseNewNumber, fetchAvailableNumbers, getOwnedUnassignedNumbers } = require("../lib/twilio");
 
 const router = express.Router();
 const estimateRecovery = require("../services/estimateRecovery");
 const emailService = require("../services/email");
+const nurturingService = require("../services/nurturing");
+const { getTenantIdFromQuery } = auth;
 
 /** Normalize a US phone to E.164 (+1XXXXXXXXXX). Returns null if invalid. */
 function normalizePhoneInput(raw) {
@@ -22,12 +24,6 @@ function normalizePhoneInput(raw) {
   return null;
 }
 
-function getTenantIdFromQuery(req) {
-  const userTenantId = req.user?.tenant_id;
-  if (userTenantId) return userTenantId;
-  const id = req.query.tenant_id || req.headers["x-tenant-id"];
-  return id || null;
-}
 
 router.get("/plans", (_req, res) => {
   try {
@@ -224,6 +220,21 @@ router.patch("/bookings/:id", async (req, res) => {
       }
     }
 
+    if (status === "Completed" && booking.lead_id) {
+      const serviceDate = booking.preferred_date
+        ? (typeof booking.preferred_date === "string" && booking.preferred_date.includes("T")
+            ? booking.preferred_date.slice(0, 10)
+            : booking.preferred_date)
+        : new Date().toISOString().slice(0, 10);
+      await db.query(
+        "UPDATE leads SET last_service_date = $1::date, updated_at = now() WHERE id = $2",
+        [serviceDate, booking.lead_id]
+      ).catch((e) => console.error("[Bookings] Update lead last_service_date:", e));
+      nurturingService.schedulePostServiceCampaigns(booking.tenant_id, booking).catch((e) =>
+        console.error("[Bookings] Schedule nurturing campaigns:", e)
+      );
+    }
+
     res.json(booking);
   } catch (e) {
     console.error(e);
@@ -401,7 +412,8 @@ router.get("/metrics", async (req, res) => {
       sourceStats,
       trendStats,
       todayStats,
-      pipelineStats
+      pipelineStats,
+      nurturingStats
     ] = await Promise.all([
       // 1. Sales Metrics
       db.query(
@@ -469,6 +481,18 @@ router.get("/metrics", async (req, res) => {
           (SELECT COUNT(*) FROM bookings WHERE tenant_id = $1 AND status = 'scheduled') as jobs_scheduled,
           (SELECT COALESCE(SUM(revenue_cents), 0) FROM bookings WHERE tenant_id = $1 AND status = 'scheduled') as estimated_revenue`,
         [tenantId]
+      ),
+      // 7. Nurturing metrics (campaign_log, referral_leads, referral-sourced bookings)
+      db.query(
+        `SELECT
+          (SELECT COUNT(*) FROM campaign_log WHERE tenant_id = $1 AND sent_at > $2 AND (channel = 'email' OR channel = 'email+sms')) as emails_sent,
+          (SELECT COUNT(*) FROM campaign_log WHERE tenant_id = $1 AND sent_at > $2 AND (channel = 'sms' OR channel = 'email+sms')) as sms_sent,
+          (SELECT COUNT(*) FROM campaign_log WHERE tenant_id = $1 AND sent_at > $2 AND channel = 'voice') as ai_calls_made,
+          (SELECT COUNT(*) FROM messages WHERE tenant_id = $1 AND direction = 'inbound' AND created_at > $2) as customer_replies,
+          (SELECT COUNT(*) FROM referral_leads WHERE tenant_id = $1 AND created_at > $2) as referrals_generated,
+          (SELECT COUNT(*) FROM bookings b JOIN leads l ON l.id = b.lead_id AND l.tenant_id = $1 AND l.lead_source = 'referral' WHERE b.tenant_id = $1 AND b.created_at > $2) as appointments_booked,
+          (SELECT COALESCE(SUM(b.revenue_cents), 0) FROM bookings b JOIN leads l ON l.id = b.lead_id AND l.tenant_id = $1 AND l.lead_source = 'referral' WHERE b.tenant_id = $1 AND b.created_at > $2) as estimated_revenue`,
+        [tenantId, thirtyDaysAgo]
       )
     ]);
 
@@ -479,6 +503,20 @@ router.get("/metrics", async (req, res) => {
     const closeRate = sales.leads_generated > 0 
       ? Math.round((sales.estimates_accepted / sales.leads_generated) * 100) 
       : 0;
+
+    const tenantForGate = await db.query("SELECT id, plan, plan_overrides FROM tenants WHERE id = $1", [tenantId]).then((r) => r.rows[0]);
+    const nurturingRow = nurturingStats?.rows?.[0];
+    const nurturing = (tenantForGate && hasNurturingReferralAccess(tenantForGate) && nurturingRow)
+      ? {
+          emails_sent: parseInt(nurturingRow.emails_sent || 0, 10),
+          sms_sent: parseInt(nurturingRow.sms_sent || 0, 10),
+          ai_calls_made: parseInt(nurturingRow.ai_calls_made || 0, 10),
+          customer_replies: parseInt(nurturingRow.customer_replies || 0, 10),
+          appointments_booked: parseInt(nurturingRow.appointments_booked || 0, 10),
+          referrals_generated: parseInt(nurturingRow.referrals_generated || 0, 10),
+          estimated_revenue: parseInt(nurturingRow.estimated_revenue || 0, 10)
+        }
+      : undefined;
 
     console.log(`[Metrics] Response structure:`, { 
       period: "30d", 
@@ -524,7 +562,8 @@ router.get("/metrics", async (req, res) => {
         date: r.date,
         leads: parseInt(r.leads, 10),
         bookings: parseInt(r.bookings, 10)
-      }))
+      })),
+      nurturing
     });
   } catch (e) {
     console.error(e);
@@ -607,15 +646,21 @@ function maskFacebookToken(token) {
 }
 
 const TENANT_SELECT_TWILIO = `t.twilio_account_sid, t.twilio_auth_token`;
-const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.plan, t.facebook_page_id, t.facebook_page_access_token, t.tone_of_voice, t.objection_handling_config, t.business_hours, t.afterhours_behavior, t.google_calendar_linked, t.google_calendar_id, t.zapier_webhook_url, t.api_key, t.website, t.voice_model, t.faqs, t.plan_overrides, t.promo_label, t.logo_url`;
+const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.plan, t.facebook_page_id, t.facebook_page_access_token, t.tone_of_voice, t.objection_handling_config, t.business_hours, t.afterhours_behavior, t.google_calendar_linked, t.google_calendar_id, t.google_calendar_email, t.zapier_webhook_url, t.api_key, t.website, t.voice_model, t.faqs, t.plan_overrides, t.promo_label, t.logo_url, t.nurturing_enabled, t.referral_enabled, t.seasonal_campaigns_enabled, t.maintenance_reminder_months, t.reengagement_reminder_months, t.referral_request_days_after_service, t.nurturing_campaign_calendar, t.maintenance_touchpoints, t.reengagement_touchpoints`;
 const TENANT_SELECT_BASE_LEGACY = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled`;
 
 router.get("/tenants/:id", async (req, res) => {
   try {
+    const id = req.params.id;
+    // Authorization check
+    if (req.user?.tenant_id && req.user.tenant_id !== id && !req.user.is_super_admin) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
     const r = await db.query(
       `SELECT ${TENANT_SELECT_BASE}, ${TENANT_SELECT_TWILIO},
        (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1`,
-      [req.params.id]
+      [id]
     );
     const tenant = r.rows[0];
     if (!tenant) return res.status(404).json({ error: "Not found" });
@@ -625,6 +670,7 @@ router.get("/tenants/:id", async (req, res) => {
     masked.facebook_token_masked = maskFacebookToken(tenant.facebook_page_access_token);
     masked.api_key_masked = tenant.api_key ? tenant.api_key.substring(0, 4) + "..." + tenant.api_key.slice(-4) : null;
     masked.has_twilio_credentials = !!(tenant.twilio_account_sid && tenant.twilio_auth_token);
+    masked.has_nurturing_referral = hasNurturingReferralAccess(tenant);
     
     delete masked.twilio_account_sid;
     delete masked.twilio_auth_token;
@@ -656,6 +702,7 @@ router.get("/tenants", async (req, res) => {
       masked.twilio_account_sid_masked = maskTwilioSid(t.twilio_account_sid);
       masked.api_key_masked = t.api_key ? t.api_key.substring(0, 4) + "..." + t.api_key.slice(-4) : null;
       masked.has_twilio_credentials = !!(t.twilio_account_sid && t.twilio_auth_token);
+      masked.has_nurturing_referral = hasNurturingReferralAccess(t);
       
       delete masked.twilio_account_sid;
       delete masked.twilio_auth_token;
@@ -824,6 +871,11 @@ function normalizeTransferNumbers(value) {
 router.patch("/tenants/:id", async (req, res) => {
   try {
     const id = req.params.id;
+
+    // Rule based authorization: Only super admins or the tenant themselves can edit
+    if (req.user?.tenant_id && req.user.tenant_id !== id && !req.user.is_super_admin) {
+      return res.status(403).json({ error: "Forbidden: You do not have permission to edit this business." });
+    }
     let allowed = [
       "name", "company_name", "timezone", "website", "logo_url",
       "welcome_message", "instructions", "transfer_numbers", "transfer_sms_brief", 
@@ -831,7 +883,11 @@ router.patch("/tenants/:id", async (req, res) => {
       "twilio_account_sid", "twilio_auth_token", "facebook_page_id", "facebook_page_access_token",
       "tone_of_voice", "objection_handling_config", "business_hours", "afterhours_behavior", 
       "google_calendar_linked", "google_calendar_id", "zapier_webhook_url",
-      "voice_model", "faqs"
+      "voice_model", "faqs",
+      "nurturing_enabled", "referral_enabled", "seasonal_campaigns_enabled",
+      "maintenance_reminder_months", "reengagement_reminder_months", "referral_request_days_after_service",
+      "nurturing_campaign_calendar",
+      "maintenance_touchpoints", "reengagement_touchpoints"
     ];
     try {
       await db.query("SELECT twilio_account_sid FROM tenants WHERE id = $1 LIMIT 1", [id]);
@@ -858,11 +914,19 @@ router.patch("/tenants/:id", async (req, res) => {
       }
     }
     if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No allowed fields to update" });
+    const nurturingKeys = ["nurturing_enabled", "referral_enabled", "seasonal_campaigns_enabled", "maintenance_reminder_months", "reengagement_reminder_months", "referral_request_days_after_service", "nurturing_campaign_calendar", "maintenance_touchpoints", "reengagement_touchpoints"];
+    const hasNurturingUpdate = Object.keys(updates).some((k) => nurturingKeys.includes(k));
+    if (hasNurturingUpdate) {
+      const current = await db.query("SELECT id, plan, plan_overrides FROM tenants WHERE id = $1", [id]).then((r) => r.rows[0]);
+      if (!current || !hasNurturingReferralAccess(current)) {
+        return res.status(403).json({ error: "Customer Nurturing & Referral is available on Elite or as an add-on. Upgrade your plan to enable." });
+      }
+    }
     const set = Object.keys(updates).map((k, i) => `${k} = $${i + 1}`).join(", ");
     const values = Object.keys(updates).map((k) => {
       const v = updates[k];
-      if (["transfer_numbers", "business_hours", "objection_handling_config", "faqs"].includes(k)) {
-        return JSON.stringify(v);
+      if (["transfer_numbers", "business_hours", "objection_handling_config", "faqs", "nurturing_campaign_calendar", "maintenance_touchpoints", "reengagement_touchpoints"].includes(k)) {
+        return typeof v === "object" ? JSON.stringify(v) : v;
       }
       return v;
     });
@@ -903,6 +967,7 @@ router.patch("/tenants/:id", async (req, res) => {
     out.api_key_masked = row.api_key ? row.api_key.substring(0, 4) + "..." + row.api_key.slice(-4) : null;
     out.has_twilio_credentials = row.has_twilio_credentials === true;
     if (out.plan == null) out.plan = "basic";
+    out.has_nurturing_referral = hasNurturingReferralAccess(out);
     res.json(out);
   } catch (e) {
     console.error(e);
@@ -916,8 +981,20 @@ router.get("/twilio/available-numbers", async (req, res) => {
   try {
     const areaCode = req.query.area_code || null;
     const limit = parseInt(req.query.limit, 10) || 10;
-    const numbers = await fetchAvailableNumbers(areaCode, limit);
-    res.json({ numbers });
+    
+    // 1. Fetch numbers already in the global Twilio account (unassigned)
+    const owned = await getOwnedUnassignedNumbers(db, areaCode);
+    
+    // 2. Fetch new numbers available to buy from Twilio
+    const available = await fetchAvailableNumbers(areaCode, limit);
+    
+    // Combine: Owned first, then available
+    const combined = [
+      ...owned,
+      ...available.filter(n => !owned.some(o => o.phoneNumber === n.phoneNumber))
+    ].slice(0, limit + owned.length);
+
+    res.json({ numbers: combined });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Could not fetch available numbers from Twilio." });
@@ -946,7 +1023,9 @@ router.post("/phone-numbers", async (req, res) => {
     const tenantId = getTenantIdFromQuery(req);
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
     const phone = normalizePhoneInput(req.body?.phone);
+    const label = req.body?.label || null;
     const setPrimary = !!req.body?.is_primary;
+    const isOwned = !!req.body?.is_owned; // Flag from frontend if picked from 'Owned' search or manual
 
     if (!phone) {
       return res.status(400).json({ error: "A valid phone number is required (e.g. +14025551234)" });
@@ -960,6 +1039,20 @@ router.post("/phone-numbers", async (req, res) => {
         return res.status(409).json({ error: "This number is already added to your business." });
       }
       return res.status(409).json({ error: "This phone number is already assigned to another business." });
+    }
+
+    // If not owned and not manual (manual is assumed owned/external), we buy it
+    // But how do we know if it was picked from 'search' vs 'manual'?
+    // Let's assume if it's NOT owned, we attempt to purchase it IF it came from the Search results.
+    // To simplify: if 'is_purchasable' flag is passed, we buy it.
+    const isPurchasable = !!req.body?.is_purchasable;
+
+    if (isPurchasable && !isOwned) {
+      try {
+        await purchaseNewNumber(phone);
+      } catch (err) {
+        return res.status(503).json({ error: "Failed to purchase number: " + err.message });
+      }
     }
 
     if (setPrimary) {
@@ -976,8 +1069,8 @@ router.post("/phone-numbers", async (req, res) => {
     
     // Save the record regardless of Twilio success
     const result = await db.query(
-      "INSERT INTO phone_numbers (tenant_id, phone, is_primary, twilio_sid) VALUES ($1, $2, $3, $4) RETURNING id, tenant_id, phone, is_primary, twilio_sid, created_at",
-      [tenantId, phone, setPrimary, webhookResult.success ? (webhookResult.twilioSid || null) : null]
+      "INSERT INTO phone_numbers (tenant_id, phone, is_primary, twilio_sid, label) VALUES ($1, $2, $3, $4, $5) RETURNING id, tenant_id, phone, is_primary, twilio_sid, label, created_at",
+      [tenantId, phone, setPrimary, webhookResult.success ? (webhookResult.twilioSid || null) : null, label]
     );
 
     res.status(201).json({ 
@@ -1016,7 +1109,7 @@ router.patch("/phone-numbers/:id", async (req, res) => {
   try {
     const tenantId = getTenantIdFromQuery(req);
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
-    const { is_primary } = req.body;
+    const { is_primary, label } = req.body;
     const phoneId = req.params.id;
 
     // Verify ownership
@@ -1228,6 +1321,7 @@ router.get("/conversations/:id/timeline", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 router.post("/tenants/:id/reset-api-key", async (req, res) => {
   try {

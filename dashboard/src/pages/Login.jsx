@@ -59,7 +59,12 @@ export default function Login({ onLogin }) {
       }
       onLogin();
     } catch (err) {
-      setError(err.message || (isSignup ? "Sign up failed" : "Login failed"));
+      const msg = err.message || "";
+      setError(
+        msg.toLowerCase().includes("unauthorized")
+          ? "Invalid email or password. Please try again."
+          : msg || (isSignup ? "Sign up failed" : "Login failed")
+      );
     } finally {
       setIsLoading(false);
     }

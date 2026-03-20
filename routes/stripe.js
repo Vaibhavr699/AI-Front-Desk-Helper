@@ -2,6 +2,7 @@
 
 const express = require("express");
 const { createCheckoutSession, createPortalSession, handleWebhookEvent, stripe } = require("../lib/stripe");
+const { getTenantIdFromQuery } = require("../lib/auth");
 
 const router = express.Router();
 
@@ -12,7 +13,8 @@ const router = express.Router();
  */
 router.post("/checkout", async (req, res) => {
     try {
-        const { tenant_id, plan_id, return_url } = req.body || {};
+        const tenant_id = getTenantIdFromQuery(req);
+        const { plan_id, return_url } = req.body || {};
         if (!tenant_id) return res.status(400).json({ error: "tenant_id required" });
         if (!plan_id) return res.status(400).json({ error: "plan_id required" });
 
@@ -31,7 +33,8 @@ router.post("/checkout", async (req, res) => {
  */
 router.post("/portal", async (req, res) => {
     try {
-        const { tenant_id, return_url } = req.body || {};
+        const tenant_id = getTenantIdFromQuery(req);
+        const { return_url } = req.body || {};
         if (!tenant_id) return res.status(400).json({ error: "tenant_id required" });
 
         const result = await createPortalSession(tenant_id, return_url);
@@ -48,7 +51,7 @@ router.post("/portal", async (req, res) => {
  */
 router.get("/status", async (req, res) => {
     try {
-        const tenantId = req.query.tenant_id;
+        const tenantId = getTenantIdFromQuery(req);
         if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
 
         const db = require("../lib/db");

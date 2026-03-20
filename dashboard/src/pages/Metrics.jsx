@@ -14,7 +14,10 @@ import {
   BarChart3,
   CheckCircle2,
   AlertCircle,
-  Clock
+  Clock,
+  Mail,
+  MessageCircle,
+  UserPlus
 } from "lucide-react";
 
 /**
@@ -233,6 +236,30 @@ export default function Metrics({ tenantId }) {
         </div>
       </div>
 
+      {/* Nurturing & Referrals (when feature data is present) */}
+      {metrics.nurturing != null && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2 bg-emerald-100 rounded-lg text-emerald-700">
+              <UserPlus size={24} />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-gray-900">Nurturing & Referrals</h2>
+              <p className="text-gray-500 text-sm">Campaign touches and referral outcomes (30 days)</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-4">
+            <NurturingStat label="Emails sent" value={metrics.nurturing.emails_sent} icon={<Mail size={16} />} />
+            <NurturingStat label="SMS sent" value={metrics.nurturing.sms_sent} icon={<MessageCircle size={16} />} />
+            <NurturingStat label="AI calls" value={metrics.nurturing.ai_calls_made} icon={<PhoneCall size={16} />} />
+            <NurturingStat label="Replies" value={metrics.nurturing.customer_replies} icon={<MessageCircle size={16} />} />
+            <NurturingStat label="Referrals" value={metrics.nurturing.referrals_generated} icon={<UserPlus size={16} />} />
+            <NurturingStat label="Booked (ref)" value={metrics.nurturing.appointments_booked} icon={<CheckCircle2 size={16} />} />
+            <NurturingStat label="Revenue (ref)" value={metrics.nurturing.estimated_revenue != null ? `$${(metrics.nurturing.estimated_revenue / 100).toLocaleString()}` : "—"} icon={<DollarSign size={16} />} />
+          </div>
+        </div>
+      )}
+
       {/* AI Performance Section */}
       <div className="bg-gray-900 rounded-2xl p-8 text-white relative overflow-hidden">
         <div className="absolute top-0 right-0 p-8 opacity-10">
@@ -292,6 +319,18 @@ function AiMetric({ label, value, icon }) {
       <div className="h-1 bg-white/10 rounded-full overflow-hidden">
         <div className="h-full bg-primary rounded-full w-2/3"></div>
       </div>
+    </div>
+  );
+}
+
+function NurturingStat({ label, value, icon }) {
+  return (
+    <div className="p-4 rounded-xl border border-gray-100 bg-gray-50/50">
+      <div className="flex items-center gap-2 text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">
+        {icon}
+        {label}
+      </div>
+      <div className="text-lg font-bold text-gray-900">{value}</div>
     </div>
   );
 }

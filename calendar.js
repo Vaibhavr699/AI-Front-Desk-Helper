@@ -48,6 +48,31 @@ if (clientEmail && privateKey) {
   );
 }
 
+/**
+ * Get a Google Calendar client for a specific tenant.
+ * Uses the tenant's OAuth2 refresh token if available, otherwise falls back to the global service account.
+ * Returns null if neither is configured.
+ */
+function getCalendarForTenant(tenant) {
+  // 1. Try tenant's own OAuth2 refresh token
+  if (tenant && tenant.google_refresh_token) {
+    const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+    if (clientId && clientSecret) {
+      try {
+        const oauth2 = new google.auth.OAuth2(clientId, clientSecret);
+        oauth2.setCredentials({ refresh_token: tenant.google_refresh_token });
+        return google.calendar({ version: "v3", auth: oauth2 });
+      } catch (e) {
+        console.error("[Calendar] Failed to create tenant OAuth2 calendar:", e.message);
+      }
+    }
+  }
+
+  // 2. Fall back to global service account
+  return calendar;
+}
+
 /** Check if a date/time is available on Google Calendar (FreeBusy). */
 async function checkAvailability(date, time) {
   if (!calendar) {
@@ -106,6 +131,7 @@ async function syncToGoogleCalendar(booking) {
 
 module.exports = {
   instance: calendar,
+  getCalendarForTenant,
   checkAvailability,
   syncToGoogleCalendar
 };

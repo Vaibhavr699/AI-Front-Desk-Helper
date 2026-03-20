@@ -2,7 +2,7 @@
 
 const express = require("express");
 const { google } = require("googleapis");
-const db = require("../db");
+const db = require("../lib/db");
 const router = express.Router();
 
 const SCOPES = ["https://www.googleapis.com/auth/calendar"];

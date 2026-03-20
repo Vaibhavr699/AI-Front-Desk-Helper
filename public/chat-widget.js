@@ -26,7 +26,7 @@
   }
 
   let companyName = "Front Desk";
-  let welcomeMessage = "Hi there 👋 How can we help you today?";
+  let welcomeMessage = "Hi there 👋 Need a quick estimate or have a question? I can help you schedule in seconds.";
   let twilioPhoneNumber = null;
   let hasWelcomed = false;
   let isOpen = false;

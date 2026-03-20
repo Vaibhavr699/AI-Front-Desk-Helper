@@ -12,6 +12,7 @@ function getOAuth2Client() {
   const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
   const baseUrl = (process.env.BASE_URL || "").replace(/\/$/, "");
   const redirectUri = `${baseUrl}/auth/google/calendar/callback`;
+  const dashboardUrl = (process.env.DASHBOARD_URL || "").replace(/\/$/, "");
 
   if (!clientId || !clientSecret) return null;
 
@@ -50,7 +51,8 @@ router.get("/callback", async (req, res) => {
 
   if (error) {
     console.error("[Google Calendar] OAuth error:", error);
-    return res.redirect(`/settings?tab=integrations&gcal=error&reason=${encodeURIComponent(error)}`);
+    const dashboardUrl = (process.env.DASHBOARD_URL || "").replace(/\/$/, "");
+    return res.redirect(`${dashboardUrl}/settings?tab=integrations&gcal=error&reason=${encodeURIComponent(error)}`);
   }
 
   if (!code || !tenantId) {
@@ -69,7 +71,8 @@ router.get("/callback", async (req, res) => {
 
     if (!refreshToken) {
       console.error("[Google Calendar] No refresh_token received. User may have already authorized without revoking.");
-      return res.redirect("/settings?tab=integrations&gcal=error&reason=no_refresh_token");
+      const dashboardUrl = (process.env.DASHBOARD_URL || "").replace(/\/$/, "");
+      return res.redirect(`${dashboardUrl}/settings?tab=integrations&gcal=error&reason=no_refresh_token`);
     }
 
     // Get the user's email from the token info
@@ -98,10 +101,12 @@ router.get("/callback", async (req, res) => {
     console.log("[Google Calendar] Linked tenant=%s email=%s", tenantId, calendarEmail);
 
     // Redirect back to Settings
-    res.redirect(`/settings?tab=integrations&gcal=success`);
+    const dashboardUrl = (process.env.DASHBOARD_URL || "").replace(/\/$/, "");
+    res.redirect(`${dashboardUrl}/settings?tab=integrations&gcal=success`);
   } catch (err) {
     console.error("[Google Calendar] Token exchange failed:", err.message);
-    res.redirect(`/settings?tab=integrations&gcal=error&reason=${encodeURIComponent(err.message)}`);
+    const dashboardUrl = (process.env.DASHBOARD_URL || "").replace(/\/$/, "");
+    res.redirect(`${dashboardUrl}/settings?tab=integrations&gcal=error&reason=${encodeURIComponent(err.message)}`);
   }
 });
 

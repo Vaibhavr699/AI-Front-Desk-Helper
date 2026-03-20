@@ -164,6 +164,15 @@ const REALTIME_TOOLS = [
       required: ["contact_phone", "new_date", "new_time"],
     },
   },
+  {
+    type: "function",
+    name: "hang_up",
+    description: "End the call. Call this ONLY after you have confirmed the booking, summarized the details, and said a final 'Goodbye'. Also use this if the caller explicitly says they have to go or the conversation is clearly finished.",
+    parameters: {
+      type: "object",
+      properties: {},
+    },
+  },
 ];
 
 const SALES_CLOSE_PROMPT = `
@@ -244,6 +253,15 @@ const RECOVERY_TOOLS = [
         language: { type: "string" },
       },
       required: ["language"],
+    },
+  },
+  {
+    type: "function",
+    name: "hang_up",
+    description: "End the call. Call this ONLY after you have confirmed the booking and said a final 'Goodbye'. Also use this if the caller explicitly says they have to go or the conversation is finished.",
+    parameters: {
+      type: "object",
+      properties: {},
     },
   },
 ];
@@ -444,6 +462,7 @@ app.get("/api/public-tenant/:id", async (req, res) => {
       name: tenant.name,
       company_name: tenant.company_name,
       welcome_message: tenant.welcome_message,
+      twilio_phone_number: tenant.twilio_phone_number,
       timezone: tenant.timezone
     });
   } catch (error) {
@@ -1132,7 +1151,7 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
         email: thread.leadCapture.email || "",
         address: thread.leadCapture.address || "",
         project_details: thread.leadCapture.project_details || ""
-      });
+      }, tenant);
     } else {
       // Fallback: assume OK if calendar is disabled or errored
       booked = { ok: true, fallback: true };
@@ -1229,6 +1248,15 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
   }
 
   mergeLeadCapture(thread, ai.lead_capture);
+  if (tenant && thread.leadId && ai.lead_capture && Object.keys(ai.lead_capture).length > 0) {
+    leadsService.updateLeadInfo(thread.leadId, {
+      name: thread.leadCapture.full_name,
+      email: thread.leadCapture.email,
+      address: thread.leadCapture.address,
+      project_type: thread.leadCapture.project_type,
+      notes: thread.leadCapture.project_details
+    }).catch(e => console.error("[Sync] Lead info update failed:", e.message));
+  }
 
   if (thread.leadCapture?.full_name || thread.phone) {
     await sendToCRM({
@@ -1312,6 +1340,15 @@ async function processFacebookConversation(senderId, messageText, tenant = null)
 
   // Update thread with any captured lead info
   mergeLeadCapture(thread, ai.lead_capture);
+  if (tenant && thread.leadId && ai.lead_capture && Object.keys(ai.lead_capture).length > 0) {
+    leadsService.updateLeadInfo(thread.leadId, {
+      name: thread.leadCapture.full_name,
+      email: thread.leadCapture.email,
+      address: thread.leadCapture.address,
+      project_type: thread.leadCapture.project_type,
+      notes: thread.leadCapture.project_details
+    }).catch(e => console.error("[Sync] FB Lead info update failed:", e.message));
+  }
 
   // If we have a name or an actual phone number (not the fb- thread key), send to CRM/Zapier
   // We check that thread.phone exists and isn't just the fb- string if we are relying on that
@@ -2343,12 +2380,13 @@ wss.on("connection", async (twilioSocket, req) => {
         `TONE OF VOICE: Your tone of voice is ${tenant?.tone_of_voice || 'professional'}. Maintain this personality throughout the call.`,
         "Default language is English. If the caller asks to speak in another language (e.g. Spanish, French, Hindi), immediately call the change_language tool with the ISO 639-1 code (es, fr, hi, zh, ar, etc.), then confirm in that language and continue the entire conversation in that language.",
         "CONVERSATIONAL FLOW: Let the conversation flow naturally like a real human. If they ask a question, answer it directly using the Knowledge Base (FAQs) before steering them back to your questions. Do NOT rigidly fire questions one after another.",
-        "GOAL: When it feels natural, try to collect the following to book an appointment or estimate: Full Name, Phone Number, Address or City, and Scope of what they need.",
-        "Offer a free on-site estimate or appointment. Repeat back key details before finalizing so the caller can correct you if needed.",
+        "GOAL: When it feels natural, try to collect the following to book an appointment or estimate: Full Name, Phone Number, Address or City, and the scope of what they need (e.g. 'What type of service can we help you with today?').",
+        "SERVICE TYPES: Do NOT assume the caller wants a specific service (like interior or exterior painting) unless it is explicitly mentioned in the business details or by the caller. If unsure, ALWAYS ask: 'What type of service are you looking for?'",
+        "OFFER: Offer a free on-site estimate or appointment. ALWAYS confirm the specific Date and Time with the caller before calling book_appointment.",
         "APPOINTMENT MANAGEMENT: If the caller wants to CANCEL or RESCHEDULE, ask for their phone number to find their booking. Use 'cancel_appointment' or 'reschedule_appointment' only after confirming the details. For rescheduling, confirm the NEW date and time first.",
         "REVENUE ESTIMATION & LEAD ANALYSIS: If the caller doesn't provide a budget, estimate the job value reasonably based on their scope. Always provide an 'estimated_value', a 'lead_score' (1-100), and a brief 'ai_summary' (1-2 sentences) when calling tools.",
         "ONLY call book_appointment when you have obtained REAL details from the human for: name, phone, and address/city. Do NOT call it with placeholders or before asking for these details.",
-        "Right after calling book_appointment successfully, say clearly and then stop forever: 'You're all set. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.' Then allow the call to end naturally.",
+        "Right after calling book_appointment successfully, say clearly: 'You're all set. I've scheduled that for [Confirmed Date] at [Confirmed Time]. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.' Then call the 'hang_up' tool immediately after finishing your sentence.",
         "Do NOT say you are transferring or connecting to someone unless you actually need a live agent. Only use request_human_transfer for: emergencies, situations requiring a manager, frustrated/angry callers, or VIP/repeat customers. For normal requests, always complete the booking with book_appointment.",
         "STRICT RULE: NEVER hallucinate or use placeholder/example data (like 'Armando', '555-1234', or 'Cancun') for any tool fields. If you are missing a required field, ASK the caller. Only use data provided by the human on the other end of the line.",
       ].join("\n");
@@ -2548,7 +2586,7 @@ wss.on("connection", async (twilioSocket, req) => {
           try {
             if (name === "check_availability" && tenant) {
               const { appointment_date, appointment_time } = args;
-              const isAvailable = await calendar.checkAvailability(appointment_date, appointment_time);
+              const isAvailable = await calendar.checkAvailability(appointment_date, appointment_time, tenant);
               output = JSON.stringify({ 
                 success: true, 
                 available: isAvailable, 
@@ -2587,7 +2625,7 @@ wss.on("connection", async (twilioSocket, req) => {
               console.log("[AI-Desk] Realtime booking done id=%s crmSynced=%s", booking.id, crmSynced);
               
               // 2. Sync to Google Calendar
-              calendar.syncToGoogleCalendar(booking).catch(e => console.error("[Calendar] Auto-sync failed:", e.message));
+              calendar.syncToGoogleCalendar(booking, tenant).catch(e => console.error("[Calendar] Auto-sync failed:", e.message));
 
               // 3. Update lead status to 'Booked'
               if (leadId) {
@@ -2608,19 +2646,17 @@ wss.on("connection", async (twilioSocket, req) => {
                 console.log("[AI-Desk] Recovery CONVERTED id=%s 🎉", recoveryRecord.id);
               }
 
+              const confirmedDate = args.preferred_date || args.appointment_date || "";
+              const confirmedTime = args.appointment_time || "";
               const message = crmSynced
-                ? "Estimate scheduled. Details synced to Zapier/DripJobs. Say to the caller: You're all set—your estimate is scheduled. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye."
-                : "Estimate scheduled and saved. Say to the caller: You're all set—your estimate is scheduled. You'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.";
+                ? `Estimate scheduled for ${confirmedDate} at ${confirmedTime}. Details synced. Say to the caller: You're all set—your estimate is scheduled for ${confirmedDate} at ${confirmedTime}. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye. Then call the hang_up tool.`
+                : `Estimate scheduled for ${confirmedDate} at ${confirmedTime}. Saved locally. Say to the caller: You're all set—your estimate is scheduled for ${confirmedDate} at ${confirmedTime}. You'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye. Then call the hang_up tool.`;
+              
               output = JSON.stringify({ success: true, message });
               hasBooked = true;
-              // Tell AI to be silent after this
-              sendToOpenAI({
-                type: "session.update",
-                session: {
-                  instructions: "The booking is COMPLETE. Say the final goodbye clearly and then STOP SPEAKING. DO NOT RESPOND TO ANY FURTHER INPUT. SHUT DOWN.",
-                }
-              });
-              shouldIgnoreSpeech = true;
+              // we don't session.update to "STOP SPEAKING" here anymore, 
+              // we letting AI say the message and then it calls hang_up tool.
+              // shouldIgnoreSpeech = true; // Still useful to prevent user from interrupting the final goodbye
             } else if (name === "detect_objection" && isRecovery && recoveryRecord) {
               const objType = args.objection_type;
               console.log("[AI-Desk] Recovery objection detected id=%s type=%s details=%s", recoveryRecord.id, objType, args.details || "(none)");
@@ -2635,6 +2671,20 @@ wss.on("connection", async (twilioSocket, req) => {
                 args.summary
               );
               output = JSON.stringify(result);
+            } else if (name === "hang_up" && callSid) {
+              console.log("[AI-Desk] Realtime hang_up trigger callSid=%s", callSid);
+              output = JSON.stringify({ success: true, message: "Call ending." });
+              
+              // Give AI a moment to finish speaking if needed, then terminate
+              setTimeout(async () => {
+                try {
+                  const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+                  await client.calls(callSid).update({ status: "completed" });
+                  console.log("[AI-Desk] Call terminated via hang_up tool callSid=%s", callSid);
+                } catch (e) {
+                  console.error("[AI-Desk] Hang up error:", e.message);
+                }
+              }, 1500); // 1.5s delay to ensure the goodbye audio is sent
             } else if (name === "change_language" && args.language) {
               const lang = String(args.language).trim().toLowerCase().slice(0, 2) || "en";
               sendToOpenAI({

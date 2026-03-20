@@ -27,6 +27,7 @@
 
   let companyName = "Front Desk";
   let welcomeMessage = "Hi there 👋 How can we help you today?";
+  let twilioPhoneNumber = null;
   let hasWelcomed = false;
   let isOpen = false;
 
@@ -108,6 +109,7 @@ async function triggerFollowUp(lead) {
         const data = await res.json();
         if (data.company_name || data.name) companyName = data.company_name || data.name;
         if (data.welcome_message) welcomeMessage = data.welcome_message;
+        if (data.twilio_phone_number) twilioPhoneNumber = data.twilio_phone_number;
         console.log("[AI-Widget] Loaded config for:", companyName);
       } else {
         console.warn("[AI-Widget] Failed to load config, using defaults.");
@@ -241,7 +243,26 @@ async function triggerFollowUp(lead) {
     headerTitle.innerText = companyName;
     headerTitle.style.flex = "1";
     headerTitle.style.textAlign = "center";
+    headerTitle.style.overflow = "hidden";
+    headerTitle.style.textOverflow = "ellipsis";
+    headerTitle.style.whiteSpace = "nowrap";
     header.appendChild(headerTitle);
+
+    // SMS Icon Button (Only if phone number exists)
+    const smsBtn = document.createElement("a");
+    smsBtn.id = "ai-widget-sms-btn";
+    smsBtn.innerHTML = "SMS";
+    smsBtn.title = "Text us instead";
+    smsBtn.style.display = "none"; // Hidden until number is loaded
+    Object.assign(smsBtn.style, {
+      padding: "4px 10px", borderRadius: "6px",
+      border: "1px solid rgba(255,255,255,0.5)", background: "rgba(255,255,255,0.15)",
+      color: "#fff", cursor: "pointer", fontSize: "11px", fontWeight: "bold",
+      marginRight: "8px", textDecoration: "none", flexShrink: "0",
+      display: "flex", alignItems: "center", justifyContent: "center"
+    });
+    header.appendChild(smsBtn);
+
     const scriptUrl = apiBase + "/chat-widget.js";
     const embedSnippet = "<script src=\"" + scriptUrl + "\"><\/script>";
     const helpBtn = document.createElement("button");
@@ -412,6 +433,19 @@ function showBookingForm() {
         toggle.innerText = "Chat";
       }
     };
+
+    // Update SMS button after config is loaded
+    const checkConfig = setInterval(() => {
+      if (twilioPhoneNumber) {
+        clearInterval(checkConfig);
+        const btn = document.getElementById("ai-widget-sms-btn");
+        if (btn) {
+          btn.href = `sms:${twilioPhoneNumber}`;
+          btn.style.display = "flex";
+        }
+      }
+    }, 500);
+    setTimeout(() => clearInterval(checkConfig), 10000);
 
     async function handleSend() {
       const val = input.value.trim();

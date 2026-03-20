@@ -1176,6 +1176,56 @@ export default function Settings({ tenantId }) {
                   </p>
                 </div>
               )}
+
+              <div className="mt-12 pt-8 border-t border-gray-200">
+                <h3 className="text-lg font-bold text-gray-900 mb-2 flex items-center gap-2">
+                  <MessageSquare className="text-primary w-5 h-5" />
+                  Website Chat Widget
+                </h3>
+                <p className="text-sm text-gray-500 mb-6 font-medium">
+                  Add the AI chat widget to your website to handle leads, quotes, and bookings 24/7.
+                </p>
+
+                <div className="space-y-6">
+                  {/* Script Tag */}
+                  <div className="bg-gray-900 rounded-2xl p-6 shadow-xl border border-gray-800">
+                    <div className="flex items-center justify-between mb-4">
+                      <span className="text-[10px] font-black text-primary uppercase tracking-[0.2em]">1. Install the Widget</span>
+                      <span className="text-[10px] font-bold text-gray-500">PASTE BEFORE &lt;/BODY&gt;</span>
+                    </div>
+                    <code className="block p-4 bg-black/40 rounded-xl text-xs font-mono text-emerald-400 break-all border border-emerald-500/20">
+                      {`<script src="https://ai-front-desk-backend.onrender.com/chat-widget.js" data-tenant-id="${tenant?.id}"></script>`}
+                    </code>
+                  </div>
+
+                  {/* SMS Shortcut */}
+                  <div className="bg-white rounded-2xl p-6 border-2 border-dashed border-gray-100">
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
+                        <Phone className="w-5 h-5 text-emerald-600" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-gray-900">"Click-to-Text" Shortcut</h4>
+                        <p className="text-xs text-gray-500 font-medium">Add a standalone button to your site that opens the customer's SMS app.</p>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-3">
+                      <div className="flex flex-col gap-2">
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest pl-1">HTML Example</label>
+                        <code className="block p-3 bg-gray-50 rounded-xl text-[11px] font-mono text-gray-600 border border-gray-100">
+                          {`<a href="sms:${tenant?.twilio_phone_number || "+1234567890"}" class="text-us-button">
+  Text Us to Book
+</a>`}
+                        </code>
+                      </div>
+                      <p className="text-[10px] text-gray-400 font-medium italic">
+                        * When clicked on mobile, this will open the phone's native messaging app with your business number pre-filled.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 

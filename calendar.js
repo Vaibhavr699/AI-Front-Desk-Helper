@@ -74,8 +74,9 @@ function getCalendarForTenant(tenant) {
 }
 
 /** Check if a date/time is available on Google Calendar (FreeBusy). */
-async function checkAvailability(date, time) {
-  if (!calendar) {
+async function checkAvailability(date, time, tenant = null) {
+  const cal = tenant ? getCalendarForTenant(tenant) : calendar;
+  if (!cal) {
     console.log("[Calendar] Google Calendar disabled, assuming available.");
     return true;
   }
@@ -85,15 +86,17 @@ async function checkAvailability(date, time) {
     const start = new Date(`${date}T${time}`);
     const end = new Date(start.getTime() + 60 * 60 * 1000); // Assume 1 hour default
 
-    const res = await calendar.freebusy.query({
+    const calendarId = (tenant && tenant.google_calendar_id) || "primary";
+
+    const res = await cal.freebusy.query({
       requestBody: {
         timeMin: start.toISOString(),
         timeMax: end.toISOString(),
-        items: [{ id: "primary" }],
+        items: [{ id: calendarId }],
       },
     });
 
-    const busy = res.data.calendars.primary.busy || [];
+    const busy = res.data.calendars[calendarId].busy || [];
     return busy.length === 0;
   } catch (error) {
     console.error("[Calendar] Availability check failed:", error.message);
@@ -102,12 +105,15 @@ async function checkAvailability(date, time) {
 }
 
 /** Create an event on Google Calendar from a booking. */
-async function syncToGoogleCalendar(booking) {
-  if (!calendar) return;
+async function syncToGoogleCalendar(booking, tenant = null) {
+  const cal = tenant ? getCalendarForTenant(tenant) : calendar;
+  if (!cal) return;
 
   try {
     const start = new Date(`${booking.preferred_date}T${booking.appointment_time || "09:00:00"}`);
     const end = new Date(start.getTime() + 60 * 60 * 1000);
+
+    const calendarId = (tenant && tenant.google_calendar_id) || "primary";
 
     const event = {
       summary: `Booking: ${booking.contact_name} (${booking.job_type || "Service"})`,
@@ -117,8 +123,8 @@ async function syncToGoogleCalendar(booking) {
       end: { dateTime: end.toISOString() },
     };
 
-    const res = await calendar.events.insert({
-      calendarId: "primary",
+    const res = await cal.events.insert({
+      calendarId,
       requestBody: event,
     });
 

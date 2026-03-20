@@ -1159,7 +1159,9 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
 
     if (booked.ok) {
       thread.bookedEventId = booked.eventId || "";
-      thread.needsFollowUpAt = Date.now() + 24 * 60 * 60 * 1000;
+      thread.needsFollowUpAt = null;
+      thread.followUpCount = 0;
+}
 
       // PERSIST TO LOCAL DATABASE
       try {

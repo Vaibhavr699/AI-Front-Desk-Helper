@@ -2195,6 +2195,17 @@ server.on("upgrade", (request, socket, head) => {
 });
 
 wss.on("connection", async (twilioSocket, req) => {
+  let isInitializing = true;
+  const twilioMessageQueue = [];
+
+  twilioSocket.on("message", (raw) => {
+    if (isInitializing) {
+      twilioMessageQueue.push(raw);
+    } else {
+      handleTwilioMessage(raw);
+    }
+  });
+
   let instructions = "";
   const rawUrl = req.url || "";
   const parsedUrl = new URL(rawUrl, "http://localhost");
@@ -2890,13 +2901,20 @@ wss.on("connection", async (twilioSocket, req) => {
   }
   connectOpenAI(0);
 
-  twilioSocket.on("message", async (raw) => {
+  isInitializing = false;
+  while (twilioMessageQueue.length > 0) {
+    handleTwilioMessage(twilioMessageQueue.shift());
+  }
+
+  async function handleTwilioMessage(raw) {
     let msg;
     try {
       msg = JSON.parse(raw.toString());
-    } catch {
+    } catch (e) {
+      console.log("[DEBUG] Twilio JSON parse failed:", e.message, raw.toString().slice(0, 100));
       return;
     }
+    console.log("[DEBUG] Twilio WS msg.event =", msg.event);
 
     if (msg.event === "start") {
       streamSid = msg.start?.streamSid || msg.streamSid || null;
@@ -2990,7 +3008,7 @@ wss.on("connection", async (twilioSocket, req) => {
         markEnded: true
       });
     }
-  });
+  };
 
   twilioSocket.on("close", async () => {
     if (openaiSocket?.readyState === WebSocket.OPEN) {

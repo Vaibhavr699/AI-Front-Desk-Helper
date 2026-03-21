@@ -1163,7 +1163,6 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
       thread.bookedEventId = booked.eventId || "";
       thread.needsFollowUpAt = null;
       thread.followUpCount = 0;
-}
 
       // PERSIST TO LOCAL DATABASE
       try {

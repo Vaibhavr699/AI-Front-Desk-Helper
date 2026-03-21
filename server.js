@@ -922,6 +922,8 @@ function buildSmsSystemPrompt(thread, tenant = null) {
     `TONE OF VOICE: Your tone of voice is ${toneOfVoice}. Maintain this personality in your texts.`,
     "Flow: qualify lead, gather full_name, project_type, project_details, address, preferred appointment_date and appointment_time.",
     "Be concise, friendly, and use one short text message. Avoid long paragraphs.",
+    "SERVICE TYPES: Do NOT assume the customer wants a specific service (like interior or exterior painting) unless they mention it or it is in the business details. Ask: 'What type of service are you looking for?'",
+    "IMPORTANT: When the customer provides a date/time and you set should_book=true, do NOT say 'I have scheduled' or 'You are booked'. Instead say something like 'Let me check availability for that time' or 'I'll confirm that slot for you shortly'. The system will check the calendar and provide the final confirmation.",
     "If enough details exist to request booking, set should_book true.",
     "If the customer wants to cancel, set should_cancel true.",
     "If the customer wants to reschedule, set should_reschedule true and provide the new appointment_date/time.",
@@ -1284,7 +1286,7 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
 
   const bookingResult = await handleLeadBooking(thread, ai, tenant);
   if (bookingResult) {
-    replyText = `${replyText} ${bookingResult}`;
+    replyText = bookingResult;
   } else if (!ai.should_book) {
     // If not booking, default to a 2-hour delay for the primary follow-up unless the AI specified
     const followUpMinutes = Number(ai.follow_up_minutes) || 120;
@@ -1382,7 +1384,7 @@ async function processFacebookConversation(senderId, messageText, tenant = null)
 
   const bookingResult = await handleLeadBooking(thread, ai, tenant);
   if (bookingResult) {
-    replyText = `${replyText} ${bookingResult}`;
+    replyText = bookingResult;
   } else if (!ai.should_book) {
     // Default follow up for inquiry
     const followUpMinutes = Number(ai.follow_up_minutes) || 120;
@@ -2930,6 +2932,51 @@ setInterval(() => {
     console.error("SMS follow-up loop error:", error.message);
   });
 }, Math.max(60000, parseInt(process.env.SMS_FOLLOW_UP_CHECK_INTERVAL_MS, 10) || 60000));
+
+// ── Visitor tracking (chat widget) ──
+app.post("/visitor-event", async (req, res) => {
+  try {
+    const { tenantId, sessionId, event, url, timestamp } = req.body || {};
+    console.log("[Widget] visitor-event tenant=%s session=%s event=%s url=%s", tenantId, sessionId, event, url);
+    // Best-effort: record the event for analytics if needed later
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[Widget] visitor-event error:", err.message);
+    res.json({ ok: true }); // Never fail the widget
+  }
+});
+
+// ── Lead capture from chat widget ──
+app.post("/lead-capture", async (req, res) => {
+  try {
+    const { tenantId, sessionId, lead } = req.body || {};
+    console.log("[Widget] lead-capture tenant=%s session=%s lead=%j", tenantId, sessionId, lead);
+
+    let tenant = null;
+    if (tenantId) {
+      tenant = await getTenantById(tenantId).catch(() => null);
+      if (!tenant) tenant = await getTenantBySlug(tenantId).catch(() => null);
+    }
+
+    if (tenant && lead) {
+      const leadRecord = await leadsService.getOrCreateLead(tenant.id, lead.phone || sessionId, lead.full_name || lead.name);
+      if (leadRecord && Object.keys(lead).length > 0) {
+        await leadsService.updateLeadInfo(leadRecord.id, {
+          name: lead.full_name || lead.name,
+          email: lead.email,
+          address: lead.address,
+          project_type: lead.project_type,
+          notes: lead.project_details
+        }).catch(e => console.error("[Widget] lead update error:", e.message));
+      }
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[Widget] lead-capture error:", err.message);
+    res.json({ ok: true }); // Never fail the widget
+  }
+});
 
 app.post("/website-chat", async (req, res) => {
   const message = String(req.body?.message || "").trim();

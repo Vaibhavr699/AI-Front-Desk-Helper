@@ -2300,6 +2300,7 @@ wss.on("connection", async (twilioSocket, req) => {
   let openaiSocket = null;
   let streamStarted = false;
   let greetingTriggered = false;
+  let responseInProgress = false;
 
   function triggerGreetingIfReady() {
     if (openaiReady && streamStarted && !greetingTriggered) {
@@ -2540,7 +2541,7 @@ wss.on("connection", async (twilioSocket, req) => {
           turn_detection: {
             type: "server_vad",
             threshold: vadThreshold,
-            prefix_padding_ms: 300,
+            prefix_padding_ms: 500,
             silence_duration_ms: silenceMs,
           },
           input_audio_transcription: { model: "whisper-1" },
@@ -2563,6 +2564,13 @@ wss.on("connection", async (twilioSocket, req) => {
         return;
       }
 
+      if (data.type === "response.created") {
+        responseInProgress = true;
+      }
+      if (data.type === "response.done" || data.type === "response.cancelled") {
+        responseInProgress = false;
+      }
+
       if (data.type === "response.audio.delta" && data.delta) {
         // console.log("[DEBUG] Received audio delta from OpenAI (length: %d)", data.delta.length);
         sendAudioToTwilio(data.delta);
@@ -2576,8 +2584,13 @@ wss.on("connection", async (twilioSocket, req) => {
         }
         console.log("[AI-Desk] User started speaking - interrupting AI");
         
-        // 1. Tell OpenAI to stop current response
-        sendToOpenAI({ type: "response.cancel" });
+        // 1. Tell OpenAI to stop current response only if one is active
+        if (responseInProgress) {
+          sendToOpenAI({ type: "response.cancel" });
+          responseInProgress = false;
+        } else {
+          console.log("[AI-Desk] Skipped response.cancel (no active response)");
+        }
 
         // 2. Tell Twilio to clear any queued audio
         if (twilioSocket.readyState === WebSocket.OPEN && streamSid) {

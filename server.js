@@ -2353,6 +2353,7 @@ wss.on("connection", async (twilioSocket, req) => {
     }
   }
 
+  let audioChunkCount = 0;
   function sendAudioToTwilio(base64Audio) {
     if (!streamSid || twilioSocket.readyState !== WebSocket.OPEN) {
       if (pendingTwilioAudio.length < 100) { // Limit cache to avoid memory issues
@@ -2362,6 +2363,10 @@ wss.on("connection", async (twilioSocket, req) => {
     }
 
     try {
+      audioChunkCount++;
+      if (audioChunkCount % 20 === 0) {
+        console.log(`[AI-Desk] Sent ${audioChunkCount} audio chunks to Twilio streamSid=${streamSid}`);
+      }
       twilioSocket.send(
         JSON.stringify({
           event: "media",
@@ -2860,6 +2865,11 @@ wss.on("connection", async (twilioSocket, req) => {
       }
 
       if (data.type && data.type.includes("error")) {
+        // Ignore harmless race condition error when cancelling a finishing response
+        if (data.error && data.error.code === "response_cancel_not_active") {
+          return;
+        }
+        
         console.error("[AI-Desk] OpenAI error type=%s", data.type, data);
         
         // Handle invalid_model error by attempting fallback to a known good model

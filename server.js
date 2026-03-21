@@ -2838,7 +2838,7 @@ wss.on("connection", async (twilioSocket, req) => {
         }
       }
 
-      if (data.type === "response.completed") {
+      if (data.type === "response.done") {
         const callerAskedHuman = /human|person|representative|manager|transfer/i.test(transcript);
         if (callerAskedHuman && !transferAttempted && isBusinessHours(tenant)) {
           transferAttempted = true;
@@ -2848,7 +2848,7 @@ wss.on("connection", async (twilioSocket, req) => {
 
         if (hasBooked && !hasScheduledHangup) {
           hasScheduledHangup = true;
-          console.log("[AI-Desk] Booking confirmed, closing call in 6s...");
+          console.log("[AI-Desk] Booking confirmed, closing call in 3s...");
           setTimeout(async () => {
             try {
               const client = twilioLib.getClientForTenant(tenant);
@@ -2870,7 +2870,7 @@ wss.on("connection", async (twilioSocket, req) => {
               status: 'completed',
               markEnded: true
             });
-          }, 6000);
+          }, 3000);
         }
         return;
       }
@@ -2922,9 +2922,6 @@ wss.on("connection", async (twilioSocket, req) => {
       streamStarted = true;
       console.log("[AI-Desk] Twilio Stream started streamSid=%s callSid=%s", streamSid, callSid);
 
-      // Trigger greeting now that we have a streamSid
-      triggerGreetingIfReady();
-
       while (pendingTwilioAudio.length && streamSid && twilioSocket.readyState === WebSocket.OPEN) {
         const chunk = pendingTwilioAudio.shift();
         twilioSocket.send(
@@ -2971,19 +2968,27 @@ wss.on("connection", async (twilioSocket, req) => {
         }
 
         if (from) {
-          getCallerHistory(from).then(history => {
-            if (history) {
-              console.log("[AI-Desk] Returning caller detected: %s", from);
-              sendToOpenAI({
-                type: "session.update",
-                session: {
-                  instructions: `THIS CALLER HAS CONTACTED BEFORE. Greet them like a returning customer.\n\nPrevious conversation summary/transcript:\n${history}\n\n${instructions}`
-                }
-              });
-            }
-          }).catch(err => console.error("[AI-Desk] Caller history lookup failed:", err.message));
+          let history = null;
+          try {
+            history = await getCallerHistory(from);
+          } catch (err) {
+            console.error("[AI-Desk] Caller history lookup failed:", err.message);
+          }
+
+          if (history) {
+            console.log("[AI-Desk] Returning caller detected: %s", from);
+            sendToOpenAI({
+              type: "session.update",
+              session: {
+                instructions: `THIS CALLER HAS CONTACTED BEFORE. Greet them like a returning customer.\n\nPrevious conversation summary/transcript:\n${history}\n\n${instructions}`
+              }
+            });
+          }
         }
       }
+
+      // Trigger greeting AFTER any history lookups are finished and applied
+      triggerGreetingIfReady();
 
       return;
     }

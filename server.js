@@ -2298,6 +2298,36 @@ wss.on("connection", async (twilioSocket, req) => {
   const openaiQueue = [];
   let openaiReady = false;
   let openaiSocket = null;
+  let streamStarted = false;
+  let greetingTriggered = false;
+
+  function triggerGreetingIfReady() {
+    if (openaiReady && streamStarted && !greetingTriggered) {
+      greetingTriggered = true;
+      const useRecoveryFlow = isRecovery || (isNurturing && recoveryScript);
+      
+      if (!useRecoveryFlow) {
+        console.log("[AI-Desk] Triggering initial greeting (StreamReady & OpenAIReady)");
+        sendToOpenAI({
+          type: "response.create",
+          response: {
+            modalities: ["audio", "text"],
+            instructions: "Greet the user warmly as a professional receptionist. Ask how you can help them today."
+          }
+        });
+      } else if (recoveryScript) {
+        console.log("[AI-Desk] Triggering recovery greeting (StreamReady & OpenAIReady): %s", recoveryScript);
+        sendToOpenAI({
+          type: "response.create",
+          response: {
+            modalities: ["audio", "text"],
+            instructions: `Greet the user by saying EXACTLY this and nothing else yet: "${recoveryScript}"`
+          }
+        });
+      }
+    }
+  }
+
   const crmLeadSentRef = { sent: false };
   const openaiModelCandidates = [...new Set([process.env.OPENAI_MODEL, "gpt-4o-realtime-preview-2024-12-17", "gpt-realtime"])]
     .filter(Boolean);
@@ -2324,17 +2354,23 @@ wss.on("connection", async (twilioSocket, req) => {
 
   function sendAudioToTwilio(base64Audio) {
     if (!streamSid || twilioSocket.readyState !== WebSocket.OPEN) {
-      pendingTwilioAudio.push(base64Audio);
+      if (pendingTwilioAudio.length < 100) { // Limit cache to avoid memory issues
+        pendingTwilioAudio.push(base64Audio);
+      }
       return;
     }
 
-    twilioSocket.send(
-      JSON.stringify({
-        event: "media",
-        streamSid,
-        media: { payload: base64Audio }
-      })
-    );
+    try {
+      twilioSocket.send(
+        JSON.stringify({
+          event: "media",
+          streamSid,
+          media: { payload: base64Audio }
+        })
+      );
+    } catch (e) {
+      console.error("[AI-Desk] Error sending audio to Twilio:", e.message);
+    }
   }
 
   function connectOpenAI(modelIndex) {
@@ -2359,9 +2395,10 @@ wss.on("connection", async (twilioSocket, req) => {
       openaiReady = true;
       while (openaiQueue.length) {
         const msg = openaiQueue.shift();
-        console.log("[DEBUG] Flushing from openaiQueue:", msg.slice(0, 500));
         openaiSocket.send(msg);
       }
+
+      triggerGreetingIfReady();
 
       let recoveryRecord = null;
       if (isRecovery && recoveryId) {
@@ -2513,29 +2550,6 @@ wss.on("connection", async (twilioSocket, req) => {
       console.log("[DEBUG] Sending payload to OpenAI:", JSON.stringify(payloadToOpenAI, null, 2));
       sendToOpenAI(payloadToOpenAI);
 
-      // Trigger initial greeting for non-recovery calls to ensure AI speaks first
-      if (!useRecoveryFlow) {
-        console.log("[AI-Desk] Triggering initial greeting");
-        sendToOpenAI({
-          type: "response.create",
-          response: {
-            modalities: ["audio", "text"],
-            instructions: "Greet the user warmly as a professional receptionist. Ask how you can help them today."
-          }
-        });
-      }
-
-
-      if (useRecoveryFlow && recoveryScript) {
-        console.log("[AI-Desk] Triggering recovery/nurturing greeting: %s", recoveryScript);
-        sendToOpenAI({
-          type: "response.create",
-          response: {
-            modalities: ["audio", "text"],
-            instructions: `Greet the user by saying EXACTLY this and nothing else yet: "${recoveryScript}"`
-          }
-        });
-      }
     });
 
     openaiSocket.on("message", async (msg) => {
@@ -2859,8 +2873,13 @@ wss.on("connection", async (twilioSocket, req) => {
     }
 
     if (msg.event === "start") {
-      streamSid = msg.start?.streamSid || null;
+      streamSid = msg.start?.streamSid || msg.streamSid || null;
       callSid = msg.start?.callSid || null;
+      streamStarted = true;
+      console.log("[AI-Desk] Twilio Stream started streamSid=%s callSid=%s", streamSid, callSid);
+
+      // Trigger greeting now that we have a streamSid
+      triggerGreetingIfReady();
 
       while (pendingTwilioAudio.length && streamSid && twilioSocket.readyState === WebSocket.OPEN) {
         const chunk = pendingTwilioAudio.shift();

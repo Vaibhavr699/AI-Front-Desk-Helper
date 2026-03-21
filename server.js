@@ -2592,8 +2592,8 @@ wss.on("connection", async (twilioSocket, req) => {
           console.log("[AI-Desk] Skipped response.cancel (no active response)");
         }
 
-        // 2. Tell Twilio to clear any queued audio
-        if (twilioSocket.readyState === WebSocket.OPEN && streamSid) {
+        // 2. Tell Twilio to clear any queued audio ONLY if we just interrupted a live response
+        if (twilioSocket.readyState === WebSocket.OPEN && streamSid && responseInProgress) {
           twilioSocket.send(JSON.stringify({
             event: "clear",
             streamSid: streamSid
@@ -2792,6 +2792,9 @@ wss.on("connection", async (twilioSocket, req) => {
             output,
           },
         });
+        
+        // Force the AI to respond immediately with the new context
+        sendToOpenAI({ type: "response.create" });
         return;
       }
 

@@ -920,11 +920,12 @@ function buildSmsSystemPrompt(thread, tenant = null) {
   const coreSmsRules = [
     `You are an SMS receptionist for ${companyName}.`,
     `TONE OF VOICE: Your tone of voice is ${toneOfVoice}. Maintain this personality in your texts.`,
-    "Flow: qualify lead, gather full_name, project_type, project_details, address, preferred appointment_date and appointment_time.",
+    "Flow: qualify lead, gather full_name, contact email, contact phone, project_type, project_details, address, preferred appointment_date and appointment_time.",
+    "MANDATORY CONTACT INFO: You MUST collect the customer's full_name, a valid phone number, and a valid email address BEFORE setting should_book=true. If any of these are missing, ask for them politely (e.g., 'To confirm your spot, could I also get your email address?').",
     "Be concise, friendly, and use one short text message. Avoid long paragraphs.",
     "SERVICE TYPES: Do NOT assume the customer wants a specific service (like interior or exterior painting) unless they mention it or it is in the business details. Ask: 'What type of service are you looking for?'",
     "IMPORTANT: When the customer provides a date/time and you set should_book=true, do NOT say 'I have scheduled' or 'You are booked'. Instead say something like 'Let me check availability for that time' or 'I'll confirm that slot for you shortly'. The system will check the calendar and provide the final confirmation.",
-    "If enough details exist to request booking, set should_book true.",
+    "If enough details exist (including name, phone, and email) to request booking, set should_book true.",
     "If the customer wants to cancel, set should_cancel true.",
     "If the customer wants to reschedule, set should_reschedule true and provide the new appointment_date/time.",
     "REVENUE ESTIMATION: Always provide an estimated_value (number, in dollars) based on the project_details (e.g., Room: 500, Interior: 2500, Exterior: 5000)."
@@ -1101,6 +1102,20 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
   }
 
   if (!ai.should_book || !ai.appointment_date || !ai.appointment_time) return null;
+
+  // ENSURE CONTACT INFO IS PRESENT
+  const fullName = ai.lead_capture?.full_name || thread.leadCapture?.full_name;
+  const phone = ai.lead_capture?.phone || thread.leadCapture?.phone || thread.phone;
+  const email = ai.lead_capture?.email || thread.leadCapture?.email;
+
+  if (!fullName || !phone || !email) {
+    let missing = [];
+    if (!fullName) missing.push("full name");
+    if (!phone) missing.push("phone number");
+    if (!email) missing.push("email address");
+    
+    return `To finalize your booking, I just need your ${missing.join(" and ")}. Please share that and I'll get you scheduled!`;
+  }
 
   let parsedDate = new Date(ai.appointment_date);
   const now = new Date();
@@ -1294,8 +1309,8 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
 
   // Reset follow up count because they just replied
   thread.followUpCount = 0;
-  await forwardLeadCaptureToCRM(thread.leadCapture, { sent: false }, tenant?.id);
 
+  // Record response in history
   thread.history.push({ role: "assistant", text: replyText, at: new Date().toISOString() });
   thread.lastOutboundAt = Date.now();
 
@@ -1304,8 +1319,14 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
     messagesService.saveMessage(tenant.id, thread.leadId, thread.channel || "sms", "outbound", replyText);
   }
 
-
-  return replyText;
+  return {
+    reply: replyText,
+    lead_capture: ai.lead_capture,
+    booking_confirmed: (ai.should_book && bookingResult && bookingResult.includes("✅")) ? {
+      date: ai.appointment_date,
+      time: ai.appointment_time
+    } : null
+  };
 }
 async function processFacebookConversation(senderId, messageText, tenant = null) {
   const threadKey = `fb-${senderId}`;
@@ -1402,8 +1423,14 @@ async function processFacebookConversation(senderId, messageText, tenant = null)
     messagesService.saveMessage(tenant.id, thread.leadId, "facebook", "outbound", replyText);
   }
 
-
-  return replyText;
+  return {
+    reply: replyText,
+    lead_capture: ai.lead_capture,
+    booking_confirmed: (ai.should_book && bookingResult && bookingResult.includes("✅")) ? {
+      date: ai.appointment_date,
+      time: ai.appointment_time
+    } : null
+  };
 }
 
 
@@ -2059,8 +2086,8 @@ app.post("/twilio-sms", async (req, res) => {
     const toNum = req.body?.To || req.body?.to;
     const tenant = await getTenantByPhone(toNum);
 
-    const reply = await processSmsConversation(from, body, tenant);
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escapeXml(reply)}</Message></Response>`;
+    const result = await processSmsConversation(from, body, tenant);
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escapeXml(result.reply)}</Message></Response>`;
     res.type("text/xml").send(twiml);
   } catch (error) {
     console.error("Twilio SMS webhook error:", error.stack || error.message);
@@ -2278,13 +2305,21 @@ wss.on("connection", async (twilioSocket, req) => {
   function sendToOpenAI(payload) {
     const message = typeof payload === "string" ? payload : JSON.stringify(payload);
     if (!message.includes("input_audio_buffer.append")) {
-      console.log("[DEBUG] sendToOpenAI:", message.slice(0, 500));
+      console.log("[DEBUG] sendToOpenAI type=%s queueSize=%d content=%s", 
+        payload.type || "unknown", 
+        openaiQueue.length,
+        message.slice(0, 300)
+      );
     }
     if (openaiReady && openaiSocket.readyState === WebSocket.OPEN) {
       openaiSocket.send(message);
       return;
     }
     openaiQueue.push(message);
+    if (openaiQueue.length > 500 && message.includes("input_audio_buffer.append")) {
+       // Optional: Drop oldest audio if queue is getting too big to avoid memory pressure or backlog
+       openaiQueue.shift();
+    }
   }
 
   function sendAudioToTwilio(base64Audio) {
@@ -2507,6 +2542,9 @@ wss.on("connection", async (twilioSocket, req) => {
       let data;
       try {
         data = JSON.parse(msg.toString());
+        if (data.type !== "response.audio.delta") {
+           console.log("[DEBUG] OpenAI Event:", data.type, data.event_id || "");
+        }
       } catch (e) {
         return;
       }
@@ -2534,6 +2572,10 @@ wss.on("connection", async (twilioSocket, req) => {
             streamSid: streamSid
           }));
         }
+      }
+
+      if (data.type === "input_audio_buffer.speech_stopped") {
+        console.log("[AI-Desk] User stopped speaking");
       }
 
       if (data.type === "conversation.item.input_audio_transcription.completed") {
@@ -3018,12 +3060,12 @@ if (!tenant) {
     const thread = getOrCreateSmsThread(sessionId);
     thread.channel = "website";
 
-    const reply = await processSmsConversation(sessionId, message, tenant);
+    const result = await processSmsConversation(sessionId, message, tenant);
     const tenantName = tenant ? (tenant.company_name || tenant.name) : null;
     emailService
-      .sendWebsiteChatNotificationEmail({ message, sessionId, reply, tenantName })
+      .sendWebsiteChatNotificationEmail({ message, sessionId, reply: result.reply, tenantName })
       .catch((err) => console.error("Website chat email to Drew:", err.message));
-    res.json({ reply });
+    res.json(result);
   } catch (error) {
     console.error("Website chat error:", error.message);
     res.status(500).json({ reply: "Something went wrong." });

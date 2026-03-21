@@ -7,6 +7,38 @@ import { Header, Sidebar } from "../components";
 const TENANT_STORAGE_KEY = "tenantId";
 const SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
 
+function ChatWidget({ tenantId }) {
+  useEffect(() => {
+    if (!tenantId) return;
+
+    const scriptId = "ai-front-desk-chat-widget";
+    const existing = document.getElementById(scriptId);
+    if (existing) existing.remove();
+
+    // Remove any existing widget UI from DOM if script is being re-injected
+    const toggle = document.getElementById("ai-chat-toggle");
+    if (toggle) toggle.remove();
+    const container = document.getElementById("ai-chat-container");
+    if (container) container.remove();
+    const callout = document.getElementById("ai-chat-callout");
+    if (callout) callout.remove();
+
+    const script = document.createElement("script");
+    script.id = scriptId;
+    script.src = `${window.location.protocol}//${window.location.hostname}:3001/chat-widget.js`;
+    script.setAttribute("data-tenant-id", tenantId);
+    script.defer = true;
+    document.body.appendChild(script);
+
+    return () => {
+      const s = document.getElementById(scriptId);
+      if (s) s.remove();
+    };
+  }, [tenantId]);
+
+  return null;
+}
+
 export default function DashboardLayout() {
   const [tenants, setTenants] = useState([]);
   const user = getUser();
@@ -153,6 +185,8 @@ export default function DashboardLayout() {
           </div>
         </main>
       </div>
+
+      <ChatWidget tenantId={tenantId} />
 
       <CookieConsent
         location="bottom"

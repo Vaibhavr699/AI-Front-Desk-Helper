@@ -253,6 +253,8 @@ async function triggerFollowUp(lead) {
     smsBtn.id = "ai-widget-sms-btn";
     smsBtn.innerHTML = "SMS";
     smsBtn.title = "Text us instead";
+    smsBtn.target = "_blank";
+    smsBtn.rel = "noopener noreferrer";
     smsBtn.style.display = "none"; // Hidden until number is loaded
     Object.assign(smsBtn.style, {
       padding: "4px 10px", borderRadius: "6px",
@@ -261,6 +263,13 @@ async function triggerFollowUp(lead) {
       marginRight: "8px", textDecoration: "none", flexShrink: "0",
       display: "flex", alignItems: "center", justifyContent: "center"
     });
+    smsBtn.onclick = function(e) {
+      // Manual trigger for sms: protocol to ensure it fires in all browsers
+      if (this.href && this.href.startsWith("sms:")) {
+        window.location.href = this.href;
+        e.preventDefault();
+      }
+    };
     header.appendChild(smsBtn);
 
     const scriptUrl = apiBase + "/chat-widget.js";
@@ -369,36 +378,6 @@ async function triggerFollowUp(lead) {
       messagesBody.appendChild(bubble);
       messagesBody.scrollTop = messagesBody.scrollHeight;
     }
-function showBookingForm() {
-
-  const booking = document.createElement("div");
-
-  booking.innerHTML = `
-  <div style="padding:10px;background:#f5f5f5;border-radius:10px;">
-  <b>Schedule Estimate</b>
-  <input id="ai-name" placeholder="Name" style="width:100%;margin-top:5px">
-  <input id="ai-phone" placeholder="Phone" style="width:100%;margin-top:5px">
-  <input id="ai-date" type="date" style="width:100%;margin-top:5px">
-  <button id="ai-book-btn" style="width:100%;margin-top:8px">Book</button>
-  </div>
-  `;
-
-  messagesBody.appendChild(booking);
-
-  document.getElementById("ai-book-btn").onclick = async () => {
-
-    const lead = {
-      name: document.getElementById("ai-name").value,
-      phone: document.getElementById("ai-phone").value,
-      date: document.getElementById("ai-date").value
-    };
-
-    await sendLeadToCRM(lead);
-    await triggerFollowUp(lead);
-
-    addMsg("✅ Appointment request sent!", false);
-  };
-}
     toggle.onmouseover = () => {
       toggle.style.transform = "scale(1.05)";
     };
@@ -473,15 +452,19 @@ function showBookingForm() {
 
         typing.remove();
         trackVisitor("message_sent", { message: val });
-        addMsg(data.reply || "I'm sorry, I encountered an issue.", false);
 
-        if (data.lead_capture) {
-          console.log("Lead Captured:", data.lead_capture);
-          await sendLeadToCRM(data.lead_capture);
-          await triggerFollowUp(data.lead_capture);
+        // If the backend returned a structured reply in result.reply, we already show that.
+        // We handle additional metadata like lead_capture or booking_confirmed automagically now.
+        if (data.reply) {
+          addMsg(data.reply, false);
+        } else {
+          addMsg("I'm sorry, I encountered an issue.", false);
         }
-        if (data.show_booking) {
-          showBookingForm();
+
+        if (data.lead_capture && Object.keys(data.lead_capture).length > 0) {
+          console.log("Lead Captured:", data.lead_capture);
+          // Sync with CRM asynchronously
+          sendLeadToCRM(data.lead_capture);
         }
         if (data.booking_confirmed) {
           addMsg(

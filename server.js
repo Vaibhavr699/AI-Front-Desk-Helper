@@ -2848,7 +2848,7 @@ wss.on("connection", async (twilioSocket, req) => {
 
         if (hasBooked && !hasScheduledHangup) {
           hasScheduledHangup = true;
-          console.log("[AI-Desk] Booking confirmed, closing call in 3s...");
+          console.log("[AI-Desk] Booking confirmed, closing call in 6s...");
           setTimeout(async () => {
             try {
               const client = twilioLib.getClientForTenant(tenant);
@@ -2870,7 +2870,7 @@ wss.on("connection", async (twilioSocket, req) => {
               status: 'completed',
               markEnded: true
             });
-          }, 3000);
+          }, 6000);
         }
         return;
       }

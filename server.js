@@ -453,7 +453,10 @@ app.get("/health", (req, res) => res.status(200).send("OK"));
 
 app.get("/api/public-tenant/:id", async (req, res) => {
   try {
-    const tenant = await getTenantById(req.params.id);
+    let tenant = await getTenantById(req.params.id).catch(() => null);
+    if (!tenant) {
+      tenant = await getTenantBySlug(req.params.id).catch(() => null);
+    }
     if (!tenant) return res.status(404).json({ error: "Tenant not found" });
 
     // Return only safe fields needed by the website chat widget
@@ -600,11 +603,6 @@ async function getCallerHistory(phone) {
     [phone]
   );
   return result.rows[0]?.transcript || null;
-}
-
-function isBusinessHours(tenant) {
-  const hour = new Date().getHours();
-  return hour >= tenant.businessHours.start && hour < tenant.businessHours.end;
 }
 
 function normalizeBaseUrl(baseUrl) {
@@ -1652,7 +1650,30 @@ function normalizeTimeString(timeValue) {
   return "";
 }
 
-function buildAppointmentWindow(dateValue, timeValue, durationMinutes = 60) {
+function getTzOffsetString(timeZone, dateStr) {
+  try {
+    const dateToCheck = new Date(dateStr + "T12:00:00Z"); // Midday UTC to avoid edge cases
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortOffset' }).formatToParts(dateToCheck);
+    const o = parts.find(p => p.type === 'timeZoneName').value;
+    
+    if (o === "GMT") return "Z";
+    let offset = o.replace("GMT", "");
+    if (!offset.includes(":")) {
+      const sign = offset[0];
+      const hours = offset.slice(1).padStart(2, "0");
+      return `${sign}${hours}:00`;
+    } else {
+      const sign = offset[0];
+      let [hours, mins] = offset.slice(1).split(":");
+      hours = hours.padStart(2, "0");
+      return `${sign}${hours}:${mins}`;
+    }
+  } catch(e) { 
+    return "Z"; 
+  }
+}
+
+function buildAppointmentWindow(dateValue, timeValue, durationMinutes = 60, timeZone = "UTC") {
   const normalizedDate = String(dateValue || "").trim();
   const normalizedTime = normalizeTimeString(timeValue);
   const duration = Number(durationMinutes) > 0 ? Number(durationMinutes) : 60;
@@ -1661,7 +1682,8 @@ function buildAppointmentWindow(dateValue, timeValue, durationMinutes = 60) {
     return null;
   }
 
-  const start = new Date(`${normalizedDate}T${normalizedTime}`);
+  const offset = getTzOffsetString(timeZone, normalizedDate);
+  const start = new Date(`${normalizedDate}T${normalizedTime}${offset}`);
   if (Number.isNaN(start.getTime())) return null;
 
   const end = new Date(start.getTime() + duration * 60 * 1000);
@@ -1674,7 +1696,8 @@ async function checkAvailability(args = {}, tenant = null) {
     return { ok: false, reason: "calendar_not_configured" };
   }
 
-  const window = buildAppointmentWindow(args.appointment_date, args.appointment_time, args.duration_minutes || 60);
+  const tz = (tenant && tenant.timezone) || BUSINESS_TIMEZONE || "America/Chicago";
+  const window = buildAppointmentWindow(args.appointment_date, args.appointment_time, args.duration_minutes || 60, tz);
   if (!window) {
     return { ok: false, reason: "invalid_datetime", message: "Use appointment_date (YYYY-MM-DD) and appointment_time (HH:MM or 1:30 PM)." };
   }
@@ -1686,7 +1709,7 @@ async function checkAvailability(args = {}, tenant = null) {
       requestBody: {
         timeMin: window.start.toISOString(),
         timeMax: window.end.toISOString(),
-        timeZone: BUSINESS_TIMEZONE,
+        timeZone: tz,
         items: [{ id: calendarId }]
       }
     });
@@ -1698,7 +1721,7 @@ async function checkAvailability(args = {}, tenant = null) {
       busySlots: busy,
       startIso: window.start.toISOString(),
       endIso: window.end.toISOString(),
-      timezone: BUSINESS_TIMEZONE
+      timezone: tz
     };
   } catch (err) {
     const errMsg = err.message || (err.response && err.response.data && err.response.data.error && err.response.data.error.message) || String(err);
@@ -1715,7 +1738,8 @@ async function bookAppointment(args = {}, tenant = null) {
   const cal = tenant ? getCalendarForTenant(tenant) : calendar.instance;
   if (!cal) return { ok: false, reason: "calendar_not_configured" };
 
-  const window = buildAppointmentWindow(args.appointment_date, args.appointment_time, args.duration_minutes || 60);
+  const tz = (tenant && tenant.timezone) || BUSINESS_TIMEZONE || "America/Chicago";
+  const window = buildAppointmentWindow(args.appointment_date, args.appointment_time, args.duration_minutes || 60, tz);
   if (!window) {
     return { ok: false, reason: "invalid_datetime", message: "Use appointment_date (YYYY-MM-DD) and appointment_time (HH:MM or 1:30 PM)." };
   }
@@ -1732,8 +1756,8 @@ async function bookAppointment(args = {}, tenant = null) {
       args.address ? `Address: ${args.address}` : "",
       args.project_details ? `Project: ${args.project_details}` : ""
     ].filter(Boolean).join("\n"),
-    start: { dateTime: window.start.toISOString(), timeZone: BUSINESS_TIMEZONE },
-    end: { dateTime: window.end.toISOString(), timeZone: BUSINESS_TIMEZONE }
+    start: { dateTime: window.start.toISOString(), timeZone: tz },
+    end: { dateTime: window.end.toISOString(), timeZone: tz }
   };
 
   try {
@@ -1951,24 +1975,7 @@ async function handleTwilioVoice(req, res, tenantId) {
     resolvedTenantId = "gladiators";
   }
 
-  // Business Hours Gating
-  const isOpen = isWithinBusinessHours(tenant);
-  if (!isOpen) {
-    const behavior = tenant.afterhours_behavior || 'voicemail';
-    if (behavior === 'transfer' && tenant.transferNumber) {
-      return res.type("text/xml").send(`<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say>Thanks for calling. We are currently closed, but transferring you to our after-hours team.</Say>
-  <Dial>${tenant.transferNumber}</Dial>
-</Response>`);
-    } else {
-      return res.type("text/xml").send(`<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say>Thanks for calling. We are currently closed. Please call back during business hours. Goodbye.</Say>
-  <Hangup/>
-</Response>`);
-    }
-  }
+  // Business hours gating removed to allow 24/7 AI answering.
 
   try {
     if (!OPENAI_API_KEY) {
@@ -2484,7 +2491,12 @@ wss.on("connection", async (twilioSocket, req) => {
       ].join("\n");
 
       // 2. TENANT CUSTOM INSTRUCTIONS
-      let combinedInstructions = coreSystemRules;
+      const isOfficeCurrentlyOpen = isWithinBusinessHours(tenant);
+      const businessHoursContext = isOfficeCurrentlyOpen 
+        ? "The office is currently OPEN. You may use request_human_transfer if appropriate based on your instructions." 
+        : "The office is currently CLOSED. Do NOT use request_human_transfer. If the caller asks for a human, politely inform them the office is closed and offer to take a message, book an appointment, or have someone call back during business hours.";
+      
+      let combinedInstructions = coreSystemRules + `\n\nOFFICE STATUS: ${businessHoursContext}`;
       if (tenant?.instructions) {
         combinedInstructions += "\n\nBUSINESS SPECIFIC INSTRUCTIONS:\n" + tenant.instructions;
       }
@@ -2752,13 +2764,17 @@ wss.on("connection", async (twilioSocket, req) => {
               await estimateRecoveryService.recordResponse(recoveryRecord.id);
               output = JSON.stringify({ success: true, message: `Objection ${objType} recorded. Adjusting follow-up sequence.` });
             } else if (name === "request_human_transfer" && callSid && tenant) {
-              const result = await transferService.initiateTransfer(
-                callSid,
-                null,
-                args.reason,
-                args.summary
-              );
-              output = JSON.stringify(result);
+              if (!isWithinBusinessHours(tenant)) {
+                output = JSON.stringify({ success: false, error: "Office is currently closed. Tell the caller the office is closed and you cannot transfer them right now, but you can help take a message or schedule a callback." });
+              } else {
+                const result = await transferService.initiateTransfer(
+                  callSid,
+                  null,
+                  args.reason,
+                  args.summary
+                );
+                output = JSON.stringify(result);
+              }
             } else if (name === "hang_up" && callSid) {
               console.log("[AI-Desk] Realtime hang_up trigger callSid=%s", callSid);
               output = JSON.stringify({ success: true, message: "Call ending." });
@@ -2840,7 +2856,7 @@ wss.on("connection", async (twilioSocket, req) => {
 
       if (data.type === "response.done") {
         const callerAskedHuman = /human|person|representative|manager|transfer/i.test(transcript);
-        if (callerAskedHuman && !transferAttempted && isBusinessHours(tenant)) {
+        if (callerAskedHuman && !transferAttempted && isWithinBusinessHours(tenant)) {
           transferAttempted = true;
           await attemptTransfer(callSid, tenant);
         }
@@ -3247,11 +3263,11 @@ app.post("/facebook-webhook", async (req, res) => {
     // Stop typing indicator
     await sendTypingIndicator(senderId, "typing_off", pageAccessToken);
 
-    const reply = await processFacebookConversation(senderId, messageText, tenant);
+    const result = await processFacebookConversation(senderId, messageText, tenant);
 
     await sendFacebookMessage(
       senderId,
-      reply,
+      result.reply,
       ["Get a Free Quote", "Talk to a Human", "Book Estimate"],
       pageAccessToken
     );

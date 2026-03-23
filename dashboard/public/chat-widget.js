@@ -8,6 +8,9 @@
     localStorage.setItem("ai_session_id", sessionId);
   }
 
+  let scriptTag = document.getElementById("ai-front-desk-chat-widget");
+  const tenantId = scriptTag ? scriptTag.getAttribute("data-tenant-id") : null;
+
   let hasWelcomed = false;
   let isOpen = false;
 
@@ -251,7 +254,7 @@
       const response = await fetch(apiBase + "/website-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, sessionId: sessionId }),
+        body: JSON.stringify({ message: text, sessionId: sessionId, tenantId: tenantId }),
       });
       removeTypingIndicator();
       if (!response.ok) {

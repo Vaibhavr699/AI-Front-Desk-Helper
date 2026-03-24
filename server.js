@@ -370,13 +370,17 @@ app.post("/webhooks/resend/inbound", express.raw({ type: "application/json", lim
       console.log("[Resend Inbound] No lead found for reply from:", fromEmail, "subject:", subject);
       return;
     }
-    const bodyText = data.text || "";
-    const bodyHtml = data.html || "";
-    // Priority: text, then stripped-down-ish html, then fallback
+    console.log("[Resend Inbound] Data Keys:", Object.keys(data).join(", "));
+    const bodyText = data.text || data.body_text || "";
+    const bodyHtml = data.html || data.body_html || "";
+    const snippet = data.snippet || "";
+    // Priority: text, then stripped-down-ish html, then snippet, then fallback
     let body = bodyText.trim();
     if (!body && bodyHtml) {
       body = bodyHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      if (body.length > 500) body = body.slice(0, 500) + "...";
     }
+    if (!body && snippet) body = snippet;
     if (!body) body = `Re: ${subject}`;
 
     await messagesService.saveMessage(leadRow.tenant_id, leadRow.id, "email", "inbound", body, { resend_email_id: emailId, from: fromEmail, to: toList });

@@ -354,6 +354,7 @@ app.post("/webhooks/resend/inbound", express.raw({ type: "application/json", lim
   res.status(200).send();
   if (!event || event.type !== "email.received" || !event.data) return;
   const data = event.data;
+  console.log("[Resend Inbound] Full Data:", JSON.stringify(data, null, 2));
   const fromRaw = data.from || "";
   const toList = Array.isArray(data.to) ? data.to : [data.to].filter(Boolean);
   const subject = data.subject || "(No subject)";

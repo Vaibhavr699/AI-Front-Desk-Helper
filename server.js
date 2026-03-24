@@ -390,6 +390,7 @@ app.post("/webhooks/resend/inbound", express.raw({ type: "application/json", lim
   }
 });
 
+// Widget routes defined after body parsers and CORS
 app.get("/chat-widget.js", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "chat-widget.js"));
 });
@@ -403,8 +404,6 @@ app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 app.use(express.json({ limit: "2mb" }));
 
 // CORS: allow frontend origin (e.g. dashboard :3089 → API :3001).
-// When CORS_ORIGINS is unset, any origin is allowed. Set CORS_ORIGINS to a comma-separated list to restrict, or "*" to allow all.
-// Same-host origins (e.g. http://HOST:3089 when API is on HOST:3001) are always allowed when BASE_URL host matches.
 const BASE_URL_FOR_CORS = process.env.BASE_URL || "";
 app.use(
   cors({
@@ -429,6 +428,59 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+
+app.post("/api/widget/start-sms", async (req, res) => {
+  const { tenantId, phone, consent, consentText, source, pageUrl, sessionId } = req.body;
+
+  if (!tenantId || !phone || consent !== true) {
+    return res.status(400).json({ error: "Missing required fields or consent not given" });
+  }
+
+  try {
+    const tenant = await getTenantById(tenantId);
+    if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+
+    // 1. Record Consent
+    await db.query(
+      `INSERT INTO sms_consents (tenant_id, phone, consent_text, source, ip_address, user_agent, page_url, session_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [tenantId, phone, consentText || "Consent given via widget", source || "widget_sms_popup", req.ip, req.headers["user-agent"], pageUrl, sessionId]
+    );
+
+    // 2. Find or Create Lead
+    let lead = await db.query("SELECT id FROM leads WHERE tenant_id = $1 AND phone = $2", [tenantId, phone]).then(r => r.rows[0]);
+    if (!lead) {
+      const leadRes = await db.query(
+        "INSERT INTO leads (tenant_id, phone, lead_source, created_at, updated_at) VALUES ($1, $2, $3, now(), now()) RETURNING id",
+        [tenantId, phone, source || "widget_sms_popup"]
+      );
+      lead = leadRes.rows[0];
+    }
+
+    // 3. Send Initial SMS
+    try {
+      const twilioClient = twilioLib.getClientForTenant(tenant);
+      const fromPhone = (await db.query("SELECT phone FROM phone_numbers WHERE tenant_id = $1 ORDER BY is_primary DESC LIMIT 1", [tenantId]).then(r => r.rows[0]?.phone)) || process.env.TWILIO_PHONE_NUMBER;
+
+      if (twilioClient && fromPhone) {
+        const brandName = tenant.company_name || tenant.name || "Front Desk";
+        const body = `Hi, this is ${brandName} — let’s get that appointment booked. Msg/data rates may apply. Reply STOP to opt out, HELP for help.`;
+        
+        await twilioClient.messages.create({ to: phone, from: fromPhone, body });
+        
+        // 4. Save outbound message to dashboard
+        await messagesService.saveMessage(tenantId, lead.id, "sms", "outbound", body, { source: "widget_optin" });
+      }
+    } catch (smsErr) {
+      console.error("[SMS Opt-in] Automated SMS failed but consent recorded:", smsErr.message);
+    }
+
+    res.json({ success: true, leadId: lead.id });
+  } catch (error) {
+    console.error("[SMS Opt-in] Error:", error.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 const PORT = process.env.PORT;
 const BASE_URL = process.env.BASE_URL;
@@ -1144,7 +1196,14 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
     return `To finalize your booking, I just need your ${missing.join(" and ")}. Please share that and I'll get you scheduled!`;
   }
 
-  let parsedDate = new Date(ai.appointment_date);
+  // Parse date string safely — avoid new Date("YYYY-MM-DD") which interprets as UTC midnight
+  const dateParts = String(ai.appointment_date).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  let parsedDate;
+  if (dateParts) {
+    parsedDate = new Date(Number(dateParts[1]), Number(dateParts[2]) - 1, Number(dateParts[3]));
+  } else {
+    parsedDate = new Date(ai.appointment_date);
+  }
   const now = new Date();
   const currentYear = now.getFullYear();
 
@@ -1156,7 +1215,7 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
   today.setHours(0, 0, 0, 0);
   parsedDate.setHours(0, 0, 0, 0);
 
-  if (parsedDate < now) {
+  if (parsedDate < today) {
     parsedDate.setFullYear(parsedDate.getFullYear() + 1);
   }
 
@@ -2538,6 +2597,14 @@ wss.on("connection", async (twilioSocket, req) => {
         : "The office is currently CLOSED. Do NOT use request_human_transfer. If the caller asks for a human, politely inform them the office is closed and offer to take a message, book an appointment, or have someone call back during business hours.";
       
       let combinedInstructions = coreSystemRules + `\n\nOFFICE STATUS: ${businessHoursContext}`;
+
+      // Inject current date/time context so the AI knows what "today" and "tomorrow" mean
+      const tenantTz = (tenant && tenant.timezone) || "America/Chicago";
+      const nowForTenant = new Date();
+      const tenantDateStr = nowForTenant.toLocaleDateString("en-US", { timeZone: tenantTz, weekday: "long", year: "numeric", month: "long", day: "numeric" });
+      const tenantTimeStr = nowForTenant.toLocaleTimeString("en-US", { timeZone: tenantTz, hour: "2-digit", minute: "2-digit", hour12: true });
+      const tenantIsoDate = nowForTenant.toLocaleDateString("en-CA", { timeZone: tenantTz }); // YYYY-MM-DD format
+      combinedInstructions += `\n\nCURRENT DATE & TIME: Today is ${tenantDateStr}, ${tenantTimeStr} (${tenantTz}). The ISO date is ${tenantIsoDate}. Use this to calculate correct dates when the caller says "today", "tomorrow", "next week", etc. Always use YYYY-MM-DD format for preferred_date.`;
       if (tenant?.instructions) {
         combinedInstructions += "\n\nBUSINESS SPECIFIC INSTRUCTIONS:\n" + tenant.instructions;
       }

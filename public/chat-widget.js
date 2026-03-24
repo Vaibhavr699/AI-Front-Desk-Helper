@@ -1,4 +1,8 @@
 (function () {
+  // Guard against double initialization (e.g. script loaded twice)
+  if (window.__aiChatWidgetLoaded) return;
+  window.__aiChatWidgetLoaded = true;
+
   console.log("[AI-Widget] Script initializing...");
 
   // Robust script detection to handle defer/async loading
@@ -163,7 +167,7 @@ async function triggerFollowUp(lead) {
     callout.innerHTML = `Need help?`;
     Object.assign(callout.style, {
       position: "fixed", bottom: "95px", right: "30px",
-      background: "#fff", color: "#000", padding: "10px 18px",
+      background: "#fff", color: "#000", padding: "10px 30px 10px 18px",
       borderRadius: "12px", boxShadow: "0 5px 25px rgba(0,0,0,0.15)",
       zIndex: "2147483646", fontFamily: "'Inter', Arial, sans-serif",
       fontSize: "14px", fontWeight: "500", display: "none",
@@ -181,13 +185,25 @@ async function triggerFollowUp(lead) {
     });
     callout.appendChild(calloutArrow);
 
-    const closeBtn = document.getElementById("ai-callout-close");
-    if (closeBtn) {
-      closeBtn.onclick = (e) => {
-        e.stopPropagation();
-        hideCallout();
-      };
-    }
+    // Close button for callout
+    const calloutCloseBtn = document.createElement("button");
+    calloutCloseBtn.innerHTML = "&#10005;";
+    calloutCloseBtn.type = "button";
+    calloutCloseBtn.setAttribute("aria-label", "Close callout");
+    Object.assign(calloutCloseBtn.style, {
+      position: "absolute", top: "2px", right: "4px",
+      background: "none", border: "none", cursor: "pointer",
+      fontSize: "12px", color: "#999", padding: "2px 4px",
+      lineHeight: "1", fontFamily: "Arial, sans-serif",
+      borderRadius: "50%", transition: "color 0.2s"
+    });
+    calloutCloseBtn.onmouseenter = () => { calloutCloseBtn.style.color = "#333"; };
+    calloutCloseBtn.onmouseleave = () => { calloutCloseBtn.style.color = "#999"; };
+    calloutCloseBtn.onclick = (e) => {
+      e.stopPropagation();
+      hideCallout();
+    };
+    callout.appendChild(calloutCloseBtn);
 
     function showCallout() {
       if (isOpen) return;
@@ -264,11 +280,9 @@ async function triggerFollowUp(lead) {
       display: "flex", alignItems: "center", justifyContent: "center"
     });
     smsBtn.onclick = function(e) {
-      // Manual trigger for sms: protocol to ensure it fires in all browsers
-      if (this.href && this.href.startsWith("sms:")) {
-        window.location.href = this.href;
-        e.preventDefault();
-      }
+      e.preventDefault();
+      e.stopPropagation();
+      showSmsModal();
     };
     header.appendChild(smsBtn);
 
@@ -410,6 +424,138 @@ async function triggerFollowUp(lead) {
           container.style.display = "none";
         }, 400);
         toggle.innerText = "Chat";
+      }
+    };
+
+    // SMS Consent Modal
+    const smsModal = document.createElement("div");
+    smsModal.id = "ai-sms-modal";
+    Object.assign(smsModal.style, {
+      position: "absolute", top: "0", left: "0", width: "100%", height: "100%",
+      background: "rgba(255,255,255,0.98)", zIndex: "2147483648",
+      display: "none", flexDirection: "column", padding: "30px 20px",
+      boxSizing: "border-box", textAlign: "center", fontFamily: "'Inter', sans-serif"
+    });
+    container.appendChild(smsModal);
+
+    const smsClose = document.createElement("div");
+    smsClose.innerHTML = "&times;";
+    Object.assign(smsClose.style, {
+      position: "absolute", top: "15px", right: "20px", fontSize: "24px",
+      cursor: "pointer", color: "#666"
+    });
+    smsClose.onclick = () => { smsModal.style.display = "none"; };
+    smsModal.appendChild(smsClose);
+
+    const smsTitle = document.createElement("h3");
+    smsTitle.innerText = "Text with us";
+    smsTitle.style.margin = "0 0 15px 0";
+    smsModal.appendChild(smsTitle);
+
+    const smsDesc = document.createElement("p");
+    smsDesc.innerText = "Enter your phone number to start a text conversation with " + companyName + ".";
+    smsDesc.style.fontSize = "14px";
+    smsDesc.style.color = "#666";
+    smsDesc.style.margin = "0 0 20px 0";
+    smsModal.appendChild(smsDesc);
+
+    const smsPhoneInput = document.createElement("input");
+    smsPhoneInput.type = "tel";
+    smsPhoneInput.placeholder = "Your phone number";
+    Object.assign(smsPhoneInput.style, {
+      width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #ddd",
+      fontSize: "16px", marginBottom: "15px", boxSizing: "border-box", textAlign: "center"
+    });
+    smsModal.appendChild(smsPhoneInput);
+
+    const consentWrap = document.createElement("div");
+    consentWrap.style.display = "flex";
+    consentWrap.style.alignItems = "flex-start";
+    consentWrap.style.gap = "10px";
+    consentWrap.style.textAlign = "left";
+    consentWrap.style.marginBottom = "20px";
+
+    const consentCheck = document.createElement("input");
+    consentCheck.type = "checkbox";
+    consentCheck.id = "ai-sms-consent";
+    consentCheck.style.marginTop = "4px";
+    consentWrap.appendChild(consentCheck);
+
+    const consentLabel = document.createElement("label");
+    consentLabel.setAttribute("for", "ai-sms-consent");
+    const disclosureText = `By submitting, you agree to receive text messages from ${companyName} about your quote, scheduling, and service updates. Msg/data rates may apply. Reply STOP to opt out, HELP for help.`;
+    consentLabel.innerText = disclosureText;
+    consentLabel.style.fontSize = "12px";
+    consentLabel.style.color = "#888";
+    consentLabel.style.lineHeight = "1.4";
+    consentWrap.appendChild(consentLabel);
+    smsModal.appendChild(consentWrap);
+
+    const smsSubmit = document.createElement("button");
+    smsSubmit.innerText = "Start Texting";
+    Object.assign(smsSubmit.style, {
+      width: "100%", background: "#000", color: "#fff", padding: "14px",
+      borderRadius: "8px", border: "none", fontSize: "16px", fontWeight: "bold",
+      cursor: "pointer"
+    });
+    smsModal.appendChild(smsSubmit);
+
+    function showSmsModal() {
+      smsModal.style.display = "flex";
+      smsPhoneInput.focus();
+    }
+
+    smsSubmit.onclick = async () => {
+      const phone = smsPhoneInput.value.trim();
+      const consent = consentCheck.checked;
+
+      if (!phone) {
+        alert("Please enter your phone number.");
+        return;
+      }
+      if (!consent) {
+        alert("Please agree to receive text messages.");
+        return;
+      }
+
+      smsSubmit.disabled = true;
+      smsSubmit.innerText = "Sending...";
+
+      try {
+        const res = await fetch(`${apiBase}/api/widget/start-sms`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tenantId,
+            phone,
+            consent: true,
+            consentText: disclosureText,
+            source: "widget_sms_popup",
+            pageUrl: window.location.href,
+            sessionId
+          })
+        });
+
+        if (res.ok) {
+          smsModal.innerHTML = `
+            <div style="margin-top: 50px">
+              <div style="font-size: 40px; margin-bottom: 20px">✅</div>
+              <h3 style="margin-bottom: 10px">Text Sent!</h3>
+              <p style="color: #666; font-size: 14px">Check your phone. We've sent you a message to start the conversation.</p>
+              <button onclick="this.closest('#ai-sms-modal').style.display='none'" style="margin-top: 30px; background: #000; color: #fff; padding: 10px 30px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold">Done</button>
+            </div>
+          `;
+          trackVisitor("sms_optin_success", { phone });
+        } else {
+          const err = await res.json();
+          alert(err.error || "Failed to start text sequence.");
+          smsSubmit.disabled = false;
+          smsSubmit.innerText = "Start Texting";
+        }
+      } catch (err) {
+        alert("Connection error. Please try again.");
+        smsSubmit.disabled = false;
+        smsSubmit.innerText = "Start Texting";
       }
     };
 

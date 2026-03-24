@@ -73,6 +73,29 @@ function getCalendarForTenant(tenant) {
   return calendar;
 }
 
+/** Normalize a time string into HH:MM:SS format. Handles AM/PM and 24h. */
+function normalizeTime(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "09:00:00";
+
+  const ampm = s.match(/^(\d{1,2})(?::(\d{2}))?\s*([ap]m)$/i);
+  if (ampm) {
+    let h = Number(ampm[1]);
+    const m = Number(ampm[2] || 0);
+    const suf = ampm[3].toLowerCase();
+    if (suf === "pm" && h < 12) h += 12;
+    if (suf === "am" && h === 12) h = 0;
+    return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:00`;
+  }
+
+  const h24 = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (h24) {
+    return `${String(h24[1]).padStart(2,"0")}:${h24[2]}:${h24[3] || "00"}`;
+  }
+
+  return "09:00:00";
+}
+
 /** Check if a date/time is available on Google Calendar (FreeBusy). */
 async function checkAvailability(date, time, tenant = null) {
   const cal = tenant ? getCalendarForTenant(tenant) : calendar;
@@ -82,16 +105,21 @@ async function checkAvailability(date, time, tenant = null) {
   }
   
   try {
-    // Combine date and time for start/end
-    const start = new Date(`${date}T${time}`);
-    const end = new Date(start.getTime() + 60 * 60 * 1000); // Assume 1 hour default
+    const tz = (tenant && tenant.timezone) || "America/Chicago";
+    const normalizedTime = normalizeTime(time);
+    // Build an ISO-like string with no offset — Google interprets it relative to the timeZone parameter
+    const startStr = `${date}T${normalizedTime}`;
+    const endDate = new Date(`${startStr}Z`);
+    endDate.setUTCHours(endDate.getUTCHours() + 1);
+    const endStr = `${date}T${String(endDate.getUTCHours()).padStart(2,"0")}:${String(endDate.getUTCMinutes()).padStart(2,"0")}:00`;
 
     const calendarId = (tenant && tenant.google_calendar_id) || "primary";
 
     const res = await cal.freebusy.query({
       requestBody: {
-        timeMin: start.toISOString(),
-        timeMax: end.toISOString(),
+        timeMin: startStr,
+        timeMax: endStr,
+        timeZone: tz,
         items: [{ id: calendarId }],
       },
     });
@@ -110,8 +138,16 @@ async function syncToGoogleCalendar(booking, tenant = null) {
   if (!cal) return;
 
   try {
-    const start = new Date(`${booking.preferred_date}T${booking.appointment_time || "09:00:00"}`);
-    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    const tz = (tenant && tenant.timezone) || "America/Chicago";
+    const normalizedTime = normalizeTime(booking.appointment_time);
+    const dateStr = String(booking.preferred_date || "").trim();
+
+    // Build start/end as plain datetime strings — let Google interpret them in the tenant's timezone
+    const startDateTime = `${dateStr}T${normalizedTime}`;
+    // Calculate end time (1 hour later) using simple hour math
+    const [hh, mm, ss] = normalizedTime.split(":").map(Number);
+    const endH = (hh + 1) % 24;
+    const endDateTime = `${dateStr}T${String(endH).padStart(2,"0")}:${String(mm).padStart(2,"0")}:${String(ss).padStart(2,"0")}`;
 
     const calendarId = (tenant && tenant.google_calendar_id) || "primary";
 
@@ -119,8 +155,8 @@ async function syncToGoogleCalendar(booking, tenant = null) {
       summary: `Booking: ${booking.contact_name} (${booking.job_type || "Service"})`,
       description: `Notes: ${booking.notes || "None"}\nScope: ${booking.scope || "N/A"}`,
       location: booking.address ? `${booking.address}, ${booking.city || ""}` : booking.city || "",
-      start: { dateTime: start.toISOString() },
-      end: { dateTime: end.toISOString() },
+      start: { dateTime: startDateTime, timeZone: tz },
+      end: { dateTime: endDateTime, timeZone: tz },
     };
 
     const res = await cal.events.insert({

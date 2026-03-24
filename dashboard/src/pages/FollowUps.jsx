@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { getFollowups, triggerFollowupSms, triggerFollowupCall, updateFollowupStatus } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
+import { ConfirmationModal } from "../components";
 import { 
   MessageSquare, 
   PhoneCall, 
@@ -22,6 +23,16 @@ export default function FollowUps({ tenantId }) {
   const [error, setError] = useState("");
   const [processing, setProcessing] = useState(null);
 
+  // Modal State
+  const [modal, setModal] = useState({
+    isOpen: false,
+    title: "",
+    message: "",
+    confirmText: "Confirm",
+    onConfirm: () => {},
+    variant: "primary"
+  });
+
   useEffect(() => {
     if (tenantId) loadData();
   }, [tenantId]);
@@ -38,15 +49,26 @@ export default function FollowUps({ tenantId }) {
     }
   }
 
+  const showAlert = (title, message, variant = "primary") => {
+    setModal({
+      isOpen: true,
+      title,
+      message,
+      confirmText: "Close",
+      onConfirm: () => setModal(prev => ({ ...prev, isOpen: false })),
+      variant
+    });
+  };
+
   async function handleSms(id) {
     if (processing) return;
     setProcessing(id);
     try {
       await triggerFollowupSms(id);
-      alert("SMS follow-up triggered!");
+      showAlert("Success", "SMS follow-up has been triggered and sent to the lead.", "primary");
       loadData();
     } catch (e) {
-      alert("Error: " + e.message);
+      showAlert("Error", e.message, "danger");
     } finally {
       setProcessing(null);
     }
@@ -57,10 +79,10 @@ export default function FollowUps({ tenantId }) {
     setProcessing(id);
     try {
       await triggerFollowupCall(id);
-      alert("AI Call follow-up triggered!");
+      showAlert("Success", "AI Call follow-up has been initiated.", "primary");
       loadData();
     } catch (e) {
-      alert("Error: " + e.message);
+      showAlert("Error", e.message, "danger");
     } finally {
       setProcessing(null);
     }
@@ -68,18 +90,26 @@ export default function FollowUps({ tenantId }) {
 
   async function handleStatus(id, status) {
     if (processing) return;
-    const confirmed = window.confirm(`Mark this lead as ${status.toUpperCase()}?`);
-    if (!confirmed) return;
-
-    setProcessing(id);
-    try {
-      await updateFollowupStatus(id, status);
-      setFollowups(prev => prev.filter(f => f.id !== id));
-    } catch (e) {
-      alert("Error: " + e.message);
-    } finally {
-      setProcessing(null);
-    }
+    
+    setModal({
+      isOpen: true,
+      title: `Mark as ${status.toUpperCase()}?`,
+      message: `Are you sure you want to move this lead to ${status}? This will update their status in the CRM.`,
+      confirmText: status === 'booked' ? "Mark Booked" : "Mark Lost",
+      variant: status === 'booked' ? 'primary' : 'danger',
+      onConfirm: async () => {
+        setProcessing(id);
+        setModal(prev => ({ ...prev, isOpen: false }));
+        try {
+          await updateFollowupStatus(id, status);
+          setFollowups(prev => prev.filter(f => f.id !== id));
+        } catch (e) {
+          showAlert("Error", e.message, "danger");
+        } finally {
+          setProcessing(null);
+        }
+      }
+    });
   }
 
   if (loading) return <div className="flex items-center justify-center py-24"><LumaSpin /></div>;
@@ -153,7 +183,7 @@ export default function FollowUps({ tenantId }) {
                       {f.last_contact ? formatDistanceToNow(new Date(f.last_contact)) + " ago" : "Never"}
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex items-center justify-end gap-2 transition-all">
                         <button
                           onClick={() => handleSms(f.id)}
                           disabled={processing === f.id}
@@ -196,6 +226,17 @@ export default function FollowUps({ tenantId }) {
           </table>
         </div>
       </div>
+
+      <ConfirmationModal 
+        isOpen={modal.isOpen}
+        onClose={() => setModal(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={modal.onConfirm}
+        title={modal.title}
+        message={modal.message}
+        confirmText={modal.confirmText}
+        variant={modal.variant}
+        loading={processing !== null}
+      />
     </div>
   );
 }

@@ -1652,16 +1652,69 @@ export default function Settings({ tenantId }) {
                         value={form.crm_webhook_url}
                         onChange={(e) => handleUpdateForm("crm_webhook_url", e.target.value)}
                         placeholder="https://hooks.zapier.com/..."
-                        className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-mono text-xs"
+                        className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-mono text-xs focus:ring-2 focus:ring-gray-900/5 transition-all"
                       />
-                      <button className="p-3 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors">
+                      <button 
+                        type="button"
+                        onClick={() => window.open(form.crm_webhook_url, "_blank")}
+                        disabled={!form.crm_webhook_url}
+                        className="p-3 bg-gray-100 rounded-xl hover:bg-gray-200 transition-colors disabled:opacity-30"
+                      >
                         <ExternalLink className="w-4 h-4 text-gray-600" />
                       </button>
                     </div>
-                    <p className="text-xs text-gray-500 mt-2">Paste your Zapier Catch Hook URL or direct CRM webhook here.</p>
+                    <p className="text-xs text-gray-500 mt-2">Data is sent here when a booking is created or call details are ready.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Secondary Zapier URL (Optional)</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="url"
+                        value={form.zapier_webhook_url}
+                        onChange={(e) => handleUpdateForm("zapier_webhook_url", e.target.value)}
+                        placeholder="https://hooks.zapier.com/..."
+                        className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-mono text-xs focus:ring-2 focus:ring-gray-900/5 transition-all"
+                      />
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2">If provided, we will also send the same data to this second URL.</p>
+                  </div>
+
+                  <div className="mt-8 p-6 bg-blue-50/50 border border-blue-100 rounded-2xl">
+                    <h3 className="text-sm font-bold text-blue-900 mb-2 flex items-center gap-2">
+                      <Bot className="w-4 h-4" />
+                      Inbound Webhook (Nurturing Flow)
+                    </h3>
+                    <p className="text-xs text-blue-700/80 mb-4 leading-relaxed">
+                      Use this URL in Zapier to notify our system when a job is completed in your CRM. This triggers the follow-up/nurturing sequence.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 p-3 bg-white border border-blue-200 rounded-xl font-mono text-[10px] text-blue-900 break-all select-all">
+                        {`${import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}/webhooks/crm/job-completed`.replace(/\/+$/, "")}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const url = `${import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}/webhooks/crm/job-completed`.replace(/\/+$/, "");
+                          navigator.clipboard.writeText(url);
+                          setMessage("Inbound URL copied to clipboard!");
+                        }}
+                        className="p-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
+                        title="Copy to clipboard"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="mt-4 space-y-2">
+                      <p className="text-[10px] text-blue-600/70 font-bold uppercase tracking-wider">Required Header:</p>
+                      <div className="p-2 bg-white/50 border border-blue-100 rounded-lg font-mono text-[9px] text-blue-800">
+                        Authorization: Bearer [Your API Key]
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
+
               {/* Google Calendar */}
               <div className="pt-6 border-t border-gray-100">
                 <div className="flex items-center justify-between gap-4 mb-6">

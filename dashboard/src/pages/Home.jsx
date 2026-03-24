@@ -44,10 +44,8 @@ export default function Home() {
               {/* Header */}
               <div className="bg-white border-b border-stone-200 px-6 py-4 flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 bg-gradient-to-br from-stone-900 to-stone-700 rounded-xl text-white flex items-center justify-center shadow-lg">
-                    <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M12 2L14.85 8.65L22 9.25L16.5 13.9L18.1 21L12 17.25L5.9 21L7.5 13.9L2 9.25L9.15 8.65L12 2Z" fill="currentColor" />
-                    </svg>
+                  <div className="w-9 h-9 bg-white border border-stone-200 rounded-xl flex items-center justify-center shadow-md overflow-hidden p-1">
+                    <img src="/favicon.png" alt="Logo" className="w-full h-full object-contain" />
                   </div>
                   <div className="text-left">
                     <p className="font-bold text-stone-900 text-sm leading-tight">Gladiators Home Services</p>

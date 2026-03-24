@@ -67,7 +67,7 @@ const REALTIME_TOOLS = [
   {
     type: "function",
     name: "book_appointment",
-    description: "Finalize and save the booking. Call this ONLY when you have real details from the caller: contact name, contact phone, and address OR city. NEVER use placeholder or dummy data (like 'Armando' or '555-1234'). Include EVERY detail the caller gave: contact_name, contact_phone, address, city, scope (what service or product they need), preferred_date, notes (pets, access, etc.). Do not omit any field the caller provided—all fields are saved to the database and sent to CRM. Use for normal booking or estimate requests.",
+    description: "Finalize and save the booking. Call this ONLY when you have real details from the caller: contact name, contact phone, contact email, and address OR city. NEVER use placeholder or dummy data. Include EVERY detail the caller gave: contact_name, contact_phone, contact_email, address, city, scope, job_type, preferred_date, appointment_time, notes, estimated_value, lead_score, and ai_summary. Do not omit any field the caller provided.",
     parameters: {
       type: "object",
       properties: {
@@ -110,13 +110,14 @@ const REALTIME_TOOLS = [
       properties: {
         reason: {
           type: "string",
-          enum: ["commercial_job", "high_value_over_10k", "frustrated_caller", "vip_repeat_customer", "caller_requested_human"]
+          enum: ["commercial_job", "high_value_over_10k", "frustrated_caller", "vip_repeat_customer", "caller_requested_human", "asked_owner_by_name"]
         },
         caller_name: { type: "string" },
         caller_phone: { type: "string" },
         project_type: { type: "string" },
         budget_estimate: { type: "string" },
         sentiment: { type: "string", enum: ["positive", "neutral", "frustrated", "angry"] },
+        location: { type: "string" },
         summary: { type: "string" },
         lead_score: { type: "integer", description: "Score from 1 to 100 based on lead quality." },
         ai_summary: { type: "string", description: "Brief summary of the call details for the agent." },
@@ -368,7 +369,15 @@ app.post("/webhooks/resend/inbound", express.raw({ type: "application/json", lim
       console.log("[Resend Inbound] No lead found for reply from:", fromEmail, "subject:", subject);
       return;
     }
-    const body = `Re: ${subject}\n\n[Email reply from ${fromEmail}. Full body can be fetched via Resend Received API if needed.]`;
+    const bodyText = data.text || "";
+    const bodyHtml = data.html || "";
+    // Priority: text, then stripped-down-ish html, then fallback
+    let body = bodyText.trim();
+    if (!body && bodyHtml) {
+      body = bodyHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    }
+    if (!body) body = `Re: ${subject}`;
+
     await messagesService.saveMessage(leadRow.tenant_id, leadRow.id, "email", "inbound", body, { resend_email_id: emailId, from: fromEmail, to: toList });
     console.log("[Resend Inbound] Saved email reply for lead:", leadRow.id, "tenant:", leadRow.tenant_id);
   } catch (e) {
@@ -791,31 +800,46 @@ async function safeUpdateCallSummary(callId, options = {}) {
 }
 
 async function sendToCRM(leadCapture, tenantId = null) {
-  let url = process.env.CRM_WEBHOOK_URL || process.env.ZAPIER_WEBHOOK_URL;
-
-  // If a tenantId is provided, try to use their specific webhook
-  if (tenantId && TENANTS[tenantId] && TENANTS[tenantId].crm_webhook_url) {
-    url = TENANTS[tenantId].crm_webhook_url;
+  let webhookUrls = [];
+  
+  // Use tenant-specific webhooks if tenantId is provided
+  if (tenantId && TENANTS[tenantId]) {
+    const t = TENANTS[tenantId];
+    if (t.crm_webhook_url?.trim()) webhookUrls.push(t.crm_webhook_url.trim());
+    if (t.zapier_webhook_url?.trim()) webhookUrls.push(t.zapier_webhook_url.trim());
   }
 
-  if (!url) {
-    console.warn(`CRM webhook not configured for tenant ${tenantId || "global"}. Skipping lead push.`);
+  // Fallback to system envs if no tenant-specific URLs
+  if (webhookUrls.length === 0) {
+    if (process.env.CRM_WEBHOOK_URL) webhookUrls.push(process.env.CRM_WEBHOOK_URL.trim());
+    if (process.env.ZAPIER_WEBHOOK_URL) webhookUrls.push(process.env.ZAPIER_WEBHOOK_URL.trim());
+  }
+
+  // Filter unique URLs
+  webhookUrls = [...new Set(webhookUrls)];
+
+  if (webhookUrls.length === 0) {
+    console.warn(`CRM webhooks not configured for tenant ${tenantId || "global"}. Skipping lead push.`);
     return;
   }
 
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(leadCapture)
-    });
+  for (const url of webhookUrls) {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(leadCapture)
+      });
 
-    if (!response.ok) {
-      const body = await response.text();
-      console.error("CRM push failed:", response.status, body);
+      if (!response.ok) {
+        const body = await response.text();
+        console.error(`CRM push failed for url=${url}:`, response.status, body);
+      } else {
+        console.log(`CRM push success for url=${url}`);
+      }
+    } catch (error) {
+      console.error(`CRM push error for url=${url}:`, error.message);
     }
-  } catch (error) {
-    console.error("CRM push error:", error.message);
   }
 }
 
@@ -1326,7 +1350,7 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
     } : null
   };
 }
-async function processFacebookConversation(senderId, messageText, tenant = null) {
+async function processFacebookConversation(senderId, messageText, tenant = null, pageAccessToken = null) {
   const threadKey = `fb-${senderId}`;
   const thread = getOrCreateSmsThread(threadKey);
 
@@ -1338,9 +1362,21 @@ async function processFacebookConversation(senderId, messageText, tenant = null)
 
   // CRM: Ensure Lead exists and save message
   if (tenant) {
+    // If we don't have a name yet, try to fetch it from Facebook
+    if (!thread.leadCapture?.full_name && pageAccessToken) {
+      const profile = await getFacebookUserProfile(senderId, pageAccessToken);
+      if (profile && (profile.first_name || profile.last_name)) {
+        const fullName = `${profile.first_name || ""} ${profile.last_name || ""}`.trim();
+        thread.leadCapture.full_name = fullName;
+        console.log(`[Facebook] Fetched profile for ${senderId}: ${fullName}`);
+      }
+    }
+
     const lead = await leadsService.getOrCreateLead(tenant.id, thread.phone, thread.leadCapture?.full_name);
     if (lead) {
       thread.leadId = lead.id;
+      // If the lead was just created and we just got the name, it's already in there.
+      // If it existed but had no name, getOrCreateLead updates it.
       messagesService.saveMessage(tenant.id, lead.id, "facebook", "inbound", messageText);
     }
   }
@@ -1451,6 +1487,22 @@ async function sendTypingIndicator(recipientId, action = "typing_on", accessToke
     );
   } catch (err) {
     console.error("[Facebook] Typing indicator error:", err.message);
+  }
+}
+
+async function getFacebookUserProfile(senderId, pageAccessToken) {
+  try {
+    const url = `https://graph.facebook.com/v18.0/${senderId}?fields=first_name,last_name,profile_pic&access_token=${pageAccessToken}`;
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.warn(`[Facebook] Profile fetch failed for ${senderId}: ${resp.status} ${errText}`);
+      return null;
+    }
+    return await resp.json();
+  } catch (err) {
+    console.error("[Facebook] Error fetching user profile:", err.message);
+    return null;
   }
 }
 
@@ -1884,35 +1936,19 @@ async function forwardLeadCaptureToCRM(rawPayload, crmLeadSentRef, tenantId = nu
 
 async function attemptTransfer(callSid, tenant) {
   if (!callSid || !tenant.transferNumber) return false;
-  if (!hasTwilioCredentials()) {
-    console.error("Twilio transfer skipped: missing TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN.");
+  
+  try {
+    const result = await transferService.initiateTransfer(
+      callSid,
+      tenant.transferNumber,
+      "caller_requested_human",
+      "The caller repeatedly asked to speak with a human or manager."
+    );
+    return result.success;
+  } catch (e) {
+    console.error("[AI-Desk] direct attemptTransfer failed:", e.message);
     return false;
   }
-  if (!isValidE164(tenant.transferNumber)) {
-    console.error(`Twilio transfer skipped: invalid transfer number ${tenant.transferNumber}`);
-    return false;
-  }
-
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${callSid}.json`;
-  const twiml = `<Response><Dial>${tenant.transferNumber}</Dial></Response>`;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: buildTwilioAuthHeader(),
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
-    body: new URLSearchParams({ Twiml: twiml }).toString()
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    console.error("Twilio transfer failed:", response.status, body);
-    return false;
-  }
-
-  return true;
 }
 
 /** Check if a tenant should be "open" based on business_hours JSON and their timezone. */
@@ -2477,15 +2513,15 @@ wss.on("connection", async (twilioSocket, req) => {
       const coreSystemRules = [
         `You are a professional receptionist for ${tenant?.company_name || 'our business'}. Be warm, confident, and helpful.`,
         `TONE OF VOICE: Your tone of voice is ${tenant?.tone_of_voice || 'professional'}. Maintain this personality throughout the call.`,
-        "Default language is English. If the caller asks to speak in another language (e.g. Spanish, French, Hindi), immediately call the change_language tool with the ISO 639-1 code (es, fr, hi, zh, ar, etc.), then confirm in that language and continue the entire conversation in that language.",
+        "Default language is English. ONLY switch languages if the human caller EXPLICITLY and CLEARLY requests it in speech. NEVER change language based on static, background noise, or ambiguous sounds. If a switch is requested, call the change_language tool with the ISO 639-1 code (es, fr, hi, zh, ar, bpo, etc.), confirm the switch in the new language, and stay in that language unless asked to switch back. Do NOT switch languages back and forth spontaneously.",
         "CONVERSATIONAL FLOW: Let the conversation flow naturally like a real human. If they ask a question, answer it directly using the Knowledge Base (FAQs) before steering them back to your questions. Do NOT rigidly fire questions one after another.",
-        "GOAL: When it feels natural, try to collect the following to book an appointment or estimate: Full Name, Phone Number, Address or City, and the scope of what they need (e.g. 'What type of service can we help you with today?').",
+        "GOAL: When it feels natural, try to collect the following to book an appointment or estimate: Full Name, Phone Number, Email Address, Address or City, and the scope of what they need (e.g. 'What type of service can we help you with today?').",
         "SERVICE TYPES: Do NOT assume the caller wants a specific service (like interior or exterior painting) unless it is explicitly mentioned in the business details or by the caller. If unsure, ALWAYS ask: 'What type of service are you looking for?'",
         "OFFER: Offer a free on-site estimate or appointment. ALWAYS confirm the specific Date and Time with the caller before calling book_appointment.",
         "APPOINTMENT MANAGEMENT: If the caller wants to CANCEL or RESCHEDULE, ask for their phone number to find their booking. Use 'cancel_appointment' or 'reschedule_appointment' only after confirming the details. For rescheduling, confirm the NEW date and time first.",
         "REVENUE ESTIMATION & LEAD ANALYSIS: If the caller doesn't provide a budget, estimate the job value reasonably based on their scope. Always provide an 'estimated_value', a 'lead_score' (1-100), and a brief 'ai_summary' (1-2 sentences) when calling tools.",
-        "ONLY call book_appointment when you have obtained REAL details from the human for: name, phone, and address/city. Do NOT call it with placeholders or before asking for these details.",
-        "Right after calling book_appointment successfully, say clearly: 'You're all set. I've scheduled that for [Confirmed Date] at [Confirmed Time]. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye.' Then call the 'hang_up' tool immediately after finishing your sentence.",
+        "ONLY call book_appointment when you have obtained REAL details from the human for: name, phone, email, and address/city. Do NOT call it with placeholders or before asking for these details.",
+        "Right after calling book_appointment successfully, say: 'I have scheduled that for [Confirmed Date] at [Confirmed Time]. You will receive a confirmation text shortly. Is there anything else I can help you with today?'. ONLY call the 'hang_up' tool if they say no or if the conversation is clearly finished.",
         "Do NOT say you are transferring or connecting to someone unless you actually need a live agent. Only use request_human_transfer for: emergencies, situations requiring a manager, frustrated/angry callers, or VIP/repeat customers. For normal requests, always complete the booking with book_appointment.",
         "STRICT RULE: NEVER hallucinate or use placeholder/example data (like 'Armando', '555-1234', or 'Cancun') for any tool fields. If you are missing a required field, ASK the caller. Only use data provided by the human on the other end of the line.",
       ].join("\n");
@@ -2749,8 +2785,8 @@ wss.on("connection", async (twilioSocket, req) => {
               const confirmedDate = args.preferred_date || args.appointment_date || "";
               const confirmedTime = args.appointment_time || "";
               const message = crmSynced
-                ? `Estimate scheduled for ${confirmedDate} at ${confirmedTime}. Details synced. Say to the caller: You're all set—your estimate is scheduled for ${confirmedDate} at ${confirmedTime}. We've sent your details to our team and you'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye. Then call the hang_up tool.`
-                : `Estimate scheduled for ${confirmedDate} at ${confirmedTime}. Saved locally. Say to the caller: You're all set—your estimate is scheduled for ${confirmedDate} at ${confirmedTime}. You'll get a confirmation by text. Thank you for calling. Have a great day. Goodbye. Then call the hang_up tool.`;
+                ? `Estimate scheduled for ${confirmedDate} at ${confirmedTime}. Details synced. Say to the caller: "I have scheduled that for ${confirmedDate} at ${confirmedTime}. You will receive a confirmation text shortly. Is there anything else I can help you with today?". Wait for their response. ONLY call the 'hang_up' tool if they say no or if the conversation is clearly finished.`
+                : `Estimate scheduled for ${confirmedDate} at ${confirmedTime}. Saved locally. Say to the caller: "I have scheduled that for ${confirmedDate} at ${confirmedTime}. You will receive a confirmation text shortly. Is there anything else I can help you with today?". Wait for their response. ONLY call the 'hang_up' tool if they say no or if the conversation is clearly finished.`;
               
               output = JSON.stringify({ success: true, message });
               hasBooked = true;
@@ -2771,7 +2807,15 @@ wss.on("connection", async (twilioSocket, req) => {
                   callSid,
                   null,
                   args.reason,
-                  args.summary
+                  args.summary,
+                  {
+                    caller_name: args.caller_name,
+                    caller_phone: args.caller_phone,
+                    project_type: args.project_type,
+                    budget_estimate: args.budget_estimate,
+                    sentiment: args.sentiment,
+                    location: args.location
+                  }
                 );
                 output = JSON.stringify(result);
               }
@@ -3131,23 +3175,26 @@ if (tenantId) {
   }
 }
 
+// Fallback to website-chat slug if nothing else found
 if (!tenant) {
   tenant = await getTenantBySlug("website-chat").catch(() => null);
+  if (tenantId) {
+    console.warn(`[WebsiteChat] Tenant lookup failed for ID/Slug: ${tenantId}. Falling back to global "website-chat" tenant.`);
+  }
 }
 
-if (!tenant) {
-  const tenants = await getAllTenants();
-  tenant = tenants[0] || null;
-}
+// Remove the unsafe tenants[0] fallback to prevent wrong business name attribution
 
     // Explicitly set channel as website
     const thread = getOrCreateSmsThread(sessionId);
     thread.channel = "website";
 
     const result = await processSmsConversation(sessionId, message, tenant);
-    const tenantName = tenant ? (tenant.company_name || tenant.name) : null;
+    const isFallback = (tenant && tenant.slug === "website-chat");
+    const tenantName = tenant ? (tenant.company_name || tenant.name || "Website Chat") : "Website Chat";
+    
     emailService
-      .sendWebsiteChatNotificationEmail({ message, sessionId, reply: result.reply, tenantName })
+      .sendWebsiteChatNotificationEmail({ message, sessionId, reply: result.reply, tenantName: isFallback ? "Website Chat" : tenantName })
       .catch((err) => console.error("Website chat email to Drew:", err.message));
     res.json(result);
   } catch (error) {
@@ -3263,7 +3310,7 @@ app.post("/facebook-webhook", async (req, res) => {
     // Stop typing indicator
     await sendTypingIndicator(senderId, "typing_off", pageAccessToken);
 
-    const result = await processFacebookConversation(senderId, messageText, tenant);
+    const result = await processFacebookConversation(senderId, messageText, tenant, pageAccessToken);
 
     await sendFacebookMessage(
       senderId,

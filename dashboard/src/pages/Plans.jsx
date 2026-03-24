@@ -150,6 +150,55 @@ export default function Plans({ tenantId }) {
         Choose the right AI Front Desk Helper tier for your business. Powered by Stripe.
       </p>
 
+      {/* Add-ons section - Moved to top for better visibility */}
+      <div className="mb-10 p-6 rounded-2xl border-2 border-brand-200 bg-brand-50/30 flex flex-col sm:flex-row sm:items-center justify-between gap-6 shadow-sm">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="font-bold text-stone-900 flex items-center gap-2">
+              <span className="text-xl">🚀</span>
+              New: Customer Nurturing & Referral Add-on
+            </h3>
+            {tenant?.has_nurturing_referral && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 uppercase tracking-wider">
+                Active
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-stone-600 mt-1 max-w-2xl">
+            Automated follow-ups, referral requests, and AI re-engagement calls to boost your revenue. **$99/month.** Included free on Elite.
+          </p>
+        </div>
+        <div className="shrink-0">
+          {tenant?.has_nurturing_referral ? (
+            <div className="flex items-center gap-2 text-emerald-600 font-bold bg-white px-4 py-2 rounded-xl border border-emerald-200 shadow-sm">
+              <span className="text-lg">✨</span>
+              <span>Enabled</span>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center sm:items-end gap-3">
+              {tenantId ? (
+                <button
+                  type="button"
+                  onClick={() => handleSelectPlan("nurturing_addon")}
+                  disabled={checkoutLoading === "nurturing_addon" || currentPlanId === "elite"}
+                  className="w-full sm:w-auto px-8 py-3 rounded-xl text-sm font-black uppercase tracking-wider bg-stone-900 text-white hover:bg-black focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-stone-600 border border-stone-800 transition-all shadow-xl shadow-stone-200 disabled:opacity-60 disabled:shadow-none"
+                >
+                  {currentPlanId === "elite" ? "Included in Elite" : checkoutLoading === "nurturing_addon" ? "Redirecting…" : "Add to Plan — $99/mo"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  className="w-full sm:w-auto px-6 py-2.5 rounded-xl text-sm font-bold bg-stone-100 text-stone-400 border border-stone-200 cursor-default"
+                >
+                  Login to add
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Subscription status banner */}
       {tenantId && (
         <div className="mb-6 rounded-xl border border-stone-200 bg-white shadow-sm p-4">
@@ -373,44 +422,7 @@ export default function Plans({ tenantId }) {
         })}
       </div>
 
-      {/* Add-ons: for Basic/Pro show Nurturing add-on option */}
-      {tenantId && tenant && (currentPlanId === "basic" || currentPlanId === "pro") && (
-        <div className="mt-10 pt-10 border-t border-stone-200">
-          <h2 className="text-lg font-semibold text-stone-900 mb-1">Add-ons</h2>
-          <p className="text-sm text-stone-500 mb-6">Extend your plan with optional features. Included free on Elite.</p>
-          <div className="rounded-2xl border-2 border-stone-200 bg-white p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-            <div className="flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="font-semibold text-stone-900">Customer Nurturing & Referral</h3>
-                {tenant.has_nurturing_referral && (
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    Enabled
-                  </span>
-                )}
-              </div>
-              <p className="text-sm text-stone-600 mt-1">
-                Post-service follow-ups, referral requests, seasonal campaigns, maintenance reminders, and AI follow-up calls. Configure in Settings → Nurturing & referrals.
-              </p>
-            </div>
-            <div className="shrink-0">
-              {tenant.has_nurturing_referral ? (
-                <span className="text-sm font-medium text-stone-500">Add-on active</span>
-              ) : (
-                <>
-                  <p className="text-xs text-stone-500 mb-2">Contact us to add this to your plan, or upgrade to Elite to get it included.</p>
-                  <button
-                    type="button"
-                    onClick={handleManageSubscription}
-                    className="w-full sm:w-auto px-4 py-2 rounded-lg text-sm font-medium bg-stone-100 text-stone-700 hover:bg-stone-200 border border-stone-200 transition-colors"
-                  >
-                    Manage subscription
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Add-ons section was here, moved to top */}
 
       {!tenantId && (
         <p className="mt-6 text-sm text-stone-500">

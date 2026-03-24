@@ -60,9 +60,9 @@ export default function ForgotPassword() {
               <motion.div
                 initial={{ scale: 0.5, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                className="mx-auto w-12 h-12 rounded-xl bg-gradient-to-br from-stone-900 to-stone-700 text-white flex items-center justify-center shadow-lg"
+                className="mx-auto w-12 h-12 rounded-xl bg-white border border-stone-200 flex items-center justify-center shadow-lg p-1.5"
               >
-                <Mail className="w-6 h-6" />
+                <img src="/favicon.png" alt="Logo" className="w-full h-full object-contain" />
               </motion.div>
 
               <h1 className="text-2xl font-bold tracking-tight text-stone-900 mt-4">

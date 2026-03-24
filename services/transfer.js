@@ -22,6 +22,7 @@ const REASON_LABELS = {
   frustrated_caller: "Frustrated Caller",
   vip_repeat_customer: "VIP / Repeat Customer",
   caller_requested_human: "Caller Requested Live Agent",
+  asked_owner_by_name: "Customer Asked for Owner by Name",
 };
 
 /**
@@ -42,6 +43,7 @@ function buildPreBriefBody(tenant, callerPhone, summary, reason, extras = {}) {
       sentiment: extras.sentiment || "neutral",
       reason: REASON_LABELS[reason] || reason || "Transfer",
       notes: reason || "",
+      location: extras.location || extras.address || "—",
     });
   }
 
@@ -51,6 +53,7 @@ function buildPreBriefBody(tenant, callerPhone, summary, reason, extras = {}) {
   lines.push("");
   if (extras.caller_name) lines.push(`👤 ${extras.caller_name}`);
   lines.push(`📞 ${callerPhone || "Unknown number"}`);
+  if (extras.location || extras.address) lines.push(`📍 ${extras.location || extras.address}`);
   if (extras.project_type) lines.push(`🏗️ ${extras.project_type}`);
   if (extras.budget_estimate) lines.push(`💰 ${extras.budget_estimate}`);
   if (extras.sentiment && extras.sentiment !== "neutral" && extras.sentiment !== "positive") {

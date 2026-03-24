@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { getConversations } from '../api';
 import ConversationViewer from '../components/ConversationViewer';
-import { Search, Filter, Phone, MessageSquare, Globe, Facebook, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
+import { Search, Filter, Phone, MessageSquare, Globe, Facebook, CheckCircle2, Clock, AlertCircle, Mail } from 'lucide-react';
 import { format, isToday, isYesterday } from 'date-fns';
 
 const Conversations = ({ tenantId }) => {
@@ -67,10 +67,10 @@ const Conversations = ({ tenantId }) => {
 
   const getChannelIcon = (channel) => {
     switch (channel) {
-      case 'voice': return <Phone size={14} />;
       case 'sms': return <MessageSquare size={14} />;
       case 'website': return <Globe size={14} />;
       case 'facebook': return <Facebook size={14} />;
+      case 'email': return <Mail size={14} />;
       default: return null;
     }
   };
@@ -99,7 +99,7 @@ const Conversations = ({ tenantId }) => {
           </div>
 
           <div className="flex gap-2 overflow-x-auto pb-1">
-            {['all', 'voice', 'sms', 'website', 'facebook'].map(c => (
+            {['all', 'sms', 'website', 'facebook', 'email'].map(c => (
               <button
                 key={c}
                 onClick={() => setFilterChannel(c)}

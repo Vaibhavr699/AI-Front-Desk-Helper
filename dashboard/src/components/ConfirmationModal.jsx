@@ -23,7 +23,7 @@ export function ConfirmationModal({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm"
+            className="absolute inset-0"
           />
           <motion.div
             initial={{ scale: 0.95, opacity: 0, y: 20 }}

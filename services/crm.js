@@ -5,19 +5,33 @@ const twilio = require("../lib/twilio");
 
 const ZAPIER_WEBHOOK_URL = process.env.ZAPIER_WEBHOOK_URL || null;
 
-function getCrmWebhookUrl(tenant) {
-  const url = (tenant && tenant.crm_webhook_url) || ZAPIER_WEBHOOK_URL;
-  return url && url.trim() ? url.trim() : null;
+/**
+ * Returns an array of unique webhook URLs configured for the tenant.
+ * Uses both crm_webhook_url and zapier_webhook_url.
+ */
+function getWebhookUrls(tenant) {
+  const urls = new Set();
+  
+  if (tenant?.crm_webhook_url?.trim()) urls.add(tenant.crm_webhook_url.trim());
+  if (tenant?.zapier_webhook_url?.trim()) urls.add(tenant.zapier_webhook_url.trim());
+  
+  // System-wide fallback ONLY if no tenant-specific URLs are set
+  if (urls.size === 0 && ZAPIER_WEBHOOK_URL) {
+    urls.add(ZAPIER_WEBHOOK_URL.trim());
+  }
+  
+  return Array.from(urls);
 }
 
 async function syncBookingToCrm(tenantId, booking) {
   const tenant = await db.query(
-    "SELECT id, name, company_name, crm_webhook_url, crm_api_key, crm_type FROM tenants WHERE id = $1",
+    "SELECT id, name, company_name, crm_webhook_url, zapier_webhook_url, crm_api_key, crm_type FROM tenants WHERE id = $1",
     [tenantId]
   ).then((r) => r.rows[0]);
-  const webhookUrl = getCrmWebhookUrl(tenant);
-  if (!webhookUrl) {
-    console.warn("[AI-Desk] CRM no webhook URL tenantId=%s tenantName=%s", tenantId, tenant?.name || "?");
+  
+  const webhookUrls = getWebhookUrls(tenant);
+  if (webhookUrls.length === 0) {
+    console.warn("[AI-Desk] CRM no webhook URLs tenantId=%s tenantName=%s", tenantId, tenant?.name || "?");
     return { synced: false };
   }
 
@@ -49,30 +63,43 @@ async function syncBookingToCrm(tenantId, booking) {
   const headers = { "Content-Type": "application/json" };
   if (tenant && tenant.crm_api_key) headers["Authorization"] = `Bearer ${tenant.crm_api_key}`;
 
-  try {
-    const resp = await fetch(webhookUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
-    const ok = resp.ok;
-    const body = await resp.text();
-    console.log("[AI-Desk] CRM webhook sent bookingId=%s status=%s ok=%s", booking.id, resp.status, ok);
-    let crmId = null;
+  let lastOk = false;
+  let lastError = null;
+  let crmId = null;
+
+  // Send to all configured URLs
+  for (const url of webhookUrls) {
     try {
-      const j = JSON.parse(body);
-      if (j.id) crmId = String(j.id);
-      else if (j.job_id) crmId = String(j.job_id);
-    } catch (_) { }
+      const resp = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      lastOk = resp.ok;
+      const body = await resp.text();
+      console.log("[AI-Desk] Webhook sent bookingId=%s url=%s status=%s ok=%s", booking.id, url, resp.status, resp.ok);
+      
+      // Try to extract a CRM ID from the responses
+      try {
+        const j = JSON.parse(body);
+        if (j.id || j.job_id) {
+          crmId = String(j.id || j.job_id);
+        }
+      } catch (_) { }
+    } catch (e) {
+      console.error("[AI-Desk] Webhook failed bookingId=%s url=%s error=%s", booking.id, url, e.message);
+      lastError = e.message;
+    }
+  }
+
+  if (crmId || lastOk) {
     await db.query(
       "UPDATE bookings SET crm_synced_at = now(), crm_id = COALESCE($1, crm_id), updated_at = now() WHERE id = $2",
       [crmId, booking.id]
     );
-    return { synced: ok, crm_id: crmId };
-  } catch (e) {
-    console.error("[AI-Desk] CRM webhook failed bookingId=%s error=%s", booking.id, e.message);
-    return { synced: false, error: e.message };
   }
+
+  return { synced: lastOk, crm_id: crmId, error: lastError };
 }
 
 async function sendBookingConfirmationSms(tenant, booking, message) {
@@ -100,11 +127,12 @@ async function sendBookingConfirmationSms(tenant, booking, message) {
 
 async function sendCallDetailsToCrm(tenantId, callId) {
   const tenant = await db.query(
-    "SELECT id, name, company_name, crm_webhook_url, crm_api_key FROM tenants WHERE id = $1",
+    "SELECT id, name, company_name, crm_webhook_url, zapier_webhook_url, crm_api_key FROM tenants WHERE id = $1",
     [tenantId]
   ).then((r) => r.rows[0]);
-  const webhookUrl = getCrmWebhookUrl(tenant);
-  if (!webhookUrl) return { sent: false };
+  
+  const webhookUrls = getWebhookUrls(tenant);
+  if (webhookUrls.length === 0) return { sent: false };
 
   const call = await db.query(
     "SELECT c.*, (SELECT json_agg(json_build_object('id', r.id, 'twilio_sid', r.twilio_sid, 'recording_url', r.recording_url, 'duration_sec', r.duration_sec, 'transcript', r.transcript, 's3_key', r.s3_key)) FROM recordings r WHERE r.call_id = c.id) as recordings FROM calls c WHERE c.id = $1",
@@ -148,17 +176,25 @@ async function sendCallDetailsToCrm(tenantId, callId) {
   const headers = { "Content-Type": "application/json" };
   if (tenant && tenant.crm_api_key) headers["Authorization"] = `Bearer ${tenant.crm_api_key}`;
 
-  try {
-    const resp = await fetch(webhookUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
-    return { sent: true, status: resp.status };
-  } catch (e) {
-    console.error("CRM call details error:", e);
-    return { sent: false, error: e.message };
+  let lastStatus = 0;
+  let sentAny = false;
+
+  for (const url of webhookUrls) {
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+      });
+      lastStatus = resp.status;
+      if (resp.ok) sentAny = true;
+      console.log("[AI-Desk] Call details webhook sent callId=%s url=%s status=%s", call.id, url, resp.status);
+    } catch (e) {
+      console.error("[AI-Desk] Call details webhook failed callId=%s url=%s error=%s", call.id, url, e.message);
+    }
   }
+
+  return { sent: sentAny, status: lastStatus };
 }
 
 module.exports = {

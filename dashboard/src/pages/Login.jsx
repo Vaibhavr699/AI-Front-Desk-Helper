@@ -130,11 +130,9 @@ export default function Login({ onLogin }) {
                   initial={{ scale: 0.5, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
                   transition={{ type: "spring", duration: 0.8 }}
-                  className="mx-auto w-12 h-12 rounded-xl bg-gradient-to-br from-stone-900 to-stone-700 text-white flex items-center justify-center relative overflow-hidden shadow-lg"
+                  className="mx-auto w-12 h-12 rounded-xl bg-white border border-stone-200 flex items-center justify-center relative overflow-hidden shadow-lg p-1.5"
                 >
-                  <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M12 2L14.85 8.65L22 9.25L16.5 13.9L18.1 21L12 17.25L5.9 21L7.5 13.9L2 9.25L9.15 8.65L12 2Z" fill="currentColor" />
-                  </svg>
+                  <img src="/favicon.png" alt="Logo" className="w-full h-full object-contain" />
                 </motion.div>
 
                 <motion.h1

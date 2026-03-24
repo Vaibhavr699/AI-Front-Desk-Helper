@@ -53,7 +53,7 @@ async function schedulePostServiceCampaigns(tenantId, booking) {
  */
 async function processDueNurturing() {
   const rows = await db.query(
-    `SELECT ns.*, ns.metadata as schedule_metadata, t.company_name, t.name as tenant_name, t.plan, t.plan_overrides,
+    `SELECT ns.*, ns.metadata as schedule_metadata, t.company_name, t.name as tenant_name, t.plan, t.plan_overrides, t.nurturing_enabled,
             (SELECT pn.phone FROM phone_numbers pn WHERE pn.tenant_id = ns.tenant_id ORDER BY pn.is_primary DESC NULLS LAST LIMIT 1) as tenant_phone,
             l.phone as lead_phone, l.email as lead_email, l.name as lead_name
      FROM nurturing_schedule ns
@@ -65,7 +65,11 @@ async function processDueNurturing() {
   );
 
   for (const row of rows.rows) {
-    if (!hasNurturingReferralAccess({ plan: row.plan, plan_overrides: row.plan_overrides })) continue;
+    if (!hasNurturingReferralAccess({ 
+      plan: row.plan, 
+      plan_overrides: row.plan_overrides,
+      nurturing_enabled: row.nurturing_enabled 
+    })) continue;
     await processOneNurturing(row);
   }
 }

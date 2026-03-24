@@ -82,11 +82,6 @@ const ConversationViewer = ({ leadId, leadName }) => {
             </div>
           </div>
         </div>
-        <div className="flex gap-2 text-xs">
-          <button className="px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors flex items-center gap-2">
-            View Profile
-          </button>
-        </div>
       </div>
 
       {/* Timeline Feed */}

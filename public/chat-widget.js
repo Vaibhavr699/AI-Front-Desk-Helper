@@ -467,10 +467,8 @@ async function triggerFollowUp(lead) {
           sendLeadToCRM(data.lead_capture);
         }
         if (data.booking_confirmed) {
-          addMsg(
-            "✅ Your appointment is booked for " + data.booking_confirmed.date + " at " + data.booking_confirmed.time + ".",
-            false
-          );
+          console.log("Booking confirmed:", data.booking_confirmed);
+          // Redundant message removed as AI already confirms in data.reply
         }
         if (data.quote_capture) {
           addMsg("📋 Quick quote request received. We'll contact you shortly!", false);

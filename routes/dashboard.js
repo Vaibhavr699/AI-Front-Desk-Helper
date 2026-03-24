@@ -334,6 +334,9 @@ router.post("/followups/:id/sms", async (req, res) => {
 
     const tenant = await getTenantById(recovery.tenant_id);
     const stepDef = estimateRecovery.ALL_STEPS.get(recovery.current_step);
+    if (!stepDef) {
+      return res.status(400).json({ error: `Invalid current step '${recovery.current_step}' for this follow-up` });
+    }
     
     const vars = {
       first_name: recovery.contact_name?.split(/\s+/)[0] || "there",
@@ -355,6 +358,9 @@ router.post("/followups/:id/call", async (req, res) => {
 
     const tenant = await getTenantById(recovery.tenant_id);
     const stepDef = estimateRecovery.ALL_STEPS.get(recovery.current_step);
+    if (!stepDef) {
+      return res.status(400).json({ error: `Invalid current step '${recovery.current_step}' for this follow-up` });
+    }
     
     const vars = {
       first_name: recovery.contact_name?.split(/\s+/)[0] || "there",

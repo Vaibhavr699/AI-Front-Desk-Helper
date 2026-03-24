@@ -40,10 +40,26 @@ async function sendEmail({ to, subject, html, text }) {
 async function sendBookingConfirmationEmail(tenant, booking) {
   if (!booking.contact_email) return { ok: false };
   const name = booking.contact_name || "there";
+  
+  // Format date for better readability (e.g., "Tuesday, March 24")
+  let dateDisplay = "—";
+  if (booking.preferred_date) {
+    try {
+      const d = new Date(booking.preferred_date);
+      dateDisplay = d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+    } catch (e) {
+      dateDisplay = booking.preferred_date;
+    }
+  }
+
   const html = `
     <p>Hi ${escapeHtml(name)},</p>
     <p>Your free on-site estimate with <strong>${escapeHtml(tenant.company_name)}</strong> is scheduled.</p>
-    <p>We'll reach out to confirm details. If you have questions, reply to this email or give us a call.</p>
+    <div style="margin: 20px 0; padding: 15px; background-color: #f8fafc; border-radius: 8px; border-left: 4px solid #2563eb;">
+      <p style="margin: 0; font-size: 16px; font-weight: 600; color: #1e293b;">📅 Date: ${escapeHtml(dateDisplay)}</p>
+      <p style="margin: 8px 0 0; font-size: 16px; font-weight: 600; color: #1e293b;">⏰ Time: ${escapeHtml(booking.appointment_time || "Not specified")}</p>
+    </div>
+    <p>We'll reach out to confirm details. If you have questions, reply to this email or give us a call at <strong>${escapeHtml(tenant.phone || "")}</strong>.</p>
     <p>Thanks,<br/>${escapeHtml(tenant.company_name)}</p>
   `;
   return sendEmail({
@@ -223,9 +239,10 @@ async function sendWebsiteChatNotificationEmail(data) {
     <p style="margin-top:24px;font-size:12px;color:#666">${new Date().toLocaleString()}</p>
   `;
   const subjectPreview = message.length > 50 ? message.slice(0, 50).replace(/\n/g, " ") + "…" : message.replace(/\n/g, " ") || "Website chat";
+  const subjectPrefix = tenantName && tenantName !== "—" ? `💬 ${tenantName}` : "💬 Website chat";
   return sendEmail({
     to,
-    subject: "💬 Website chat: " + subjectPreview,
+    subject: `${subjectPrefix}: ${subjectPreview}`,
     html,
   });
 }

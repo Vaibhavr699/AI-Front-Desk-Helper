@@ -32,6 +32,20 @@ const BOOK_APPOINTMENT_TOOL = {
     },
   },
 };
+
+const HANG_UP_TOOL = {
+  type: "function",
+  function: {
+    name: "hang_up",
+    description: "End the call. Call this ONLY after you have confirmed the booking, summarized the details, and asked if there is anything else you can help with, and the user says no or the conversation is clearly finished.",
+    parameters: {
+      type: "object",
+      properties: {},
+    },
+  },
+};
+
+const VOICE_TOOLS = [BOOK_APPOINTMENT_TOOL, HANG_UP_TOOL];
 const SILENCE_MS = 1500;   // Process after this many ms with no new audio
 const MIN_AUDIO_MS = 400;  // Ignore utterances shorter than this
 const SAMPLE_RATE = 8000;
@@ -134,7 +148,7 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
       const completion = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: conversationMessages,
-        tools: [BOOK_APPOINTMENT_TOOL],
+        tools: VOICE_TOOLS,
         max_tokens: 300,
       });
       let assistantMessage = completion.choices && completion.choices[0] && completion.choices[0].message;
@@ -157,7 +171,10 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
             conversationMessages.push({
               role: "tool",
               tool_call_id: toolCall.id,
-              content: JSON.stringify({ success: true, message: "Booking saved. Confirm to the caller and say goodbye." }),
+              content: JSON.stringify({ 
+                success: true, 
+                message: "Booking saved. Confirm the details (date/time) to the caller, then ASK if there is anything else you can help them with. Do NOT say goodbye yet. Wait for their response." 
+              }),
             });
             const followUp = await openai.chat.completions.create({
               model: "gpt-4o-mini",
@@ -182,7 +199,7 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
             });
             reply = (followUp.choices && followUp.choices[0] && followUp.choices[0].message && followUp.choices[0].message.content) || "Sorry, I had trouble saving that. Please try again or call back.";
           }
-        } else {
+        } else if (toolCall) {
           if (!tenant || !callId) console.error("[AI-Desk] Turn-based book_appointment skipped tenant=%s callId=%s", !!tenant, !!callId);
           conversationMessages.push(assistantMessage);
           conversationMessages.push({
@@ -191,6 +208,23 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
             content: JSON.stringify({ success: false, error: "Missing context" }),
           });
           reply = reply || "I'm sorry, I couldn't complete that. Please try again.";
+        }
+
+        const hangUpCall = assistantMessage.tool_calls.find((tc) => tc.function && tc.function.name === "hang_up");
+        if (hangUpCall) {
+          console.log("[AI-Desk] Turn-based hang_up requested by AI callId=%s", callId);
+          conversationMessages.push(assistantMessage);
+          conversationMessages.push({
+            role: "tool",
+            tool_call_id: hangUpCall.id,
+            content: JSON.stringify({ success: true, message: "Hanging up now." }),
+          });
+          reply = "Thank you for calling. Have a great day!";
+          setTimeout(() => {
+            if (twilioSocket.readyState === 1) {
+              twilioSocket.close();
+            }
+          }, 4000); 
         }
       }
 

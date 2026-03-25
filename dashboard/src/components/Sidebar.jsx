@@ -1,3 +1,4 @@
+import React, { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { getUser } from "../api";
 
@@ -144,41 +145,22 @@ function BillingIcon({ className }) {
  * closeMobile: optional, called when a link is clicked (for mobile drawer).
  */
 export default function Sidebar({ collapsed, onToggle, closeMobile }) {
+  const [isHovered, setIsHovered] = useState(false);
   const location = useLocation();
 
   function handleLinkClick() {
     if (closeMobile) closeMobile();
   }
 
+  const isExpanded = !collapsed || isHovered;
+
   return (
     <aside
-      className={`flex flex-col bg-white border-r border-stone-200 transition-all duration-200 ease-in-out shrink-0 h-full overflow-hidden ${collapsed ? "w-[4.25rem]" : "w-56"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      className={`flex flex-col bg-white border-r border-stone-200 transition-all duration-200 ease-in-out shrink-0 h-full overflow-hidden ${isExpanded ? "w-56" : "w-[4.25rem]"
         }`}
     >
-      <div className="flex items-center justify-between h-12 px-3 py-2 border-b border-stone-200 shrink-0">
-        <button
-          type="button"
-          onClick={onToggle}
-          className="p-2 mb-2 mt-2 rounded-lg text-stone-500 hover:bg-stone-100 hover:text-stone-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 transition-colors"
-          aria-label={closeMobile ? "Close menu" : collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        >
-          {closeMobile ? (
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          ) : (
-            <svg
-              className={`w-5 h-5 transition-transform duration-200 ${collapsed ? "rotate-180" : ""}`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-            </svg>
-          )}
-        </button>
-      </div>
-
       <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-x-hidden overflow-y-auto min-h-0">
         {getNavItems().map(({ to, label, icon: Icon }) => {
           const isActive =
@@ -191,15 +173,40 @@ export default function Sidebar({ collapsed, onToggle, closeMobile }) {
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActive
                 ? "bg-stone-100 text-stone-900"
                 : "text-stone-600 hover:bg-stone-50 hover:text-stone-900"
-                } ${collapsed ? "justify-center" : ""}`}
-              title={collapsed ? label : undefined}
+                } ${!isExpanded ? "justify-center" : ""}`}
+              title={!isExpanded ? label : undefined}
             >
               <Icon className="w-5 h-5 shrink-0" />
-              {!collapsed && <span>{label}</span>}
+              {isExpanded && <span>{label}</span>}
             </Link>
           );
         })}
       </nav>
+
+            <div className="flex items-center justify-between h-12 px-3 py-2 border-b border-stone-200 shrink-0">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="p-2 mb-2 mt-2 rounded-lg text-stone-500 hover:bg-stone-100 hover:text-stone-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 transition-colors"
+          aria-label={closeMobile ? "Close menu" : !isExpanded ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          {closeMobile ? (
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          ) : (
+            <svg
+              className={`w-5 h-5 transition-transform duration-200 ${!isExpanded ? "rotate-180" : ""}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+            </svg>
+          )}
+        </button>
+      </div>
     </aside>
   );
 }
+

@@ -10,11 +10,11 @@ export default function Loading({ fullScreen = true, message = "Loading…" }) {
 
   if (fullScreen) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-50/80 backdrop-blur-sm">
+      <div className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-stone-50/80 backdrop-blur-md pointer-events-auto">
         {content}
       </div>
     );
   }
 
-  return <div className="flex w-full items-center justify-center p-8">{content}</div>;
+  return <div className="flex flex-1 w-full min-h-[50vh] items-center justify-center p-8">{content}</div>;
 }

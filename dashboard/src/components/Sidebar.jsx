@@ -158,10 +158,10 @@ export default function Sidebar({ collapsed, onToggle, closeMobile }) {
     <aside
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
-      className={`flex flex-col bg-white border-r border-stone-200 transition-all duration-200 ease-in-out shrink-0 h-full overflow-hidden ${isExpanded ? "w-56" : "w-[4.25rem]"
+      className={`flex flex-col bg-white border-r border-stone-200 transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] shrink-0 h-full overflow-hidden ${isExpanded ? "w-64" : "w-[4.5rem]"
         }`}
     >
-      <nav className="flex-1 py-3 px-2 space-y-0.5 overflow-x-hidden overflow-y-auto min-h-0">
+      <nav className="flex-1 py-4 px-3 space-y-1 overflow-x-hidden overflow-y-auto min-h-0">
         {getNavItems().map(({ to, label, icon: Icon }) => {
           const isActive =
             location.pathname === to || (to !== "/" && location.pathname.startsWith(to));
@@ -170,40 +170,55 @@ export default function Sidebar({ collapsed, onToggle, closeMobile }) {
               key={to}
               to={to}
               onClick={handleLinkClick}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${isActive
-                ? "bg-stone-100 text-stone-900"
-                : "text-stone-600 hover:bg-stone-50 hover:text-stone-900"
-                } ${!isExpanded ? "justify-center" : ""}`}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 group ${isActive
+                ? "bg-brand-50 text-brand-600 shadow-sm shadow-brand-100/50"
+                : "text-stone-500 hover:bg-stone-50 hover:text-stone-900"
+                }`}
               title={!isExpanded ? label : undefined}
             >
-              <Icon className="w-5 h-5 shrink-0" />
-              {isExpanded && <span>{label}</span>}
+              <Icon className={`w-5 h-5 shrink-0 transition-transform duration-200 ${isActive ? "scale-110" : "group-hover:scale-110"}`} />
+              <span 
+                className={`whitespace-nowrap transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] origin-left ${
+                  isExpanded ? "opacity-100 translate-x-0 ml-1" : "opacity-0 -translate-x-4 pointer-events-none w-0"
+                }`}
+              >
+                {label}
+              </span>
             </Link>
           );
         })}
       </nav>
 
-            <div className="flex items-center justify-between h-12 px-3 py-2 border-b border-stone-200 shrink-0">
+      <div className="p-3 border-t border-stone-100">
         <button
           type="button"
           onClick={onToggle}
-          className="p-2 mb-2 mt-2 rounded-lg text-stone-500 hover:bg-stone-100 hover:text-stone-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 transition-colors"
+          className={`flex items-center gap-3 w-full p-2.5 rounded-xl text-stone-400 hover:bg-stone-50 hover:text-stone-600 transition-all duration-200 group ${!isExpanded ? "justify-center" : ""}`}
           aria-label={closeMobile ? "Close menu" : !isExpanded ? "Expand sidebar" : "Collapse sidebar"}
         >
-          {closeMobile ? (
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          ) : (
-            <svg
-              className={`w-5 h-5 transition-transform duration-200 ${!isExpanded ? "rotate-180" : ""}`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-            </svg>
-          )}
+          <div className="w-5 h-5 shrink-0 flex items-center justify-center">
+            {closeMobile ? (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            ) : (
+              <svg
+                className={`w-5 h-5 transition-transform duration-300 ${!isExpanded ? "rotate-180" : ""}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+              </svg>
+            )}
+          </div>
+          <span 
+            className={`whitespace-nowrap transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] origin-left ${
+              isExpanded ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-4 pointer-events-none w-0"
+            }`}
+          >
+            {collapsed ? "Lock Expanded" : "Collapse"}
+          </span>
         </button>
       </div>
     </aside>

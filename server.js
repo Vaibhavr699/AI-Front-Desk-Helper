@@ -76,6 +76,7 @@ const REALTIME_TOOLS = [
         contact_email: { type: "string" },
         address: { type: "string" },
         city: { type: "string" },
+        state: { type: "string", description: "The state of the job location (e.g. New York, NY, Florida, etc.)" },
         scope: { type: "string" },
         job_type: { type: "string" },
         preferred_date: { type: "string", description: "Preferred date (YYYY-MM-DD)" },
@@ -665,7 +666,7 @@ ${websiteKnowledgeContext}`;
 async function getCallerHistory(phone) {
   if (!pool || !phone) return null;
   const result = await pool.query(
-    "SELECT transcript FROM calls WHERE phone = $1 AND transcript IS NOT NULL AND transcript != '' ORDER BY started_at DESC LIMIT 1",
+    "SELECT transcript FROM calls WHERE from_number = $1 AND transcript IS NOT NULL AND transcript != '' ORDER BY started_at DESC LIMIT 1",
     [phone]
   );
   return result.rows[0]?.transcript || null;
@@ -2326,6 +2327,18 @@ wss.on("connection", async (twilioSocket, req) => {
   const recoveryScript = q.script ? decodeURIComponent(q.script) : "";
 
   console.log("[AI-Desk] Connection path=%s isRecovery=%s isNurturing=%s recoveryId=%s scheduleId=%s", pathname, isRecovery, isNurturing, recoveryId, scheduleId);
+
+  const isTurnBased = q.turnBased === "1";
+  if (isTurnBased) {
+    console.log("[AI-Desk] Handoff to Turn-Based Stream Handler (Owner/Test Mode)");
+    const { handleTurnBasedStream } = require("./handlers/turnBasedStream");
+    handleTurnBasedStream(twilioSocket, { 
+      callSid: q.CallSid || q.callSid, 
+      from: q.From || q.from, 
+      to: q.To || q.to 
+    }, getTenantByPhone, callsService, recordingService);
+    return;
+  }
 
   const pathSegments = pathname.split("/").filter(Boolean);
   const tenantIdFromPath = pathSegments.length >= 2 ? pathSegments[1] : "";

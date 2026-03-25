@@ -32,6 +32,7 @@ function normalizeBookingData(data) {
     contact_email: get(data, "contact_email", "contactEmail"),
     address: get(data, "address"),
     city: get(data, "city"),
+    state: get(data, "state"),
     scope: get(data, "scope"),
     job_type: get(data, "job_type", "jobType"),
     preferred_date: preferredDate,
@@ -45,14 +46,14 @@ function normalizeBookingData(data) {
 async function createBooking(tenantId, callId, data, leadId = null) {
   console.log("[AI-Desk] Booking create start tenantId=%s callId=%s raw_keys=%s", tenantId, callId || "(none)", Object.keys(data || {}).join(","));
   const norm = normalizeBookingData(data);
-  console.log("[AI-Desk] Booking normalized name=%s phone=%s address=%s city=%s", norm.contact_name, norm.contact_phone, norm.address || "(none)", norm.city || "(none)");
+  console.log("[AI-Desk] Booking normalized name=%s phone=%s address=%s city=%s state=%s", norm.contact_name, norm.contact_phone, norm.address || "(none)", norm.city || "(none)", norm.state || "(none)");
   let res;
   try {
     res = await db.query(
       `INSERT INTO bookings (
         tenant_id, call_id, lead_id, contact_name, contact_phone, contact_email,
-        address, city, scope, job_type, preferred_date, appointment_time, technician_id, notes, status, revenue_cents
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'Booked', $15)
+        address, city, state, scope, job_type, preferred_date, appointment_time, technician_id, notes, status, revenue_cents
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'Booked', $16)
       RETURNING *`,
       [
         tenantId,
@@ -63,6 +64,7 @@ async function createBooking(tenantId, callId, data, leadId = null) {
         norm.contact_email,
         norm.address,
         norm.city,
+        norm.state,
         norm.scope,
         norm.job_type,
         norm.preferred_date,

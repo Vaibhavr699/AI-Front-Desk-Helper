@@ -53,6 +53,7 @@ async function syncBookingToCrm(tenantId, booking) {
     contact_email: booking.contact_email,
     address: booking.address,
     city: booking.city,
+    state: booking.state,
     scope: booking.scope,
     job_type: booking.job_type,
     preferred_date: booking.preferred_date,
@@ -64,8 +65,11 @@ async function syncBookingToCrm(tenantId, booking) {
   if (tenant && tenant.crm_api_key) headers["Authorization"] = `Bearer ${tenant.crm_api_key}`;
 
   let lastOk = false;
+  let lastStatus = 0;
   let lastError = null;
   let crmId = null;
+
+  console.log("[AI-Desk] Sending booking payload to webhooks:", JSON.stringify(payload));
 
   // Send to all configured URLs
   for (const url of webhookUrls) {
@@ -76,6 +80,7 @@ async function syncBookingToCrm(tenantId, booking) {
         body: JSON.stringify(payload),
       });
       lastOk = resp.ok;
+      lastStatus = resp.status;
       const body = await resp.text();
       console.log("[AI-Desk] Webhook sent bookingId=%s url=%s status=%s ok=%s", booking.id, url, resp.status, resp.ok);
       
@@ -99,7 +104,7 @@ async function syncBookingToCrm(tenantId, booking) {
     );
   }
 
-  return { synced: lastOk, crm_id: crmId, error: lastError };
+  return { synced: lastOk, crm_id: crmId, error: lastError, status: lastStatus };
 }
 
 async function sendBookingConfirmationSms(tenant, booking, message) {
@@ -141,7 +146,7 @@ async function sendCallDetailsToCrm(tenantId, callId) {
   if (!call) return { sent: false };
 
   const booking = await db.query(
-    "SELECT id, contact_name, contact_phone, status FROM bookings WHERE call_id = $1 LIMIT 1",
+    "SELECT id, contact_name, contact_phone, state, status FROM bookings WHERE call_id = $1 LIMIT 1",
     [callId]
   ).then((r) => r.rows[0]);
 
@@ -170,7 +175,10 @@ async function sendCallDetailsToCrm(tenantId, callId) {
     tenant_name: tenant?.name ?? null,
     company_name: tenant?.company_name ?? null,
     booking_id: booking?.id ?? null,
-    booking_contact: booking ? { name: booking.contact_name, phone: booking.contact_phone, status: booking.status } : null,
+    booking_contact_name: booking?.contact_name ?? null,
+    booking_contact_phone: booking?.contact_phone ?? null,
+    booking_contact_state: booking?.state ?? null,
+    booking_contact_status: booking?.status ?? null,
   };
 
   const headers = { "Content-Type": "application/json" };
@@ -178,6 +186,8 @@ async function sendCallDetailsToCrm(tenantId, callId) {
 
   let lastStatus = 0;
   let sentAny = false;
+
+  console.log("[AI-Desk] Sending call_details payload to webhooks:", JSON.stringify(payload));
 
   for (const url of webhookUrls) {
     try {

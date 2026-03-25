@@ -22,6 +22,7 @@ const BOOK_APPOINTMENT_TOOL = {
         contact_email: { type: "string", description: "Email if given" },
         address: { type: "string", description: "Street address" },
         city: { type: "string", description: "City" },
+        state: { type: "string", description: "State (e.g. New York, NY, Florida, etc.)" },
         scope: { type: "string", description: "What services or products they need, specific details about their request, etc." },
         job_type: { type: "string", description: "Residential or commercial" },
         preferred_date: { type: "string", description: "Preferred date if given" },

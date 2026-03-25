@@ -6,7 +6,11 @@ async function createCall(tenantId, twilioCallSid, fromNumber, toNumber, directi
   const res = await db.query(
     `INSERT INTO calls (tenant_id, twilio_call_sid, from_number, to_number, direction, status)
      VALUES ($1, $2, $3, $4, $5, 'in_progress')
-     ON CONFLICT (twilio_call_sid) DO UPDATE SET updated_at = now()
+     ON CONFLICT (twilio_call_sid) DO UPDATE SET 
+       updated_at = now(),
+       from_number = EXCLUDED.from_number,
+       to_number = EXCLUDED.to_number,
+       direction = EXCLUDED.direction
      RETURNING *`,
     [tenantId, twilioCallSid, fromNumber, toNumber, direction]
   );

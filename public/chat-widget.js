@@ -287,7 +287,7 @@ async function triggerFollowUp(lead) {
     header.appendChild(smsBtn);
 
     const scriptUrl = apiBase + "/chat-widget.js";
-    const embedSnippet = "<script src=\"" + scriptUrl + "\"><\/script>";
+    const embedSnippet = "<script src=\"" + scriptUrl + "\" data-tenant-id=\"" + tenantId + "\"><\/script>";
     const helpBtn = document.createElement("button");
     helpBtn.innerText = "?";
     helpBtn.type = "button";

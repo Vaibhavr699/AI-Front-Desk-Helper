@@ -54,7 +54,7 @@
 
   // ===== Chat header with (?) tooltip =====
   var scriptUrl = apiBase + "/dashboard/chat-widget.js";
-  var embedSnippet = "<script src=\"" + scriptUrl + "\"><\/script>";
+  var embedSnippet = "<script src=\"" + scriptUrl + "\" data-tenant-id=\"" + tenantId + "\"><\/script>";
   var headerBar = document.createElement("div");
   headerBar.style.display = "flex";
   headerBar.style.alignItems = "center";

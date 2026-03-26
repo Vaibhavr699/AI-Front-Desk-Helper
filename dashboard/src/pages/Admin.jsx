@@ -447,8 +447,12 @@ export default function Admin({ view = "tenants" }) {
                           >
                             <td className="px-6 py-4">
                               <div className="flex items-center gap-3">
-                                <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 text-xs font-black shrink-0">
-                                  {(t.company_name || t.name || "?").charAt(0).toUpperCase()}
+                                <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center text-slate-500 text-xs font-black shrink-0 overflow-hidden">
+                                  {t.logo_url ? (
+                                    <img src={t.logo_url} alt="" className="w-full h-full object-cover" />
+                                  ) : (
+                                    (t.company_name || t.name || "?").charAt(0).toUpperCase()
+                                  )}
                                 </div>
                                 <div className="min-w-0">
                                   <div className="font-bold text-slate-900 text-sm truncate">{t.company_name || t.name}</div>
@@ -485,10 +489,11 @@ export default function Admin({ view = "tenants" }) {
                               <div className="flex items-center justify-end gap-2">
                                 <button
                                   onClick={() => openOverrideDrawer(t)}
-                                  className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all shadow-sm"
+                                  className="px-3 py-1.5 flex items-center gap-1.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all text-[10px] font-black uppercase tracking-wider shadow-sm"
                                   title="Pricing Settings"
                                 >
-                                  <Tag size={14} />
+                                  <Tag size={12} />
+                                  Pricing
                                 </button>
                                 <button
                                   onClick={() => handleImpersonate(t)}

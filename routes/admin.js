@@ -4,6 +4,7 @@ const express = require("express");
 const db = require("../lib/db");
 const auth = require("../lib/auth");
 const emailService = require("../services/email");
+const stripeService = require("../lib/stripe");
 const { getPlan, listPlans } = require("../lib/plans");
 
 const router = express.Router();
@@ -72,7 +73,7 @@ router.get("/tenants", async (req, res) => {
   try {
     const r = await db.query(
       `SELECT
-        t.id, t.name, t.slug, t.company_name, t.plan,
+        t.id, t.name, t.slug, t.company_name, t.plan, t.logo_url,
         t.subscription_status, t.stripe_customer_id, t.stripe_subscription_id,
         t.plan_overrides,
         t.promo_label, t.promo_expires_at, t.promo_notes,
@@ -255,6 +256,11 @@ router.patch("/tenants/:id/pricing", async (req, res) => {
       { plan_overrides, promo_label }
     );
 
+    // 2. Sync to Stripe if they have an active subscription
+    await stripeService.syncStripeSubscription(id).catch(err => {
+      console.error("[Admin] Stripe pricing sync failed:", err.message);
+    });
+
     res.json({ success: true });
   } catch (e) {
     console.error("[Admin] Pricing update error:", e.message);
@@ -281,6 +287,12 @@ router.delete("/tenants/:id/pricing", async (req, res) => {
     );
 
     console.log("[Admin] Pricing overrides removed tenantId=%s by=%s", id, req.user.email);
+    
+    // Sync to Stripe (remove custom pricing)
+    await stripeService.syncStripeSubscription(id).catch(err => {
+      console.error("[Admin] Stripe pricing sync failed (on removal):", err.message);
+    });
+
     res.json({ success: true });
   } catch (e) {
     console.error("[Admin] Remove overrides error:", e.message);

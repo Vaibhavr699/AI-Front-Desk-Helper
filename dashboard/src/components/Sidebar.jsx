@@ -177,10 +177,9 @@ export default function Sidebar({ collapsed, onToggle, closeMobile }) {
               title={!isExpanded ? label : undefined}
             >
               <Icon className={`w-5 h-5 shrink-0 transition-transform duration-200 ${isActive ? "scale-110" : "group-hover:scale-110"}`} />
-              <span 
-                className={`whitespace-nowrap transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] origin-left ${
-                  isExpanded ? "opacity-100 translate-x-0 ml-1" : "opacity-0 -translate-x-4 pointer-events-none w-0"
-                }`}
+              <span
+                className={`whitespace-nowrap transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] origin-left ${isExpanded ? "opacity-100 translate-x-0 ml-1" : "opacity-0 -translate-x-4 pointer-events-none w-0"
+                  }`}
               >
                 {label}
               </span>
@@ -188,39 +187,6 @@ export default function Sidebar({ collapsed, onToggle, closeMobile }) {
           );
         })}
       </nav>
-
-      <div className="p-3 border-t border-stone-100">
-        <button
-          type="button"
-          onClick={onToggle}
-          className={`flex items-center gap-3 w-full p-2.5 rounded-xl text-stone-400 hover:bg-stone-50 hover:text-stone-600 transition-all duration-200 group ${!isExpanded ? "justify-center" : ""}`}
-          aria-label={closeMobile ? "Close menu" : !isExpanded ? "Expand sidebar" : "Collapse sidebar"}
-        >
-          <div className="w-5 h-5 shrink-0 flex items-center justify-center">
-            {closeMobile ? (
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            ) : (
-              <svg
-                className={`w-5 h-5 transition-transform duration-300 ${!isExpanded ? "rotate-180" : ""}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-              </svg>
-            )}
-          </div>
-          <span 
-            className={`whitespace-nowrap transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] origin-left ${
-              isExpanded ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-4 pointer-events-none w-0"
-            }`}
-          >
-            {collapsed ? "Lock Expanded" : "Collapse"}
-          </span>
-        </button>
-      </div>
     </aside>
   );
 }

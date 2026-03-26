@@ -2862,9 +2862,23 @@ wss.on("connection", async (twilioSocket, req) => {
                 console.error("[Sales-Engine] Trigger error:", err.message);
               });
 
-              if (isRecovery && recoveryRecord) {
-                await estimateRecoveryService.markConverted(recoveryRecord.id);
-                console.log("[AI-Desk] Recovery CONVERTED id=%s 🎉", recoveryRecord.id);
+              // 5. Mark any active estimate recovery as CONVERTED (Sales Win)
+              const bookingPhone = norm.contact_phone || args.contact_phone || args.phone;
+              if (bookingPhone) {
+                try {
+                  const activeRecovery = await db.query(
+                    "SELECT id FROM estimate_recoveries WHERE tenant_id = $1 AND contact_phone = $2 AND status IN ('active', 'paused', 'dormant') LIMIT 1",
+                    [tenant.id, normalizePhone(bookingPhone)]
+                  );
+                  if (activeRecovery.rows.length > 0) {
+                    await estimateRecoveryService.markConverted(activeRecovery.rows[0].id);
+                    console.log("[AI-Desk] Recovery CONVERTED (via booking) id=%s 🎉", activeRecovery.rows[0].id);
+                  }
+                  // Also stop any sales engine follow-up
+                  await salesEngine.stopEstimateFollowUp(normalizePhone(bookingPhone), 'converted');
+                } catch (e) {
+                  console.error("[AI-Desk] Recovery conversion error:", e.message);
+                }
               }
 
               const confirmedDate = args.preferred_date || args.appointment_date || "";
@@ -3452,6 +3466,7 @@ app.post("/webhooks/sales/stop", async (req, res) => {
 
 // -------------------- Webhook: CRM Job Completed (DripJobs → Zapier → here) --------------------
 app.post("/webhooks/crm/job-completed", async (req, res) => {
+  console.log("[CRM Webhook] Received job-completed for phone=%s", req.body?.phone || req.body?.contact_phone);
   const phone = normalizePhone(req.body?.phone || req.body?.contact_phone);
   const contactName = req.body?.contact_name || null;
   const serviceDate = req.body?.service_date || new Date().toISOString().slice(0, 10);
@@ -3530,6 +3545,24 @@ app.post("/webhooks/crm/job-completed", async (req, res) => {
       }).catch((e) =>
         console.error("[CRM Webhook] Schedule nurturing campaigns (no booking):", e)
       );
+    }
+
+    // 5. Mark any active estimate recovery as CONVERTED
+    try {
+      // Find active recovery in estimate_recoveries
+      const activeRecovery = await db.query(
+        "SELECT id FROM estimate_recoveries WHERE tenant_id = $1 AND contact_phone = $2 AND status IN ('active', 'paused', 'dormant') LIMIT 1",
+        [tenantId, phone]
+      );
+      if (activeRecovery.rows.length > 0) {
+        await estimateRecoveryService.markConverted(activeRecovery.rows[0].id);
+        console.log("[CRM Webhook] Converted estimate_recovery id=%s", activeRecovery.rows[0].id);
+      }
+      
+      // Also stop any sales engine follow-up
+      await salesEngine.stopEstimateFollowUp(phone, 'converted');
+    } catch (e) {
+      console.error("[CRM Webhook] Recovery conversion error:", e.message);
     }
 
     res.json({

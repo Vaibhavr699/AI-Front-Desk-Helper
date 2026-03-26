@@ -14,13 +14,13 @@ export function SiteHeader() {
               <img src="/favicon.png" alt="Logo" className="w-full h-full object-contain" />
             </div>
             <div className="flex flex-col">
-              <span className="font-bold text-stone-900 leading-none">AI Front Desk</span>
+              <span className="font-bold text-stone-900 leading-none">AI Front Desk Helper</span>
               <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mt-0.5">Helper</span>
             </div>
           </Link>
           <div className="flex items-center gap-3">
-            <Link to="/login" className="text-sm font-medium text-stone-600 hover:text-stone-900 transition-colors">
-              Log in
+            <Link to="/login" className="text-sm font-medium text-stone-700 hover:text-stone-900 transition-colors">
+              Sign in
             </Link>
             <ShimmerButton
               onClick={() => navigate("/login?signup=1")}
@@ -28,7 +28,7 @@ export function SiteHeader() {
               shimmerSize="0.04em"
               background="rgba(41, 37, 36, 1)"
             >
-              Get started
+              Start setup
             </ShimmerButton>
           </div>
         </div>

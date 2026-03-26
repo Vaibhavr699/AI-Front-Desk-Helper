@@ -6,7 +6,7 @@ import { Button } from "./button";
 export function AnimatedHeroTitle({ onStart, onLogin, onContact }) {
     const [titleNumber, setTitleNumber] = useState(0);
     const titles = useMemo(
-        () => ["every call", "more leads", "every booking", "no voicemails", "more revenue"],
+        () => ["every call", "more jobs", "lost revenue", "every lead", "more bookings"],
         []
     );
 
@@ -27,7 +27,7 @@ export function AnimatedHeroTitle({ onStart, onLogin, onContact }) {
                 </div>
                 <div className="flex gap-3 flex-col">
                     <h1 className="text-5xl md:text-6xl max-w-2xl tracking-tight text-center font-bold text-stone-900">
-                        Your AI answers
+                        Never miss
                         <span className="relative flex w-full justify-center overflow-hidden text-center md:pb-4 md:pt-1 h-[1.2em]">
                             &nbsp;
                             {titles.map((title, index) => (
@@ -48,8 +48,8 @@ export function AnimatedHeroTitle({ onStart, onLogin, onContact }) {
                         </span>
                     </h1>
                     <p className="text-lg md:text-xl leading-relaxed tracking-tight text-stone-600 max-w-2xl text-center mx-auto">
-                        An AI phone assistant that qualifies leads, books jobs, and connects
-                        your CRM — so you can focus on the work that matters.
+                        Answer every call. Book more jobs. Recover lost revenue - automatically
+                        Your AI front desk handles calls, qualifies leads, schedules work, and follows up.
                     </p>
                 </div>
                 <div className="flex flex-row gap-3 mt-2 relative z-[101] pointer-events-auto isolate">

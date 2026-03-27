@@ -85,7 +85,19 @@ const MONTH_PLACEHOLDERS = {
 };
 
 const GoogleCalendarIcon = ({ className = "w-6 h-6" }) => (
-  <img src={googleCalendarLogo} className={className} alt="Google Calendar" />
+  <svg viewBox="0 0 122.88 122.88" className={className} xmlns="http://www.w3.org/2000/svg">
+    <style dangerouslySetInnerHTML={{ __html: ".st0{fill:#188038;}.st1{fill:#1967D2;}.st2{fill:#1A73E8;}.st3{fill:#F72A25;}.st4{fill:#FBBC04;}.st5{fill:#FFFFFF;}.st6{fill:#34A853;}.st7{fill:#4285F4;}" }} />
+    <g>
+      <polygon className="st5" points="93.78,29.1 29.1,29.1 29.1,93.78 93.78,93.78 93.78,29.1" />
+      <polygon className="st3" points="93.78,122.88 122.88,93.78 93.78,93.78 93.78,122.88" />
+      <polygon className="st4" points="122.88,29.1 93.78,29.1 93.78,93.78 122.88,93.78 122.88,29.1" />
+      <polygon className="st6" points="93.78,93.78 29.1,93.78 29.1,122.88 93.78,122.88 93.78,93.78" />
+      <path className="st0" d="M0,93.78v19.4c0,5.36,4.34,9.7,9.7,9.7h19.4v-29.1H0L0,93.78z" />
+      <path className="st1" d="M122.88,29.1V9.7c0-5.36-4.34-9.7-9.7-9.7h-19.4v29.1H122.88L122.88,29.1z" />
+      <path className="st7" d="M93.78,0H9.7C4.34,0,0,4.34,0,9.7v84.08h29.1V29.1h64.67V0L93.78,0z" />
+      <path className="st2" d="M42.37,79.27c-2.42-1.63-4.09-4.02-5-7.17l5.61-2.31c0.51,1.94,1.4,3.44,2.67,4.51 c1.26,1.07,2.8,1.59,4.59,1.59c1.84,0,3.41-0.56,4.73-1.67c1.32-1.12,1.98-2.54,1.98-4.26c0-1.76-0.7-3.2-2.09-4.32 c-1.39-1.12-3.14-1.67-5.22-1.67H46.4v-5.55h2.91c1.79,0,3.31-0.48,4.54-1.46c1.23-0.97,1.84-2.3,1.84-3.99 c0-1.5-0.55-2.7-1.65-3.6s-2.49-1.35-4.18-1.35c-1.65,0-2.96,0.44-3.93,1.32c-0.97,0.88-1.7,2-2.12,3.24l-5.55-2.31 c0.74-2.09,2.09-3.93,4.07-5.52c1.98-1.59,4.51-2.39,7.58-2.39c2.27,0,4.32,0.44,6.13,1.32c1.81,0.88,3.23,2.1,4.26,3.65 c1.03,1.56,1.54,3.31,1.54,5.25c0,1.98-0.48,3.65-1.43,5.03c-0.95,1.37-2.13,2.43-3.52,3.16v0.33c1.79,0.74,3.36,1.96,4.51,3.52 c1.17,1.58,1.76,3.46,1.76,5.66c0,2.2-0.56,4.16-1.67,5.88c-1.12,1.72-2.66,3.08-4.62,4.07c-1.96,0.99-4.17,1.49-6.62,1.49 C47.41,81.72,44.79,80.91,42.37,79.27L42.37,79.27L42.37,79.27z M76.83,51.43l-6.16,4.45l-3.08-4.67l11.05-7.97h4.24v37.6h-6.05 V51.43L76.83,51.43z" />
+    </g>
+  </svg>
 );
 
 const TABS = [
@@ -123,6 +135,7 @@ export default function Settings({ tenantId }) {
     twilio_auth_token: "",
     facebook_page_id: "",
     facebook_page_access_token: "",
+    facebook_token_error: null,
     google_calendar_linked: false,
     google_calendar_email: "",
     faqs: [],
@@ -208,7 +221,8 @@ export default function Settings({ tenantId }) {
         twilio_account_sid: "",
         twilio_auth_token: "",
         facebook_page_id: t.facebook_page_id || "",
-        facebook_page_access_token: "",
+        facebook_page_access_token: t.facebook_page_access_token || "",
+        facebook_token_error: t.facebook_token_error || null,
         google_calendar_linked: t.google_calendar_linked === true,
         google_calendar_email: t.google_calendar_email || "",
         faqs: Array.isArray(t.faqs) ? t.faqs : [],
@@ -1987,6 +2001,18 @@ export default function Settings({ tenantId }) {
                 )}
 
                 <div className="bg-[#1877F2]/5 rounded-2xl p-6 border border-[#1877F2]/10 space-y-4">
+                  {form.facebook_token_error === 'expired' && (
+                    <div className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-start gap-3 border-l-4 border-l-red-500 shadow-sm">
+                      <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+                      <div>
+                        <h4 className="text-sm font-bold text-red-700">Facebook Session Expired</h4>
+                        <p className="text-xs text-red-600 mt-1">
+                          Your Page Access Token (Gladiator Painting) has expired. Meta requires tokens to be refreshed periodically. 
+                          Generate a new token in Meta Developers and paste it below.
+                        </p>
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <label className="block text-sm font-bold text-[#1877F2] mb-2 uppercase tracking-wide">Page ID</label>
                     <input

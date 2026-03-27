@@ -468,8 +468,9 @@ export default function Home() {
       </button>
     </div>
   </div>
-</section>
-
+  </section>
+  </main>
+      
       <SiteFooter />
 
 <ContactModal 

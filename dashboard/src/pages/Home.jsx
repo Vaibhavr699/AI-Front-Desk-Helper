@@ -7,7 +7,7 @@ import { SiteFooter } from "../components/SiteFooter";
 import { PhoneCall, CalendarCheck, MessageSquare, Bot, User, CheckCircle2, Home as HomeIcon, Layers, DollarSign, ShieldCheck, Headphones, CalendarDays, Link2, Smartphone, Phone, Settings, Zap } from "lucide-react";
 import { BentoGrid, BentoCard } from "../components/ui/bento-grid";
 import { ShimmerButton } from "../components/ui/shimmer-button";
-import { ContactModal } from "../components/ui/ContactModal";
+import { ContactModal } from "../components/ContactModal";
 import { useState } from "react";
 
 const NAV_ITEMS = [

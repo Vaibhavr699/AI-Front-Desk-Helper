@@ -1,6 +1,8 @@
 "use strict";
 
 const { Resend } = require("resend");
+const db = require("../lib/db");
+
 
 const apiKey = process.env.RESEND_API_KEY;
 const fromEmail = process.env.EMAIL_FROM;
@@ -39,7 +41,23 @@ async function sendEmail({ to, subject, html, text }) {
 
 async function sendBookingConfirmationEmail(tenant, booking) {
   if (!booking.contact_email) return { ok: false };
+
+  // Fetch tenant phone number for footer
+  let phone = "";
+  try {
+    const phoneRes = await db.query(
+      "SELECT phone FROM phone_numbers WHERE tenant_id = $1 ORDER BY is_primary DESC NULLS LAST LIMIT 1",
+      [tenant.id]
+    );
+    if (phoneRes.rows.length > 0) {
+      phone = phoneRes.rows[0].phone;
+    }
+  } catch (err) {
+    console.error("[Email] Failed to fetch tenant phone:", err.message);
+  }
+
   const name = booking.contact_name || "there";
+
   
   // Format date for better readability (e.g., "Tuesday, March 24")
   let dateDisplay = "—";
@@ -59,7 +77,8 @@ async function sendBookingConfirmationEmail(tenant, booking) {
       <p style="margin: 0; font-size: 16px; font-weight: 600; color: #1e293b;">📅 Date: ${escapeHtml(dateDisplay)}</p>
       <p style="margin: 8px 0 0; font-size: 16px; font-weight: 600; color: #1e293b;">⏰ Time: ${escapeHtml(booking.appointment_time || "Not specified")}</p>
     </div>
-    <p>We'll reach out to confirm details. If you have questions, reply to this email or give us a call at <strong>${escapeHtml(tenant.phone || "")}</strong>.</p>
+    <p>We'll reach out to confirm details. If you have questions, reply to this email or give us a call at <strong>${escapeHtml(phone || "")}</strong>.</p>
+
     <p>Thanks,<br/>${escapeHtml(tenant.company_name)}</p>
   `;
   return sendEmail({

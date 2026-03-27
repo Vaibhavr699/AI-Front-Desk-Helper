@@ -82,7 +82,7 @@ router.get("/:id/history", async (req, res) => {
     
     // Also fetch Bookings
     const bookingsRes = await db.query(
-      "SELECT id, created_at, contact_name, status, preferred_date, revenue_cents, scope FROM bookings WHERE lead_id = $1 ORDER BY created_at DESC",
+      "SELECT id, created_at, contact_name, status, preferred_date, estimated_revenue_cents, scope FROM bookings WHERE lead_id = $1 ORDER BY created_at DESC",
       [leadId]
     );
     const bookings = bookingsRes.rows;

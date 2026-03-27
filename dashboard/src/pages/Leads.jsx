@@ -90,6 +90,7 @@ export default function Leads({ tenantId }) {
                     <th className="px-6 py-4 text-left text-xs font-semibold text-stone-500 uppercase tracking-wider">Progress</th>
                     <th className="px-6 py-4 text-left text-xs font-semibold text-stone-500 uppercase tracking-wider">Status</th>
                     <th className="px-6 py-4 text-left text-xs font-semibold text-stone-500 uppercase tracking-wider">Project Type</th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold text-stone-500 uppercase tracking-wider">Source</th>
                     <th className="px-6 py-4 text-left text-xs font-semibold text-stone-500 uppercase tracking-wider">Created</th>
                     <th className="px-6 py-4 text-right text-xs font-semibold text-stone-500 uppercase tracking-wider">Actions</th>
                   </tr>
@@ -137,9 +138,15 @@ export default function Leads({ tenantId }) {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-600">
                         {lead.project_type || "---"}
                       </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className="px-2 py-1 bg-stone-100 text-stone-500 text-[10px] font-black uppercase tracking-widest rounded-md border border-stone-200">
+                          {lead.lead_source || "Website"}
+                        </span>
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-500 font-mono">
                         {new Date(lead.created_at).toLocaleDateString()}
                       </td>
+
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <button className="text-stone-400 hover:text-stone-900 transition-colors">
                           <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

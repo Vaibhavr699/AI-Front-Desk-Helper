@@ -1,4 +1,3 @@
-// Must be a full URL (e.g. http://localhost:3001). Fix missing scheme or "http:" typo (no "//").
 let API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 if (API_BASE && !/^https?:\/\//i.test(API_BASE)) {
   API_BASE = API_BASE.replace(/^https?:(?!\/\/)/i, "").replace(/^\/+/, "");
@@ -17,7 +16,6 @@ export async function api(path, options = {}) {
   if (res.status === 401) {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
-    // Don't redirect on login/signup — let the form show the error and stay on the page
     const isAuthAttempt = path === "/api/auth/login" || path === "/api/auth/signup";
     if (!isAuthAttempt) {
       window.location.href = "/";
@@ -147,8 +145,9 @@ export function getActivityFeed(tenantId) {
   return api(`/api/activity-feed?tenant_id=${tenantId}`);
 }
 
-export async function getBookings(tenantId) {
-  return api(`/api/bookings?tenant_id=${tenantId}`);
+export async function getBookings(tenantId, params = {}) {
+  const q = new URLSearchParams({ tenant_id: tenantId, ...params });
+  return api(`/api/bookings?${q}`);
 }
 
 export async function updateBooking(id, data) {

@@ -162,22 +162,64 @@ router.get("/bookings", async (req, res) => {
   try {
     const tenantId = getTenantIdFromQuery(req);
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
-    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
+
+    const limit = Math.min(parseInt(req.query.limit, 10) || 15, 100);
+    const offset = parseInt(req.query.offset, 10) || 0;
+    const search = req.query.search || "";
+    const status = req.query.status || "";
+    const sortBy = req.query.sortBy || "preferred_date";
+    const sortDir = req.query.sortDir === "asc" ? "ASC" : "DESC";
+
+    const params = [tenantId];
+    let where = "WHERE b.tenant_id = $1";
+    let i = 2;
+
+    if (status && status !== "all") {
+      where += ` AND LOWER(b.status) = $${i++}`;
+      params.push(status.toLowerCase());
+    }
+
+    if (search) {
+      where += ` AND (b.contact_name ILIKE $${i} OR b.contact_phone ILIKE $${i} OR b.scope ILIKE $${i} OR b.address ILIKE $${i})`;
+      params.push(`%${search}%`);
+      i++;
+    }
+
+    // Sort column validation
+    const allowedSort = ["contact_name", "preferred_date", "estimated_revenue_cents", "status", "created_at"];
+    const activeSort = allowedSort.includes(sortBy) ? sortBy : "preferred_date";
+
+    const countRes = await db.query(
+      `SELECT COUNT(*) FROM bookings b ${where}`,
+      params
+    );
+    const total = parseInt(countRes.rows[0].count, 10);
+
+    params.push(limit, offset);
     const result = await db.query(
       `SELECT b.*, t.name as technician_name 
        FROM bookings b 
        LEFT JOIN technicians t ON b.technician_id = t.id
-       WHERE b.tenant_id = $1 
-       ORDER BY b.preferred_date DESC, b.appointment_time DESC, b.created_at DESC 
-       LIMIT $2`,
-      [tenantId, limit]
+       ${where}
+       ORDER BY b.${activeSort} ${sortDir}, b.created_at DESC 
+       LIMIT $${i++} OFFSET $${i++}`,
+      params
     );
-    res.json({ bookings: result.rows });
+
+    res.json({ 
+      bookings: result.rows,
+      pagination: {
+        total,
+        limit,
+        offset
+      }
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 router.patch("/bookings/:id", async (req, res) => {
   try {
@@ -427,7 +469,7 @@ router.get("/metrics", async (req, res) => {
           COUNT(DISTINCT l.id) as leads_generated,
           COUNT(DISTINCT er.id) as estimates_sent,
           COUNT(DISTINCT b.id) as estimates_accepted,
-          COALESCE(SUM(b.revenue_cents), 0) as revenue_booked
+          COALESCE(SUM(b.estimated_revenue_cents), 0) as revenue_booked
          FROM leads l
          LEFT JOIN estimate_recoveries er ON er.lead_id = l.id AND er.created_at > $2
          LEFT JOIN bookings b ON b.lead_id = l.id AND b.created_at > $2
@@ -445,16 +487,23 @@ router.get("/metrics", async (req, res) => {
          WHERE tenant_id = $1 AND started_at > $2`,
         [tenantId, thirtyDaysAgo]
       ),
-      // 3. Lead Sources (Distribution)
+      // 3. Lead Sources (Distribution & Revenue)
       db.query(
         `SELECT 
-          COALESCE(channel, 'unknown') as source,
-          COUNT(*) as count
-         FROM messages
-         WHERE tenant_id = $1 AND created_at > $2 AND direction = 'inbound'
-         GROUP BY channel
+          COALESCE(lead_source, 'Direct') as source,
+          COUNT(*) as count,
+          COALESCE(SUM(estimated_revenue_cents), 0) as revenue
+         FROM bookings
+         WHERE tenant_id = $1 AND created_at > $2
+         GROUP BY lead_source
          UNION ALL
-         SELECT 'phone' as source, COUNT(*) as count FROM calls WHERE tenant_id = $1 AND started_at > $2
+         SELECT 
+          COALESCE(lead_source, 'Direct') as source,
+          COUNT(*) as count,
+          0 as revenue
+         FROM calls
+         WHERE tenant_id = $1 AND started_at > $2 AND twilio_call_sid NOT IN (SELECT twilio_call_sid FROM calls JOIN bookings ON bookings.call_id = calls.id WHERE calls.tenant_id = $1)
+         GROUP BY lead_source
          ORDER BY count DESC`,
         [tenantId, thirtyDaysAgo]
       ),
@@ -485,7 +534,7 @@ router.get("/metrics", async (req, res) => {
         `SELECT
           (SELECT COUNT(*) FROM leads WHERE tenant_id = $1 AND status NOT IN ('Closed', 'Lost')) as open_estimates,
           (SELECT COUNT(*) FROM bookings WHERE tenant_id = $1 AND status = 'scheduled') as jobs_scheduled,
-          (SELECT COALESCE(SUM(revenue_cents), 0) FROM bookings WHERE tenant_id = $1 AND status = 'scheduled') as estimated_revenue`,
+          (SELECT COALESCE(SUM(estimated_revenue_cents), 0) FROM bookings WHERE tenant_id = $1 AND status = 'scheduled') as estimated_revenue`,
         [tenantId]
       ),
       // 7. Nurturing metrics (campaign_log, referral_leads, referral-sourced bookings)
@@ -497,7 +546,7 @@ router.get("/metrics", async (req, res) => {
           (SELECT COUNT(*) FROM messages WHERE tenant_id = $1 AND direction = 'inbound' AND created_at > $2) as customer_replies,
           (SELECT COUNT(*) FROM referral_leads WHERE tenant_id = $1 AND created_at > $2) as referrals_generated,
           (SELECT COUNT(*) FROM bookings b JOIN leads l ON l.id = b.lead_id AND l.tenant_id = $1 AND l.lead_source = 'referral' WHERE b.tenant_id = $1 AND b.created_at > $2) as appointments_booked,
-          (SELECT COALESCE(SUM(b.revenue_cents), 0) FROM bookings b JOIN leads l ON l.id = b.lead_id AND l.tenant_id = $1 AND l.lead_source = 'referral' WHERE b.tenant_id = $1 AND b.created_at > $2) as estimated_revenue`,
+          (SELECT COALESCE(SUM(b.estimated_revenue_cents), 0) FROM bookings b JOIN leads l ON l.id = b.lead_id AND l.tenant_id = $1 AND l.lead_source = 'referral' WHERE b.tenant_id = $1 AND b.created_at > $2) as estimated_revenue`,
         [tenantId, thirtyDaysAgo]
       )
     ]);
@@ -561,8 +610,9 @@ router.get("/metrics", async (req, res) => {
           : 0
       },
       sources: sourceStats.rows.map(r => ({
-        label: r.source.charAt(0).toUpperCase() + r.source.slice(1),
-        value: parseInt(r.count, 10)
+        label: r.source,
+        value: parseInt(r.count, 10),
+        revenue: parseInt(r.revenue, 10)
       })),
       trends: trendStats.rows.map(r => ({
         date: r.date,
@@ -1014,7 +1064,7 @@ router.get("/phone-numbers", async (req, res) => {
     const tenantId = getTenantIdFromQuery(req);
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
     const result = await db.query(
-      "SELECT id, tenant_id, phone, is_primary, created_at FROM phone_numbers WHERE tenant_id = $1 ORDER BY is_primary DESC, created_at",
+      "SELECT id, tenant_id, phone, is_primary, lead_source, created_at FROM phone_numbers WHERE tenant_id = $1 ORDER BY is_primary DESC, created_at",
       [tenantId]
     );
     res.json({ phone_numbers: result.rows });
@@ -1028,8 +1078,28 @@ router.post("/phone-numbers", async (req, res) => {
   try {
     const tenantId = getTenantIdFromQuery(req);
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+
+    // Enforce Plan Limits: Basic (1), Pro (3), Elite (5)
+    // Additional lines are $12/mo (handled via subscription, but we check limits here for automated add)
+    const tenant = await getTenantById(tenantId);
+    const countRes = await db.query("SELECT COUNT(*) FROM phone_numbers WHERE tenant_id = $1", [tenantId]);
+    const currentCount = parseInt(countRes.rows[0].count, 10);
+    const plan = tenant.plan || "basic";
+    
+    let limit = 1;
+    if (plan === "pro") limit = 3;
+    if (plan === "elite") limit = 5;
+
+    if (currentCount >= limit) {
+      return res.status(403).json({ 
+        error: `Plan limit reached. Your '${plan}' plan includes up to ${limit} phone number(s). Please upgrade to add more.`,
+        limit_reached: true,
+        current_plan: plan,
+        limit: limit
+      });
+    }
     const phone = normalizePhoneInput(req.body?.phone);
-    const label = req.body?.label || null;
+    const lead_source = req.body?.lead_source || req.body?.label || null;
     const setPrimary = !!req.body?.is_primary;
     const isOwned = !!req.body?.is_owned; // Flag from frontend if picked from 'Owned' search or manual
 
@@ -1075,8 +1145,8 @@ router.post("/phone-numbers", async (req, res) => {
     
     // Save the record regardless of Twilio success
     const result = await db.query(
-      "INSERT INTO phone_numbers (tenant_id, phone, is_primary, twilio_sid, label) VALUES ($1, $2, $3, $4, $5) RETURNING id, tenant_id, phone, is_primary, twilio_sid, label, created_at",
-      [tenantId, phone, setPrimary, webhookResult.success ? (webhookResult.twilioSid || null) : null, label]
+      "INSERT INTO phone_numbers (tenant_id, phone, is_primary, twilio_sid, lead_source) VALUES ($1, $2, $3, $4, $5) RETURNING id, tenant_id, phone, is_primary, twilio_sid, lead_source, created_at",
+      [tenantId, phone, setPrimary, webhookResult.success ? (webhookResult.twilioSid || null) : null, lead_source]
     );
 
     res.status(201).json({ 
@@ -1115,7 +1185,8 @@ router.patch("/phone-numbers/:id", async (req, res) => {
   try {
     const tenantId = getTenantIdFromQuery(req);
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
-    const { is_primary, label } = req.body;
+    const { is_primary, lead_source, label } = req.body;
+    const finalSource = lead_source || label;
     const phoneId = req.params.id;
 
     // Verify ownership
@@ -1142,6 +1213,13 @@ router.patch("/phone-numbers/:id", async (req, res) => {
       await db.query(
         "UPDATE phone_numbers SET is_primary = false, updated_at = now() WHERE id = $1",
         [phoneId]
+      );
+    }
+
+    if (finalSource !== undefined) {
+      await db.query(
+        "UPDATE phone_numbers SET lead_source = $1, updated_at = now() WHERE id = $2",
+        [finalSource, phoneId]
       );
     }
 

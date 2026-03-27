@@ -66,6 +66,27 @@ function isValidE164(phone) {
 const REALTIME_TOOLS = [
   {
     type: "function",
+    name: "capture_lead_info",
+    description: "Capture the caller's information (name, phone, email, etc.) before they book or if they are just inquiring. ALWAYS call this if you've collected ANY details like name or scope, even if they haven't committed to a date yet. This ensures we save their lead record for follow-ups.",
+    parameters: {
+      type: "object",
+      properties: {
+        contact_name: { type: "string" },
+        contact_phone: { type: "string" },
+        contact_email: { type: "string" },
+        address: { type: "string" },
+        city: { type: "string" },
+        scope: { type: "string" },
+        job_type: { type: "string" },
+        notes: { type: "string" },
+        estimated_value: { type: "number" },
+        lead_score: { type: "integer" }
+      },
+      required: ["contact_name", "contact_phone"]
+    }
+  },
+  {
+    type: "function",
     name: "book_appointment",
     description: "Finalize and save the booking. Call this ONLY when you have real details from the caller: contact name, contact phone, contact email, and address OR city. NEVER use placeholder or dummy data. Include EVERY detail the caller gave: contact_name, contact_phone, contact_email, address, city, scope, job_type, preferred_date, appointment_time, notes, estimated_value, lead_score, and ai_summary. Do not omit any field the caller provided.",
     parameters: {
@@ -82,13 +103,14 @@ const REALTIME_TOOLS = [
         preferred_date: { type: "string", description: "Preferred date (YYYY-MM-DD)" },
         appointment_time: { type: "string", description: "Preferred time (e.g. 1:30 PM or 13:30)" },
         notes: { type: "string" },
-        estimated_value: { type: "number", description: "Estimated job value in dollars (e.g. 1500 or 4500.50). Estimate based on job size if not explicitly given." },
+        estimated_value: { type: "number", description: "Estimated job value in dollars (e.g. 1500 or 4500.50). ALWAYS provide an estimate based on the project scope (e.g. $500 for a room, $3000 for a house). Do not leave at 0 if project details are known." },
         lead_score: { type: "integer", description: "Score from 1 to 100 based on lead quality. 100 is a perfect lead." },
         ai_summary: { type: "string", description: "A concise 1-2 sentence summary of the caller's needs and sentiment." },
       },
-      required: ["contact_name", "contact_phone", "address"],
+      required: ["contact_name", "contact_phone", "address", "estimated_value"],
     },
   },
+
   {
     type: "function",
     name: "check_availability",
@@ -208,11 +230,11 @@ const RECOVERY_TOOLS = [
         preferred_date: { type: "string", description: "Preferred date (YYYY-MM-DD)" },
         appointment_time: { type: "string", description: "Preferred time (e.g. 1:30 PM)" },
         notes: { type: "string", description: "Extra notes" },
-        estimated_value: { type: "number", description: "Estimated job value in dollars" },
-        lead_score: { type: "integer", description: "Score from 1 to 100 based on lead quality." },
+        estimated_value: { type: "number", description: "Estimated job value in dollars. ALWAYS provide a reasonable estimate ($500-$5000)." },
+        lead_score: { type: "integer", description: "Score from 1 to 100 based on lead quality. 100 is a perfect lead." },
         ai_summary: { type: "string", description: "A concise 1-2 sentence summary of the call." },
       },
-      required: ["contact_name", "contact_phone", "address"],
+      required: ["contact_name", "contact_phone", "address", "estimated_value"],
     },
   },
   {
@@ -701,9 +723,13 @@ function resolveBaseUrl(req) {
   return normalizeBaseUrl(`${proto}://${host}`);
 }
 
-function buildTenantWsUrl(baseUrl, tenantId) {
+function buildTenantWsUrl(baseUrl, tenantId, leadSource = null) {
   const wsBaseUrl = toWebSocketBaseUrl(baseUrl);
-  return `${wsBaseUrl}/twilio-media/${tenantId}`;
+  let url = `${wsBaseUrl}/twilio-media/${tenantId}`;
+  if (leadSource) {
+    url += `?leadSource=${encodeURIComponent(leadSource)}`;
+  }
+  return url;
 }
 
 function escapeXml(value) {
@@ -861,17 +887,35 @@ async function sendToCRM(leadCapture, tenantId = null) {
   let webhookUrls = [];
   
   // Use tenant-specific webhooks if tenantId is provided
-  if (tenantId && TENANTS[tenantId]) {
-    const t = TENANTS[tenantId];
-    if (t.crm_webhook_url?.trim()) webhookUrls.push(t.crm_webhook_url.trim());
-    if (t.zapier_webhook_url?.trim()) webhookUrls.push(t.zapier_webhook_url.trim());
+  if (tenantId) {
+    try {
+      const dbRes = await db.query(
+        "SELECT crm_webhook_url, zapier_webhook_url FROM tenants WHERE id = $1",
+        [tenantId]
+      );
+      const t = dbRes.rows[0];
+      if (t) {
+        if (t.crm_webhook_url?.trim()) webhookUrls.push(t.crm_webhook_url.trim());
+        if (t.zapier_webhook_url?.trim()) webhookUrls.push(t.zapier_webhook_url.trim());
+      }
+    } catch (err) {
+      console.error("[CRM] DB hook lookup failed:", err.message);
+    }
+
+    // Fallback to memory cache if DB fetch didn't yield URLs
+    if (webhookUrls.length === 0 && TENANTS[tenantId]) {
+      const t = TENANTS[tenantId];
+      if (t.crm_webhook_url?.trim()) webhookUrls.push(t.crm_webhook_url.trim());
+      if (t.zapier_webhook_url?.trim()) webhookUrls.push(t.zapier_webhook_url.trim());
+    }
   }
 
-  // Fallback to system envs if no tenant-specific URLs
+  // Fallback to system envs if STILL no URLs
   if (webhookUrls.length === 0) {
     if (process.env.CRM_WEBHOOK_URL) webhookUrls.push(process.env.CRM_WEBHOOK_URL.trim());
     if (process.env.ZAPIER_WEBHOOK_URL) webhookUrls.push(process.env.ZAPIER_WEBHOOK_URL.trim());
   }
+
 
   // Filter unique URLs
   webhookUrls = [...new Set(webhookUrls)];
@@ -992,7 +1036,7 @@ async function sendTwilioSms(to, body, tenantId = null) {
   return { ok: true, sid: msg.sid };
 }
 
-function buildSmsSystemPrompt(thread, tenant = null) {
+function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
   const companyName = tenant?.company_name || tenant?.name || "our team";
   const toneOfVoice = tenant?.tone_of_voice || "professional";
 
@@ -1017,7 +1061,14 @@ function buildSmsSystemPrompt(thread, tenant = null) {
     combinedInstructions += "\n\nBUSINESS SPECIFIC INSTRUCTIONS:\n" + tenant.instructions;
   }
 
-  // 3. OBJECTION HANDLING
+  // 3. CALENDAR CONTEXT (if available)
+  if (availableSlots && availableSlots.length > 0) {
+    combinedInstructions += `\n\nCALENDAR AVAILABILITY: The following slots are currently open for the requested day: ${availableSlots.join(", ")}. Suggest these to the customer if they ask for available times or if their requested time is taken.`;
+  } else if (availableSlots && availableSlots.info) {
+    combinedInstructions += `\n\nCALENDAR CONTEXT: ${availableSlots.info}`;
+  }
+
+  // 4. OBJECTION HANDLING
   if (tenant && tenant.objection_handling_config) {
     const oh = tenant.objection_handling_config;
     let lines = [];
@@ -1049,8 +1100,31 @@ function buildSmsSystemPrompt(thread, tenant = null) {
 }
 
 async function runSmsAiOrchestrator(thread, incomingText, tenant = null) {
+  // Determine if we should fetch available slots
+  let availableSlots = [];
+  const text = (incomingText || "").toLowerCase();
+  const dateMentioned = text.match(/tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|(\d{4}-\d{2}-\d{2})/);
+  const askingAvailability = text.includes("available") || text.includes("time") || text.includes("when");
+
+  if (tenant && (dateMentioned || askingAvailability)) {
+    try {
+      // Default to checking tomorrow if no specific date is clear, for simplicity
+      let dateToCheck = new Date();
+      dateToCheck.setDate(dateToCheck.getDate() + 1); // Tomorrow
+      if (text.includes("today")) dateToCheck = new Date();
+      
+      const dateStr = dateToCheck.toISOString().split("T")[0];
+      availableSlots = await getAvailableSlots(tenant, dateStr);
+      if (availableSlots.length > 0) {
+        availableSlots.info = `Available on ${dateStr}: ${availableSlots.join(", ")}`;
+      }
+    } catch (err) {
+      console.error("[Orchestrator] Failed to fetch slots:", err.message);
+    }
+  }
+
   const input = [
-    { role: "system", content: buildSmsSystemPrompt(thread, tenant) },
+    { role: "system", content: buildSmsSystemPrompt(thread, tenant, availableSlots) },
     ...thread.history.map((msg) => ({
       role: msg.role,
       content: String(msg.text || "")
@@ -1156,8 +1230,14 @@ function mergeLeadCapture(thread, incomingLeadCapture) {
 }
 
 async function handleLeadBooking(thread, ai, tenantOverride = null) {
-  const tenant = tenantOverride || TENANTS.gladiators;
-  if (!tenant) return null;
+  let tenant = tenantOverride;
+  if (!tenant && thread.tenantId) {
+    tenant = TENANTS[thread.tenantId];
+  }
+  if (!tenant) {
+    console.warn("[Booking] No tenant resolved for booking flow. thread.phone=%s", thread.phone);
+    return null;
+  }
 
   // HANDLE CANCELLATION
   if (ai.should_cancel) {
@@ -1236,11 +1316,14 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
     duration_minutes: 60
   }, tenant);
 
-  // Allow booking if: (1) calendar says available, (2) calendar not configured, or (3) calendar errored (don't block bookings due to calendar issues)
-  const calendarSkipped = ["calendar_not_configured", "calendar_error"].includes(availability.reason);
-  const isAvailable = (availability.ok && availability.available) || calendarSkipped;
-  if (calendarSkipped && availability.reason === "calendar_error") {
-    console.warn("[Booking] Calendar error — proceeding with booking anyway:", availability.message || "unknown");
+  // Allow booking if: (1) calendar says available, (2) calendar not configured
+  // 🔥 TIGHTENED: Do NOT proceed if there was a calendar_error to prevent double bookings
+  const calendarNotConfigured = availability.reason === "calendar_not_configured";
+  const isAvailable = (availability.ok && availability.available) || calendarNotConfigured;
+  
+  if (availability.reason === "calendar_error") {
+    console.error("[Booking] Calendar error — blocking booking to prevent double booking:", availability.message || "unknown");
+    return "I'm having a bit of trouble checking our schedule right now. Let me have a team member confirm that time for you and we'll text you back shortly!";
   }
 
   if (isAvailable) {
@@ -1268,8 +1351,9 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
 
       // PERSIST TO LOCAL DATABASE
       try {
-        const tenant = tenantOverride || TENANTS.gladiators;
+        const tenant = tenantOverride;
         if (tenant) {
+
           await bookingsService.createBooking(tenant.id, null, {
             contact_name: thread.leadCapture.full_name || "New Lead",
             contact_phone: thread.leadCapture?.phone || thread.phone,
@@ -1279,9 +1363,11 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
             scope: thread.leadCapture.project_type || "",
             job_type: "Residential",
             preferred_date: ai.appointment_date,
+            appointment_time: ai.appointment_time,
             notes: thread.leadCapture.project_details || "",
             estimated_value: thread.leadCapture.estimated_value
           }, thread.leadId);
+
           
           if (thread.leadId) {
             leadsService.updateLeadStatus(thread.leadId, 'Booked').catch(e => console.error("Lead status update error:", e));
@@ -1807,8 +1893,100 @@ function buildAppointmentWindow(dateValue, timeValue, durationMinutes = 60, time
   return { start, end };
 }
 
-async function checkAvailability(args = {}, tenant = null) {
+async function getAvailableSlots(tenant, dateStr) {
   const cal = tenant ? getCalendarForTenant(tenant) : calendar.instance;
+  if (!cal) return [];
+
+  const tz = (tenant && tenant.timezone) || BUSINESS_TIMEZONE || "America/Chicago";
+  const offset = getTzOffsetString(tz, dateStr);
+  
+  // Define working hours: 8 AM to 5 PM
+  const startOfDay = new Date(`${dateStr}T08:00:00${offset}`);
+  const endOfDay = new Date(`${dateStr}T17:00:00${offset}`);
+
+  if (Number.isNaN(startOfDay.getTime()) || Number.isNaN(endOfDay.getTime())) return [];
+
+  const calendarId = (tenant && tenant.google_calendar_id) || DEFAULT_CALENDAR_ID;
+
+  try {
+    const res = await cal.freebusy.query({
+      requestBody: {
+        timeMin: startOfDay.toISOString(),
+        timeMax: endOfDay.toISOString(),
+        timeZone: tz,
+        items: [{ id: calendarId }],
+      },
+    });
+
+    const busy = res.data.calendars[calendarId].busy || [];
+    
+    // Fetch local bookings to ensure they are also blocked
+    try {
+      const dbRes = await db.query(
+        "SELECT appointment_time FROM bookings WHERE tenant_id = $1 AND preferred_date = $2 AND status != 'Cancelled'",
+        [tenant?.id, dateStr]
+      );
+      dbRes.rows.forEach(row => {
+        const lbStart = new Date(`${dateStr}T${row.appointment_time}${offset}`);
+        const lbEnd = new Date(lbStart.getTime() + 60 * 60 * 1000);
+        busy.push({ start: lbStart.toISOString(), end: lbEnd.toISOString() });
+      });
+    } catch (dbErr) {
+      console.error("[Calendar] Local busy fetch failed:", dbErr.message);
+    }
+
+    const slots = [];
+    let current = startOfDay.getTime();
+    const duration = 60 * 60 * 1000; // 1 hour
+
+    while (current + duration <= endOfDay.getTime()) {
+      const slotStart = current;
+      const slotEnd = current + duration;
+
+      const isBusy = busy.some(b => {
+        const bStart = new Date(b.start).getTime();
+        const bEnd = new Date(b.end).getTime();
+        return (slotStart < bEnd && slotEnd > bStart);
+      });
+
+      if (!isBusy) {
+        const d = new Date(slotStart);
+        slots.push(d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: tz }));
+      }
+      current += duration;
+    }
+    return slots;
+  } catch (err) {
+    console.error(`[Calendar] getAvailableSlots failed date=${dateStr}:`, err.message);
+    return [];
+  }
+}
+
+async function checkAvailability(args = {}, tenant = null) {
+  // 1. Check Local Database first (fast and always available)
+  if (tenant) {
+    try {
+      const localRes = await db.query(
+        `SELECT id FROM bookings 
+         WHERE tenant_id = $1 
+         AND preferred_date = $2 
+         AND status != 'Cancelled'
+         AND appointment_time >= ($3::time - interval '59 minutes')
+         AND appointment_time <= ($3::time + interval '59 minutes')`,
+        [tenant.id, args.appointment_date, args.appointment_time]
+      );
+      if (localRes.rows.length > 0) {
+        console.log("[Calendar] Local booking conflict found for tenant %s at %s %s", tenant.id, args.appointment_date, args.appointment_time);
+        return { ok: true, available: false, reason: "busy" };
+      }
+    } catch (err) {
+      console.error("[Calendar] Local availability check failed:", err.message);
+      // Continue to Google check even if DB fails
+    }
+  }
+
+  const cal = tenant ? getCalendarForTenant(tenant) : calendar.instance;
+
   if (!cal) {
     return { ok: false, reason: "calendar_not_configured" };
   }
@@ -2098,7 +2276,7 @@ async function handleTwilioVoice(req, res, tenantId) {
       return;
     }
 
-    const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId);
+    const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId, tenant.lead_source);
     if (!/^wss:\/\//i.test(wsUrl)) {
       const fallbackTwiml = buildFallbackTwiml(
         "Please hold while we connect you to the team.",
@@ -2325,6 +2503,7 @@ wss.on("connection", async (twilioSocket, req) => {
   const recoveryId = q.recoveryId;
   const scheduleId = q.scheduleId;
   const recoveryScript = q.script ? decodeURIComponent(q.script) : "";
+  const leadSource = q.leadSource || null;
 
   console.log("[AI-Desk] Connection path=%s isRecovery=%s isNurturing=%s recoveryId=%s scheduleId=%s", pathname, isRecovery, isNurturing, recoveryId, scheduleId);
 
@@ -2596,7 +2775,8 @@ wss.on("connection", async (twilioSocket, req) => {
         "SERVICE TYPES: Do NOT assume the caller wants a specific service (like interior or exterior painting) unless it is explicitly mentioned in the business details or by the caller. If unsure, ALWAYS ask: 'What type of service are you looking for?'",
         "OFFER: Offer a free on-site estimate or appointment. ALWAYS confirm the specific Date and Time with the caller before calling book_appointment.",
         "APPOINTMENT MANAGEMENT: If the caller wants to CANCEL or RESCHEDULE, ask for their phone number to find their booking. Use 'cancel_appointment' or 'reschedule_appointment' only after confirming the details. For rescheduling, confirm the NEW date and time first.",
-        "REVENUE ESTIMATION & LEAD ANALYSIS: If the caller doesn't provide a budget, estimate the job value reasonably based on their scope. Always provide an 'estimated_value', a 'lead_score' (1-100), and a brief 'ai_summary' (1-2 sentences) when calling tools.",
+        "REVENUE ESTIMATION: You MUST provide a non-zero 'estimated_value' (in dollars) for every booking. After the caller describes their project scope, ask professionally about their budget by saying something like: 'To help us provide the most accurate estimate, did you have a specific budget range in mind for this project?'. If they don't have one, ask for project size (e.g. 'How many rooms?') to form a reasonable estimate. As a rule of thumb: $500 per room, $2500 for a small project, $5000+ for large projects. NEVER leave revenue at 0.",
+        "LEAD ANALYSIS: Always provide a 'lead_score' (1-100) and a brief 'ai_summary' (1-2 sentences) when calling tools.",
         "ONLY call book_appointment when you have obtained REAL details from the human for: name, phone, email, and address/city. Do NOT call it with placeholders or before asking for these details.",
         "Right after calling book_appointment successfully, say: 'I have scheduled that for [Confirmed Date] at [Confirmed Time]. You will receive a confirmation text shortly. Is there anything else I can help you with today?'. ONLY call the 'hang_up' tool if they say no or if the conversation is clearly finished.",
         "Do NOT say you are transferring or connecting to someone unless you actually need a live agent. Only use request_human_transfer for: emergencies, situations requiring a manager, frustrated/angry callers, or VIP/repeat customers. For normal requests, always complete the booking with book_appointment.",
@@ -2671,7 +2851,8 @@ wss.on("connection", async (twilioSocket, req) => {
            Immediately call 'detect_objection' with type 'spouse'.
            
         4. If they are ready to book:
-           Collect any missing details (name, phone, address, scope, preferred date) and call 'book_appointment'. Always include an 'estimated_value' based on the job details discussed.
+           Confirm their project scope and ask professionally about their budget by saying: 'To help us provide the most accurate estimate, did you have a specific budget range in mind for this project?'. 
+           Collect any missing details (name, phone, address, scope, preferred date) and call 'book_appointment'. Always include an 'estimated_value' based on the conversation.
            
         Be warm, helpful, and professional. The goal is to open conversation, not pressure them.`;
       }
@@ -2837,12 +3018,25 @@ wss.on("connection", async (twilioSocket, req) => {
                 });
                 output = JSON.stringify({ success: true, message: "Appointment rescheduled successfully." });
               }
+            } else if (name === "capture_lead_info" && tenant) {
+              console.log("[AI-Desk] Realtime capture_lead_info tenantId=%s leadId=%s props=%j", tenant.id, leadId, args);
+              currentLeadCapture = { ...currentLeadCapture, ...args };
+              if (leadId) {
+                await leadsService.updateLeadInfo(leadId, {
+                  name: args.contact_name,
+                  email: args.contact_email,
+                  address: args.address || args.city,
+                  project_type: args.project_type || args.job_type,
+                  notes: args.notes || args.details || args.scope
+                }).catch(e => console.error("[AI-Desk] Lead update failed:", e.message));
+              }
+              output = JSON.stringify({ success: true, message: "Lead info captured. Continue the conversation." });
             } else if (name === "book_appointment" && tenant && callId) {
               console.log("[AI-Desk] Realtime book_appointment callSid=%s tenantId=%s callId=%s recovery=%s", callSid, tenant.id, callId, isRecovery);
               currentLeadCapture = { ...currentLeadCapture, ...args };
               
               // 1. Create local booking
-              const { booking, crmSynced } = await bookingsService.createBooking(tenant.id, callId, args, leadId);
+              const { booking, crmSynced } = await bookingsService.createBooking(tenant.id, callId, args, leadId, leadSource);
               console.log("[AI-Desk] Realtime booking done id=%s crmSynced=%s", booking.id, crmSynced);
               
               // 2. Sync to Google Calendar
@@ -3093,11 +3287,11 @@ wss.on("connection", async (twilioSocket, req) => {
       }
 
       const insertRes = await safePoolQuery(
-        `INSERT INTO calls (id, tenant_id, twilio_call_sid, started_at, status)
-         VALUES ($1, $2, $3, now(), $4)
+        `INSERT INTO calls (id, tenant_id, twilio_call_sid, started_at, status, lead_source)
+         VALUES ($1, $2, $3, now(), $4, $5)
          ON CONFLICT (twilio_call_sid) DO UPDATE SET status = 'in_progress'
          RETURNING id`,
-        [callId, tenant.id, callSid, "in_progress"]
+        [callId, tenant.id, callSid, "in_progress", leadSource]
       );
 
       if (insertRes && insertRes.rows && insertRes.rows.length > 0) {
@@ -3107,7 +3301,7 @@ wss.on("connection", async (twilioSocket, req) => {
       // --- Lead/CRM Integration ---
       from = msg.start?.customParameters?.From || msg.start?.from || null;
       if (from && tenant) {
-        leadsService.getOrCreateLead(tenant.id, from).then(lead => {
+        leadsService.getOrCreateLead(tenant.id, from, null, leadSource).then(lead => {
           if (lead) {
             leadId = lead.id;
             console.log("[AI-Desk] Lead linked callSid=%s leadId=%s", callSid, leadId);
@@ -3186,6 +3380,15 @@ wss.on("connection", async (twilioSocket, req) => {
         metadata: { leadCapture: currentLeadCapture },
         markEnded: true
       });
+
+      // Trigger inquiry follow-up if they didn't book
+      if (!hasBooked && !transferAttempted && leadId && from && tenant) {
+        estimateRecoveryService.startInquiryRecovery(tenant.id, {
+          id: leadId,
+          phone: from,
+          name: currentLeadCapture.full_name || currentLeadCapture.name || null
+        }, { call_id: callId }).catch(err => console.error("[AI-Desk] Inquiry follow-up trigger failed:", err.message));
+      }
     }
   });
 

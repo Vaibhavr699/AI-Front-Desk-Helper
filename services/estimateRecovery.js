@@ -145,6 +145,28 @@ const SPOUSE_SEQUENCE = [
 ];
 
 /**
+ * Inquiry sequence (called but didn't book).
+ */
+const INQUIRY_SEQUENCE = [
+    {
+        step: "inquiry_thanks",
+        channel: "sms",
+        delayHours: 1, // 1 hour later
+        message: (v) =>
+            `Hi ${v.first_name}! This is ${v.company_name}. I noticed we couldn't finish your booking inquiry earlier. Did you have any other questions I can help with?`,
+        next: "inquiry_call",
+    },
+    {
+        step: "inquiry_call",
+        channel: "call",
+        delayHours: 24,
+        script:
+            "Hi {{first_name}}, this is the AI assistant from {{company_name}}. I'm calling back to see if you were still interested in that painting project you called about? We have a few openings this week.",
+        next: null,
+    },
+];
+
+/**
  * Facebook layer messages — inserted between SMS touches if lead came from Facebook.
  */
 const FACEBOOK_MESSAGES = [
@@ -161,7 +183,7 @@ const OBJECTION_SEQUENCES = {
 
 // All sequences flattened for step lookup
 const ALL_STEPS = new Map();
-for (const seq of [GHOST_SEQUENCE, THINKING_SEQUENCE, PRICE_SEQUENCE, SPOUSE_SEQUENCE]) {
+for (const seq of [GHOST_SEQUENCE, THINKING_SEQUENCE, PRICE_SEQUENCE, SPOUSE_SEQUENCE, INQUIRY_SEQUENCE]) {
     for (const s of seq) ALL_STEPS.set(s.step, s);
 }
 
@@ -228,6 +250,45 @@ async function startRecovery(tenantId, bookingId, options = {}) {
         ]
     );
     console.log("[Recovery] Started id=%s tenant=%s booking=%s phone=%s", res.rows[0].id, tenantId, bookingId, b.contact_phone);
+    return res.rows[0];
+}
+
+/**
+ * Start an inquiry recovery for a lead (no booking required).
+ */
+async function startInquiryRecovery(tenantId, lead, options = {}) {
+    const phone = lead.phone || lead.contact_phone;
+    if (!phone) return null;
+
+    // Check if there is already an active recovery for this phone
+    const existing = await db.query(
+        "SELECT id FROM estimate_recoveries WHERE tenant_id = $1 AND contact_phone = $2 AND status = 'active'",
+        [tenantId, phone]
+    );
+    if (existing.rows.length > 0) return existing.rows[0];
+
+    const now = new Date();
+    const firstStep = INQUIRY_SEQUENCE[0];
+    const nextActionAt = addHours(now, firstStep.delayHours);
+
+    const res = await db.query(
+        `INSERT INTO estimate_recoveries (
+      tenant_id, lead_id, call_id, contact_name, contact_phone, contact_email,
+      status, current_step, next_action_at, lead_source
+    ) VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8, 'inquiry')
+    RETURNING *`,
+        [
+            tenantId,
+            lead.id || null,
+            options.call_id || null,
+            lead.name || lead.contact_name || "Guest",
+            phone,
+            lead.email || lead.contact_email || null,
+            firstStep.step,
+            nextActionAt.toISOString()
+        ]
+    );
+    console.log("[Recovery] Inquiry started id=%s tenant=%s phone=%s", res.rows[0].id, tenantId, phone);
     return res.rows[0];
 }
 
@@ -574,6 +635,7 @@ async function getRecoveryStats(tenantId) {
 module.exports = {
     // Core
     startRecovery,
+    startInquiryRecovery,
     processDueRecoveries,
     // Objection routing
     setObjection,

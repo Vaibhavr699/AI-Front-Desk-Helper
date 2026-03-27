@@ -81,7 +81,7 @@ router.get("/tenants", async (req, res) => {
         t.created_at,
         (SELECT COUNT(*) FROM calls WHERE tenant_id = t.id) as total_calls,
         (SELECT COUNT(*) FROM bookings WHERE tenant_id = t.id) as total_bookings,
-        (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary))
+        (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary, 'lead_source', pn.lead_source))
          FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones
        FROM tenants t
        ORDER BY t.created_at DESC`
@@ -129,7 +129,7 @@ router.get("/tenants/:id", async (req, res) => {
         t.*,
         (SELECT COUNT(*) FROM calls WHERE tenant_id = t.id) as total_calls,
         (SELECT COUNT(*) FROM bookings WHERE tenant_id = t.id) as total_bookings,
-        (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary))
+        (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary, 'lead_source', pn.lead_source))
          FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones,
         (SELECT json_build_object('email', du.email, 'role', du.role)
          FROM dashboard_users du WHERE du.tenant_id = t.id LIMIT 1) as owner

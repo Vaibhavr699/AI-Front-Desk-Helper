@@ -222,18 +222,30 @@ export default function Metrics({ tenantId }) {
             <p className="text-xs text-gray-400 font-medium">Distribution by channel</p>
           </div>
           <PieChart data={metrics.sources} size={180} />
-          <div className="w-full mt-6 space-y-2">
+          <div className="w-full mt-6 space-y-3">
             {(metrics.sources || []).map((s, i) => (
-              <div key={i} className="flex items-center justify-between text-[11px] font-bold">
-                <div className="flex items-center gap-2">
-                  <span className={`w-2 h-2 rounded-full`} style={{ backgroundColor: ["#3b82f6", "#10b981", "#8b5cf6", "#f59e0b", "#ef4444", "#6366f1"][i % 6] }}></span>
-                  <span className="text-gray-500 uppercase">{s.label}</span>
+              <div key={i} className="flex flex-col gap-1">
+                <div className="flex items-center justify-between text-[11px] font-bold">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2.5 h-2.5 rounded-full shadow-sm`} style={{ backgroundColor: ["#3b82f6", "#10b981", "#8b5cf6", "#f59e0b", "#ef4444", "#6366f1"][i % 6] }}></span>
+                    <span className="text-gray-500 uppercase tracking-tighter">{s.label}</span>
+                  </div>
+                  <span className="text-gray-900">{s.value} <span className="text-gray-400 font-medium">LDS</span></span>
                 </div>
-                <span className="text-gray-900">{s.value}</span>
+                <div className="flex justify-between items-center pl-4.5">
+                   <div className="h-1 flex-1 bg-gray-100 rounded-full overflow-hidden mr-3">
+                      <div 
+                        className="h-full bg-gray-900/10 rounded-full" 
+                        style={{ width: `${(s.value / metrics.sources.reduce((a,b)=>a+b.value,0)) * 100}%` }}
+                      ></div>
+                   </div>
+                   <span className="text-[10px] font-black text-emerald-600">${((s.revenue || 0) / 100).toLocaleString()}</span>
+                </div>
               </div>
             ))}
           </div>
         </div>
+
       </div>
 
       {/* Nurturing & Referrals (when feature data is present) */}

@@ -3,7 +3,7 @@
 const db = require("../lib/db");
 
 /** Get or create a lead by phone number for a tenant */
-async function getOrCreateLead(tenantId, phone, name = null) {
+async function getOrCreateLead(tenantId, phone, name = null, leadSource = null) {
   if (!tenantId || !phone) return null;
   const normalizedPhone = String(phone).trim();
   
@@ -28,10 +28,10 @@ async function getOrCreateLead(tenantId, phone, name = null) {
   // Create new
   try {
     res = await db.query(
-      `INSERT INTO leads (tenant_id, phone, name, status)
-       VALUES ($1, $2, $3, 'New Lead')
+      `INSERT INTO leads (tenant_id, phone, name, status, lead_source)
+       VALUES ($1, $2, $3, 'New Lead', $4)
        RETURNING *`,
-      [tenantId, normalizedPhone, name]
+      [tenantId, normalizedPhone, name, leadSource]
     );
     return res.rows[0];
   } catch (err) {
@@ -59,7 +59,7 @@ async function updateLeadInfo(id, data) {
   const values = [];
   let i = 1;
   
-  const allowed = ['name', 'email', 'address', 'project_type', 'notes', 'status', 'estimated_revenue_cents'];
+  const allowed = ['name', 'email', 'address', 'project_type', 'notes', 'status', 'estimated_revenue_cents', 'lead_source'];
   for (const key of allowed) {
     if (data[key] !== undefined) {
       fields.push(`${key} = $${i++}`);

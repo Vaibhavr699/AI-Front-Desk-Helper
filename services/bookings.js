@@ -39,11 +39,12 @@ function normalizeBookingData(data) {
     appointment_time: get(data, "appointment_time", "appointmentTime"),
     technician_id: get(data, "technician_id", "technicianId"),
     notes: get(data, "notes"),
-    revenue_cents: data.estimated_value ? Math.round(parseFloat(data.estimated_value) * 100) : null,
+    estimated_revenue_cents: data.estimated_value ? Math.round(parseFloat(data.estimated_value) * 100) : 15000, // Default to $150 if not specified
   };
 }
 
-async function createBooking(tenantId, callId, data, leadId = null) {
+
+async function createBooking(tenantId, callId, data, leadId = null, leadSource = null) {
   console.log("[AI-Desk] Booking create start tenantId=%s callId=%s raw_keys=%s", tenantId, callId || "(none)", Object.keys(data || {}).join(","));
   const norm = normalizeBookingData(data);
   console.log("[AI-Desk] Booking normalized name=%s phone=%s address=%s city=%s state=%s", norm.contact_name, norm.contact_phone, norm.address || "(none)", norm.city || "(none)", norm.state || "(none)");
@@ -52,8 +53,8 @@ async function createBooking(tenantId, callId, data, leadId = null) {
     res = await db.query(
       `INSERT INTO bookings (
         tenant_id, call_id, lead_id, contact_name, contact_phone, contact_email,
-        address, city, state, scope, job_type, preferred_date, appointment_time, technician_id, notes, status, revenue_cents
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'Booked', $16)
+        address, city, state, scope, job_type, preferred_date, appointment_time, technician_id, notes, status, estimated_revenue_cents, lead_source
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'Booked', $16, $17)
       RETURNING *`,
       [
         tenantId,
@@ -71,8 +72,10 @@ async function createBooking(tenantId, callId, data, leadId = null) {
         norm.appointment_time,
         norm.technician_id,
         norm.notes,
-        norm.revenue_cents,
+        norm.estimated_revenue_cents,
+        leadSource || null,
       ]
+
     );
   } catch (err) {
     console.error("[AI-Desk] Booking INSERT failed tenantId=%s error=%s code=%s data=%s", tenantId, err.message, err.code, JSON.stringify(norm));

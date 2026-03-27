@@ -19,9 +19,7 @@ async function createEstimateFollowUp(lead, tenantId = null) {
             tenantId = res.rows[0]?.id;
         }
 
-        if (!tenantId) {
-            console.warn("[Sales-Engine] No tenant ID found for follow-up. Using null.");
-        }
+        if (!tenantId) return;
 
         // Check if there's already an active recovery for this phone
         const existing = await db.pool.query(
@@ -29,10 +27,7 @@ async function createEstimateFollowUp(lead, tenantId = null) {
             [phone]
         );
 
-        if (existing.rows.length > 0) {
-            console.log("[Sales-Engine] Follow-up already active for %s", phone);
-            return;
-        }
+        if (existing.rows.length > 0) return;
 
         await db.pool.query(
             `INSERT INTO estimate_recoveries (
@@ -52,7 +47,6 @@ async function createEstimateFollowUp(lead, tenantId = null) {
         console.error("[Sales-Engine] createEstimateFollowUp error:", err.message);
     }
 }
-
 /**
  * Run the automation loop to process due follow-ups.
  */
@@ -146,7 +140,7 @@ async function triggerOutboundEstimateCall(lead) {
     }
 
     const wsHost = baseUrl.replace(/^https?:\/\//, "");
-    const script = `Hey ${lead.name || ""}, this is the AI assistant from ${companyName}. I'm calling to see if you had any questions about the estimate we sent over...`;
+    const script = lead.scriptOverride || `Hey ${lead.name || ""}, this is the AI assistant from ${companyName}. I'm calling to see if you had any questions about the estimate we sent over...`;
 
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>

@@ -247,7 +247,9 @@ function formatStage(step) {
     'sms_followup': 'SMS FollowUp',
     'ai_call_followup': 'AI Call FollowUp',
     'second_reminder': 'Second Reminder',
-    'final_attempt': 'Final Attempt'
+    'final_attempt': 'Final Attempt',
+    'inquiry_thanks': 'Inquiry Thanks',
+    'inquiry_call': 'Inquiry Call'
   };
   return map[step] || step;
 }
@@ -259,6 +261,8 @@ function getStageStyle(step) {
     case 'ai_call_followup': return 'bg-indigo-50 text-indigo-700 border border-indigo-100';
     case 'second_reminder': return 'bg-purple-50 text-purple-700 border border-purple-100';
     case 'final_attempt': return 'bg-red-50 text-red-700 border border-red-100';
+    case 'inquiry_thanks': return 'bg-cyan-50 text-cyan-700 border border-cyan-100';
+    case 'inquiry_call': return 'bg-orange-50 text-orange-700 border border-orange-100';
     default: return 'bg-stone-50 text-stone-700 border border-stone-100';
   }
 }

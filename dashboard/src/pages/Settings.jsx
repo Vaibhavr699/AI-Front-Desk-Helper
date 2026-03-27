@@ -640,6 +640,21 @@ export default function Settings({ tenantId }) {
                   </div>
                 ) : (
                   <>
+                    <div className="mb-6 p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Phone className="w-5 h-5 text-blue-500" />
+                        <div>
+                          <p className="text-sm font-bold text-blue-900">Plan Usage: {phoneNumbers.length} / {tenant?.plan === 'elite' ? 5 : (tenant?.plan === 'pro' ? 3 : 1)} Numbers</p>
+                          <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wider">{tenant?.plan ? `${tenant.plan.toUpperCase()} PLAN` : 'BASIC PLAN'}</p>
+                        </div>
+                      </div>
+                      {phoneNumbers.length >= (tenant?.plan === 'elite' ? 5 : (tenant?.plan === 'pro' ? 3 : 1)) && (
+                        <Link to="/billing" className="text-[10px] font-black bg-blue-600 text-white px-3 py-1.5 rounded-lg uppercase tracking-widest hover:bg-blue-700 transition-all">
+                          Upgrade for more
+                        </Link>
+                      )}
+                    </div>
+
                     <div className="mb-10 p-8 bg-slate-50 border border-slate-100 rounded-[2.5rem] shadow-sm">
                       <div className="flex items-center gap-3 mb-6">
                         <div className="w-10 h-10 rounded-2xl bg-slate-900 flex items-center justify-center text-white shadow-lg shadow-slate-200">
@@ -677,16 +692,41 @@ export default function Settings({ tenantId }) {
                                   maxLength={3}
                                 />
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => fetchAvailableNumbers(areaCode)}
-                                disabled={loadingNumbers}
-                                className="px-6 py-2.5 bg-slate-900 text-white text-[10px] font-black rounded-xl hover:bg-black disabled:opacity-50 flex items-center gap-2 transition-all uppercase tracking-widest shadow-lg shadow-slate-900/10"
-                              >
-                                {loadingNumbers ? <LumaSpin className="w-3.5 h-3.5 border-white" /> : <Search size={14} />}
-                                Find Numbers
-                              </button>
-                            </div>
+                                <button
+                                  type="button"
+                                  onClick={() => fetchAvailableNumbers(areaCode)}
+                                  disabled={loadingNumbers || phoneNumbers.length >= (tenant?.plan === 'elite' ? 5 : (tenant?.plan === 'pro' ? 3 : 1))}
+                                  className="px-6 py-2.5 bg-slate-900 text-white text-[10px] font-black rounded-xl hover:bg-black disabled:opacity-50 flex items-center gap-2 transition-all uppercase tracking-widest shadow-lg shadow-slate-900/10"
+                                >
+                                  {loadingNumbers ? <LumaSpin className="w-3.5 h-3.5 border-white" /> : <Search size={14} />}
+                                  Find Numbers
+                                </button>
+                              </div>
+
+                              <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Attribute to Lead Source</label>
+                                <select
+                                  value={newPhoneLabel}
+                                  onChange={(e) => setNewPhoneLabel(e.target.value)}
+                                  className="w-full px-4 py-2.5 bg-slate-50 border-none rounded-xl text-xs font-bold focus:ring-4 focus:ring-slate-900/5 transition-all outline-none shadow-sm cursor-pointer"
+                                >
+                                  <option value="Google Ads">Google Ads</option>
+                                  <option value="LSA">LSA (Google Local Service Ads)</option>
+                                  <option value="Facebook">Facebook / Instagram Ads</option>
+                                  <option value="YouTube Ads">YouTube Ads</option>
+                                  <option value="Yelp">Yelp</option>
+                                  <option value="Angi">Angi / HomeAdvisor</option>
+                                  <option value="Thumbtack">Thumbtack</option>
+                                  <option value="Houzz">Houzz</option>
+                                  <option value="Website">Website (Direct)</option>
+                                  <option value="Google Organic Search">Google Organic Search</option>
+                                  <option value="Customer Referral/Repeat">Customer Referral/Repeat</option>
+                                  <option value="Yard Sign/DoorHanger">Yard Sign/DoorHanger</option>
+                                  <option value="Direct Mail">Direct Mail</option>
+                                  <option value="Truck / Vehicle Branding">Truck / Vehicle Branding</option>
+                                  <option value="Other">Other / Unknown</option>
+                                </select>
+                              </div>
 
                             {!loadingNumbers && availableNumbers.length === 0 && provisionMessage === "no_numbers" && (
                               <div className="p-5 rounded-2xl bg-amber-50 border border-amber-100/50 text-amber-800 animate-in fade-in slide-in-from-top-4">
@@ -813,23 +853,35 @@ export default function Settings({ tenantId }) {
                               </div>
 
                               <div className="space-y-1.5">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Assign Label</label>
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Lead Source</label>
                                 <div className="relative group/select">
                                   <select
                                     value={newPhoneLabel}
                                     onChange={(e) => setNewPhoneLabel(e.target.value)}
                                     className="w-full px-4 py-2.5 bg-white border border-slate-100 rounded-xl text-xs font-bold focus:ring-4 focus:ring-slate-900/5 transition-all outline-none appearance-none shadow-sm pr-10 cursor-pointer"
                                   >
-                                    <option value="Main Business">Main Business Number</option>
-                                    <option value="Office">Office Line</option>
-                                    <option value="Mobile">Mobile Number</option>
-                                    <option value="Support">Support</option>
+                                    <option value="Google Ads">Google Ads</option>
+                                    <option value="LSA">LSA (Google Local Service Ads)</option>
+                                    <option value="Facebook">Facebook / Instagram Ads</option>
+                                    <option value="YouTube Ads">YouTube Ads</option>
+                                    <option value="Yelp">Yelp</option>
+                                    <option value="Angi">Angi / HomeAdvisor</option>
+                                    <option value="Thumbtack">Thumbtack</option>
+                                    <option value="Houzz">Houzz</option>
+                                    <option value="Website">Website (Direct)</option>
+                                    <option value="Google Organic Search">Google Organic Search</option>
+                                    <option value="Customer Referral/Repeat">Customer Referral/Repeat</option>
+                                    <option value="Yard Sign/DoorHanger">Yard Sign/DoorHanger</option>
+                                    <option value="Direct Mail">Direct Mail</option>
+                                    <option value="Truck / Vehicle Branding">Truck / Vehicle Branding</option>
+                                    <option value="Other">Other / Unknown</option>
                                   </select>
                                   <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 group-hover/select:text-slate-600 transition-colors">
                                     <ChevronDown size={14} />
                                   </div>
                                 </div>
                               </div>
+
                             </div>
                           </div>
 
@@ -840,8 +892,9 @@ export default function Settings({ tenantId }) {
                             className="w-full mt-6 py-3 bg-white border-2 border-slate-900 text-slate-900 text-xs font-black rounded-xl hover:bg-slate-900 hover:text-white disabled:opacity-50 transition-all uppercase tracking-[0.1em] flex items-center justify-center gap-2"
                           >
                             {phonesLoading ? <LumaSpin className="w-4 h-4 border-slate-900" /> : <Globe size={18} />}
-                            Register Number
+                            {phoneNumbers.length >= (tenant?.plan === 'elite' ? 5 : (tenant?.plan === 'pro' ? 3 : 1)) ? "Plan Limit Reached" : "Register Number"}
                           </button>
+
                         </div>
                       </div>
 
@@ -879,7 +932,30 @@ export default function Settings({ tenantId }) {
                                 <Phone size={18} className="text-gray-500" />
                                 <div>
                                   <p className="font-medium text-gray-900">{pn.phone}</p>
-                                  {pn.is_primary && <span className="text-xs text-gray-500">Primary</span>}
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <select
+                                      value={pn.lead_source || "Website"}
+                                      onChange={(e) => handleUpdateLabel(pn.id, e.target.value)}
+                                      className="text-[10px] font-black uppercase tracking-widest bg-gray-50 border-none rounded p-0 px-1 cursor-pointer hover:bg-gray-100"
+                                    >
+                                      <option value="Google Ads">Google Ads</option>
+                                      <option value="LSA">LSA (Google Local Service Ads)</option>
+                                      <option value="Facebook">Facebook / Instagram Ads</option>
+                                      <option value="YouTube Ads">YouTube Ads</option>
+                                      <option value="Yelp">Yelp</option>
+                                      <option value="Angi">Angi / HomeAdvisor</option>
+                                      <option value="Thumbtack">Thumbtack</option>
+                                      <option value="Houzz">Houzz</option>
+                                      <option value="Website">Website (Direct)</option>
+                                      <option value="Google Organic Search">Google Organic Search</option>
+                                      <option value="Customer Referral/Repeat">Customer Referral/Repeat</option>
+                                      <option value="Yard Sign/DoorHanger">Yard Sign/DoorHanger</option>
+                                      <option value="Direct Mail">Direct Mail</option>
+                                      <option value="Truck / Vehicle Branding">Truck / Vehicle Branding</option>
+                                      <option value="Other">Other / Unknown</option>
+                                    </select>
+                                    {pn.is_primary && <span className="text-[10px] text-primary font-black uppercase tracking-widest">Primary</span>}
+                                  </div>
                                 </div>
                               </div>
                               <div className="flex gap-1">
@@ -896,6 +972,7 @@ export default function Settings({ tenantId }) {
                           ))
                         )}
                     </div>
+
                     <div className="border-t border-gray-100 pt-8 mt-4">
                       <div className="flex items-center gap-3 mb-4">
                         <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center text-white shadow-lg shadow-slate-200">
@@ -917,11 +994,27 @@ export default function Settings({ tenantId }) {
                               <div>
                                 <div className="flex items-center gap-2">
                                   <p className="font-bold text-slate-900 text-sm tracking-tight">{pn.phone}</p>
-                                  {pn.label && (
-                                    <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[9px] font-black uppercase tracking-widest rounded-md border border-slate-200">
-                                      {pn.label}
-                                    </span>
-                                  )}
+                                  <select
+                                      value={pn.lead_source || "Website"}
+                                      onChange={(e) => handleUpdateLabel(pn.id, e.target.value)}
+                                      className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[9px] font-black uppercase tracking-widest rounded-md border border-slate-200 cursor-pointer"
+                                    >
+                                      <option value="Google Ads">Google Ads</option>
+                                      <option value="LSA">LSA (Google Local Service Ads)</option>
+                                      <option value="Facebook">Facebook / Instagram Ads</option>
+                                      <option value="YouTube Ads">YouTube Ads</option>
+                                      <option value="Yelp">Yelp</option>
+                                      <option value="Angi">Angi / HomeAdvisor</option>
+                                      <option value="Thumbtack">Thumbtack</option>
+                                      <option value="Houzz">Houzz</option>
+                                      <option value="Website">Website (Direct)</option>
+                                      <option value="Google Organic Search">Google Organic Search</option>
+                                      <option value="Customer Referral/Repeat">Customer Referral/Repeat</option>
+                                      <option value="Yard Sign/DoorHanger">Yard Sign/DoorHanger</option>
+                                      <option value="Direct Mail">Direct Mail</option>
+                                      <option value="Truck / Vehicle Branding">Truck / Vehicle Branding</option>
+                                      <option value="Other">Other / Unknown</option>
+                                    </select>
                                 </div>
                                 {pn.is_primary ? (
                                   <div className="flex items-center gap-1.5 mt-0.5">
@@ -931,6 +1024,7 @@ export default function Settings({ tenantId }) {
                                 ) : (
                                   <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">External number</span>
                                 )}
+
                               </div>
                             </div>
                             <div className="flex gap-2">

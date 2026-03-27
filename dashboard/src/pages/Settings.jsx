@@ -1811,66 +1811,93 @@ export default function Settings({ tenantId }) {
 
               {/* Google Calendar */}
               <div className="pt-6 border-t border-gray-100">
-                <div className="flex items-center justify-between gap-4 mb-6">
+                <div className="flex items-center justify-between gap-4 mb-2">
                   <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
                     <GoogleCalendarIcon className="w-6 h-6" />
                     Google Calendar
                   </h2>
                   {form.google_calendar_linked ? (
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-full text-xs font-bold border border-emerald-100">
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      CONNECTED
+                    <div className="flex items-center gap-2 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-[10px] font-black tracking-widest border border-emerald-100 shadow-sm animate-pulse">
+                      <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                      LIVE SYNC ACTIVE
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 text-gray-500 rounded-full text-xs font-bold border border-gray-100">
-                      <Clock className="w-3.5 h-3.5" />
-                      NOT CONNECTED
+                    <div className="flex items-center gap-2 px-3 py-1 bg-gray-50 text-gray-400 rounded-full text-[10px] font-black tracking-widest border border-gray-100 shadow-sm">
+                      <span className="w-1.5 h-1.5 bg-gray-300 rounded-full"></span>
+                      OFFLINE
                     </div>
                   )}
                 </div>
+                <p className="text-sm text-gray-500 mb-6 font-medium">Real-time availability sync and automated appointment scheduling.</p>
 
-                <div className="bg-gray-50 border border-gray-200 rounded-2xl p-6">
+                <div className={`relative overflow-hidden rounded-3xl border-2 transition-all p-8 ${form.google_calendar_linked ? "bg-white border-emerald-100 shadow-xl shadow-emerald-500/5" : "bg-gray-50/50 border-dashed border-gray-200"}`}>
+                  {form.google_calendar_linked && (
+                    <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none">
+                      <GoogleCalendarIcon className="w-32 h-32 rotate-12" />
+                    </div>
+                  )}
+
                   {form.google_calendar_linked ? (
-                    <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-white rounded-xl border border-gray-200 flex items-center justify-center shadow-sm">
-                          <GoogleCalendarIcon className="w-7 h-7" />
+                    <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-8">
+                      <div className="flex items-center gap-6">
+                        <div className="w-16 h-16 bg-white rounded-2xl shadow-lg border border-gray-100 flex items-center justify-center relative">
+                          <GoogleCalendarIcon className="w-10 h-10" />
+                          <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-emerald-500 text-white rounded-full flex items-center justify-center border-2 border-white shadow-sm">
+                            <CheckCircle2 size={10} strokeWidth={3} />
+                          </div>
                         </div>
                         <div>
-                          <p className="text-sm font-bold text-gray-900">Connected to Google Calendar</p>
-                          <p className="text-xs text-gray-500">{form.google_calendar_email || "Active association"}</p>
+                          <h4 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                            Primary Calendar Connected
+                          </h4>
+                          <div className="mt-1 flex items-center gap-2 px-2 py-0.5 bg-gray-900 text-white rounded-lg w-fit shadow-md">
+                            <span className="text-xs font-mono opacity-80">{form.google_calendar_email}</span>
+                          </div>
+                          <p className="mt-3 text-xs text-gray-400 font-medium flex items-center gap-1.5">
+                            <RefreshCw size={12} className="text-emerald-500 animate-[spin_3s_linear_infinite]" />
+                            Checked for availability every time a booking starts
+                          </p>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={handleDisconnectCalendar}
-                        className="px-6 py-2.5 bg-white border border-red-200 text-red-600 font-bold text-xs uppercase tracking-widest rounded-xl hover:bg-red-50 transition-all shadow-sm"
-                      >
-                        Disconnect
-                      </button>
+
+                      <div className="flex items-center gap-3 w-full md:w-auto">
+                        <button
+                          type="button"
+                          onClick={handleDisconnectCalendar}
+                          className="flex-1 md:flex-none px-6 py-3 bg-white border border-red-100 text-red-500 font-bold text-[11px] uppercase tracking-widest rounded-xl hover:bg-red-50 transition-all shadow-sm active:scale-95"
+                        >
+                          Disconnect
+                        </button>
+                      </div>
                     </div>
                   ) : (
-                    <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+                    <div className="flex flex-col md:flex-row items-center justify-between gap-8 text-center md:text-left">
                       <div className="max-w-md">
-                        <p className="text-sm font-bold text-gray-900 mb-1">Sync with your Google Calendar</p>
-                        <p className="text-xs text-gray-500 leading-relaxed">
-                          Allow the AI to check your availability in real-time and automatically book appointments on your calendar.
+                        <h4 className="text-lg font-bold text-gray-900 mb-2">Sync your business schedule</h4>
+                        <p className="text-sm text-gray-500 leading-relaxed font-medium">
+                          Connect your Google Calendar to allow the AI to check your real-time availability. 
+                          This prevents double bookings and ensures your customers only see times you are actually free.
                         </p>
+                        <div className="mt-4 flex flex-wrap justify-center md:justify-start gap-4">
+                          <div className="flex items-center gap-2 text-[10px] font-bold text-emerald-600 uppercase tracking-tight bg-emerald-50 px-2 py-1 rounded-md">
+                            <CheckCircle2 size={12} /> Real-time Sync
+                          </div>
+                          <div className="flex items-center gap-2 text-[10px] font-bold text-blue-600 uppercase tracking-tight bg-blue-50 px-2 py-1 rounded-md">
+                            <CheckCircle2 size={12} /> Auto-Booking
+                          </div>
+                        </div>
                       </div>
                       <button
                         type="button"
                         onClick={handleConnectCalendar}
-                        className="px-8 py-3 bg-white border-2 border-gray-200 font-bold text-xs uppercase tracking-widest rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm active:scale-95 flex items-center gap-3 text-gray-700"
+                        className="w-full md:w-auto px-10 py-4 bg-gray-900 text-white font-bold text-xs uppercase tracking-[0.2em] rounded-2xl hover:bg-black hover:scale-[1.02] active:scale-[0.98] transition-all shadow-xl shadow-gray-200 flex items-center justify-center gap-4 group"
                       >
-                        <GoogleCalendarIcon className="w-5 h-5" />
-                        Connect Google Calendar
+                        <GoogleCalendarIcon className="w-5 h-5 group-hover:rotate-12 transition-transform" />
+                        Connect Calendar
                       </button>
                     </div>
                   )}
                 </div>
-                <p className="text-xs text-gray-500 mt-4 leading-relaxed">
-                  Once connected, the AI will use your primary calendar to verify availability before confirming a booking with a customer.
-                </p>
               </div>
 
               {/* Facebook */}
@@ -1967,6 +1994,17 @@ export default function Settings({ tenantId }) {
                       className="w-full px-4 py-3 bg-white border border-[#1877F2]/20 rounded-xl font-mono text-xs focus:ring-[#1877F2]"
                     />
                     <p className="text-xs text-gray-500 mt-1">Token with pages_messaging and pages_manage_metadata. Never share this token.</p>
+                  </div>
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={handleFacebookSave}
+                      disabled={saving}
+                      className="w-full py-3 bg-[#1877F2] text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-[#1164cc] transition-all disabled:opacity-50"
+                    >
+                      {saving ? <RefreshCw className="animate-spin w-4 h-4" /> : <Save className="w-4 h-4" />}
+                      SAVE FACEBOOK SETTINGS
+                    </button>
                   </div>
                 </div>
               </div>

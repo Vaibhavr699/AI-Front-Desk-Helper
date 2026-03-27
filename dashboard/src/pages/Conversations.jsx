@@ -98,18 +98,25 @@ const Conversations = ({ tenantId }) => {
             />
           </div>
 
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {['all', 'sms', 'website', 'facebook', 'email'].map(c => (
+          <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+            {[
+              { id: 'all', icon: <Filter size={12} /> },
+              { id: 'sms', icon: <MessageSquare size={12} /> },
+              { id: 'website', icon: <Globe size={12} /> },
+              { id: 'facebook', icon: <Facebook size={12} /> },
+              { id: 'email', icon: <Mail size={12} /> }
+            ].map(c => (
               <button
-                key={c}
-                onClick={() => setFilterChannel(c)}
-                className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all whitespace-nowrap border ${
-                  filterChannel === c 
-                    ? 'bg-brand-500 border-brand-500 text-white' 
-                    : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
+                key={c.id}
+                onClick={() => setFilterChannel(c.id)}
+                className={`flex items-center gap-0.5 px-1 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all whitespace-nowrap border ${
+                  filterChannel === c.id 
+                    ? 'bg-brand-500 border-brand-500 text-white shadow-md shadow-brand-500/20' 
+                    : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50'
                 }`}
               >
-                {c}
+                {c.icon}
+                {c.id}
               </button>
             ))}
           </div>

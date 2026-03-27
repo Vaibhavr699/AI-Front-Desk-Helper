@@ -206,6 +206,7 @@ export function ContactModal({ isOpen, onClose }) {
       )}
     </AnimatePresence>
   );
-
+  
+  if (typeof document === "undefined") return null;
   return createPortal(modalContent, document.body);
 }

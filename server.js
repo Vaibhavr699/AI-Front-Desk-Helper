@@ -2,6 +2,19 @@
 
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
+
+process.on("uncaughtException", (err) => {
+  console.error("FATAL: Uncaught Exception:", err.stack || err);
+  // Give logs a moment to flush
+  setTimeout(() => process.exit(1), 500);
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("FATAL: Unhandled Rejection at:", promise, "reason:", reason?.stack || reason);
+  // Give logs a moment to flush
+  setTimeout(() => process.exit(1), 500);
+});
+
 const { handleWebhookEvent, stripe } = require("./lib/stripe");
 // BASE_URL must be the backend root (no /dashboard). Strip if set wrong so Twilio/webhooks work.
 if (process.env.BASE_URL) {
@@ -1658,6 +1671,7 @@ async function getFacebookUserProfile(senderId, pageAccessToken) {
 }
 
 async function sendFacebookMessage(recipientId, messageText, quickReplies = [], accessTokenOverride = null) {
+  console.log(`[Facebook Send] recipient=${recipientId}, hasOverride=${!!accessTokenOverride}, overrideStart=${accessTokenOverride ? accessTokenOverride.substring(0, 10) : 'NONE'}`);
   const PAGE_ACCESS_TOKEN = accessTokenOverride || process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
 
   if (!PAGE_ACCESS_TOKEN) {
@@ -2012,6 +2026,12 @@ async function checkAvailability(args = {}, tenant = null) {
     });
 
     const busy = response?.data?.calendars?.[calendarId]?.busy || [];
+    
+    // Clear any previous error if we succeeded
+    if (tenant && tenant.google_calendar_error) {
+      db.query("UPDATE tenants SET google_calendar_error = NULL WHERE id = $1", [tenant.id]).catch(e => console.error("[Calendar] Failed to clear error:", e.message));
+    }
+
     return {
       ok: true,
       available: busy.length === 0,
@@ -2023,6 +2043,10 @@ async function checkAvailability(args = {}, tenant = null) {
   } catch (err) {
     const errMsg = err.message || (err.response && err.response.data && err.response.data.error && err.response.data.error.message) || String(err);
     console.error("[Calendar] Availability check failed:", errMsg);
+
+    if (errMsg.includes("invalid_grant") && tenant) {
+      db.query("UPDATE tenants SET google_calendar_error = 'invalid_grant' WHERE id = $1", [tenant.id]).catch(e => console.error("[Calendar] Failed to save error:", e.message));
+    }
 
     if (errMsg.includes("unregistered callers")) {
       return { ok: false, reason: "calendar_not_configured" };
@@ -2072,6 +2096,10 @@ async function bookAppointment(args = {}, tenant = null) {
   } catch (err) {
     const errMsg = err.message || (err.response && err.response.data && err.response.data.error && err.response.data.error.message) || String(err);
     console.error("[Calendar] Booking failed:", errMsg);
+    if (errMsg.includes("invalid_grant") && tenant) {
+      db.query("UPDATE tenants SET google_calendar_error = 'invalid_grant' WHERE id = $1", [tenant.id]).catch(e => console.error("[Calendar] Failed to save error:", e.message));
+    }
+
     if (errMsg.includes("unregistered callers")) {
       return { ok: false, reason: "calendar_not_configured" };
     }
@@ -3531,20 +3559,18 @@ app.post("/facebook-webhook", async (req, res) => {
 
     // Look up the tenant for this Page ID
     const tenant = pageId ? await getTenantByFacebookPageId(pageId) : null;
-    console.log(`[Facebook Webhook] Page ID: ${pageId}, Tenant resolved: ${tenant ? tenant.name : "NONE"}`);
-    if (!tenant && pageId) {
-      console.warn("[Facebook Webhook] NO TENANT matched for pageId:", pageId);
-    }
-    const pageAccessToken = tenant?.facebook_page_access_token || process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+    
+    let pageAccessToken = tenant?.facebook_page_access_token;
+    let tokenSource = "TENANT_DB";
 
-    // ⚠️ TEMPORARY WORKAROUND: Use Acme Token for Gladiator Painting until permissions are fixed
-    let effectiveToken = pageAccessToken;
-    if (pageId === "566954113178482") {
-      effectiveToken = "EAAbgJTWZC5wEBRG427tOaZCN8VFakl2KH9rJKlzZAFWcxiN4wpH2Pi87FrcEERwzC74wmUACnedvfoZBM7m7QzOeXPqxOouvUPWxEiD9qZBIJ9DNX1voGf4I4vm9hzCt6CIZAmM8WsvFZCRrNNzgKnvlSiMRC19ne9ek47WeqbM6TjTyqOV3MNt3uZBtPkMKzqZCVxsBHogZDZD";
-      console.log("[Facebook] Using TEMPORARY Acme Token override for Gladiator Painting");
+    if (!pageAccessToken) {
+      pageAccessToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+      tokenSource = "ENV_FALLBACK";
     }
 
-    if (!effectiveToken) {
+    console.log(`[Facebook Webhook] Page ID: ${pageId}, Tenant resolved: ${tenant ? tenant.name : "NONE"}, Token Source: ${tokenSource}, Token Start: ${pageAccessToken ? pageAccessToken.substring(0, 10) : "MISSING"}`);
+
+    if (!pageAccessToken) {
       console.warn("[Facebook] No access token for Page ID:", pageId);
       return res.sendStatus(200);
     }
@@ -3617,21 +3643,21 @@ app.post("/facebook-webhook", async (req, res) => {
     const messageText = messaging.message.text;
 
     // Show typing indicator
-    await sendTypingIndicator(senderId, "typing_on", effectiveToken);
+    await sendTypingIndicator(senderId, "typing_on", pageAccessToken);
 
     // 2–3 second delay
     await delay(2000 + Math.random() * 1000);
 
     // Stop typing indicator
-    await sendTypingIndicator(senderId, "typing_off", effectiveToken);
+    await sendTypingIndicator(senderId, "typing_off", pageAccessToken);
 
-    const result = await processFacebookConversation(senderId, messageText, tenant, effectiveToken);
+    const result = await processFacebookConversation(senderId, messageText, tenant, pageAccessToken);
 
     await sendFacebookMessage(
       senderId,
       result.reply,
       ["Get a Free Quote", "Talk to a Human", "Book Estimate"],
-      effectiveToken
+      pageAccessToken
     );
     res.sendStatus(200);
   } catch (error) {

@@ -272,7 +272,7 @@ export default function Settings({ tenantId }) {
     if (tenantId) {
       getSubscriptionStatus(tenantId)
         .then((s) => setSubscriptionStatus(s))
-        .catch(() => {});
+        .catch(() => { });
     }
   }, [tenantId]);
 
@@ -308,8 +308,8 @@ export default function Settings({ tenantId }) {
     setProvisionMessage("");
     try {
       // selectedNumber is now the object { phoneNumber, isOwned, ... }
-      await addPhoneNumber({ 
-        tenant_id: tenantId, 
+      await addPhoneNumber({
+        tenant_id: tenantId,
         phone: selectedNumber.phoneNumber,
         is_owned: !!selectedNumber.isOwned,
         is_purchasable: true // Coming from the search/buy flow
@@ -610,8 +610,8 @@ export default function Settings({ tenantId }) {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex items-center gap-3 px-4 py-3 text-sm font-bold rounded-xl transition-all flex-1 lg:flex-none justify-center lg:justify-start ${activeTab === tab.id
-                    ? "bg-white text-gray-900 shadow-sm ring-1 ring-gray-200"
-                    : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+                  ? "bg-white text-gray-900 shadow-sm ring-1 ring-gray-200"
+                  : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
                   }`}
               >
                 <tab.icon className={`w-5 h-5 ${activeTab === tab.id ? "text-primary" : "text-gray-400"}`} />
@@ -640,7 +640,7 @@ export default function Settings({ tenantId }) {
                   </div>
                 ) : (
                   <>
-                    <div className="mb-6 p-4 bg-blue-50 border border-blue-100 rounded-2xl flex items-center justify-between">
+                    <div className="mb-6 px-4 py-2 bg-blue-50 border border-blue-100 rounded-2xl flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <Phone className="w-5 h-5 text-blue-500" />
                         <div>
@@ -655,7 +655,7 @@ export default function Settings({ tenantId }) {
                       )}
                     </div>
 
-                    <div className="mb-10 p-8 bg-slate-50 border border-slate-100 rounded-[2.5rem] shadow-sm">
+                    <div className="mb-10 p-6 bg-slate-50 border border-slate-100 rounded-[1.5rem] shadow-sm">
                       <div className="flex items-center gap-3 mb-6">
                         <div className="w-10 h-10 rounded-2xl bg-slate-900 flex items-center justify-center text-white shadow-lg shadow-slate-200">
                           <Zap size={20} />
@@ -668,7 +668,7 @@ export default function Settings({ tenantId }) {
 
                       <div className="space-y-6">
                         {/* Option 1: Search & Buy / Ready to Connect */}
-                        <div className="p-8 bg-white border border-slate-100 rounded-[2.5rem] shadow-sm hover:shadow-md transition-all duration-500">
+                        <div className="p-6 bg-white border border-slate-100 rounded-[1.5rem] shadow-sm hover:shadow-md transition-all duration-500">
                           <div className="flex items-center gap-4 mb-6">
                             <div className="w-12 h-12 rounded-2xl bg-slate-900 flex items-center justify-center text-white shadow-xl shadow-slate-900/20">
                               <Search size={24} />
@@ -688,45 +688,45 @@ export default function Settings({ tenantId }) {
                                   value={areaCode}
                                   onChange={(e) => setAreaCode(e.target.value)}
                                   onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); fetchAvailableNumbers(areaCode); } }}
-                                  className="w-full px-4 py-2.5 bg-slate-50 border-none rounded-xl text-xs font-bold focus:ring-4 focus:ring-slate-900/5 transition-all placeholder:text-slate-300 shadow-sm"
+                                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 font-bold focus:ring-4 focus:ring-slate-900/5 transition-all placeholder:text-slate-500 shadow-sm"
                                   maxLength={3}
                                 />
                               </div>
-                                <button
-                                  type="button"
-                                  onClick={() => fetchAvailableNumbers(areaCode)}
-                                  disabled={loadingNumbers || phoneNumbers.length >= (tenant?.plan === 'elite' ? 5 : (tenant?.plan === 'pro' ? 3 : 1))}
-                                  className="px-6 py-2.5 bg-slate-900 text-white text-[10px] font-black rounded-xl hover:bg-black disabled:opacity-50 flex items-center gap-2 transition-all uppercase tracking-widest shadow-lg shadow-slate-900/10"
-                                >
-                                  {loadingNumbers ? <LumaSpin className="w-3.5 h-3.5 border-white" /> : <Search size={14} />}
-                                  Find Numbers
-                                </button>
-                              </div>
+                              <button
+                                type="button"
+                                onClick={() => fetchAvailableNumbers(areaCode)}
+                                disabled={loadingNumbers || phoneNumbers.length >= (tenant?.plan === 'elite' ? 5 : (tenant?.plan === 'pro' ? 3 : 1))}
+                                className="px-6 py-2.5 bg-slate-900 text-white text-[10px] font-black rounded-xl hover:bg-black disabled:opacity-50 flex items-center gap-2 transition-all uppercase tracking-widest shadow-lg shadow-slate-900/10"
+                              >
+                                {loadingNumbers ? <LumaSpin className="w-3.5 h-3.5 border-white" /> : <Search size={14} />}
+                                Find Numbers
+                              </button>
+                            </div>
 
-                              <div className="space-y-1.5">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Attribute to Lead Source</label>
-                                <select
-                                  value={newPhoneLabel}
-                                  onChange={(e) => setNewPhoneLabel(e.target.value)}
-                                  className="w-full px-4 py-2.5 bg-slate-50 border-none rounded-xl text-xs font-bold focus:ring-4 focus:ring-slate-900/5 transition-all outline-none shadow-sm cursor-pointer"
-                                >
-                                  <option value="Google Ads">Google Ads</option>
-                                  <option value="LSA">LSA (Google Local Service Ads)</option>
-                                  <option value="Facebook">Facebook / Instagram Ads</option>
-                                  <option value="YouTube Ads">YouTube Ads</option>
-                                  <option value="Yelp">Yelp</option>
-                                  <option value="Angi">Angi / HomeAdvisor</option>
-                                  <option value="Thumbtack">Thumbtack</option>
-                                  <option value="Houzz">Houzz</option>
-                                  <option value="Website">Website (Direct)</option>
-                                  <option value="Google Organic Search">Google Organic Search</option>
-                                  <option value="Customer Referral/Repeat">Customer Referral/Repeat</option>
-                                  <option value="Yard Sign/DoorHanger">Yard Sign/DoorHanger</option>
-                                  <option value="Direct Mail">Direct Mail</option>
-                                  <option value="Truck / Vehicle Branding">Truck / Vehicle Branding</option>
-                                  <option value="Other">Other / Unknown</option>
-                                </select>
-                              </div>
+                            <div className="space-y-1.5">
+                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Attribute to Lead Source</label>
+                              <select
+                                value={newPhoneLabel}
+                                onChange={(e) => setNewPhoneLabel(e.target.value)}
+                                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-4 focus:ring-slate-900/5 transition-all outline-none shadow-sm cursor-pointer"
+                              >
+                                <option value="Google Ads">Google Ads</option>
+                                <option value="LSA">LSA (Google Local Service Ads)</option>
+                                <option value="Facebook">Facebook / Instagram Ads</option>
+                                <option value="YouTube Ads">YouTube Ads</option>
+                                <option value="Yelp">Yelp</option>
+                                <option value="Angi">Angi / HomeAdvisor</option>
+                                <option value="Thumbtack">Thumbtack</option>
+                                <option value="Houzz">Houzz</option>
+                                <option value="Website">Website (Direct)</option>
+                                <option value="Google Organic Search">Google Organic Search</option>
+                                <option value="Customer Referral/Repeat">Customer Referral/Repeat</option>
+                                <option value="Yard Sign/DoorHanger">Yard Sign/DoorHanger</option>
+                                <option value="Direct Mail">Direct Mail</option>
+                                <option value="Truck / Vehicle Branding">Truck / Vehicle Branding</option>
+                                <option value="Other">Other / Unknown</option>
+                              </select>
+                            </div>
 
                             {!loadingNumbers && availableNumbers.length === 0 && provisionMessage === "no_numbers" && (
                               <div className="p-5 rounded-2xl bg-amber-50 border border-amber-100/50 text-amber-800 animate-in fade-in slide-in-from-top-4">
@@ -747,7 +747,7 @@ export default function Settings({ tenantId }) {
                                   {suggestedNumbers.map((num) => (
                                     <label
                                       key={num.phoneNumber}
-                                      className={`group relative flex flex-col p-4 cursor-pointer rounded-2xl border-2 transition-all duration-300 ${selectedNumber?.phoneNumber === num.phoneNumber ? "border-emerald-600 bg-emerald-50/30 ring-4 ring-emerald-600/5" : "border-slate-50 bg-slate-50/50 hover:border-slate-200"}`}
+                                      className={`group relative flex flex-col p-4 cursor-pointer rounded-xl shadow-sm border-2 border-slate-500 transition-all duration-300 ${selectedNumber?.phoneNumber === num.phoneNumber ? "border-emerald-600 bg-emerald-50/30 ring-4 ring-emerald-600/5" : "border-slate-50 bg-slate-50/50 hover:border-slate-200"}`}
                                     >
                                       <input
                                         type="radio"
@@ -765,7 +765,6 @@ export default function Settings({ tenantId }) {
                                       </div>
                                       <div className="flex items-center gap-2">
                                         <span className="px-2 py-0.5 bg-emerald-600 text-white text-[9px] font-black uppercase tracking-widest rounded-md">In Account</span>
-                                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{num.locality || "Owned"}, {num.region}</span>
                                       </div>
                                     </label>
                                   ))}
@@ -839,7 +838,7 @@ export default function Settings({ tenantId }) {
                             <p className="text-xs text-slate-500 font-medium leading-relaxed bg-white/50 p-4 rounded-2xl border border-white">
                               Use this if you already have a business number elsewhere and want to forward its calls to your AI assistant.
                             </p>
-                            
+
                             <div className="space-y-4">
                               <div className="space-y-1.5">
                                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Phone Number</label>
@@ -848,7 +847,7 @@ export default function Settings({ tenantId }) {
                                   placeholder="+1 (555) 000-0000"
                                   value={newPhone}
                                   onChange={(e) => setNewPhone(e.target.value)}
-                                  className="w-full px-4 py-2.5 bg-white border border-slate-100 rounded-xl text-xs font-bold focus:ring-4 focus:ring-slate-900/5 transition-all outline-none shadow-sm"
+                                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-4 focus:ring-slate-900/5 transition-all outline-none shadow-sm placeholder:text-slate-500"
                                 />
                               </div>
 
@@ -858,7 +857,7 @@ export default function Settings({ tenantId }) {
                                   <select
                                     value={newPhoneLabel}
                                     onChange={(e) => setNewPhoneLabel(e.target.value)}
-                                    className="w-full px-4 py-2.5 bg-white border border-slate-100 rounded-xl text-xs font-bold focus:ring-4 focus:ring-slate-900/5 transition-all outline-none appearance-none shadow-sm pr-10 cursor-pointer"
+                                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold focus:ring-4 focus:ring-slate-900/5 transition-all outline-none appearance-none shadow-sm pr-10 cursor-pointer"
                                   >
                                     <option value="Google Ads">Google Ads</option>
                                     <option value="LSA">LSA (Google Local Service Ads)</option>
@@ -900,10 +899,10 @@ export default function Settings({ tenantId }) {
 
                       {provisionMessage && provisionMessage !== "no_numbers" && (
                         <div className={`mt-6 p-4 rounded-2xl border ${provisionMessage.startsWith("Error") ? "bg-red-50 border-red-100 text-red-700" : "bg-emerald-50 border-emerald-100 text-emerald-700"} animate-in fade-in slide-in-from-top-2`}>
-                           <p className="text-[11px] font-bold uppercase tracking-wide">{provisionMessage}</p>
+                          <p className="text-[11px] font-bold uppercase tracking-wide">{provisionMessage}</p>
                         </div>
                       )}
-                      
+
                       {phoneError && (
                         <div className="mt-6 p-4 bg-red-50 border border-red-100 rounded-2xl flex items-start gap-3 text-red-700 animate-in fade-in slide-in-from-top-2">
                           <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
@@ -912,10 +911,10 @@ export default function Settings({ tenantId }) {
                       )}
 
                       {message && message.includes("successfully") && (
-                         <div className="mt-6 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-start gap-3 text-emerald-700 animate-in fade-in slide-in-from-top-2">
-                           <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5" />
-                           <p className="text-[11px] font-bold uppercase tracking-wide leading-relaxed">{message}</p>
-                         </div>
+                        <div className="mt-6 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-start gap-3 text-emerald-700 animate-in fade-in slide-in-from-top-2">
+                          <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5" />
+                          <p className="text-[11px] font-bold uppercase tracking-wide leading-relaxed">{message}</p>
+                        </div>
                       )}
                     </div>
 
@@ -971,30 +970,30 @@ export default function Settings({ tenantId }) {
                             </div>
                           ))
                         )}
-                    </div>
-
-                    <div className="border-t border-gray-100 pt-8 mt-4">
-                      <div className="flex items-center gap-3 mb-4">
-                        <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center text-white shadow-lg shadow-slate-200">
-                          <Plus size={20} />
-                        </div>
-                        <div>
-                          <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">Existing numbers</h3>
-                          <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">Connect your own hardware or Twilio lines</p>
-                        </div>
                       </div>
-                      
-                      <div className="space-y-4">
-                        {phoneNumbers.filter(pn => !pn.twilio_sid).map((pn) => (
-                          <div key={pn.id} className={`group flex items-center justify-between p-4 rounded-2xl border transition-all ${pn.is_primary ? "border-slate-900 bg-slate-50 ring-1 ring-slate-900/5 shadow-sm" : "border-slate-100 bg-white hover:border-slate-200"}`}>
-                            <div className="flex items-center gap-4">
-                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${pn.is_primary ? "bg-slate-900 text-white" : "bg-slate-50 text-slate-400 group-hover:bg-slate-100 group-hover:text-slate-600"}`}>
-                                <Phone size={18} />
-                              </div>
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <p className="font-bold text-slate-900 text-sm tracking-tight">{pn.phone}</p>
-                                  <select
+
+                      <div className="border-t border-gray-100 pt-8 mt-4">
+                        <div className="flex items-center gap-3 mb-4">
+                          <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center text-white shadow-lg shadow-slate-200">
+                            <Plus size={20} />
+                          </div>
+                          <div>
+                            <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider">Existing numbers</h3>
+                            <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">Connect your own hardware or Twilio lines</p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-4">
+                          {phoneNumbers.filter(pn => !pn.twilio_sid).map((pn) => (
+                            <div key={pn.id} className={`group flex items-center justify-between p-4 rounded-2xl border transition-all ${pn.is_primary ? "border-slate-900 bg-slate-50 ring-1 ring-slate-900/5 shadow-sm" : "border-slate-100 bg-white hover:border-slate-200"}`}>
+                              <div className="flex items-center gap-4">
+                                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${pn.is_primary ? "bg-slate-900 text-white" : "bg-slate-50 text-slate-400 group-hover:bg-slate-100 group-hover:text-slate-600"}`}>
+                                  <Phone size={18} />
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <p className="font-bold text-slate-900 text-sm tracking-tight">{pn.phone}</p>
+                                    <select
                                       value={pn.lead_source || "Website"}
                                       onChange={(e) => handleUpdateLabel(pn.id, e.target.value)}
                                       className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[9px] font-black uppercase tracking-widest rounded-md border border-slate-200 cursor-pointer"
@@ -1015,74 +1014,74 @@ export default function Settings({ tenantId }) {
                                       <option value="Truck / Vehicle Branding">Truck / Vehicle Branding</option>
                                       <option value="Other">Other / Unknown</option>
                                     </select>
-                                </div>
-                                {pn.is_primary ? (
-                                  <div className="flex items-center gap-1.5 mt-0.5">
-                                    <Shield size={10} className="text-slate-900" />
-                                    <span className="text-[10px] text-slate-900 font-black uppercase tracking-widest">Primary identity</span>
                                   </div>
-                                ) : (
-                                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">External number</span>
-                                )}
+                                  {pn.is_primary ? (
+                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                      <Shield size={10} className="text-slate-900" />
+                                      <span className="text-[10px] text-slate-900 font-black uppercase tracking-widest">Primary identity</span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">External number</span>
+                                  )}
 
+                                </div>
+                              </div>
+                              <div className="flex gap-2">
+                                {!pn.is_primary && (
+                                  <button type="button" onClick={() => handleSetPrimary(pn.id)} className="px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-900 transition-colors" title="Set as primary">
+                                    Set as Primary
+                                  </button>
+                                )}
+                                <button type="button" onClick={() => handleDeletePhone(pn.id)} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all" title="Remove">
+                                  <Trash2 size={16} />
+                                </button>
                               </div>
                             </div>
-                            <div className="flex gap-2">
-                              {!pn.is_primary && (
-                                <button type="button" onClick={() => handleSetPrimary(pn.id)} className="px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-900 transition-colors" title="Set as primary">
-                                  Set as Primary
-                                </button>
-                              )}
-                              <button type="button" onClick={() => handleDeletePhone(pn.id)} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all" title="Remove">
-                                <Trash2 size={16} />
-                              </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {phoneNumbers.some(pn => pn.twilio_sid) && (
+                        <div className="mt-10 p-8 bg-slate-900 rounded-[2rem] text-white shadow-2xl shadow-slate-900/20 relative overflow-hidden group">
+                          <div className="absolute top-0 right-0 p-8 text-white/5 group-hover:text-white/10 transition-colors">
+                            <Zap size={120} weight="fill" />
+                          </div>
+
+                          <div className="relative z-10">
+                            <div className="flex items-center gap-2 mb-4">
+                              <span className="px-3 py-1 bg-white/10 rounded-full text-[10px] font-black uppercase tracking-[0.2em] border border-white/5">Configuration Guide</span>
+                            </div>
+                            <h3 className="text-xl font-black mb-2">Forward your main line</h3>
+                            <p className="text-sm text-slate-400 font-medium mb-8 max-w-md italic">
+                              Forward busy or no-answer calls from your <span className="text-slate-200 font-bold decoration-slate-500 underline underline-offset-4 decoration-2">{phoneNumbers.find(pn => pn.label === "Main Business")?.phone || "primary business number"}</span> to your dedicated AI line so no call ever goes unanswered.
+                            </p>
+
+                            <div className="mb-8 p-4 bg-white/5 rounded-2xl border border-white/10 inline-flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-lg bg-emerald-500 flex items-center justify-center text-white">
+                                <Phone size={16} />
+                              </div>
+                              <div>
+                                <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-0.5">Your AI Line</p>
+                                <p className="text-base font-black tracking-tighter">
+                                  {phoneNumbers.find(pn => pn.twilio_sid)?.phone || "Provisioned line"}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                              <div className="p-5 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all">
+                                <p className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-2">AT&T / Verizon</p>
+                                <p className="text-sm font-medium text-slate-200">Dial <span className="text-emerald-400 font-black">*72</span> followed by your AI line number.</p>
+                              </div>
+                              <div className="p-5 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all">
+                                <p className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-2">T-Mobile / Others</p>
+                                <p className="text-sm font-medium text-slate-200">Go to <span className="text-emerald-400 font-black">Settings → Call Forwarding</span> in your phone app.</p>
+                              </div>
                             </div>
                           </div>
-                        ))}
-                      </div>
+                        </div>
+                      )}
                     </div>
-
-                    {phoneNumbers.some(pn => pn.twilio_sid) && (
-                      <div className="mt-10 p-8 bg-slate-900 rounded-[2rem] text-white shadow-2xl shadow-slate-900/20 relative overflow-hidden group">
-                        <div className="absolute top-0 right-0 p-8 text-white/5 group-hover:text-white/10 transition-colors">
-                          <Zap size={120} weight="fill" />
-                        </div>
-                        
-                        <div className="relative z-10">
-                          <div className="flex items-center gap-2 mb-4">
-                            <span className="px-3 py-1 bg-white/10 rounded-full text-[10px] font-black uppercase tracking-[0.2em] border border-white/5">Configuration Guide</span>
-                          </div>
-                          <h3 className="text-xl font-black mb-2">Forward your main line</h3>
-                          <p className="text-sm text-slate-400 font-medium mb-8 max-w-md italic">
-                            Forward busy or no-answer calls from your <span className="text-slate-200 font-bold decoration-slate-500 underline underline-offset-4 decoration-2">{phoneNumbers.find(pn => pn.label === "Main Business")?.phone || "primary business number"}</span> to your dedicated AI line so no call ever goes unanswered.
-                          </p>
-                          
-                          <div className="mb-8 p-4 bg-white/5 rounded-2xl border border-white/10 inline-flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-emerald-500 flex items-center justify-center text-white">
-                              <Phone size={16} />
-                            </div>
-                            <div>
-                              <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-0.5">Your AI Line</p>
-                              <p className="text-base font-black tracking-tighter">
-                                {phoneNumbers.find(pn => pn.twilio_sid)?.phone || "Provisioned line"}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <div className="p-5 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all">
-                              <p className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-2">AT&T / Verizon</p>
-                              <p className="text-sm font-medium text-slate-200">Dial <span className="text-emerald-400 font-black">*72</span> followed by your AI line number.</p>
-                            </div>
-                            <div className="p-5 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all">
-                              <p className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-2">T-Mobile / Others</p>
-                              <p className="text-sm font-medium text-slate-200">Go to <span className="text-emerald-400 font-black">Settings → Call Forwarding</span> in your phone app.</p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
- </div>
                   </>
                 )}
               </div>
@@ -1102,7 +1101,7 @@ export default function Settings({ tenantId }) {
                     <select
                       value={form.tone_of_voice}
                       onChange={(e) => handleUpdateForm("tone_of_voice", e.target.value)}
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-transparent transition-all outline-none font-medium"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-primary/5 transition-all outline-none font-bold text-xs"
                     >
                       <option value="professional">Professional & Polished</option>
                       <option value="friendly">Friendly & Casual</option>
@@ -1116,7 +1115,7 @@ export default function Settings({ tenantId }) {
                       value={form.welcome_message}
                       onChange={(e) => handleUpdateForm("welcome_message", e.target.value)}
                       rows={2}
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary transition-all outline-none font-medium"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-primary/5 transition-all outline-none font-medium placeholder:text-slate-500"
                       placeholder="e.g. Thanks for calling Gladiators Painting..."
                     />
                   </div>
@@ -1126,7 +1125,7 @@ export default function Settings({ tenantId }) {
                       value={form.instructions}
                       onChange={(e) => handleUpdateForm("instructions", e.target.value)}
                       rows={6}
-                      className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary transition-all outline-none font-medium leading-relaxed"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-primary/5 transition-all outline-none font-medium leading-relaxed placeholder:text-slate-500"
                       placeholder="Detailed prompts for the AI behavior..."
                     />
                   </div>
@@ -1160,7 +1159,7 @@ export default function Settings({ tenantId }) {
                           value={case_.trigger}
                           onChange={(e) => handleUpdateObjectionCase(index, "trigger", e.target.value)}
                           placeholder="e.g. price is too high, need to think, talk to my spouse"
-                          className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary focus:border-transparent"
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-4 focus:ring-primary/5 transition-all placeholder:text-slate-500"
                         />
                       </div>
                       <div>
@@ -1170,7 +1169,7 @@ export default function Settings({ tenantId }) {
                           onChange={(e) => handleUpdateObjectionCase(index, "script", e.target.value)}
                           rows={2}
                           placeholder="Brief response the assistant should use in this situation."
-                          className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary focus:border-transparent"
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-4 focus:ring-primary/5 transition-all placeholder:text-slate-500"
                         />
                       </div>
                     </div>
@@ -1243,7 +1242,7 @@ export default function Settings({ tenantId }) {
                             value={faq.question}
                             onChange={(e) => handleUpdateFaq(index, "question", e.target.value)}
                             placeholder="e.g. Do you offer emergency services?"
-                            className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-bold focus:ring-2 focus:ring-primary outline-none transition-all"
+                            className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all placeholder:text-slate-500"
                           />
                         </div>
                         <div>
@@ -1253,7 +1252,7 @@ export default function Settings({ tenantId }) {
                             onChange={(e) => handleUpdateFaq(index, "answer", e.target.value)}
                             placeholder="Detailed answer for the AI..."
                             rows={3}
-                            className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary outline-none transition-all"
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:ring-4 focus:ring-primary/5 outline-none transition-all placeholder:text-slate-500"
                           />
                         </div>
                       </div>
@@ -1303,7 +1302,7 @@ export default function Settings({ tenantId }) {
                         <p className="text-xs text-gray-500 font-medium">Add a standalone button to your site that opens the customer's SMS app.</p>
                       </div>
                     </div>
-                    
+
                     <div className="space-y-3">
                       <div className="flex flex-col gap-2">
                         <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest pl-1">HTML Example</label>
@@ -1352,14 +1351,14 @@ export default function Settings({ tenantId }) {
                               type="time"
                               value={config.open || "08:00"}
                               onChange={(e) => handleUpdateOpeningHours(day, "open", e.target.value)}
-                              className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm font-bold"
+                              className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold focus:ring-4 focus:ring-primary/5 transition-all"
                             />
                             <span className="text-gray-400 font-bold">—</span>
                             <input
                               type="time"
                               value={config.close || "17:00"}
                               onChange={(e) => handleUpdateOpeningHours(day, "close", e.target.value)}
-                              className="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm font-bold"
+                              className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold focus:ring-4 focus:ring-primary/5 transition-all"
                             />
                           </div>
                         ) : (
@@ -1370,8 +1369,8 @@ export default function Settings({ tenantId }) {
                         type="button"
                         onClick={() => handleUpdateOpeningHours(day, "closed", !config.closed)}
                         className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-tight transition-all border ${config.closed
-                            ? "bg-red-50 text-red-600 border-red-100"
-                            : "bg-emerald-50 text-emerald-600 border-emerald-100"
+                          ? "bg-red-50 text-red-600 border-red-100"
+                          : "bg-emerald-50 text-emerald-600 border-emerald-100"
                           }`}
                       >
                         {config.closed ? "Closed" : "Open"}
@@ -1386,7 +1385,7 @@ export default function Settings({ tenantId }) {
                 <select
                   value={form.afterhours_behavior}
                   onChange={(e) => handleUpdateForm("afterhours_behavior", e.target.value)}
-                  className="w-full md:w-64 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-transparent outline-none font-bold"
+                  className="w-full md:w-64 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-primary/5 transition-all outline-none font-bold text-xs"
                 >
                   <option value="voicemail">AI Out-of-Office Greeting</option>
                   <option value="transfer">Transfer to Live Agent</option>
@@ -1639,7 +1638,7 @@ export default function Settings({ tenantId }) {
                               handleUpdateForm("nurturing_campaign_calendar", next);
                             }}
                             placeholder={placeholder}
-                            className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-lg bg-white placeholder:text-gray-400 focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition-colors"
+                            className="w-full px-3 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-lg placeholder:text-slate-500 focus:ring-4 focus:ring-emerald-500/5 focus:border-emerald-500 transition-all font-medium"
                           />
                         </div>
                       );
@@ -1667,7 +1666,7 @@ export default function Settings({ tenantId }) {
                         value={form.transfer_numbers_raw}
                         onChange={(e) => handleUpdateForm("transfer_numbers_raw", e.target.value)}
                         placeholder="e.g. +14025551234, +14025555678"
-                        className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl font-medium"
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-medium focus:ring-4 focus:ring-slate-900/5 transition-all placeholder:text-slate-500"
                       />
                       <p className="text-xs text-gray-500 mt-2">Comma-separated. Where calls go when human transfer is requested.</p>
                     </div>
@@ -1680,7 +1679,7 @@ export default function Settings({ tenantId }) {
                           value={form.twilio_account_sid}
                           onChange={(e) => handleUpdateForm("twilio_account_sid", e.target.value)}
                           placeholder={tenant?.twilio_account_sid_masked || "ACxxxxxxxxxx"}
-                          className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl font-mono text-xs"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:ring-4 focus:ring-slate-900/5 transition-all placeholder:text-slate-500"
                         />
                       </div>
                       <div>
@@ -1690,7 +1689,7 @@ export default function Settings({ tenantId }) {
                           value={form.twilio_auth_token}
                           onChange={(e) => handleUpdateForm("twilio_auth_token", e.target.value)}
                           placeholder="••••••••••••••••"
-                          className="w-full px-4 py-3 bg-white border border-gray-200 rounded-xl font-mono text-xs"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:ring-4 focus:ring-slate-900/5 transition-all placeholder:text-slate-500"
                         />
                       </div>
                     </div>
@@ -1719,11 +1718,10 @@ export default function Settings({ tenantId }) {
                           key={crm.value}
                           type="button"
                           onClick={() => handleUpdateForm("crm_type", crm.value)}
-                          className={`relative flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all text-center ${
-                            form.crm_type === crm.value
+                          className={`relative flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all text-center ${form.crm_type === crm.value
                               ? "border-gray-900 bg-gray-900 text-white shadow-lg scale-[1.02]"
                               : "border-gray-200 bg-gray-50 text-gray-600 hover:border-gray-300 hover:bg-gray-100"
-                          }`}
+                            }`}
                         >
                           <div className={`w-8 h-8 rounded-xl ${form.crm_type === crm.value ? "bg-white/20" : crm.color + "/10"} flex items-center justify-center`}>
                             <Zap className={`w-4 h-4 ${form.crm_type === crm.value ? "text-white" : crm.color.replace("bg-", "text-")}`} />
@@ -1746,9 +1744,9 @@ export default function Settings({ tenantId }) {
                         value={form.crm_webhook_url}
                         onChange={(e) => handleUpdateForm("crm_webhook_url", e.target.value)}
                         placeholder="https://hooks.zapier.com/..."
-                        className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-mono text-xs focus:ring-2 focus:ring-gray-900/5 transition-all"
+                        className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:ring-4 focus:ring-slate-900/5 transition-all placeholder:text-slate-500"
                       />
-                      <button 
+                      <button
                         type="button"
                         onClick={() => window.open(form.crm_webhook_url, "_blank")}
                         disabled={!form.crm_webhook_url}
@@ -1768,7 +1766,7 @@ export default function Settings({ tenantId }) {
                         value={form.zapier_webhook_url}
                         onChange={(e) => handleUpdateForm("zapier_webhook_url", e.target.value)}
                         placeholder="https://hooks.zapier.com/..."
-                        className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-mono text-xs focus:ring-2 focus:ring-gray-900/5 transition-all"
+                        className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:ring-4 focus:ring-slate-900/5 transition-all placeholder:text-slate-500"
                       />
                     </div>
                     <p className="text-xs text-gray-500 mt-2">If provided, we will also send the same data to this second URL.</p>
@@ -1840,31 +1838,47 @@ export default function Settings({ tenantId }) {
                   {form.google_calendar_linked ? (
                     <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-8">
                       <div className="flex items-center gap-6">
-                        <div className="w-16 h-16 bg-white rounded-2xl shadow-lg border border-gray-100 flex items-center justify-center relative">
-                          <GoogleCalendarIcon className="w-10 h-10" />
-                          <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-emerald-500 text-white rounded-full flex items-center justify-center border-2 border-white shadow-sm">
-                            <CheckCircle2 size={10} strokeWidth={3} />
+                        <div className={`w-16 h-16 bg-white rounded-2xl shadow-lg border flex items-center justify-center relative ${form.google_calendar_error === 'invalid_grant' ? 'border-red-200' : 'border-gray-100'}`}>
+                          <GoogleCalendarIcon className={`w-10 h-10 ${form.google_calendar_error === 'invalid_grant' ? 'opacity-50 grayscale' : ''}`} />
+                          <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-sm ${form.google_calendar_error === 'invalid_grant' ? 'bg-red-500' : 'bg-emerald-500'} text-white`}>
+                            {form.google_calendar_error === 'invalid_grant' ? <AlertCircle size={10} strokeWidth={3} /> : <CheckCircle2 size={10} strokeWidth={3} />}
                           </div>
                         </div>
                         <div>
-                          <h4 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                            Primary Calendar Connected
+                          <h4 className={`text-lg font-bold flex items-center gap-2 ${form.google_calendar_error === 'invalid_grant' ? 'text-red-600' : 'text-gray-900'}`}>
+                            {form.google_calendar_error === 'invalid_grant' ? 'Connection Expired' : 'Primary Calendar Connected'}
                           </h4>
-                          <div className="mt-1 flex items-center gap-2 px-2 py-0.5 bg-gray-900 text-white rounded-lg w-fit shadow-md">
+                          <div className={`mt-1 flex items-center gap-2 px-2 py-0.5 rounded-lg w-fit shadow-md ${form.google_calendar_error === 'invalid_grant' ? 'bg-red-600' : 'bg-gray-900'} text-white`}>
                             <span className="text-xs font-mono opacity-80">{form.google_calendar_email}</span>
                           </div>
-                          <p className="mt-3 text-xs text-gray-400 font-medium flex items-center gap-1.5">
-                            <RefreshCw size={12} className="text-emerald-500 animate-[spin_3s_linear_infinite]" />
-                            Checked for availability every time a booking starts
-                          </p>
+                          {form.google_calendar_error === 'invalid_grant' ? (
+                            <p className="mt-3 text-xs text-red-500 font-bold flex items-center gap-1.5 animate-pulse">
+                              <AlertCircle size={12} />
+                              Action Required: Google has revoked access. Please re-connect.
+                            </p>
+                          ) : (
+                            <p className="mt-3 text-xs text-gray-400 font-medium flex items-center gap-1.5">
+                              <RefreshCw size={12} className="text-emerald-500 animate-[spin_3s_linear_infinite]" />
+                              Checked for availability every time a booking starts
+                            </p>
+                          )}
                         </div>
                       </div>
 
                       <div className="flex items-center gap-3 w-full md:w-auto">
+                        {form.google_calendar_error === 'invalid_grant' ? (
+                          <button
+                            type="button"
+                            onClick={handleConnectCalendar}
+                            className="flex-1 md:flex-none px-6 py-3 bg-red-600 text-white font-black text-[11px] uppercase tracking-widest rounded-xl hover:bg-red-700 transition-all shadow-lg shadow-red-200 active:scale-95"
+                          >
+                            Reconnect Now
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           onClick={handleDisconnectCalendar}
-                          className="flex-1 md:flex-none px-6 py-3 bg-white border border-red-100 text-red-500 font-bold text-[11px] uppercase tracking-widest rounded-xl hover:bg-red-50 transition-all shadow-sm active:scale-95"
+                          className="flex-1 md:flex-none px-4 py-3 bg-white border border-gray-100 text-gray-400 font-bold text-[10px] uppercase tracking-widest rounded-xl hover:text-red-500 hover:border-red-100 hover:bg-red-50 transition-all active:scale-95"
                         >
                           Disconnect
                         </button>
@@ -1875,7 +1889,7 @@ export default function Settings({ tenantId }) {
                       <div className="max-w-md">
                         <h4 className="text-lg font-bold text-gray-900 mb-2">Sync your business schedule</h4>
                         <p className="text-sm text-gray-500 leading-relaxed font-medium">
-                          Connect your Google Calendar to allow the AI to check your real-time availability. 
+                          Connect your Google Calendar to allow the AI to check your real-time availability.
                           This prevents double bookings and ensures your customers only see times you are actually free.
                         </p>
                         <div className="mt-4 flex flex-wrap justify-center md:justify-start gap-4">
@@ -1980,7 +1994,7 @@ export default function Settings({ tenantId }) {
                       value={form.facebook_page_id}
                       onChange={(e) => handleUpdateForm("facebook_page_id", e.target.value)}
                       placeholder="e.g. 123456789012345"
-                      className="w-full px-4 py-3 bg-white border border-[#1877F2]/20 rounded-xl font-mono text-xs focus:ring-[#1877F2]"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:ring-4 focus:ring-[#1877F2]/5 placeholder:text-slate-500 transition-all font-bold"
                     />
                     <p className="text-xs text-gray-500 mt-1">Numeric ID of your Facebook Page (from Meta for Developers → Messenger → your Page).</p>
                   </div>
@@ -1991,7 +2005,7 @@ export default function Settings({ tenantId }) {
                       value={form.facebook_page_access_token}
                       onChange={(e) => handleUpdateForm("facebook_page_access_token", e.target.value)}
                       placeholder="Paste token from Meta App → Messenger → Access Tokens"
-                      className="w-full px-4 py-3 bg-white border border-[#1877F2]/20 rounded-xl font-mono text-xs focus:ring-[#1877F2]"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:ring-4 focus:ring-[#1877F2]/5 placeholder:text-slate-500 transition-all font-bold"
                     />
                     <p className="text-xs text-gray-500 mt-1">Token with pages_messaging and pages_manage_metadata. Never share this token.</p>
                   </div>

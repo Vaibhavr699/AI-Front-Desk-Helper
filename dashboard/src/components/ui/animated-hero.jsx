@@ -53,18 +53,18 @@ export function AnimatedHeroTitle({ onStart, onLogin, onContact }) {
                     </p>
                 </div>
                 <div className="flex flex-row gap-3 mt-2 relative z-[101] pointer-events-auto isolate">
-  <Button
-    type="button"
-    size="lg"
-    className="gap-3 relative z-[102]"
-    variant="outline"
-    onClick={() => {
-      console.log("Get in touch clicked");
-      onContact?.();
-    }}
-  >
-    Get in touch <PhoneCall className="w-4 h-4" />
-  </Button>
+ <button
+  type="button"
+  onClick={() => {
+    console.log("Get in touch clicked");
+    if (onContact) {
+      onContact();
+    }
+  }}
+  className="relative z-[9999] px-6 py-3 border border-stone-300 bg-white rounded-xl"
+>
+  Get in touch <PhoneCall className="w-4 h-4" />
+</button>
 
   <Button
     type="button"

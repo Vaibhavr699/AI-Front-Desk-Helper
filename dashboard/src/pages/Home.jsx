@@ -414,7 +414,7 @@ export default function Home() {
                 Built for home service pros
               </h2>
               <p className="mt-4 text-lg text-stone-600 max-w-2xl mx-auto">
-                Contractors, painters, roofers, and field service companies use AI Front Desk Helper to stop losing leads to voicemail.
+                Contractors, painters, roofers, and field service companies use AI Front Desk Helper to stop losing leads and revenue.
               </p>
             </div>
             <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-w-4xl mx-auto">
@@ -437,34 +437,35 @@ export default function Home() {
           </div>
         </section>
 
-        {/* CTA */}
-        <section className="py-20 sm:py-28">
-          <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-            <h2 className="text-3xl sm:text-4xl font-bold text-stone-900">
-              Ready to stop missing calls?
-            </h2>
-            <p className="mt-4 text-lg text-stone-600">
-              Create your account and connect your first number in minutes.
-            </p>
-            <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
-              <ShimmerButton
-                onClick={() => navigate("/login?signup=1")}
-                className="w-full sm:w-auto text-base text-white font-semibold px-8 py-4"
-                shimmerSize="0.05em"
-                background="rgba(41, 37, 36, 1)"
-              >
-                Get started free
-              </ShimmerButton>
-              <Link
-                to="/login"
-                className="text-base font-semibold text-stone-600 hover:text-stone-900 transition-colors"
-              >
-                I already have an account
-              </Link>
-            </div>
-          </div>
-        </section>
-      </main>
+{/* CTA */}
+<section className="py-20 sm:py-28">
+  <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+    <h2 className="text-3xl sm:text-4xl font-bold text-stone-900">
+      Ready to stop missing revenue?
+    </h2>
+    <p className="mt-4 text-lg text-stone-600">
+      Create your account and connect your first number in minutes.
+    </p>
+    <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
+      <ShimmerButton
+        onClick={() => navigate("/login?signup=1")}
+        className="w-full sm:w-auto text-base text-white font-semibold px-8 py-4"
+        shimmerSize="0.05em"
+        background="rgba(41, 37, 36, 1)"
+      >
+        Get Started
+      </ShimmerButton>
+
+      <button
+        type="button"
+        onClick={() => navigate("/login")}
+        className="w-full sm:w-auto px-8 py-4 rounded-xl border border-stone-300 bg-white text-base font-semibold text-stone-700 hover:text-stone-900 hover:border-stone-400 transition-colors"
+      >
+        I already have an account
+      </button>
+    </div>
+  </div>
+</section>
 
       <SiteFooter />
 

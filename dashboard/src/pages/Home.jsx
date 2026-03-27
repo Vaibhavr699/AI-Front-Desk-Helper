@@ -36,7 +36,10 @@ export default function Home() {
               <AnimatedHeroTitle
                 onStart={() => navigate("/login?signup=1")}
                 onLogin={() => navigate("/login")}
-                onContact={() => setIsContactOpen(true)}
+                onContact={() => {
+                console.log("Opening contact modal");
+                setIsContactOpen(true);
+                }}
               />
             }
           >

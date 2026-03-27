@@ -469,6 +469,22 @@ export default function Home() {
 
       <SiteFooter />
 
+        {isContactOpen && (
+  <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/50">
+    <div className="bg-white p-8 rounded-2xl shadow-xl">
+      <p className="text-lg font-bold text-stone-900">Test modal works</p>
+      <button
+        type="button"
+        onClick={() => setIsContactOpen(false)}
+        className="mt-4 px-4 py-2 rounded-lg bg-stone-900 text-white"
+      >
+        Close
+      </button>
+    </div>
+  </div>
+)}
+
+<ContactModal 
       <ContactModal 
         isOpen={isContactOpen} 
         onClose={() => setIsContactOpen(false)} 

@@ -46,7 +46,9 @@ import {
   Calendar,
   Lock,
   CalendarDays,
-  UserPlus
+  UserPlus,
+  AtSign,
+  Mail
 } from "lucide-react";
 
 const TENANT_STORAGE_KEY = "tenantId";
@@ -221,7 +223,8 @@ export default function Settings({ tenantId }) {
         twilio_account_sid: "",
         twilio_auth_token: "",
         facebook_page_id: t.facebook_page_id || "",
-        facebook_page_access_token: t.facebook_page_access_token || "",
+        facebook_page_access_token: "", // Never keep the actual token in form state
+        facebook_token_masked: t.facebook_token_masked || null,
         facebook_token_error: t.facebook_token_error || null,
         google_calendar_linked: t.google_calendar_linked === true,
         google_calendar_email: t.google_calendar_email || "",
@@ -1850,49 +1853,54 @@ export default function Settings({ tenantId }) {
                   )}
 
                   {form.google_calendar_linked ? (
-                    <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-8">
+                    <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
                       <div className="flex items-center gap-6">
-                        <div className={`w-16 h-16 bg-white rounded-2xl shadow-lg border flex items-center justify-center relative ${form.google_calendar_error === 'invalid_grant' ? 'border-red-200' : 'border-gray-100'}`}>
-                          <GoogleCalendarIcon className={`w-10 h-10 ${form.google_calendar_error === 'invalid_grant' ? 'opacity-50 grayscale' : ''}`} />
-                          <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-sm ${form.google_calendar_error === 'invalid_grant' ? 'bg-red-500' : 'bg-emerald-500'} text-white`}>
-                            {form.google_calendar_error === 'invalid_grant' ? <AlertCircle size={10} strokeWidth={3} /> : <CheckCircle2 size={10} strokeWidth={3} />}
+                        <div className={`w-20 h-20 bg-white rounded-3xl shadow-xl border-2 flex items-center justify-center relative ${form.google_calendar_error === 'invalid_grant' ? 'border-red-100 bg-red-50/30' : 'border-emerald-100 bg-emerald-50/10'}`}>
+                          <GoogleCalendarIcon className={`w-12 h-12 ${form.google_calendar_error === 'invalid_grant' ? 'opacity-40 grayscale' : ''}`} />
+                          <div className={`absolute -bottom-1.5 -right-1.5 w-7 h-7 rounded-full flex items-center justify-center border-4 border-white shadow-md ${form.google_calendar_error === 'invalid_grant' ? 'bg-red-500' : 'bg-emerald-500'} text-white`}>
+                            {form.google_calendar_error === 'invalid_grant' ? <AlertCircle size={14} strokeWidth={3} /> : <CheckCircle2 size={14} strokeWidth={3} />}
                           </div>
                         </div>
-                        <div>
-                          <h4 className={`text-lg font-bold flex items-center gap-2 ${form.google_calendar_error === 'invalid_grant' ? 'text-red-600' : 'text-gray-900'}`}>
-                            {form.google_calendar_error === 'invalid_grant' ? 'Connection Expired' : 'Primary Calendar Connected'}
+                        <div className="flex flex-col gap-1">
+                          <h4 className={`text-xl font-black tracking-tight flex items-center gap-2 ${form.google_calendar_error === 'invalid_grant' ? 'text-red-600' : 'text-slate-900'}`}>
+                            {form.google_calendar_error === "invalid_grant" ? "Connection Expired" : "Primary Calendar Connected"}
                           </h4>
-                          <div className={`mt-1 flex items-center gap-2 px-2 py-0.5 rounded-lg w-fit shadow-md ${form.google_calendar_error === 'invalid_grant' ? 'bg-red-600' : 'bg-gray-900'} text-white`}>
-                            <span className="text-xs font-mono opacity-80">{form.google_calendar_email}</span>
-                          </div>
-                          {form.google_calendar_error === 'invalid_grant' ? (
-                            <p className="mt-3 text-xs text-red-500 font-bold flex items-center gap-1.5 animate-pulse">
-                              <AlertCircle size={12} />
-                              Action Required: Google has revoked access. Please re-connect.
-                            </p>
-                          ) : (
-                            <p className="mt-3 text-xs text-gray-400 font-medium flex items-center gap-1.5">
-                              <RefreshCw size={12} className="text-emerald-500 animate-[spin_3s_linear_infinite]" />
-                              Checked for availability every time a booking starts
-                            </p>
+                          {form.google_calendar_email && (
+                            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border-2 transition-all w-fit ${form.google_calendar_error === 'invalid_grant' ? 'bg-red-50 border-red-100 text-red-600' : 'bg-slate-900 border-slate-800 text-white shadow-lg shadow-slate-200'}`}>
+                              <Mail size={12} className={form.google_calendar_error === 'invalid_grant' ? 'text-red-400' : 'text-slate-400'} />
+                              <span className="text-xs font-bold tracking-wide">{form.google_calendar_email}</span>
+                            </div>
                           )}
+                          <p className={`mt-1 text-[11px] font-bold flex items-center gap-2 uppercase tracking-[0.05em] ${form.google_calendar_error === 'invalid_grant' ? 'text-red-500' : 'text-slate-400'}`}>
+                            {form.google_calendar_error === 'invalid_grant' ? (
+                              <>
+                                <AlertCircle size={12} />
+                                Action Required: Re-connect to restore sync
+                              </>
+                            ) : (
+                              <>
+                                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-[pulse_2s_infinite]" />
+                                Real-time availability sync active
+                              </>
+                            )}
+                          </p>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-3 w-full md:w-auto">
-                        {form.google_calendar_error === 'invalid_grant' ? (
+                      <div className="flex items-center gap-4 w-full md:w-auto">
+                        {form.google_calendar_error === 'invalid_grant' && (
                           <button
                             type="button"
                             onClick={handleConnectCalendar}
-                            className="flex-1 md:flex-none px-6 py-3 bg-red-600 text-white font-black text-[11px] uppercase tracking-widest rounded-xl hover:bg-red-700 transition-all shadow-lg shadow-red-200 active:scale-95"
+                            className="flex-1 md:flex-none px-8 py-3.5 bg-red-600 text-white font-black text-[11px] uppercase tracking-[0.2em] rounded-2xl hover:bg-red-700 transition-all shadow-xl shadow-red-200 active:scale-95"
                           >
-                            Reconnect Now
+                            Reconnect
                           </button>
-                        ) : null}
+                        )}
                         <button
                           type="button"
                           onClick={handleDisconnectCalendar}
-                          className="flex-1 md:flex-none px-4 py-3 bg-white border border-gray-100 text-gray-400 font-bold text-[10px] uppercase tracking-widest rounded-xl hover:text-red-500 hover:border-red-100 hover:bg-red-50 transition-all active:scale-95"
+                          className="flex-1 md:flex-none px-6 py-3.5 bg-white border-2 border-slate-100 text-slate-400 font-black text-[11px] uppercase tracking-[0.2em] rounded-2xl hover:text-red-600 hover:border-red-100 hover:bg-red-50 transition-all active:scale-95"
                         >
                           Disconnect
                         </button>
@@ -2030,7 +2038,7 @@ export default function Settings({ tenantId }) {
                       type="password"
                       value={form.facebook_page_access_token}
                       onChange={(e) => handleUpdateForm("facebook_page_access_token", e.target.value)}
-                      placeholder="Paste token from Meta App → Messenger → Access Tokens"
+                      placeholder={form.facebook_token_masked ? "••••••••••••••••••••••••••••••••" : "Paste token from Meta App → Messenger → Access Tokens"}
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:ring-4 focus:ring-[#1877F2]/5 placeholder:text-slate-500 transition-all font-bold"
                     />
                     <p className="text-xs text-gray-500 mt-1">Token with pages_messaging and pages_manage_metadata. Never share this token.</p>

@@ -5,7 +5,10 @@ const { google } = require("googleapis");
 const db = require("../lib/db");
 const router = express.Router();
 
-const SCOPES = ["https://www.googleapis.com/auth/calendar"];
+const SCOPES = [
+  "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/userinfo.email"
+];
 
 function getOAuth2Client() {
   const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;

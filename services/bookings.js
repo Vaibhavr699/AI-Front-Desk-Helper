@@ -7,26 +7,32 @@ const { getTenantById } = require("../lib/tenant");
 const followUp = require("./followUp");
 
 /** Normalize and validate booking payload from AI (handles camelCase, extra fields, bad dates). */
-function normalizeBookingData(data) {
+function normalizeBookingData(data, isUpdate = false) {
   if (!data || typeof data !== "object") return {};
   const get = (obj, ...keys) => {
     for (const k of keys) {
-      const v = obj[k];
-      if (v != null && String(v).trim() !== "") return String(v).trim();
+      if (k in obj) {
+        const v = obj[k];
+        if (v == null || String(v).trim() === "") return null;
+        return String(v).trim();
+      }
     }
-    return null;
+    return isUpdate ? undefined : null;
   };
+
   const contactPhone = get(data, "contact_phone", "contactPhone");
-  if (!contactPhone) {
+  if (!isUpdate && !contactPhone) {
     throw new Error("contact_phone is required and cannot be empty");
   }
+
   // Only pass through preferred_date if it looks like a valid date (YYYY-MM-DD)
   let preferredDate = get(data, "preferred_date", "preferredDate");
   if (preferredDate) {
     const isoMatch = preferredDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (!isoMatch) preferredDate = null;
+    if (!isoMatch) preferredDate = isUpdate ? undefined : null;
   }
-  return {
+
+  const result = {
     contact_name: get(data, "contact_name", "contactName"),
     contact_phone: contactPhone,
     contact_email: get(data, "contact_email", "contactEmail"),
@@ -39,8 +45,17 @@ function normalizeBookingData(data) {
     appointment_time: get(data, "appointment_time", "appointmentTime"),
     technician_id: get(data, "technician_id", "technicianId"),
     notes: get(data, "notes"),
-    estimated_revenue_cents: data.estimated_value ? Math.round(parseFloat(data.estimated_value) * 100) : 15000, // Default to $150 if not specified
   };
+
+  // Handle estimated_revenue_cents carefully for updates
+  if ("estimated_value" in data || "estimatedValue" in data) {
+    const val = data.estimated_value !== undefined ? data.estimated_value : data.estimatedValue;
+    result.estimated_revenue_cents = (val != null && val !== "") ? Math.round(parseFloat(val) * 100) : 15000;
+  } else if (!isUpdate) {
+    result.estimated_revenue_cents = 15000;
+  }
+
+  return result;
 }
 
 
@@ -104,7 +119,7 @@ async function createBooking(tenantId, callId, data, leadId = null, leadSource =
 
 async function updateBooking(bookingId, data) {
   console.log("[AI-Desk] Booking update start bookingId=%s", bookingId);
-  const norm = normalizeBookingData(data);
+  const norm = normalizeBookingData(data, true);
   const set = [];
   const values = [];
   let i = 1;

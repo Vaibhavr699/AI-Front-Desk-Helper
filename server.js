@@ -1681,6 +1681,7 @@ async function sendFacebookMessage(recipientId, messageText, quickReplies = [], 
   }
 
   const payload = {
+    messaging_type: "RESPONSE",
     recipient: { id: recipientId },
     message: { text: messageText }
   };
@@ -3654,6 +3655,9 @@ app.post("/facebook-webhook", async (req, res) => {
       fbProcessedMessageIds.set(mid, now);
     }
 
+    // 🔥 Send 200 OK immediately to prevent Facebook from timing out.
+    res.sendStatus(200);
+
     const senderId = messaging.sender.id;
     const messageText = messaging.message.text;
 
@@ -3675,10 +3679,9 @@ app.post("/facebook-webhook", async (req, res) => {
       pageAccessToken,
       tenant?.id
     );
-    res.sendStatus(200);
   } catch (error) {
     console.error("Facebook webhook error:", error.stack || error.message);
-    res.sendStatus(200); // Always 200 to FB
+    if (!res.headersSent) res.sendStatus(200); // Always 200 to FB
   }
 });
 

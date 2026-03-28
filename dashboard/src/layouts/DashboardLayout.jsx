@@ -44,7 +44,7 @@ export default function DashboardLayout() {
   const user = getUser();
   const [tenantId, setTenantId] = useState(user?.tenant_id || "");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
-    () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"
+    () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) !== "0"
   );
   const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
   const [impersonating, setImpersonating] = useState(

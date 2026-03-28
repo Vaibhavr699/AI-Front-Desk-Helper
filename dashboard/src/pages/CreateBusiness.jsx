@@ -31,7 +31,7 @@ export default function CreateBusiness() {
       if (data.tenant?.id) {
         localStorage.setItem(TENANT_STORAGE_KEY, data.tenant.id);
       }
-      window.location.href = "/";
+      window.location.href = "/dashboard";
     } catch (err) {
       setError(err.message || "Failed to create business");
     } finally {

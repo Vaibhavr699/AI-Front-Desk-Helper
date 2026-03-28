@@ -16,25 +16,22 @@ function ScrollToTop() {
 
 function Protected({ children }) {
   const user = getUser();
-  if (!user) return <Navigate to="/" replace />;
+  if (!user) return <Navigate to="/login" replace />;
   return children;
 }
 
 /** Rendered when route is /login so we read user on this render (after logout, App may not have re-rendered). */
 function LoginRoute() {
   const user = getUser();
-  if (user) return <Navigate to="/" replace />;
-  return <Login onLogin={() => { window.location.href = "/"; }} />;
+  if (user) return <Navigate to="/dashboard" replace />;
+  return <Login onLogin={() => { window.location.href = "/dashboard"; }} />;
 }
 
-function RootElement() {
+/** Logged-in layout wrapper: handles tenant guards and renders DashboardLayout. */
+function AuthenticatedRoot() {
   const user = getUser();
   const { pathname } = useLocation();
-  const isRoot = pathname === "/" || pathname === "";
-  if (!user) {
-    if (isRoot) return <Home />;
-    return <Navigate to="/" replace />;
-  }
+  if (!user) return <Navigate to="/login" replace />;
   const isImpersonating = !!localStorage.getItem("impersonate_tenant_id");
   if (user && !user.tenant_id && user.is_super_admin && !pathname.startsWith("/admin") && !isImpersonating) {
     return <Navigate to="/admin/tenants" replace />;
@@ -49,35 +46,45 @@ function RootElement() {
   );
 }
 
+/** Root "/" route: landing page for guests, redirect to /dashboard for logged-in users. */
+function RootElement() {
+  const user = getUser();
+  if (user) return <Navigate to="/dashboard" replace />;
+  return <Home />;
+}
+
 export default function App() {
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, "")}>
       <ScrollToTop />
       <Routes>
+        {/* Public routes */}
+        <Route path="/" element={<RootElement />} />
         <Route path="/login" element={<LoginRoute />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/privacy-policy" element={<PrivacyPolicy />} />
         <Route path="/terms" element={<TermsOfService />} />
         <Route path="/cookies" element={<CookiePolicy />} />
-        <Route path="/" element={<RootElement />}>
-          <Route index element={<DashboardWithContext />} />
-          <Route path="create-business" element={<CreateBusiness />} />
-          <Route path="calls" element={<CallsWithContext />} />
-          <Route path="calls/:id" element={<CallDetail />} />
-          <Route path="leads" element={<LeadsWithContext />} />
-          <Route path="leads/:id" element={<LeadDetailWithContext />} />
-          <Route path="bookings" element={<BookingsWithContext />} />
-          <Route path="follow-ups" element={<FollowUpsWithContext />} />
-          <Route path="conversations" element={<ConversationsWithContext />} />
-          <Route path="metrics" element={<MetricsWithContext />} />
-          <Route path="plans" element={<PlansWithContext />} />
-          <Route path="billing" element={<BillingWithContext />} />
-          <Route path="settings" element={<SettingsWithContext />} />
-          <Route path="tenants" element={<Tenants />} />
-          <Route path="admin" element={<Navigate to="/admin/tenants" replace />} />
-          <Route path="admin/tenants" element={<AdminWithContext view="tenants" />} />
-          <Route path="admin/admins" element={<AdminWithContext view="admins" />} />
+        {/* Authenticated dashboard routes */}
+        <Route element={<AuthenticatedRoot />}>
+          <Route path="/dashboard" element={<DashboardWithContext />} />
+          <Route path="/create-business" element={<CreateBusiness />} />
+          <Route path="/calls" element={<CallsWithContext />} />
+          <Route path="/calls/:id" element={<CallDetail />} />
+          <Route path="/leads" element={<LeadsWithContext />} />
+          <Route path="/leads/:id" element={<LeadDetailWithContext />} />
+          <Route path="/bookings" element={<BookingsWithContext />} />
+          <Route path="/follow-ups" element={<FollowUpsWithContext />} />
+          <Route path="/conversations" element={<ConversationsWithContext />} />
+          <Route path="/metrics" element={<MetricsWithContext />} />
+          <Route path="/plans" element={<PlansWithContext />} />
+          <Route path="/billing" element={<BillingWithContext />} />
+          <Route path="/settings" element={<SettingsWithContext />} />
+          <Route path="/tenants" element={<Tenants />} />
+          <Route path="/admin" element={<Navigate to="/admin/tenants" replace />} />
+          <Route path="/admin/tenants" element={<AdminWithContext view="tenants" />} />
+          <Route path="/admin/admins" element={<AdminWithContext view="admins" />} />
         </Route>
       </Routes>
     </BrowserRouter>

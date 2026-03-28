@@ -4,7 +4,7 @@ import { getUser } from "../api";
 
 // Order by SaaS importance: Home first, core activity, pipeline, analytics, account, Settings last.
 const baseNavItems = [
-  { to: "/", label: "Home", icon: HomeIcon },
+  { to: "/dashboard", label: "Home", icon: HomeIcon },
   { to: "/calls", label: "Calls", icon: CallsIcon },
   { to: "/conversations", label: "AI Conversations", icon: ConversationsIcon },
   { to: "/leads", label: "Leads", icon: LeadsIcon },
@@ -164,7 +164,7 @@ export default function Sidebar({ collapsed, onToggle, closeMobile }) {
       <nav className="flex-1 py-4 px-3 space-y-1 overflow-x-hidden overflow-y-auto min-h-0">
         {getNavItems().map(({ to, label, icon: Icon }) => {
           const isActive =
-            location.pathname === to || (to !== "/" && location.pathname.startsWith(to));
+            location.pathname === to || location.pathname.startsWith(to + "/");
           return (
             <Link
               key={to}

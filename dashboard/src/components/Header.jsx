@@ -51,7 +51,7 @@ export default function Header({ tenantId, tenants, onMenuClick }) {
               </button>
             )}
             <Link
-              to="/"
+              to="/dashboard"
               className="flex items-center gap-2 shrink-0 group transition-all"
             >
               <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-white border border-stone-200 shadow-lg group-hover:scale-105 transition-transform duration-200 overflow-hidden p-1">

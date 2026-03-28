@@ -303,7 +303,7 @@ export default function Admin({ view = "tenants" }) {
     if (!impersonateConfirm) return;
     localStorage.setItem("impersonate_tenant_id", impersonateConfirm.id);
     localStorage.setItem("impersonate_tenant_name", impersonateConfirm.company_name || impersonateConfirm.name);
-    window.location.href = "/";
+    window.location.href = "/dashboard";
   }
 
   const filteredTenants = tenants.filter((t) => {

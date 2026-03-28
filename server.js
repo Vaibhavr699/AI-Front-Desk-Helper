@@ -25,6 +25,7 @@ const cors = require("cors");
 const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
+const crypto = require("crypto");
 const fetch = require("node-fetch");
 const db = require("./lib/db");
 const pool = db.pool;

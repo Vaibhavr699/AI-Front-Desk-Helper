@@ -1,7 +1,7 @@
 "use strict";
 
 const express = require("express");
-const { getTenantByPhone } = require("../lib/tenant");
+const { getTenantByPhone, getTenantById, getTenantBySlug } = require("../lib/tenant");
 const callsService = require("../services/calls");
 const recordingService = require("../services/recording");
 const { updateCallByTwilioSid } = require("../services/calls");
@@ -23,15 +23,25 @@ function escapeXml(s) {
     .replace(/'/g, "&apos;");
 }
 
-router.post("/voice", async (req, res) => {
+router.post("/voice/:tenantId?", async (req, res) => {
   const { CallSid, From, To } = req.body || {};
   const toNumber = To || req.body?.To;
   const fromNumber = From || req.body?.From;
   console.log("[AI-Desk] Voice webhook CallSid=%s From=%s To=%s", CallSid, fromNumber, toNumber);
   try {
+    let tenant = null;
+    if (req.params.tenantId) {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.tenantId);
+      if (isUuid) {
+        tenant = await getTenantById(req.params.tenantId);
+      } else {
+        tenant = await getTenantBySlug(req.params.tenantId);
+      }
+    }
     const tenantByTo = await getTenantByPhone(toNumber);
     const tenantByFrom = await getTenantByPhone(fromNumber);
-    const tenant = tenantByTo || tenantByFrom;
+    if (!tenant) tenant = tenantByTo;
+    if (!tenant) tenant = tenantByFrom;
     if (!tenant) {
       console.log("[AI-Desk] Voice webhook no tenant for To=%s From=%s", toNumber, fromNumber);
       sendVoiceError(res, "We're sorry, this number is not configured. Goodbye.");

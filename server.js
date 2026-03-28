@@ -586,20 +586,21 @@ app.use("/api", authMiddleware, dashboardRoutes);
 app.use("/auth/google/calendar", require("./routes/google-calendar"));
 app.use("/api/google-calendar", authMiddleware, require("./routes/google-calendar"));
 
+// Serve dashboard static assets early so JS/CSS/images load,
+// but do NOT register the wildcard catch-all here — it goes at the very end
+// of all route definitions (see bottom of file) so it doesn't shadow later GET routes.
 if (SERVE_DASHBOARD) {
   app.use(express.static(path.join(__dirname, "dashboard", "dist")));
-  app.get("*", (req, res) => {
-    res.sendFile(path.join(__dirname, "dashboard", "dist", "index.html"));
-  });
 } else {
   const FRONTEND_URL = process.env.FRONTEND_URL || "";
   app.get("/", (req, res) => {
-if (FRONTEND_URL) return res.redirect(302, FRONTEND_URL);
+    if (FRONTEND_URL) return res.redirect(302, FRONTEND_URL);
     res.set("Content-Type", "text/plain").status(200).send(
       "AI Front Desk API. Dashboard is deployed separately. Use your frontend URL to sign in, or set FRONTEND_URL to redirect / here."
     );
   });
 }
+
 
 app.get("/health/details", (_req, res) => {
   res.status(200).json({
@@ -1670,7 +1671,7 @@ async function getFacebookUserProfile(senderId, pageAccessToken) {
   }
 }
 
-async function sendFacebookMessage(recipientId, messageText, quickReplies = [], accessTokenOverride = null) {
+async function sendFacebookMessage(recipientId, messageText, quickReplies = [], accessTokenOverride = null, tenantId = null) {
   console.log(`[Facebook Send] recipient=${recipientId}, hasOverride=${!!accessTokenOverride}, overrideStart=${accessTokenOverride ? accessTokenOverride.substring(0, 10) : 'NONE'}`);
   const PAGE_ACCESS_TOKEN = accessTokenOverride || process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
 
@@ -1706,8 +1707,20 @@ async function sendFacebookMessage(recipientId, messageText, quickReplies = [], 
 
     if (!response.ok) {
       const errorBody = await response.text();
+      let parsedError;
+      try { parsedError = JSON.parse(errorBody); } catch (e) { }
+
+      const errorCode = parsedError?.error?.code;
+      if (errorCode === 190 && tenantId) {
+        console.warn(`[Facebook] Token EXPIRED for tenant ${tenantId}. Marking in DB.`);
+        await db.query("UPDATE tenants SET facebook_token_error = 'expired', updated_at = now() WHERE id = $1", [tenantId]);
+      }
       console.error("[Facebook] Failed to send message:", response.status, errorBody);
     } else {
+      if (tenantId) {
+        // Clear error on success
+        await db.query("UPDATE tenants SET facebook_token_error = NULL WHERE id = $1", [tenantId]);
+      }
       console.log(`[Facebook] Successfully sent message to ${recipientId}`);
     }
   } catch (err) {
@@ -3585,7 +3598,8 @@ app.post("/facebook-webhook", async (req, res) => {
           senderId,
           `Hi 👋 Thanks for reaching out to ${tenant?.company_name || "us"}! Need a quote or want to schedule a service? I can help you right away.`,
           ["Get a Free Quote", "Book Estimate", "Talk to a Human"],
-          pageAccessToken
+          pageAccessToken,
+          tenant?.id
         );
         return res.sendStatus(200);
       }
@@ -3595,7 +3609,8 @@ app.post("/facebook-webhook", async (req, res) => {
           senderId,
           "Great! What type of painting project are you planning?",
           [],
-          pageAccessToken
+          pageAccessToken,
+          tenant?.id
         );
         return res.sendStatus(200);
       }
@@ -3657,7 +3672,8 @@ app.post("/facebook-webhook", async (req, res) => {
       senderId,
       result.reply,
       ["Get a Free Quote", "Talk to a Human", "Book Estimate"],
-      pageAccessToken
+      pageAccessToken,
+      tenant?.id
     );
     res.sendStatus(200);
   } catch (error) {
@@ -3680,11 +3696,12 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// -------------------- SERVE_DASHBOARD (optional) --------------------
+// -------------------- SPA catch-all (MUST be last) --------------------
+// This wildcard route serves index.html for any GET request that didn't match
+// an API or webhook endpoint, enabling client-side routing (React Router).
 if (SERVE_DASHBOARD) {
-  app.use(express.static(path.join(__dirname, "dashboard", "dist")));
   app.get("*", (req, res) => {
-    if (req.path.startsWith("/api") || req.path.startsWith("/twilio") || req.path.startsWith("/stripe")) return;
+    if (req.path.startsWith("/api") || req.path.startsWith("/twilio") || req.path.startsWith("/stripe") || req.path.startsWith("/auth") || req.path.startsWith("/webhooks") || req.path.startsWith("/health")) return;
     res.sendFile(path.join(__dirname, "dashboard", "dist", "index.html"));
   });
 }

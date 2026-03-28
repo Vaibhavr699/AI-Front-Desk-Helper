@@ -5,12 +5,8 @@ const db = require('./lib/db');
 
 async function check() {
   try {
-    const res = await db.query("SELECT name, facebook_page_id, facebook_page_access_token FROM tenants");
-    for (const t of res.rows) {
-      console.log(`- ${t.name} -`);
-      console.log(`  Page ID: [${t.facebook_page_id}] (len: ${t.facebook_page_id?.length})`);
-      console.log(`  Token:   [${t.facebook_page_access_token?.substring(0, 10)}...] (total len: ${t.facebook_page_access_token?.length})`);
-    }
+    const res = await db.query("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS facebook_token_error TEXT");
+    console.log("Column added or already exists");
     process.exit();
     console.log("Tenants found:", res.rows.length);
     for (const t of res.rows) {

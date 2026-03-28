@@ -24,7 +24,7 @@ function Protected({ children }) {
 function LoginRoute() {
   const user = getUser();
   if (user) return <Navigate to="/" replace />;
-  return <Login onLogin={() => { window.location.reload(); }} />;
+  return <Login onLogin={() => { window.location.href = "/"; }} />;
 }
 
 function RootElement() {

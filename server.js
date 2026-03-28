@@ -1311,7 +1311,7 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
   today.setHours(0, 0, 0, 0);
   parsedDate.setHours(0, 0, 0, 0);
 
-  if (parsedDate < today) {
+  while (parsedDate < today) {
     parsedDate.setFullYear(parsedDate.getFullYear() + 1);
   }
 
@@ -1337,39 +1337,51 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
   const isAvailable = (availability.ok && availability.available) || calendarNotConfigured;
   
   if (availability.reason === "calendar_error") {
-    console.error("[Booking] Calendar error — blocking booking to prevent double booking:", availability.message || "unknown");
-    return "I'm having a bit of trouble checking our schedule right now. Let me have a team member confirm that time for you and we'll text you back shortly!";
+    console.warn("[Booking] Calendar error (likely API disabled) — falling back to local booking only:", availability.message || "unknown");
+    // We proceed anyway to at least capture the lead and record the preference locally.
   }
 
   if (isAvailable) {
-    let booked = { ok: false };
-    if (!calendarSkipped) {
-      booked = await bookAppointment({
-        appointment_date: ai.appointment_date,
-        appointment_time: ai.appointment_time,
-        duration_minutes: 60,
-        full_name: thread.leadCapture.full_name || "New Lead",
-        phone: thread.leadCapture?.phone || thread.phone,
-        email: thread.leadCapture.email || "",
-        address: thread.leadCapture.address || "",
-        project_details: thread.leadCapture.project_details || ""
-      }, tenant);
-    } else {
-      // Fallback: assume OK if calendar is disabled or errored
-      booked = { ok: true, fallback: true };
+    let booked = { ok: true, fallback: true }; // Default to success so local booking happens
+
+    // Only attempt Google Calendar sync if it's configured and was reachable during check
+    const shouldTryGoogle = availability.reason !== "calendar_not_configured" && availability.reason !== "calendar_error";
+
+    if (shouldTryGoogle) {
+      try {
+        const syncResult = await bookAppointment({
+          appointment_date: ai.appointment_date,
+          appointment_time: ai.appointment_time,
+          duration_minutes: 60,
+          full_name: thread.leadCapture.full_name || "New Lead",
+          phone: thread.leadCapture?.phone || thread.phone,
+          email: thread.leadCapture.email || "",
+          address: thread.leadCapture.address || "",
+          project_details: thread.leadCapture.project_details || ""
+        }, tenant);
+        
+        if (syncResult && syncResult.ok) {
+          booked = syncResult;
+        } else {
+          console.warn("[Booking] Google Calendar sync failed:", syncResult?.reason || "unknown");
+          // We still keep booked.ok = true (from initialization) to allow local booking to proceed
+        }
+      } catch (err) {
+        console.error("[Booking] Google Calendar bookAppointment exception:", err.message);
+        // Fallback to local-only success
+      }
     }
 
     if (booked.ok) {
-      thread.bookedEventId = booked.eventId || "";
+      thread.bookedEventId = booked.eventId || (booked.fallback ? "LOCAL_ONLY" : "");
       thread.needsFollowUpAt = null;
       thread.followUpCount = 0;
 
       // PERSIST TO LOCAL DATABASE
       try {
-        const tenant = tenantOverride;
-        if (tenant) {
-
-          await bookingsService.createBooking(tenant.id, null, {
+        const t = tenantOverride || (thread.tenantId ? TENANTS[thread.tenantId] : null);
+        if (t) {
+          await bookingsService.createBooking(t.id, null, {
             contact_name: thread.leadCapture.full_name || "New Lead",
             contact_phone: thread.leadCapture?.phone || thread.phone,
             contact_email: thread.leadCapture.email || "",
@@ -1383,7 +1395,6 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
             estimated_value: thread.leadCapture.estimated_value
           }, thread.leadId);
 
-          
           if (thread.leadId) {
             leadsService.updateLeadStatus(thread.leadId, 'Booked').catch(e => console.error("Lead status update error:", e));
           }
@@ -2066,7 +2077,8 @@ async function checkAvailability(args = {}, tenant = null) {
     if (errMsg.includes("unregistered callers")) {
       return { ok: false, reason: "calendar_not_configured" };
     }
-    return { ok: false, reason: "calendar_error", message: errMsg };
+    // Fail semi-safe: return true for available but indicate it was a calendar error
+    return { ok: true, available: true, reason: "calendar_error", message: errMsg };
   }
 }
 
@@ -3566,7 +3578,7 @@ app.get("/facebook-webhook", (req, res) => {
 
 app.post("/facebook-webhook", async (req, res) => {
   try {
-    // console.log("[Facebook Webhook] Raw Payload:", JSON.stringify(req.body, null, 2));
+    console.log("[Facebook Webhook] Raw Payload:", JSON.stringify(req.body, null, 2));
 
     const entry = req.body.entry?.[0];
     const messaging = entry?.messaging?.[0];

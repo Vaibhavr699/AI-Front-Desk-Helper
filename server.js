@@ -3574,14 +3574,12 @@ app.post("/facebook-webhook", async (req, res) => {
     // Look up the tenant for this Page ID
     const tenant = pageId ? await getTenantByFacebookPageId(pageId) : null;
     
-    // Per user request: use the master token primarily for replies.
-    let pageAccessToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
-    let tokenSource = "MASTER_ENV";
+    let pageAccessToken = tenant?.facebook_page_access_token;
+    let tokenSource = "TENANT_DB";
 
-    // Fallback to tenant DB token if master doesn't exist
     if (!pageAccessToken) {
-      pageAccessToken = tenant?.facebook_page_access_token;
-      tokenSource = "TENANT_DB_FALLBACK";
+      pageAccessToken = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
+      tokenSource = "ENV_FALLBACK";
     }
 
     console.log(`[Facebook Webhook] Page ID: ${pageId}, Tenant resolved: ${tenant ? tenant.name : "NONE"}, Token Source: ${tokenSource}, Token Start: ${pageAccessToken ? pageAccessToken.substring(0, 10) : "MISSING"}`);

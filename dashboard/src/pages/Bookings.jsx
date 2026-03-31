@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { getBookings, updateBooking, getTechnicians } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
-import { 
-  Calendar, List, Users, Clock, CheckCircle2, AlertCircle, 
-  MapPin, ChevronRight, Phone, Search, Filter, 
-  ChevronLeft, ChevronsLeft, ChevronsRight, 
+import {
+  Calendar, List, Users, Clock, CheckCircle2, AlertCircle,
+  MapPin, ChevronRight, Phone, Search, Filter,
+  ChevronLeft, ChevronsLeft, ChevronsRight,
   ArrowUpDown, X, ExternalLink, Mail, DollarSign, Tag
 } from "lucide-react";
 import BookingCalendar from "../components/BookingCalendar";
@@ -34,7 +34,7 @@ export default function Bookings({ tenantId }) {
     if (!tenantId) return;
     getTechnicians(tenantId)
       .then(data => setTechnicians(data.technicians || []))
-      .catch(() => {});
+      .catch(() => { });
   }, [tenantId, view]);
 
   const loadCalendarBookings = useCallback(async () => {
@@ -57,7 +57,7 @@ export default function Bookings({ tenantId }) {
   }, [view, loadCalendarBookings]);
 
   const loadTableData = useCallback(async () => {
-    if (!tenantId) return;  
+    if (!tenantId) return;
     if (initialLoad) setLoading(true);
     else setSearching(true);
 
@@ -143,37 +143,34 @@ export default function Bookings({ tenantId }) {
         <div>
           <h1 className="text-3xl font-bold text-stone-900 tracking-tight">Bookings</h1>
           <p className="text-stone-500 mt-1 flex items-center gap-2">
-            <span className="inline-flex items-center justify-center w-5 h-5 bg-stone-100 rounded-full text-[10px] font-bold text-stone-600">
+            <span className="inline-flex items-center justify-center w-5 h-5 border border-orange-500 rounded-full text-[14px] font-bold text-orange-500">
               {total}
             </span>
             Manage your appointments, crew assignments, and schedule.
           </p>
         </div>
-        
+
         <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200">
           <button
             onClick={() => setView("table")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              view === "table" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-700"
-            }`}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${view === "table" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-700"
+              }`}
           >
             <List className="w-4 h-4" />
             Table
           </button>
           <button
             onClick={() => setView("calendar")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              view === "calendar" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-700"
-            }`}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${view === "calendar" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-700"
+              }`}
           >
             <Calendar className="w-4 h-4" />
             Calendar
           </button>
           <button
             onClick={() => setView("technicians")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              view === "technicians" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-700"
-            }`}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${view === "technicians" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-700"
+              }`}
           >
             <Users className="w-4 h-4" />
             Crew
@@ -191,8 +188,8 @@ export default function Bookings({ tenantId }) {
             ) : (
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
             )}
-            <input 
-              type="text" 
+            <input
+              type="text"
               placeholder="Search by name, phone, or project details..."
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
@@ -207,18 +204,17 @@ export default function Bookings({ tenantId }) {
               </button>
             )}
           </div>
-          
+
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 md:pb-0 w-full md:w-auto">
             <Filter className="w-4 h-4 text-stone-400 mr-2 shrink-0" />
             {["all", "booked", "confirmed", "completed", "cancelled"].map((s) => (
               <button
                 key={s}
                 onClick={() => { setStatusFilter(s); setPage(1); }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all border shrink-0 ${
-                  statusFilter === s 
-                    ? "bg-stone-900 border-stone-900 text-white shadow-md shadow-stone-900/10" 
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all border shrink-0 ${statusFilter === s
+                    ? "bg-stone-900 border-stone-900 text-white shadow-md shadow-stone-900/10"
                     : "bg-white border-stone-200 text-stone-500 hover:border-stone-300"
-                }`}
+                  }`}
               >
                 {s}
               </button>
@@ -275,8 +271,8 @@ export default function Bookings({ tenantId }) {
                   </tr>
                 ) : (
                   bookings.map((b) => (
-                    <tr 
-                      key={b.id} 
+                    <tr
+                      key={b.id}
                       className="group hover:bg-stone-50/50 transition-colors cursor-pointer"
                       onClick={() => setSelectedBooking(b)}
                     >
@@ -351,21 +347,21 @@ export default function Bookings({ tenantId }) {
               </tbody>
             </table>
           </div>
-          
+
           <div className="px-6 py-4 bg-stone-50/50 border-t border-stone-100 flex items-center justify-between">
             <div className="text-xs font-medium text-stone-400 uppercase tracking-widest flex-1">
-              Showing {Math.min(total, (page-1)*limit + 1)}-{Math.min(total, page*limit)} of {total}
+              Showing {Math.min(total, (page - 1) * limit + 1)}-{Math.min(total, page * limit)} of {total}
             </div>
-            
+
             <div className="flex items-center justify-center gap-2 flex-1">
-              <button 
+              <button
                 onClick={() => setPage(p => Math.max(1, p - 1))}
                 disabled={page === 1}
                 className="p-2 rounded-lg border border-stone-200 bg-white text-stone-600 disabled:opacity-30 disabled:cursor-not-allowed hover:border-stone-400 transition-all shadow-sm"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              
+
               <div className="flex items-center gap-1">
                 {[...Array(totalPages)].map((_, i) => {
                   const p = i + 1;
@@ -375,11 +371,10 @@ export default function Bookings({ tenantId }) {
                     <button
                       key={p}
                       onClick={() => setPage(p)}
-                      className={`w-8 h-8 rounded-lg text-xs font-bold transition-all ${
-                        page === p 
-                          ? "bg-stone-900 text-white shadow-md" 
+                      className={`w-8 h-8 rounded-lg text-xs font-bold transition-all ${page === p
+                          ? "bg-stone-900 text-white shadow-md"
                           : "text-stone-500 hover:bg-stone-100"
-                      }`}
+                        }`}
                     >
                       {p}
                     </button>
@@ -387,7 +382,7 @@ export default function Bookings({ tenantId }) {
                 })}
               </div>
 
-              <button 
+              <button
                 onClick={() => setPage(p => Math.min(totalPages, p + 1))}
                 disabled={page === totalPages || totalPages === 0}
                 className="p-2 rounded-lg border border-stone-200 bg-white text-stone-600 disabled:opacity-30 disabled:cursor-not-allowed hover:border-stone-400 transition-all shadow-sm"
@@ -395,16 +390,16 @@ export default function Bookings({ tenantId }) {
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
-            
+
             <div className="flex-1"></div>
           </div>
         </div>
       )}
 
       {view === "calendar" && (
-        <BookingCalendar 
-          bookings={calendarBookings} 
-          onEventClick={(b) => setSelectedBooking(b)} 
+        <BookingCalendar
+          bookings={calendarBookings}
+          onEventClick={(b) => setSelectedBooking(b)}
         />
       )}
 
@@ -415,8 +410,8 @@ export default function Bookings({ tenantId }) {
       {/* Detail Modal */}
       {selectedBooking && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div 
-            className="absolute inset-0 bg-stone-100/40 animate-in fade-in duration-300" 
+          <div
+            className="absolute inset-0 bg-stone-100/40 animate-in fade-in duration-300"
             onClick={() => setSelectedBooking(null)}
           />
           <div className="relative bg-white w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 slide-in-from-bottom-4 duration-300">
@@ -425,7 +420,7 @@ export default function Bookings({ tenantId }) {
                 <div className={`w-3 h-3 rounded-full animate-pulse ${getStatusSlugColor(selectedBooking.status)}`} />
                 <h2 className="text-xl font-bold text-stone-900 tracking-tight">Booking Details</h2>
               </div>
-              <button 
+              <button
                 onClick={() => setSelectedBooking(null)}
                 className="p-2 hover:bg-stone-200 rounded-full transition-colors text-stone-400 hover:text-stone-600"
               >
@@ -503,7 +498,7 @@ export default function Bookings({ tenantId }) {
 
             <div className="p-6 bg-stone-900 flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <a 
+                <a
                   href={`tel:${selectedBooking.contact_phone}`}
                   className="flex items-center gap-2 text-stone-400 hover:text-white transition-colors text-xs font-bold uppercase tracking-widest"
                 >

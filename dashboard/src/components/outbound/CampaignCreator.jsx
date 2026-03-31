@@ -233,7 +233,7 @@ export default function CampaignCreator({ tenantId, onClose, onCreated }) {
               {formData.consent_confirmed && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
             </div>
             <div className={`text-[10px] font-bold uppercase tracking-tight leading-relaxed ${formData.consent_confirmed ? 'text-emerald-900' : 'text-stone-500'}`}>
-               I verify explicit documented consent for automated outreach. I handle TCPA liability.
+               I confirm all contacts on this list have provided consent to be contacted.
             </div>
           </label>
         </div>

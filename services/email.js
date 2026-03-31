@@ -502,13 +502,47 @@ async function sendSeasonalCampaignEmail(companyName, customerName, subjectLine,
   return { ok: result.ok, error: result.error };
 }
 
+async function sendUsageAlertEmail(email, tenantName, percent, limits, current) {
+  const html = `
+    <h2 style="margin:0 0 16px; color: ${percent >= 100 ? '#e11d48' : '#d97706'}">⚠️ Usage Alert: ${percent}% limit reached</h2>
+    <p>Your account for <strong>${escapeHtml(tenantName)}</strong> has reached <strong>${percent}%</strong> of your monthly allowance.</p>
+    <div style="margin: 24px 0; padding: 20px; background-color: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+        <tr>
+          <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; font-weight: 600; color: #64748b;">Resource</td>
+          <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; font-weight: 600; color: #64748b;">Current Usage</td>
+          <td style="padding: 10px 0; border-bottom: 1px solid #f1f5f9; font-weight: 600; color: #64748b;">Monthly Limit</td>
+        </tr>
+        <tr>
+          <td style="padding: 12px 0;">🎙️ AI Voice Minutes</td>
+          <td style="padding: 12px 0; font-weight: 700; color: #1e293b;">${current.minutes.toLocaleString()}</td>
+          <td style="padding: 12px 0; color: #64748b;">${limits.minutes.toLocaleString()}</td>
+        </tr>
+        <tr>
+          <td style="padding: 12px 0;">💬 AI SMS Messages</td>
+          <td style="padding: 12px 0; font-weight: 700; color: #1e293b;">${current.sms.toLocaleString()}</td>
+          <td style="padding: 12px 0; color: #64748b;">${limits.sms.toLocaleString()}</td>
+        </tr>
+      </table>
+    </div>
+    <p style="margin-top: 24px;">Please log in to your dashboard to manage your subscription or upgrade your plan to avoid any disruption in service.</p>
+    <p>Thanks,<br/><strong>AI Front Desk Team</strong></p>
+  `;
+  return sendEmail({
+    to: email,
+    subject: `⚠️ Usage Alert: ${percent}% of limit reached – ${tenantName}`,
+    html,
+  });
+}
+
 function escapeHtml(s) {
   if (s == null) return "";
   return String(s)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 module.exports = {
@@ -527,4 +561,5 @@ module.exports = {
   sendSeasonalCampaignEmail,
   sendAdminInvitationEmail,
   sendTeamInviteEmail,
+  sendUsageAlertEmail,
 };

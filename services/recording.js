@@ -61,8 +61,10 @@ async function handleRecordingStatus(reqBody) {
     if (RecordingStatus === "completed") {
       const { transcribeRecording } = require("./transcription");
       const { uploadRecordingToS3 } = require("./s3");
+      const { checkAndSendUsageAlerts } = require("./usage");
       setImmediate(() => transcribeRecording(CallSid, RecordingSid).catch((e) => console.error("Transcribe error:", e)));
       setImmediate(() => uploadRecordingToS3(call.tenant_id, RecordingSid).catch((e) => console.error("S3 upload error:", e)));
+      setImmediate(() => checkAndSendUsageAlerts(call.tenant_id).catch((e) => console.error("Usage alert error:", e)));
     }
   }
 }

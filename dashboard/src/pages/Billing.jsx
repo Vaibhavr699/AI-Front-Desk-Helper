@@ -12,11 +12,15 @@ import {
   ChevronRight,
   Info
 } from "lucide-react";
+import { useToast } from "../components/ui/Toast";
+import { updateUsageAlerts } from "../api";
 
 export default function Billing({ tenantId }) {
+  const { success, error: toastError } = useToast();
   const [usage, setUsage] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [thresholds, setThresholds] = useState({ "75": true, "90": true, "100": true });
 
   useEffect(() => {
     if (!tenantId) return;
@@ -28,10 +32,25 @@ export default function Billing({ tenantId }) {
     try {
       const data = await getUsage(tenantId);
       setUsage(data);
+      if (data.alertThresholds) {
+        setThresholds(data.alertThresholds);
+      }
     } catch (e) {
       setError(e.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleThresholdToggle = async (percent) => {
+    const next = { ...thresholds, [percent]: !thresholds[percent] };
+    setThresholds(next);
+    try {
+      await updateUsageAlerts(tenantId, next, true);
+      success(`${percent}% alert ${next[percent] ? 'enabled' : 'disabled'}`);
+    } catch (e) {
+      toastError("Failed to update alert settings");
+      setThresholds(thresholds);
     }
   };
 
@@ -206,9 +225,9 @@ export default function Billing({ tenantId }) {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <ThresholdToggle percent={75} label="Usage Warning" description="Sent via SMS/Email at 75% capacity." checked={true} />
-          <ThresholdToggle percent={90} label="Usage Alert" description="Sent at 90% capacity. Critical notice." checked={true} />
-          <ThresholdToggle percent={100} label="Overage Notice" description="Sent when limit is reached." checked={false} />
+          <ThresholdToggle percent={75} label="Usage Warning" description="Sent via SMS/Email at 75% capacity." checked={thresholds["75"]} onToggle={() => handleThresholdToggle(75)} />
+          <ThresholdToggle percent={90} label="Usage Alert" description="Sent at 90% capacity. Critical notice." checked={thresholds["90"]} onToggle={() => handleThresholdToggle(90)} />
+          <ThresholdToggle percent={100} label="Overage Notice" description="Sent when limit is reached." checked={thresholds["100"]} onToggle={() => handleThresholdToggle(100)} />
         </div>
       </div>
     </div>
@@ -266,17 +285,29 @@ function OverageRow({ label, units, rate, cost }) {
   );
 }
 
-function ThresholdToggle({ percent, label, description, checked }) {
+function ThresholdToggle({ percent, label, description, checked, onToggle }) {
   return (
-    <div className={`p-6 rounded-2xl border transition-all ${checked ? 'border-indigo-100 bg-indigo-50/20' : 'border-gray-100 bg-white opacity-60'}`}>
-      <div className="flex items-center justify-between mb-4">
-        <span className="text-xs font-black text-indigo-600 uppercase tracking-tighter">{percent}% LIMIT</span>
-        <div className={`w-10 h-5 rounded-full relative transition-colors cursor-pointer ${checked ? 'bg-indigo-500' : 'bg-gray-200'}`}>
-           <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${checked ? 'right-1' : 'left-1'}`}></div>
+    <div className={`flex flex-col p-6 rounded-2xl border transition-all duration-300 ${checked ? 'border-amber-200 bg-amber-50/30' : 'border-gray-100 bg-white'}`}>
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-md mb-2 inline-block ${checked ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-400'}`}>
+            {percent}% Limit reached
+          </span>
+          <h5 className="font-bold text-gray-900">{label}</h5>
         </div>
+        <button
+          onClick={onToggle}
+          className={`w-12 h-6 rounded-full relative transition-all duration-300 ${checked ? 'bg-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : 'bg-gray-200'}`}
+        >
+          <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm transition-all duration-300 ${checked ? 'right-1' : 'left-1'}`}></div>
+        </button>
       </div>
-      <h5 className="font-bold text-gray-900 mb-1">{label}</h5>
-      <p className="text-[10px] text-gray-500 leading-relaxed font-medium">{description}</p>
+      <p className="text-xs text-gray-500 leading-relaxed font-medium mb-4">{description}</p>
+      <div className={`mt-auto pt-4 border-t border-dashed transition-all ${checked ? 'border-amber-200' : 'border-gray-100'}`}>
+        <span className={`text-[10px] font-bold uppercase ${checked ? 'text-amber-600' : 'text-gray-400'}`}>
+          Status: {checked ? 'Active' : 'Disabled'}
+        </span>
+      </div>
     </div>
   );
 }

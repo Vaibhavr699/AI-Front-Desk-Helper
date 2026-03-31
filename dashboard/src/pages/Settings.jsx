@@ -19,6 +19,7 @@ import {
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import { ConfirmationModal } from "../components/ConfirmationModal";
+import { useToast } from "../components/ui/Toast";
 import {
   Bot,
   Clock,
@@ -112,6 +113,7 @@ const TABS = [
 ];
 
 export default function Settings({ tenantId }) {
+  const { success, error: toastError } = useToast();
   const [tenant, setTenant] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -141,6 +143,7 @@ export default function Settings({ tenantId }) {
     google_calendar_linked: false,
     google_calendar_email: "",
     faqs: [],
+    outbound_instructions: "",
     nurturing_enabled: false,
     referral_enabled: false,
     seasonal_campaigns_enabled: false,
@@ -229,6 +232,7 @@ export default function Settings({ tenantId }) {
         google_calendar_linked: t.google_calendar_linked === true,
         google_calendar_email: t.google_calendar_email || "",
         faqs: Array.isArray(t.faqs) ? t.faqs : [],
+        outbound_instructions: t.outbound_instructions || "",
         nurturing_enabled: t.nurturing_enabled === true,
         referral_enabled: t.referral_enabled === true,
         seasonal_campaigns_enabled: t.seasonal_campaigns_enabled === true,
@@ -246,6 +250,7 @@ export default function Settings({ tenantId }) {
           : [{ months: t.reengagement_reminder_months ?? 12, header: "" }],
       });
     } catch (e) {
+      toastError(`Failed to load tenant: ${e.message}`);
       setError(e.message);
     } finally {
       setLoading(false);
@@ -331,12 +336,14 @@ export default function Settings({ tenantId }) {
         is_owned: !!selectedNumber.isOwned,
         is_purchasable: true // Coming from the search/buy flow
       });
+      success("Number provisioned successfully!");
       setProvisionMessage("Number provisioned successfully!");
       setAvailableNumbers([]);
       setSelectedNumber(null);
       setAreaCode("");
       await fetchPhoneNumbers();
     } catch (err) {
+      toastError(`Provisioning failed: ${err.message}`);
       setProvisionMessage(`Error: ${err.message}`);
     } finally {
       setProvisionLoading(false);
@@ -423,8 +430,10 @@ export default function Settings({ tenantId }) {
       setNewPhoneLabel("Main Business");
 
       if (result.webhook_configured) {
+        success(`${newPhone} added and configured!`);
         setMessage(`Success! ${newPhone} added and configured as an AI phone line.`);
       } else {
+        success(`Number ${newPhone} added.`);
         setMessage(`Number ${newPhone} added. (External business number)`);
       }
 
@@ -432,6 +441,7 @@ export default function Settings({ tenantId }) {
       // Clear success message after 5s
       setTimeout(() => setMessage(""), 5000);
     } catch (err) {
+      toastError(err.message);
       setPhoneError(err.message);
     }
   };
@@ -446,8 +456,10 @@ export default function Settings({ tenantId }) {
         try {
           await deletePhoneNumber(phoneId);
           fetchPhoneNumbers();
+          success("Number removed.");
           setConfirmModal(prev => ({ ...prev, isOpen: false }));
         } catch (err) {
+          toastError(`Failed to delete number: ${err.message}`);
           setPhoneError(err.message);
         } finally {
           setConfirmModal(prev => ({ ...prev, loading: false }));
@@ -459,9 +471,11 @@ export default function Settings({ tenantId }) {
   const handleSetPrimary = async (phoneId) => {
     try {
       await updatePhoneNumber(phoneId, { is_primary: true });
+      success("Primary number set.");
       fetchPhoneNumbers();
     } catch (e) {
       console.error(e);
+      toastError("Failed to update primary status");
       setPhoneError("Failed to update primary status");
     }
   };
@@ -503,6 +517,7 @@ export default function Settings({ tenantId }) {
       objection_handling_config: form.objection_handling,
       facebook_page_id: form.facebook_page_id.trim() || null,
       faqs: form.faqs.filter(f => f.question.trim() && f.answer.trim()),
+      outbound_instructions: form.outbound_instructions || null,
       nurturing_enabled: form.nurturing_enabled,
       referral_enabled: form.referral_enabled,
       seasonal_campaigns_enabled: form.seasonal_campaigns_enabled,
@@ -521,9 +536,11 @@ export default function Settings({ tenantId }) {
     try {
       const updated = await updateTenant(tenantId, payload);
       setTenant(updated);
+      success("Settings saved successfully.");
       setMessage("Settings saved successfully.");
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
+      toastError(`Save failed: ${e.message}`);
       setError(e.message);
     } finally {
       setSaving(false);
@@ -540,9 +557,11 @@ export default function Settings({ tenantId }) {
         facebook_page_id: form.facebook_page_id,
         facebook_page_access_token: form.facebook_page_access_token,
       });
+      success("Facebook settings saved!");
       setMessage("Facebook settings saved!"); // Use setMessage for success
       loadTenant();
     } catch (e) {
+      toastError(e.message);
       setError(e.message);
     } finally {
       setSaving(false);
@@ -561,9 +580,11 @@ export default function Settings({ tenantId }) {
     setSaving(true);
     try {
       await disconnectGoogleCalendar(tenantId);
+      success("Google Calendar disconnected.");
       setMessage("Google Calendar disconnected."); // Use setMessage for success
       loadTenant();
     } catch (e) {
+      toastError(`Disconnect failed: ${e.message}`);
       setError(e.message);
     } finally {
       setSaving(false);
@@ -1144,6 +1165,28 @@ export default function Settings({ tenantId }) {
                       rows={6}
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-primary/5 transition-all outline-none font-medium leading-relaxed placeholder:text-slate-500"
                       placeholder="Detailed prompts for the AI behavior..."
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-8 border-t border-gray-100">
+                <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
+                  <ExternalLink className="text-blue-500 w-5 h-5" />
+                  Outbound AI Agent
+                </h2>
+                <p className="text-sm text-gray-500 mb-6 italic bg-blue-50/50 p-4 rounded-xl border border-blue-100/50 leading-relaxed">
+                  These instructions are used when your AI assistant calls or follows up with leads. Focus on outreach, professional follow-up, and engaging existing contacts.
+                </p>
+                <div className="space-y-4">
+                  <div className="col-span-2">
+                    <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Outbound Personality & Instructions</label>
+                    <textarea
+                      value={form.outbound_instructions}
+                      onChange={(e) => handleUpdateForm("outbound_instructions", e.target.value)}
+                      rows={6}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-blue-500/5 transition-all outline-none font-medium leading-relaxed placeholder:text-slate-500"
+                      placeholder="e.g. You are following up on an estimate request. Be proactive, polite, and try to find a time to connect..."
                     />
                   </div>
                 </div>

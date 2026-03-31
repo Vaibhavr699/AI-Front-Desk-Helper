@@ -175,6 +175,13 @@ export function getUsage(tenantId) {
   return api(`/api/billing/usage?tenant_id=${tenantId}`);
 }
 
+export function updateUsageAlerts(tenantId, thresholds, enabled) {
+  return api(`/api/billing/alerts?tenant_id=${tenantId}`, {
+    method: "POST",
+    body: JSON.stringify({ thresholds, enabled }),
+  });
+}
+
 export function getConversations(tenantId) {
   return api(`/api/conversations?tenant_id=${tenantId}`);
 }

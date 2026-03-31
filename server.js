@@ -2903,11 +2903,19 @@ wss.on("connection", async (twilioSocket, req) => {
       }
 
       // 1. CORE SYSTEM RULES (Always included to protect tool usage and flow)
-      const coreSystemRules = [
+      const baseInboundRules = [
         `You are a professional receptionist for ${tenant?.company_name || 'our business'}. Be warm, confident, and helpful.`,
+        "CONVERSATIONAL FLOW: Let the conversation flow naturally like a real human. If they ask a question, answer it directly using the Knowledge Base (FAQs) before steering them back to your questions. Your primary flow is: (1) Warm welcome, (2) Ask for name and what they need, (3) ANSWER any questions about the business, (4) Get lead details (phone/email/address), (5) Ask about budget/size, (6) Book the time.",
+      ];
+
+      const baseOutboundRules = [
+        `You are a professional outreach and follow-up agent for ${tenant?.company_name || 'our business'}. Be professional, respectful, and direct.`,
+        `CONVERSATIONAL FLOW: You are CALLING the customer. Do NOT say 'How can I help you?'. Instead, introduce yourself, state that you are calling from ${tenant?.company_name || 'the business'}, and then proceed with your script. Your primary goal is to engage the user, answer their questions, and move them toward booking an appointment or confirming their project details.`,
+      ];
+
+      const universalRules = [
         `TONE OF VOICE: Your tone of voice is ${tenant?.tone_of_voice || 'professional'}. Maintain this personality throughout the call.`,
         "Default language is English. ONLY switch languages if the human caller EXPLICITLY and CLEARLY requests it in speech. NEVER change language based on static, background noise, or ambiguous sounds. If a switch is requested, call the change_language tool with the ISO 639-1 code (es, fr, hi, zh, ar, bpo, etc.), confirm the switch in the new language, and stay in that language unless asked to switch back. Do NOT switch languages back and forth spontaneously.",
-        "CONVERSATIONAL FLOW: Let the conversation flow naturally like a real human. If they ask a question, answer it directly using the Knowledge Base (FAQs) before steering them back to your questions. Your primary flow is: (1) Warm welcome, (2) Ask for name and what they need, (3) ANSWER any questions about the business, (4) Get lead details (phone/email/address), (5) Ask about budget/size, (6) Book the time.",
         "GOAL: Always collect: Full Name, Phone Number, Email Address, Address or City, and a detailed 'scope' of the project.",
         "SERVICE TYPES: Do NOT assume service types. If unsure, ALWAYS ask: 'To clarify, is this for an interior or exterior project?' or similar.",
         "OFFER: Offer a free on-site estimate. ALWAYS call 'check_availability' BEFORE calling 'book_appointment' if the caller suggests a specific date or time.",
@@ -2919,6 +2927,11 @@ wss.on("connection", async (twilioSocket, req) => {
         "POST-BOOKING: Immediately confirm the time to the caller and ask if there is anything else you can help with today. Only call the 'hang_up' tool once they say no.",
         "TRANSFER RULE: Only use request_human_transfer for high-value projects (over $10,000), commercial jobs, angry callers, or VIP/repeat customers. For regular residential calls, use 'book_appointment'.",
         "STRICT RULE: NEVER hallucinate data. If you miss a field, ASK.",
+      ];
+
+      const coreSystemRules = [
+        ...(isOutbound ? baseOutboundRules : baseInboundRules),
+        ...universalRules
       ].join("\n");
 
       // 2. TENANT CUSTOM INSTRUCTIONS
@@ -2936,8 +2949,10 @@ wss.on("connection", async (twilioSocket, req) => {
       const tenantTimeStr = nowForTenant.toLocaleTimeString("en-US", { timeZone: tenantTz, hour: "2-digit", minute: "2-digit", hour12: true });
       const tenantIsoDate = nowForTenant.toLocaleDateString("en-CA", { timeZone: tenantTz }); // YYYY-MM-DD format
       combinedInstructions += `\n\nCURRENT DATE & TIME: Today is ${tenantDateStr}, ${tenantTimeStr} (${tenantTz}). The ISO date is ${tenantIsoDate}. Use this to calculate correct dates when the caller says "today", "tomorrow", "next week", etc. Always use YYYY-MM-DD format for preferred_date.`;
-      if (tenant?.instructions) {
-        combinedInstructions += "\n\nBUSINESS SPECIFIC INSTRUCTIONS:\n" + tenant.instructions;
+      
+      const customInstructions = (isOutbound ? tenant?.outbound_instructions : tenant?.instructions) || tenant?.instructions;
+      if (customInstructions) {
+        combinedInstructions += "\n\nBUSINESS SPECIFIC INSTRUCTIONS:\n" + customInstructions;
       }
 
       // 3. OBJECTION HANDLING

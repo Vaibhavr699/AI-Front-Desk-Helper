@@ -28,9 +28,15 @@ router.get("/usage", async (req, res) => {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     
     // Get tenant plan & bundle info
-    const tenantRes = await db.query("SELECT plan, bundle_minutes_balance FROM tenants WHERE id = $1", [tenantId]);
-    const planKey = (tenantRes.rows[0]?.plan || "basic").toLowerCase();
-    const bundleMinutesBalance = tenantRes.rows[0]?.bundle_minutes_balance || 0;
+    const tenantRes = await db.query(
+      "SELECT plan, bundle_minutes_balance, usage_alert_thresholds, usage_alerts_enabled FROM tenants WHERE id = $1", 
+      [tenantId]
+    );
+    const tenantRaw = tenantRes.rows[0] || {};
+    const planKey = (tenantRaw.plan || "basic").toLowerCase();
+    const bundleMinutesBalance = tenantRaw.bundle_minutes_balance || 0;
+    const alertThresholds = tenantRaw.usage_alert_thresholds || { "75": true, "90": true, "100": true };
+    const alertsEnabled = tenantRaw.usage_alerts_enabled !== false;
     const limits = PLAN_LIMITS[planKey] || PLAN_LIMITS.basic;
 
     const [voiceRes, smsRes] = await Promise.all([
@@ -68,9 +74,15 @@ router.get("/usage", async (req, res) => {
     const projectedExtraSms = Math.max(0, projectedSms - limits.sms);
     const projectedOverageCost = (projectedExtraMin * OVERAGE_RATES.minute) + (projectedExtraSms * OVERAGE_RATES.sms);
 
+    const voicePercent = (usedMinutes / limits.minutes) * 100;
+    const smsPercent = (usedSms / limits.sms) * 100;
+    const maxPercent = Math.max(voicePercent, smsPercent);
+
     res.json({
       plan: planKey,
       limits,
+      alertThresholds,
+      alertsEnabled,
       current: {
         minutes: usedMinutes,
         sms: usedSms,
@@ -88,8 +100,40 @@ router.get("/usage", async (req, res) => {
         minutes: projectedMinutes,
         sms: projectedSms,
         overageCost: projectedOverageCost
+      },
+      status: {
+        percent: maxPercent,
+        reached: [75, 90, 100].filter(t => maxPercent >= t).sort((a,b) => b-a)[0] || null
       }
     });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.post("/alerts", async (req, res) => {
+  try {
+    const tenantId = getTenantIdFromQuery(req);
+    const { thresholds, enabled } = req.body;
+    if (!thresholds && enabled === undefined) return res.status(400).json({ error: "No changes provided" });
+
+    const updates = [];
+    const values = [];
+    if (thresholds) {
+      updates.push("usage_alert_thresholds = $" + (updates.length + 1));
+      values.push(JSON.stringify(thresholds));
+    }
+    if (enabled !== undefined) {
+      updates.push("usage_alerts_enabled = $" + (updates.length + 1));
+      values.push(enabled);
+    }
+    values.push(tenantId);
+    
+    const sql = `UPDATE tenants SET ${updates.join(", ")}, updated_at = now() WHERE id = $${values.length}`;
+    await db.query(sql, values);
+    
+    res.json({ success: true });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error" });

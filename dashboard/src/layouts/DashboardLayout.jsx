@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
 import { Outlet, Link } from "react-router-dom";
 import CookieConsent from "react-cookie-consent";
-import { getTenants, getUser } from "../api";
-import { Header, Sidebar } from "../components";
 import { useToast } from "../components/ui/Toast";
 import { useRef } from "react";
+import { getUsage, getTenants, getUser } from "../api";
+import { Header, Sidebar } from "../components";
+import { AlertTriangle } from "lucide-react";
 
 const TENANT_STORAGE_KEY = "tenantId";
 const SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
@@ -55,6 +56,8 @@ export default function DashboardLayout() {
   );
   const impersonateName = localStorage.getItem("impersonate_tenant_name");
   const { success } = useToast();
+  const [usageStatus, setUsageStatus] = useState(null);
+  const [usageLoading, setUsageLoading] = useState(false);
   const isFirstRender = useRef(true);
   const prevTenantIdRef = useRef(null);
 
@@ -75,6 +78,19 @@ export default function DashboardLayout() {
 
   const [tenant, setTenant] = useState(null);
   const [isSuspended, setIsSuspended] = useState(false);
+
+  const fetchUsage = async (id) => {
+    if (!id || id === 'all') return;
+    setUsageLoading(true);
+    try {
+      const data = await getUsage(id);
+      setUsageStatus(data.status);
+    } catch (e) {
+      console.error("[DashboardLayout] Usage fetch failed:", e);
+    } finally {
+      setUsageLoading(false);
+    }
+  };
 
   useEffect(() => {
     getTenants()
@@ -104,21 +120,15 @@ export default function DashboardLayout() {
       if (active) {
         setTenant(active);
         setIsSuspended(active.is_suspended && !user?.is_super_admin && !impersonating);
-        
-        // Only show toast if the tenantId has ACTUALLY changed from a previously known value
-        // and it's not the initial load of the application.
         const hasIdChanged = prevTenantIdRef.current && prevTenantIdRef.current !== tenantId;
-        
         if (!isFirstRender.current && hasIdChanged) {
           const locationName = tenantId === "all" ? "Reporting" : active.name;
           success(`Switched to: ${locationName}`);
         }
-        
         prevTenantIdRef.current = tenantId;
+        fetchUsage(tenantId);
       }
     }
-    
-    // Set first render to false only after we have actually loaded something or if it's clear it's stable.
     if (tenants.length > 0) {
       isFirstRender.current = false;
     }
@@ -154,6 +164,27 @@ export default function DashboardLayout() {
           </button>
         </div>
       )}
+
+      {/* Usage Warning Banner */}
+      {!isSuspended && usageStatus?.reached && (
+        <div className={`px-6 py-2 flex items-center justify-between text-xs font-bold shadow-sm relative z-[55] transition-all duration-300 ${usageStatus.reached >= 100 ? 'bg-red-600 text-white' : 'bg-amber-100 text-amber-900 border-b border-amber-200'}`}>
+          <div className="flex items-center gap-3">
+            <div className={`w-6 h-6 rounded-lg flex items-center justify-center ${usageStatus.reached >= 100 ? 'bg-white/20' : 'bg-amber-500/10 text-amber-600'}`}>
+              <AlertTriangle size={14} />
+            </div>
+            <span>
+              {usageStatus.reached >= 100 
+                ? `CRITICAL: Monthly limit reached (${Math.round(usageStatus.percent)}%). AI services may be restricted.`
+                : `WARNING: Usage has reached ${usageStatus.reached}% of your monthly allowance.`
+              }
+            </span>
+          </div>
+          <Link to="/billing" className={`px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-widest transition-all ${usageStatus.reached >= 100 ? 'bg-white text-red-600 hover:bg-stone-50' : 'bg-amber-900 text-white hover:bg-black'}`}>
+            {usageStatus.reached >= 100 ? 'Upgrade Now' : 'Manage Usage'}
+          </Link>
+        </div>
+      )}
+
       <Header
         tenantId={tenantId}
         tenants={tenants}

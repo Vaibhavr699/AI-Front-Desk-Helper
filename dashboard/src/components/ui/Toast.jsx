@@ -52,11 +52,18 @@ const ToastItem = ({ toast, onRemove }) => {
     info: <Info className="w-4 h-4 text-blue-500" />
   };
 
+  const borderColors = {
+    success: 'border-emerald-200 border-t-emerald-600',
+    error: 'border-rose-200 border-t-rose-600',
+    warning: 'border-amber-200 border-t-amber-600',
+    info: 'border-blue-200 border-t-blue-600'
+  };
+
   const bgColors = {
-    success: 'border-emerald-100 bg-white/90',
-    error: 'border-rose-100 bg-white/90',
-    warning: 'border-amber-100 bg-white/90',
-    info: 'border-blue-100 bg-white/90'
+    success: 'bg-emerald-50/95 shadow-emerald-900/5',
+    error: 'bg-rose-50/95 shadow-rose-900/5',
+    warning: 'bg-amber-50/95 shadow-amber-900/5',
+    info: 'bg-blue-50/95 shadow-blue-900/5'
   };
 
   return (
@@ -65,7 +72,7 @@ const ToastItem = ({ toast, onRemove }) => {
       initial={{ opacity: 0, y: -20, x: 20, scale: 0.95 }}
       animate={{ opacity: 1, y: 0, x: 0, scale: 1 }}
       exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
-      className={`pointer-events-auto flex items-start gap-3 p-4 rounded-xl border border-t-2 border-t-brand-600 shadow-lg backdrop-blur-md ${bgColors[toast.type]} min-w-[280px]`}
+      className={`pointer-events-auto flex items-start gap-3 p-4 rounded-xl border-2 border-t-4 shadow-xl backdrop-blur-md transition-all duration-300 ${bgColors[toast.type]} ${borderColors[toast.type]} min-w-[280px]`}
     >
       <div className="mt-0.5">{icons[toast.type]}</div>
       <div className="flex-1 mr-2">

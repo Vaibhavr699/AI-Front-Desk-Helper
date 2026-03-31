@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { MoveRight, PhoneCall } from "lucide-react";
+import { MoveRight, PhoneCall, Sparkles } from "lucide-react";
 import { Button } from "./button";
 
 export function AnimatedHeroTitle({ onStart, onLogin, onContact }) {
@@ -20,11 +20,20 @@ export function AnimatedHeroTitle({ onStart, onLogin, onContact }) {
     return (
         <div className="w-full">
             <div className="flex gap-6 py-4 lg:py-8 items-center justify-center flex-col mb-4">
-                <div>
-                    <Button variant="secondary" size="sm" className="gap-2 text-stone-700 border border-stone-200 rounded-xl bg-green-100">
-                        Built for home service contractors <MoveRight className="w-4 h-4" />
-                    </Button>
-                </div>
+                <motion.div 
+                    initial={{ opacity: 0, y: -20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5 }}
+                >
+                    <div className="inline-flex items-center gap-2.5 px-4 py-2 rounded-2xl bg-white border border-stone-200 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07),0_10px_20px_-2px_rgba(0,0,0,0.04)] hover:shadow-lg transition-all cursor-default group">
+                        <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-orange-500 text-white shadow-orange-200 shadow-lg">
+                            <Sparkles className="w-3.5 h-3.5" />
+                        </div>
+                        <div className="flex flex-col">
+                            <span className="text-[12px] font-bold text-stone-900 tracking-tight">Built for Home Service Pros</span>
+                        </div>                        
+                    </div>
+                </motion.div>
                 <div className="flex gap-3 flex-col">
                     <h1 className="text-5xl md:text-6xl max-w-2xl tracking-tight text-center font-bold text-stone-900">
                         Never miss

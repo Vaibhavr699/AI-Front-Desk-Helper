@@ -2,9 +2,12 @@
 
 const express = require("express");
 const { createCheckoutSession, createPortalSession, handleWebhookEvent, stripe } = require("../lib/stripe");
-const { getTenantIdFromQuery } = require("../lib/auth");
+const { getTenantIdFromQuery, requireRole, ROLES } = require("../lib/auth");
 
 const router = express.Router();
+
+// Only Owners and Admins can access Stripe checkout/portal
+router.use(requireRole([ROLES.OWNER, ROLES.ADMIN]));
 
 /**
  * POST /api/stripe/checkout

@@ -9,6 +9,7 @@ export default function CreateBusiness() {
   const user = getUser();
   const [name, setName] = useState("");
   const [companyName, setCompanyName] = useState("");
+  const [businessType, setBusinessType] = useState("standalone"); // 'standalone' or 'parent'
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -25,6 +26,7 @@ export default function CreateBusiness() {
       const payload = {
         name: name.trim() || companyName.trim(),
         company_name: companyName.trim() || name.trim(),
+        business_type: businessType,
       };
 
       const data = await createTenant(payload);
@@ -70,6 +72,45 @@ export default function CreateBusiness() {
                 <span>{error}</span>
               </div>
             )}
+
+            {/* Business Type Selection */}
+            <div className="grid grid-cols-2 gap-3 mb-2">
+              <button
+                type="button"
+                onClick={() => setBusinessType("standalone")}
+                className={`p-4 rounded-xl border-2 text-left transition-all ${
+                  businessType === "standalone"
+                    ? "border-stone-900 bg-stone-50 ring-2 ring-stone-900/5"
+                    : "border-stone-200 hover:border-stone-300"
+                }`}
+              >
+                <div className="w-8 h-8 rounded-lg bg-stone-100 flex items-center justify-center mb-2">
+                  <svg className="w-5 h-5 text-stone-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                  </svg>
+                </div>
+                <div className="font-bold text-stone-900 text-sm">Single Location</div>
+                <div className="text-[10px] text-stone-500 mt-1">One business, one AI settings</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setBusinessType("parent")}
+                className={`p-4 rounded-xl border-2 text-left transition-all ${
+                  businessType === "parent"
+                    ? "border-stone-900 bg-stone-50 ring-2 ring-stone-900/5"
+                    : "border-stone-200 hover:border-stone-300"
+                }`}
+              >
+                <div className="w-8 h-8 rounded-lg bg-stone-100 flex items-center justify-center mb-2">
+                  <svg className="w-5 h-5 text-stone-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4M19 21l2-2" />
+                  </svg>
+                </div>
+                <div className="font-bold text-stone-900 text-sm">Multi-location</div>
+                <div className="text-[10px] text-stone-500 mt-1">HQ account with multiple branches</div>
+              </button>
+            </div>
 
             <div className="space-y-5">
               {/* Company name */}

@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { getUser } from "../api";
 
-// Order by SaaS importance: Home first, core activity, pipeline, analytics, account, Settings last.
 const baseNavItems = [
   { to: "/dashboard", label: "Home", icon: HomeIcon },
   { to: "/calls", label: "Calls", icon: CallsIcon },
@@ -11,9 +10,17 @@ const baseNavItems = [
   { to: "/bookings", label: "Bookings", icon: BookingsIcon },
   { to: "/follow-ups", label: "Follow-ups", icon: FollowUpsIcon },
   { to: "/metrics", label: "Metrics", icon: MetricsIcon },
+];
+
+const adminNavItems = [
+  { to: "/team", label: "Team", icon: TeamIcon },
   { to: "/plans", label: "Plans", icon: PlansIcon },
   { to: "/billing", label: "Usage & Billing", icon: BillingIcon },
   { to: "/tenants", label: "Businesses", icon: BusinessesIcon },
+  { to: "/settings", label: "Settings", icon: SettingsIcon },
+];
+
+const managerNavItems = [
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
@@ -33,21 +40,65 @@ function AdminsIcon({ className }) {
   );
 }
 
-function getNavItems() {
+function TeamIcon({ className }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+    </svg>
+  );
+}
+
+function getNavItems(activeTenant) {
   const user = getUser();
   const isImpersonating = !!localStorage.getItem("impersonate_tenant_id");
 
-  // Super admin without a tenant — show redirected admin views UNLESS impersonating
+  // 1. Super Admin (Global) view
   if (user?.is_super_admin && !user.tenant_id && !isImpersonating) {
     return [
       { to: "/admin/tenants", label: "Tenants", icon: BusinessesIcon },
       { to: "/admin/admins", label: "Platform Admins", icon: AdminsIcon },
     ];
   }
+  
+  const role = user?.role || 'staff';
+
+  // 2. Staff/Technician role: ONLY Bookings
+  // Any unknown role defaults to staff for security (least privilege)
+  if (role !== 'admin' && role !== 'owner' && role !== 'manager') {
+    return [
+      { to: "/bookings", label: "Bookings", icon: BookingsIcon },
+    ];
+  }
+
+  // 3. Business Manager role: Base items + Settings (No billing/plans/team/businesses)
+  if (role === 'manager') {
+    return [
+      ...baseNavItems,
+      { to: "/settings", label: "Settings", icon: SettingsIcon },
+    ];
+  }
+
+  // 4. Business Owner (Admin) role: Everything
+  // Ensure "HQ" menus stay visible if the USER belongs to a parent tenant,
+  // even if they are currently viewing a child branch.
+  const isHQ = user?.tenant_business_type === 'parent' || activeTenant?.business_type === 'parent';
+  
   const items = [...baseNavItems];
+  
+  if (isHQ) {
+    items.push({ to: "/team", label: "Team", icon: TeamIcon });
+    items.push({ to: "/plans", label: "Plans", icon: PlansIcon });
+    items.push({ to: "/billing", label: "Usage & Billing", icon: BillingIcon });
+    items.push({ to: "/tenants", label: "Businesses", icon: BusinessesIcon });
+  }
+
   if (user?.is_super_admin) {
     items.push({ to: "/admin/tenants", label: "Admin Console", icon: AdminIcon });
   }
+
+  // Settings is for everyone above staff, now at the very last
+  items.push({ to: "/settings", label: "Settings", icon: SettingsIcon });
+
   return items;
 }
 
@@ -144,7 +195,7 @@ function BillingIcon({ className }) {
  * Collapsible sidebar with nav links and icons.
  * closeMobile: optional, called when a link is clicked (for mobile drawer).
  */
-export default function Sidebar({ collapsed, onToggle, closeMobile }) {
+export default function Sidebar({ collapsed, onToggle, closeMobile, activeTenant }) {
   const [isHovered, setIsHovered] = useState(false);
   const location = useLocation();
 
@@ -162,7 +213,7 @@ export default function Sidebar({ collapsed, onToggle, closeMobile }) {
         }`}
     >
       <nav className="flex-1 py-4 px-3 space-y-1 overflow-x-hidden overflow-y-auto min-h-0">
-        {getNavItems().map(({ to, label, icon: Icon }) => {
+        {getNavItems(activeTenant).map(({ to, label, icon: Icon }) => {
           const isActive =
             location.pathname === to || location.pathname.startsWith(to + "/");
           return (

@@ -6,6 +6,7 @@ const os = require("os");
 const OpenAI = require("openai").default;
 const { mulawChunksToWav, mp3ToMulaw } = require("../lib/audioUtils");
 const bookingsService = require("../services/bookings");
+const calendar = require("../calendar");
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
@@ -27,8 +28,25 @@ const BOOK_APPOINTMENT_TOOL = {
         job_type: { type: "string", description: "Residential or commercial" },
         preferred_date: { type: "string", description: "Preferred date if given" },
         notes: { type: "string", description: "Any extra notes" },
+        estimated_value: { type: "number", description: "Estimated job value in dollars. ALWAYS ask for a budget or project size and provide a non-zero estimate ($500-$5000)." },
       },
-      required: ["contact_phone"],
+      required: ["contact_phone", "estimated_value"],
+    },
+  },
+};
+
+const CHECK_AVAILABILITY_TOOL = {
+  type: "function",
+  function: {
+    name: "check_availability",
+    description: "Check if a specific date and time is available for an appointment. Use this BEFORE calling book_appointment if the human provides a specific date/time.",
+    parameters: {
+      type: "object",
+      properties: {
+        appointment_date: { type: "string", description: "The date (YYYY-MM-DD)" },
+        appointment_time: { type: "string", description: "The time (e.g. 10:30 AM)" },
+      },
+      required: ["appointment_date", "appointment_time"],
     },
   },
 };
@@ -45,7 +63,7 @@ const HANG_UP_TOOL = {
   },
 };
 
-const VOICE_TOOLS = [BOOK_APPOINTMENT_TOOL, HANG_UP_TOOL];
+const VOICE_TOOLS = [BOOK_APPOINTMENT_TOOL, HANG_UP_TOOL, CHECK_AVAILABILITY_TOOL];
 const SILENCE_MS = 1500;   // Process after this many ms with no new audio
 const MIN_AUDIO_MS = 400;  // Ignore utterances shorter than this
 const SAMPLE_RATE = 8000;
@@ -140,7 +158,7 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
       if (conversationMessages.length === 0) {
         conversationMessages.push({
           role: "system",
-          content: `${instructions}${faqText}\n\nCollect: (1) full name, (2) phone number, (3) address or city, (4) scope (what they need help with), (5) preferred date if given, (6) any notes. When you have at least name, phone, and address OR city, call book_appointment with ALL details the caller gave. Keep replies short (1-3 sentences) for phone. Let the conversation flow naturally and prioritize answering any of their questions directly from the Knowledge Base before pressing for appointment details.`,
+          content: `${instructions}${faqText}\n\nCollect: (1) full name, (2) phone number, (3) address or city, (4) scope, (5) budget estimate (MANDATORY). ALWAYS call 'check_availability' BEFORE 'book_appointment' if they give a time. If it returns 'available: false', suggest the 'suggested_alternatives' provided by the tool. Keep replies short.`,
         });
       }
       conversationMessages.push({ role: "user", content: text });
@@ -208,6 +226,33 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
             content: JSON.stringify({ success: false, error: "Missing context" }),
           });
           reply = reply || "I'm sorry, I couldn't complete that. Please try again.";
+        }
+
+        const availabilityCall = assistantMessage.tool_calls.find((tc) => tc.function && tc.function.name === "check_availability");
+        if (availabilityCall && tenant) {
+          let args = {};
+          try {
+            args = JSON.parse(availabilityCall.function.arguments);
+          } catch (_) {}
+          const av = await calendar.checkAvailability(args.appointment_date, args.appointment_time, tenant);
+          conversationMessages.push(assistantMessage);
+          conversationMessages.push({
+            role: "tool",
+            tool_call_id: availabilityCall.id,
+            content: JSON.stringify({ 
+              success: true, 
+              available: av.available, 
+              suggested_alternatives: av.suggestedTimes 
+            }),
+          });
+          const followUp = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages: conversationMessages,
+            max_tokens: 150,
+          });
+          const followUpMsg = followUp.choices && followUp.choices[0] && followUp.choices[0].message;
+          reply = (followUpMsg && followUpMsg.content) || (av.available ? "That time is available! Would you like me to book it for you?" : "I'm sorry, that time is taken. I have other openings at...");
+          conversationMessages.push(followUpMsg || { role: "assistant", content: reply });
         }
 
         const hangUpCall = assistantMessage.tool_calls.find((tc) => tc.function && tc.function.name === "hang_up");

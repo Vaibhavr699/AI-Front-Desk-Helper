@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { getUser, logout } from "../api";
+import LocationSwitcher from "./LocationSwitcher";
 
 /**
  * App header: logo, sidebar toggle (mobile), business selector, user menu.
  * Nav links live in the Sidebar.
  */
-export default function Header({ tenantId, tenants, onMenuClick }) {
+export default function Header({ tenantId, tenants, onTenantChange, onMenuClick }) {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef(null);
   const user = getUser();
@@ -51,7 +52,7 @@ export default function Header({ tenantId, tenants, onMenuClick }) {
               </button>
             )}
             <Link
-              to="/dashboard"
+              to={user?.role === 'staff' ? "/bookings" : "/dashboard"}
               className="flex items-center gap-2 shrink-0 group transition-all"
             >
               <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-white border border-stone-200 shadow-lg group-hover:scale-105 transition-transform duration-200 overflow-hidden p-1">
@@ -68,12 +69,11 @@ export default function Header({ tenantId, tenants, onMenuClick }) {
             {tenantId && (
               <>
                 <div className="hidden sm:block h-6 w-px bg-stone-200" aria-hidden />
-                <div className="flex items-center gap-2 min-w-0 max-w-[200px] sm:max-w-[280px]">
-                  <span className="hidden sm:inline text-sm text-stone-500 shrink-0">Business</span>
-                  <span className="text-sm font-medium text-stone-900 truncate" title={currentBusinessName}>
-                    {currentBusinessName || "—"}
-                  </span>
-                </div>
+                <LocationSwitcher 
+                  tenantId={tenantId}
+                  tenants={tenants}
+                  onTenantChange={onTenantChange}
+                />
               </>
             )}
             <div className="hidden sm:block h-6 w-px bg-stone-200" aria-hidden />

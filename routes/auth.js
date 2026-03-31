@@ -36,6 +36,7 @@ router.post("/login", async (req, res) => {
         email: user.email,
         tenant_id: user.tenant_id,
         role: user.role,
+        tenant_business_type: user.tenant_business_type,
         is_super_admin: user.is_super_admin === true,
       },
     });

@@ -52,12 +52,13 @@ export default function Login({ onLogin }) {
     setError("");
     setIsLoading(true);
     try {
+      let data;
       if (isSignup) {
-        await signup(email, password);
+        data = await signup(email, password);
       } else {
-        await login(email, password);
+        data = await login(email, password);
       }
-      onLogin();
+      onLogin(data?.user);
     } catch (err) {
       const msg = err.message || "";
       setError(

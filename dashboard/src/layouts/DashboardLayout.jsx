@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Outlet, Link } from "react-router-dom";
 import CookieConsent from "react-cookie-consent";
-import { getTenant, getUser } from "../api";
+import { getTenants, getUser } from "../api";
 import { Header, Sidebar } from "../components";
 
 const TENANT_STORAGE_KEY = "tenantId";
@@ -71,14 +71,34 @@ export default function DashboardLayout() {
   const [isSuspended, setIsSuspended] = useState(false);
 
   useEffect(() => {
-    if (tenantId) {
-      getTenant(tenantId)
-        .then((data) => {
-          setTenants([data]);
-          setTenant(data);
-          setIsSuspended(data.is_suspended && !user?.is_super_admin && !impersonating);
-        })
-        .catch(() => setTenants([]));
+    getTenants()
+      .then((data) => {
+        const list = data.tenants || [];
+        console.log("[DashboardLayout] Fetched tenants:", list.length, list.map(t => t.name + " (" + t.business_type + ")"));
+        setTenants(list);
+        
+        // Find the current active tenant from the list
+        const active = list.find(t => t.id === tenantId) || list[0];
+        if (active) {
+          setTenant(active);
+          setIsSuspended(active.is_suspended && !user?.is_super_admin && !impersonating);
+          if (!tenantId) setTenantId(active.id);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to fetch tenants:", err);
+        setTenants([]);
+      });
+  }, [impersonating]);
+
+  // When tenantId changes (e.g. user switches location), update the active tenant from existing list
+  useEffect(() => {
+    if (tenants.length > 0 && tenantId) {
+      const active = tenants.find(t => t.id === tenantId);
+      if (active) {
+        setTenant(active);
+        setIsSuspended(active.is_suspended && !user?.is_super_admin && !impersonating);
+      }
     }
   }, [tenantId]);
 
@@ -123,6 +143,7 @@ export default function DashboardLayout() {
       <Header
         tenantId={tenantId}
         tenants={tenants}
+        onTenantChange={setTenantId}
         onMenuClick={openMobileSidebar}
       />
 
@@ -157,7 +178,7 @@ export default function DashboardLayout() {
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* Desktop sidebar: fixed height, no scroll */}
         <div className="hidden lg:block h-full shrink-0">
-          <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
+          <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} activeTenant={tenant} />
         </div>
 
         {/* Mobile sidebar overlay */}
@@ -176,12 +197,13 @@ export default function DashboardLayout() {
             collapsed={false}
             onToggle={closeMobileSidebar}
             closeMobile={closeMobileSidebar}
+            activeTenant={tenant}
           />
         </div>
 
         <main className="flex-1 min-w-0 min-h-0 overflow-auto flex flex-col">
           <div className="flex-1 max-w-full w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <Outlet context={{ tenantId: tenantId || null, tenants }} />
+            <Outlet context={{ tenantId: tenantId || null, tenants, onTenantChange: setTenantId }} />
           </div>
         </main>
       </div>

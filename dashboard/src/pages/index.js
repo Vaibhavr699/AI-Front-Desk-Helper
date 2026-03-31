@@ -20,3 +20,5 @@ export { default as ResetPassword } from "./ResetPassword";
 export { default as PrivacyPolicy } from "./PrivacyPolicy";
 export { default as TermsOfService } from "./TermsOfService";
 export { default as CookiePolicy } from "./CookiePolicy";
+export { default as AddLocation } from "./AddLocation";
+export { default as Team } from "./Team";

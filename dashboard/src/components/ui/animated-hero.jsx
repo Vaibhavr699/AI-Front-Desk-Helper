@@ -21,7 +21,7 @@ export function AnimatedHeroTitle({ onStart, onLogin, onContact }) {
         <div className="w-full">
             <div className="flex gap-6 py-4 lg:py-8 items-center justify-center flex-col mb-4">
                 <div>
-                    <Button variant="secondary" size="sm" className="gap-2 text-stone-700 border border-stone-200">
+                    <Button variant="secondary" size="sm" className="gap-2 text-stone-700 border border-stone-200 rounded-xl bg-green-100">
                         Built for home service contractors <MoveRight className="w-4 h-4" />
                     </Button>
                 </div>
@@ -52,29 +52,29 @@ export function AnimatedHeroTitle({ onStart, onLogin, onContact }) {
                         Your AI front desk handles calls, qualifies leads, schedules work, and follows up.
                     </p>
                 </div>
-                <div className="flex flex-row gap-3 mt-2 relative z-[101] pointer-events-auto isolate">
- <button
-  type="button"
-  onClick={() => {
-    console.log("Get in touch clicked");
-    if (onContact) {
-      onContact();
-    }
-  }}
-  className="relative z-[9999] px-6 py-3 border border-stone-300 bg-white rounded-xl"
->
-  Get in touch <PhoneCall className="w-4 h-4" />
-</button>
+                <div className="flex flex-row gap-3 mt-4 relative z-50 pointer-events-auto">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            if (onContact) {
+                                onContact();
+                            }
+                        }}
+                        className="px-6 py-2 border border-stone-300 bg-white rounded-xl flex items-center gap-2 hover:bg-stone-50 transition-colors"
+                    >
+                        <span>Get in touch</span>
+                        <PhoneCall className="w-4 h-4" />
+                    </button>
 
-  <Button
-    type="button"
-    size="lg"
-    className="gap-3 relative z-[102]"
-    onClick={onStart}
-  >
-    Start free <MoveRight className="w-4 h-4" />
-  </Button>
-</div>
+                    <Button
+                        type="button"
+                        size="lg"
+                        className="gap-3 rounded-xl shadow-lg hover:shadow-xl transition-all"
+                        onClick={onStart}
+                    >
+                        Start free <MoveRight className="w-4 h-4" />
+                    </Button>
+                </div>
             </div>
         </div>
     );

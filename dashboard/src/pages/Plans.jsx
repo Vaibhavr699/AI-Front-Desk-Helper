@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { getPlans, getTenant, createCheckout, openBillingPortal, getSubscriptionStatus } from "../api";
 import { Loading } from "../components";
 import confetti from "canvas-confetti";
+import { Check, X, Sparkles, Rocket, Crown, ArrowRight, ShieldCheck, Zap } from "lucide-react";
 
 const PLAN_EMOJI = { basic: "🥉", pro: "🥈", elite: "🥇" };
 const STATUS_LABELS = {
@@ -40,9 +41,9 @@ export default function Plans({ tenantId }) {
       .catch((e) => {
         setError(e.message);
         setPlans([
-          { id: "basic", name: "Basic", tagline: "AI Front Desk Helper Starter", whoItIsFor: "Small ops", voiceMinutes: 500, smsLimit: 500, priceMonthly: 297, setupFee: 197, priceLabel: "/month", includes: [], excludes: [] },
-          { id: "pro", name: "Pro", tagline: "AI Booking Assistant", whoItIsFor: "Growing teams", voiceMinutes: 1200, smsLimit: 1500, priceMonthly: 497, setupFee: 297, priceLabel: "/month", includes: [], excludes: [] },
-          { id: "elite", name: "Elite", tagline: "AI Sales & Follow-Up Engine", whoItIsFor: "Scaling companies", voiceMinutes: 3000, smsLimit: 4000, priceMonthly: 997, setupFee: 497, priceLabel: "/month", includes: [], excludes: [] },
+          { id: "basic", name: "Basic", tagline: "AI Front Desk Starter", whoItIsFor: "Small ops", voiceMinutes: 500, smsLimit: 500, priceMonthly: 297, setupFee: 197, priceLabel: "/month", includes: ["24/7 Call Answering", "Custom AI Voice Agent", "Basic Call Forwarding"], excludes: ["CRM Integration", "Advanced Analytics"] },
+          { id: "pro", name: "Pro", tagline: "AI Booking Assistant", whoItIsFor: "Growing teams", voiceMinutes: 1200, smsLimit: 1500, priceMonthly: 497, setupFee: 297, priceLabel: "/month", includes: ["Everything in Basic", "Calendar Integration", "Lead Qualifying", "CRM Webhooks"], excludes: ["Follow-Up Sequences"] },
+          { id: "elite", name: "Elite", tagline: "AI Sales & Follow-Up Engine", whoItIsFor: "Scaling companies", voiceMinutes: 3000, smsLimit: 4000, priceMonthly: 997, setupFee: 497, priceLabel: "/month", includes: ["Everything in Pro", "Customer Nurturing Add-on FREE", "Dedicated Account Manager", "Priority Support"], excludes: [] },
         ]);
       })
       .finally(() => setLoading(false));
@@ -64,26 +65,19 @@ export default function Plans({ tenantId }) {
 
   useEffect(() => {
     if (tenant?.promo_label && tenant?.plan_overrides && !hasFiredConfetti) {
-      // Check if any plan actually has an override applied to make the promo active
       const hasActiveOverride = Object.values(tenant.plan_overrides).some(
         plan => plan.monthly != null || plan.setup != null
       );
       
       if (hasActiveOverride) {
-        // Fire confetti!
         const duration = 2500;
         const animationEnd = Date.now() + duration;
         const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 100 };
-
         const randomInRange = (min, max) => Math.random() * (max - min) + min;
 
         const interval = setInterval(function() {
           const timeLeft = animationEnd - Date.now();
-
-          if (timeLeft <= 0) {
-            return clearInterval(interval);
-          }
-
+          if (timeLeft <= 0) return clearInterval(interval);
           const particleCount = 50 * (timeLeft / duration);
           confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } }));
           confetti(Object.assign({}, defaults, { particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } }));
@@ -122,19 +116,10 @@ export default function Plans({ tenantId }) {
       setError(e.message);
     }
   }
-
   if (loading) {
     return (
       <div className="px-0">
         <Loading fullScreen={false} message="Loading plans…" />
-      </div>
-    );
-  }
-
-  if (error && !plans.length) {
-    return (
-      <div className="px-0">
-        <p className="text-red-600 text-sm sm:text-base">{error}</p>
       </div>
     );
   }
@@ -145,105 +130,121 @@ export default function Plans({ tenantId }) {
 
   return (
     <div className="px-0">
-      <h1 className="text-xl sm:text-2xl font-semibold text-stone-900 mb-1">Plans</h1>
-      <p className="text-sm text-stone-500 mb-6">
-        Choose the right AI Front Desk Helper tier for your business. Powered by Stripe.
-      </p>
-
-      {/* Add-ons section - Moved to top for better visibility */}
-      <div className="mb-10 p-6 rounded-2xl border-2 border-brand-200 bg-brand-50/30 flex flex-col sm:flex-row sm:items-center justify-between gap-6 shadow-sm">
-        <div className="flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="font-bold text-stone-900 flex items-center gap-2">
-              <span className="text-xl">🚀</span>
-              New: Customer Nurturing & Referral Add-on
-            </h3>
-            {tenant?.has_nurturing_referral && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 uppercase tracking-wider">
-                Active
-              </span>
-            )}
-          </div>
-          <p className="text-sm text-stone-600 mt-1 max-w-2xl">
-            Automated follow-ups, referral requests, and AI re-engagement calls to boost your revenue. **$99/month.** Included free on Elite.
-          </p>
-        </div>
-        <div className="shrink-0">
-          {tenant?.has_nurturing_referral ? (
-            <div className="flex items-center gap-2 text-emerald-600 font-bold bg-white px-4 py-2 rounded-xl border border-emerald-200 shadow-sm">
-              <span className="text-lg">✨</span>
-              <span>Enabled</span>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center sm:items-end gap-3">
-              {tenantId ? (
-                <button
-                  type="button"
-                  onClick={() => handleSelectPlan("nurturing_addon")}
-                  disabled={checkoutLoading === "nurturing_addon" || currentPlanId === "elite"}
-                  className="w-full sm:w-auto px-8 py-3 rounded-xl text-sm font-black uppercase tracking-wider bg-stone-900 text-white hover:bg-black focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-stone-600 border border-stone-800 transition-all shadow-xl shadow-stone-200 disabled:opacity-60 disabled:shadow-none"
-                >
-                  {currentPlanId === "elite" ? "Included in Elite" : checkoutLoading === "nurturing_addon" ? "Redirecting…" : "Add to Plan — $99/mo"}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled
-                  className="w-full sm:w-auto px-6 py-2.5 rounded-xl text-sm font-bold bg-stone-100 text-stone-400 border border-stone-200 cursor-default"
-                >
-                  Login to add
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+      {/* Header */}
+      <div className="mb-8">
+        <h1 className="text-xl sm:text-2xl font-semibold text-stone-900 mb-1">
+          Plans
+        </h1>
+        <p className="text-sm text-stone-500">
+          Scale your business with an AI front desk that works 24/7 without taking vacations.
+        </p>
       </div>
+
+      {message && (
+        <div className="mb-6 bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 rounded-xl flex items-center justify-center gap-3 font-medium">
+          <Sparkles className="w-5 h-5 text-emerald-500" />
+          {message}
+        </div>
+      )}
+      
+      {error && !plans.length && (
+        <div className="mb-6 text-red-600 font-medium">
+          {error}
+        </div>
+      )}
 
       {/* Subscription status banner */}
       {tenantId && (
-        <div className="mb-6 rounded-xl border border-stone-200 bg-white shadow-sm p-4">
-          <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="mb-8 bg-white rounded-xl border border-stone-200 p-5 flex items-center justify-between flex-wrap gap-4 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-stone-50 border border-stone-200 shadow-sm flex items-center justify-center text-stone-600">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
             <div>
-              {isSubscribed && (
-                <p className="text-sm font-medium text-stone-700">
-                  Current plan:{" "}
-                  <span className="text-stone-900 capitalize font-semibold">{currentPlanId}</span>
-                </p>
-              )}
-              <div className={`flex items-center gap-2 ${isSubscribed ? "mt-1" : ""}`}>
+              <p className="text-xs font-semibold text-stone-500 uppercase tracking-wider">Current Plan</p>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="text-lg font-bold text-stone-900 capitalize leading-none">
+                  {isSubscribed ? currentPlanId : "None"}
+                </span>
                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${status.color}`}>
                   {status.text}
                 </span>
-                {subStatus?.cancel_at_period_end && (
-                  <span className="text-xs text-amber-600">Cancels at period end</span>
-                )}
-                {subStatus?.current_period_end && isSubscribed && (
-                  <span className="text-xs text-stone-500">
-                    Renews {new Date(subStatus.current_period_end * 1000).toLocaleDateString()}
-                  </span>
-                )}
               </div>
             </div>
+          </div>
+          
+          <div className="flex items-center gap-4">
+            {isSubscribed && (
+              <div className="text-right hidden sm:block">
+                {subStatus?.cancel_at_period_end ? (
+                  <p className="text-sm text-amber-600 font-medium">Cancels at period end</p>
+                ) : subStatus?.current_period_end ? (
+                  <p className="text-sm text-stone-500">Renews on <span className="font-medium text-stone-900">{new Date(subStatus.current_period_end * 1000).toLocaleDateString()}</span></p>
+                ) : null}
+              </div>
+            )}
+            
             {isSubscribed && (
               <button
                 onClick={handleManageSubscription}
-                className="text-sm font-medium text-stone-600 hover:text-stone-900 underline underline-offset-2"
+                className="px-4 py-2 bg-white border border-stone-200 text-stone-700 font-bold text-sm rounded-lg hover:bg-stone-50 shadow-sm transition-all flex items-center gap-2"
               >
-                Manage subscription →
+                Manage Billing <ArrowRight className="w-4 h-4" />
               </button>
             )}
           </div>
         </div>
       )}
 
+      {/* Add-on Banner (Premium SaaS Style) */}
+      <div className="mb-10 relative overflow-hidden rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 to-white shadow-sm group transition-all duration-300">
+        <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-indigo-500 blur-[80px] opacity-10 rounded-full"></div>
+        <div className="absolute bottom-0 left-0 -mb-4 -ml-4 w-32 h-32 bg-fuchsia-500 blur-[80px] opacity-10 rounded-full"></div>
+        
+        <div className="p-6 relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
+          <div className="flex-1 text-center md:text-left">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 mb-3 rounded-md bg-indigo-100/50 border border-indigo-200 text-indigo-700 text-xs font-bold uppercase tracking-wider">
+              <Zap className="w-3.5 h-3.5" /> Optional Add-on
+            </div>
+            <h3 className="text-xl font-bold text-stone-900 mb-2">
+              Customer Nurturing & Referrals
+            </h3>
+            <p className="text-sm text-stone-500 max-w-2xl leading-relaxed">
+              Unlock automated post-service follow-ups, intelligent referral requests, and AI re-engagement calls to dramatically boost your lifetime revenue. <strong className="text-stone-800">Included free on Elite.</strong>
+            </p>
+          </div>
+          
+          <div className="shrink-0 flex flex-col items-center gap-3 border-t w-full md:border-t-0 md:border-l border-indigo-100 pt-5 md:pt-0 md:pl-8 md:w-auto">
+            <div className="text-center">
+              <span className="text-2xl font-black text-stone-900">$99</span>
+              <span className="text-stone-500 font-medium text-sm ml-1">/mo</span>
+            </div>
+            
+            {tenant?.has_nurturing_referral ? (
+              <div className="flex items-center justify-center gap-1.5 bg-emerald-500 text-white w-full px-4 py-2 rounded-lg text-sm font-bold shadow-sm">
+                <Check className="w-4 h-4" /> Enabled
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => handleSelectPlan("nurturing_addon")}
+                disabled={checkoutLoading === "nurturing_addon" || currentPlanId === "elite" || !tenantId}
+                className="w-full px-6 py-2 rounded-lg text-sm font-bold bg-stone-900 text-white hover:bg-black transition-all shadow-md disabled:opacity-50 disabled:shadow-none min-w-[160px]"
+              >
+                {!tenantId ? "Login to add" : currentPlanId === "elite" ? "Included in Elite" : checkoutLoading === "nurturing_addon" ? "Redirecting…" : "Add to Plan"}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
 
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {/* Pricing Cards Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
         {(plans.length ? plans : [{ id: "basic" }, { id: "pro" }, { id: "elite" }]).map((plan) => {
           const isCurrent = currentPlanId === (plan.id || "").toLowerCase();
           const isLoading = checkoutLoading === plan.id;
-          const emoji = PLAN_EMOJI[plan.id] || "";
           const isPro = plan.id === "pro";
+          const isElite = plan.id === "elite";
 
           const originalMonthly = plan.priceMonthly ?? (plan.id === "basic" ? 297 : plan.id === "pro" ? 497 : 997);
           const originalSetup = plan.setupFee ?? (plan.id === "basic" ? 197 : plan.id === "pro" ? 297 : 497);
@@ -255,7 +256,6 @@ export default function Plans({ tenantId }) {
           
           if (tenant?.plan_overrides && tenant.plan_overrides[plan.id]) {
             const planOverrides = tenant.plan_overrides[plan.id];
-            
             if (planOverrides.monthly != null) {
                 displayMonthly = planOverrides.monthly / 100;
                 hasMonthlyOverride = true;
@@ -269,166 +269,168 @@ export default function Plans({ tenantId }) {
           return (
             <div
               key={plan.id}
-              className={`rounded-xl border-2 shadow-sm overflow-hidden flex flex-col relative ${isCurrent
-                ? "border-brand-500 bg-brand-50/30"
-                : isPro
-                  ? "border-stone-800 bg-white"
-                  : "border-stone-200 bg-white hover:border-stone-300"
-                }`}
+              className={`relative rounded-2xl flex flex-col transition-all duration-300 ${
+                isCurrent 
+                  ? "bg-brand-50/20 border-2 border-brand-400" 
+                  : isPro
+                    ? "bg-white border-2 border-indigo-400 shadow-xl shadow-indigo-100/40 z-10"
+                    : "bg-white border border-stone-200 shadow-sm hover:shadow-md hover:border-stone-300"
+              }`}
             >
+              {/* Popular Badge */}
               {isPro && !isCurrent && (
-                <div className="absolute top-0 right-0 bg-stone-800 text-white text-xs font-medium px-3 py-1 rounded-bl-lg">
-                  Popular
-                </div>
-              )}
-              <div className="p-5 pb-4 border-b border-stone-100">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-2xl" aria-hidden>{emoji}</span>
-                  <span className="text-xs font-medium uppercase tracking-wider text-stone-500">
-                    {plan.whoItIsFor || (plan.id === "basic" ? "Small ops" : plan.id === "pro" ? "Growing teams" : "Scaling companies")}
+                <div className="absolute -top-3.5 inset-x-0 flex justify-center">
+                  <span className="bg-gradient-to-r from-indigo-500 to-blue-500 text-white text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full shadow-sm">
+                    Most Popular
                   </span>
                 </div>
-                {tenant?.promo_label && (hasMonthlyOverride || hasSetupOverride) && (
-                   <div className="mt-4 relative p-3 rounded-lg border-2 border-dashed border-amber-300 bg-gradient-to-br from-amber-50 to-orange-50 shadow-sm overflow-hidden group">
-                     <div className="absolute -left-2 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full border-r-2 border-dashed border-amber-300"></div>
-                     <div className="absolute -right-2 top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full border-l-2 border-dashed border-amber-300"></div>
+              )}
+              
+              {/* Current Plan Badge */}
+              {isCurrent && (
+                <div className="absolute -top-3.5 inset-x-0 flex justify-center">
+                  <span className="bg-stone-800 text-white text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full shadow-sm">
+                    Current Plan
+                  </span>
+                </div>
+              )}
 
-                     <div className="relative flex items-center justify-center gap-2">
-                       <span className="text-lg">🎟️</span>
-                       <span className="text-xs font-black text-amber-700 uppercase tracking-widest text-center">
-                         {tenant.promo_label}
-                       </span>
-                     </div>
-                   </div>
-                )}
-                <h2 className="mt-2 text-lg font-semibold text-stone-900">
-                  {plan.name || plan.id}
-                </h2>
-                <p className="text-sm text-stone-600 mt-0.5">
-                  {plan.tagline || (plan.id === "basic" ? "AI Front Desk Helper Starter" : plan.id === "pro" ? "AI Booking Assistant" : "AI Sales & Follow-Up Engine")}
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className={`text-lg font-black ${isPro ? "text-indigo-600" : isElite ? "text-amber-600" : "text-stone-900"}`}>
+                    {plan.name || plan.id}
+                  </h2>
+                  <span className="text-lg px-2 py-0.5 bg-stone-100 rounded-md">{isElite ? <Crown className="w-4 h-4 text-amber-500" /> : PLAN_EMOJI[plan.id]}</span>
+                </div>
+                
+                <p className="text-sm text-stone-500 min-h-[3.5rem] mb-5 leading-relaxed">
+                  {plan.tagline || (plan.id === "basic" ? "Essential AI receptionist to handle missed calls." : plan.id === "pro" ? "Growth engine to qualify leads and book appointments." : "Complete autonomous sales engine with nurturing.")}
                 </p>
                 
-                <div className="mt-4 flex items-baseline gap-1">
+                {/* Promo Label */}
+                {tenant?.promo_label && (hasMonthlyOverride || hasSetupOverride) && (
+                   <div className="mb-4 flex items-center justify-center gap-1 px-2 py-1 bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-bold uppercase tracking-wider rounded-md">
+                     <Sparkles className="w-3 h-3" />
+                     {tenant.promo_label}
+                   </div>
+                )}
+
+                {/* Price Display */}
+                <div className="flex items-baseline gap-1" style={{ minHeight: '48px' }}>
                   {hasMonthlyOverride ? (
                     <div className="flex flex-col">
-                      <div className="flex items-baseline gap-2">
-                         <span className="text-2xl font-bold text-emerald-600">
-                           ${displayMonthly}
-                         </span>
-                         <span className="text-sm font-semibold text-emerald-600 tracking-wide uppercase">Offer price</span>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-xs font-bold text-emerald-600 tracking-wide uppercase mr-1">Offer</span>
+                        <span className="text-3xl font-black text-emerald-600">${displayMonthly}</span>
+                        <span className="text-stone-500 font-medium text-sm">/mo</span>
                       </div>
-                      <div className="flex items-center gap-1 mt-1">
-                        <span className="text-sm text-stone-400 line-through decoration-stone-300">
-                          ${originalMonthly}
+                      <div className="flex items-center mt-0.5">
+                        <span className="text-xs text-stone-400 font-medium line-through decoration-stone-300">
+                          ${originalMonthly}/mo Orig
                         </span>
-                        <span className="text-sm text-stone-500">{plan.priceLabel ?? "/month"}</span>
                       </div>
                     </div>
                   ) : (
                     <>
-                      <span className="text-2xl font-bold text-stone-900">
-                        ${displayMonthly}
-                      </span>
-                      <span className="text-sm text-stone-500">{plan.priceLabel ?? "/month"}</span>
+                      <span className="text-3xl font-black text-stone-900">${displayMonthly}</span>
+                      <span className="text-stone-500 font-medium text-sm">{plan.priceLabel ?? "/mo"}</span>
                     </>
                   )}
                 </div>
-                <p className="mt-1 text-xs font-semibold text-brand-600 flex items-center gap-1.5">
-                  {hasSetupOverride && (
-                     <span className="text-stone-400 line-through decoration-stone-300">${originalSetup}</span>
+                
+                <p className="mt-2 text-xs font-semibold text-stone-500 h-4">
+                  {hasSetupOverride ? (
+                    <span className="flex items-center gap-1.5">
+                       <span className="line-through decoration-stone-300">${originalSetup} setup</span>
+                       <span className="text-emerald-600">{displaySetup === 0 ? "Free setup" : `$${displaySetup} setup`}</span>
+                    </span>
+                  ) : (
+                    <span>{displaySetup === 0 ? "No setup fee" : `+$${displaySetup} one-time setup`}</span>
                   )}
-                  {displaySetup === 0 ? "No setup fee" : `+$${displaySetup} setup fee`}
                 </p>
-                <div className="mt-3 flex gap-4 text-sm">
-                  <span className="text-stone-600">
-                    <span className="font-medium text-stone-900">{plan.voiceMinutes ?? (plan.id === "basic" ? 500 : plan.id === "pro" ? 1200 : 3000)}</span> voice min
-                  </span>
-                  <span className="text-stone-600">
-                    <span className="font-medium text-stone-900">{plan.smsLimit ?? (plan.id === "basic" ? 500 : plan.id === "pro" ? 1500 : 4000)}</span> SMS
-                  </span>
+
+                {/* Call Limits Grid */}
+                <div className="mt-5 p-3 rounded-xl bg-stone-50 border border-stone-100 grid grid-cols-2 gap-3">
+                  <div>
+                    <p className="text-[10px] text-stone-400 font-bold uppercase tracking-wider mb-0.5">Voice</p>
+                    <p className="text-stone-900 font-bold text-sm">{plan.voiceMinutes ?? (plan.id === "basic" ? 500 : plan.id === "pro" ? 1200 : 3000)} <span className="text-[10px] font-medium text-stone-500">min</span></p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-stone-400 font-bold uppercase tracking-wider mb-0.5">SMS</p>
+                    <p className="text-stone-900 font-bold text-sm">{plan.smsLimit ?? (plan.id === "basic" ? 500 : plan.id === "pro" ? 1500 : 4000)} <span className="text-[10px] font-medium text-stone-500">msg</span></p>
+                  </div>
                 </div>
-                {plan.positioning && (
-                  <p className="mt-3 text-xs text-stone-500 italic">"{plan.positioning}"</p>
-                )}
-              </div>
 
-              <div className="p-5 flex-1 flex flex-col">
-                {Array.isArray(plan.includes) && plan.includes.length > 0 && (
-                  <ul className="space-y-2 text-sm text-stone-700 mb-4">
-                    {plan.includes.map((item, i) => (
-                      <li key={i} className="flex gap-2">
-                        <span className="text-emerald-600 shrink-0">✓</span>
-                        <span>{item}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {Array.isArray(plan.excludes) && plan.excludes.length > 0 && (
-                  <ul className="space-y-1.5 text-sm text-stone-500 mb-4">
-                    {plan.excludes.map((item, i) => (
-                      <li key={i} className="flex gap-2">
-                        <span className="text-stone-400 shrink-0">✗</span>
-                        <span>{item}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-
-                {tenantId && (
-                  <div className="mt-auto pt-4">
-                    {isCurrent && isSubscribed ? (
-                      <button
-                        type="button"
-                        disabled
-                        className="w-full py-2.5 rounded-lg text-sm font-medium bg-stone-200 text-stone-500 cursor-default"
-                      >
-                        Current plan
+                {/* Main Action Button */}
+                <div className="mt-6">
+                  {tenantId ? (
+                    isCurrent && isSubscribed ? (
+                      <button disabled className="w-full py-2.5 rounded-lg text-sm font-bold bg-stone-100 text-stone-400 border border-stone-200 cursor-default transition-all shadow-inner">
+                        Current Plan
                       </button>
                     ) : isCurrent && !isSubscribed ? (
                       <button
-                        type="button"
                         onClick={() => handleSelectPlan(plan.id)}
                         disabled={isLoading}
-                        className="w-full py-2.5 rounded-lg text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 disabled:opacity-60 transition-colors"
+                        className="w-full py-2.5 rounded-lg text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-500 transition-all shadow-md"
                       >
-                        {isLoading ? "Redirecting to Stripe…" : "Subscribe to this plan"}
+                        {isLoading ? "Redirecting…" : "Reactivate Plan"}
                       </button>
                     ) : isSubscribed ? (
-                      <button
-                        type="button"
-                        onClick={handleManageSubscription}
-                        className="w-full py-2.5 rounded-lg text-sm font-medium bg-stone-100 text-stone-700 hover:bg-stone-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-stone-400 transition-colors"
-                      >
-                        Change to this plan →
-                      </button>
+                        <button
+                          onClick={handleManageSubscription}
+                          className="w-full py-2.5 rounded-lg text-sm font-bold bg-stone-100 text-stone-700 hover:bg-stone-200 transition-all border border-stone-200"
+                        >
+                          Change to {plan.name}
+                        </button>
                     ) : (
                       <button
-                        type="button"
                         onClick={() => handleSelectPlan(plan.id)}
                         disabled={isLoading}
-                        className={`w-full py-2.5 rounded-lg text-sm font-medium transition-colors ${isPro
-                          ? "bg-stone-800 text-white hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-stone-600 disabled:opacity-60"
-                          : "bg-stone-800 text-white hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-stone-600 disabled:opacity-60"
-                          }`}
+                        className={`w-full py-2.5 rounded-lg text-sm font-bold transition-all shadow-sm ${
+                          isPro 
+                            ? "bg-indigo-600 text-white hover:bg-indigo-500" 
+                            : "bg-stone-900 text-white hover:bg-stone-800"
+                        }`}
                       >
-                        {isLoading ? "Redirecting to Stripe…" : "Subscribe"}
+                        {isLoading ? "Redirecting…" : "Get Started"}
                       </button>
-                    )}
-                  </div>
-                )}
+                    )
+                  ) : (
+                      <button disabled className="w-full py-2.5 rounded-lg text-sm font-bold bg-stone-100 text-stone-400 border border-stone-200">
+                        Login to Subscribe
+                      </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Features List */}
+              <div className="p-6 border-t border-stone-100 flex-1 bg-stone-50 rounded-b-2xl">
+                <p className="text-xs font-bold text-stone-900 mb-3">{isElite ? "Everything in Pro, plus:" : isPro ? "Everything in Basic, plus:" : "Includes:"}</p>
+                <ul className="space-y-3 text-sm">
+                  {(plan.includes || ["24/7 AI Receptionist", "Call Transferring", "SMS Responses", "Web Dashboard"]).map((item, i) => (
+                    <li key={i} className="flex gap-2.5 text-stone-600 leading-snug">
+                      <div className="shrink-0 mt-0.5 bg-emerald-100 text-emerald-600 w-5 h-5 rounded-full flex items-center justify-center">
+                        <Check className="w-3 h-3" strokeWidth={3} />
+                      </div>
+                      <span className={item.includes("Customer Nurturing") ? "font-bold text-stone-900" : ""}>{item}</span>
+                    </li>
+                  ))}
+                  
+                  {(plan.excludes || []).map((item, i) => (
+                    <li key={`ex-${i}`} className="flex gap-2.5 text-stone-400 leading-snug opacity-75">
+                      <div className="shrink-0 mt-0.5 text-stone-300 w-5 h-5 rounded-full flex items-center justify-center">
+                        <X className="w-3.5 h-3.5" />
+                      </div>
+                      <span className="line-through decoration-stone-300 decoration-1">{item}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
             </div>
           );
         })}
       </div>
-
-      {/* Add-ons section was here, moved to top */}
-
-      {!tenantId && (
-        <p className="mt-6 text-sm text-stone-500">
-          Select a business in Home or Businesses to subscribe to a plan.
-        </p>
-      )}
     </div>
   );
 }

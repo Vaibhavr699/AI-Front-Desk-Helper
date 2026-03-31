@@ -5,6 +5,7 @@ const crm = require("./crm");
 const emailService = require("./email");
 const { getTenantById } = require("../lib/tenant");
 const followUp = require("./followUp");
+const calendar = require("../calendar");
 
 /** Normalize and validate booking payload from AI (handles camelCase, extra fields, bad dates). */
 function normalizeBookingData(data, isUpdate = false) {
@@ -50,9 +51,11 @@ function normalizeBookingData(data, isUpdate = false) {
   // Handle estimated_revenue_cents carefully for updates
   if ("estimated_value" in data || "estimatedValue" in data) {
     const val = data.estimated_value !== undefined ? data.estimated_value : data.estimatedValue;
-    result.estimated_revenue_cents = (val != null && val !== "") ? Math.round(parseFloat(val) * 100) : 15000;
+    const numeric = parseFloat(val);
+    // Use default if not a valid number or <= 0
+    result.estimated_revenue_cents = (isNaN(numeric) || numeric <= 0) ? 25000 : Math.round(numeric * 100);
   } else if (!isUpdate) {
-    result.estimated_revenue_cents = 15000;
+    result.estimated_revenue_cents = 25000; // Default $250.00
   }
 
   return result;
@@ -62,6 +65,17 @@ function normalizeBookingData(data, isUpdate = false) {
 async function createBooking(tenantId, callId, data, leadId = null, leadSource = null) {
   console.log("[AI-Desk] Booking create start tenantId=%s callId=%s raw_keys=%s", tenantId, callId || "(none)", Object.keys(data || {}).join(","));
   const norm = normalizeBookingData(data);
+
+  // Final Availability Check BEFORE inserting to prevent race conditions or sync overlaps
+  if (norm.preferred_date && norm.appointment_time) {
+    const tenant = await getTenantById(tenantId);
+    const av = await calendar.checkAvailability(norm.preferred_date, norm.appointment_time, tenant);
+    if (!av.available) {
+      console.warn("[AI-Desk] FINAL CHECK FAILED: Slot %s %s already taken for tenant %s", norm.preferred_date, norm.appointment_time, tenantId);
+      throw new Error("This time slot is no longer available. Please choose another time.");
+    }
+  }
+
   console.log("[AI-Desk] Booking normalized name=%s phone=%s address=%s city=%s state=%s", norm.contact_name, norm.contact_phone, norm.address || "(none)", norm.city || "(none)", norm.state || "(none)");
   let res;
   try {

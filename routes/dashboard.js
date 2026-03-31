@@ -12,7 +12,7 @@ const router = express.Router();
 const estimateRecovery = require("../services/estimateRecovery");
 const emailService = require("../services/email");
 const nurturingService = require("../services/nurturing");
-const { getTenantIdFromQuery } = auth;
+const { getTenantIdFromQuery, getTargetTenantIds, requireRole, ROLES } = auth;
 
 /** Normalize a US phone to E.164 (+1XXXXXXXXXX). Returns null if invalid. */
 function normalizePhoneInput(raw) {
@@ -34,18 +34,150 @@ router.get("/plans", (_req, res) => {
   }
 });
 
+// --- Bookings (Available to Staff, Manager, and Owner) ---
+router.get("/bookings", async (req, res) => {
+  try {
+    const tenantIds = await getTargetTenantIds(req);
+    if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
+
+    const limit = Math.min(parseInt(req.query.limit, 10) || 15, 100);
+    const offset = parseInt(req.query.offset, 10) || 0;
+    const search = req.query.search || "";
+    const status = req.query.status || "";
+    const sortBy = req.query.sortBy || "preferred_date";
+    const sortDir = req.query.sortDir === "asc" ? "ASC" : "DESC";
+
+    const params = [tenantIds];
+    let where = "WHERE b.tenant_id = ANY($1)";
+    let i = 2;
+
+    if (status && status !== "all") {
+      where += ` AND LOWER(b.status) = $${i++}`;
+      params.push(status.toLowerCase());
+    }
+
+    if (search) {
+      where += ` AND (b.contact_name ILIKE $${i} OR b.contact_phone ILIKE $${i} OR b.scope ILIKE $${i} OR b.address ILIKE $${i})`;
+      params.push(`%${search}%`);
+      i++;
+    }
+
+    // Sort column validation
+    const allowedSort = ["contact_name", "preferred_date", "estimated_revenue_cents", "status", "created_at"];
+    const activeSort = allowedSort.includes(sortBy) ? sortBy : "preferred_date";
+
+    const countRes = await db.query(
+      `SELECT COUNT(*) FROM bookings b ${where}`,
+      params
+    );
+    const total = parseInt(countRes.rows[0].count, 10);
+
+    params.push(limit, offset);
+    const result = await db.query(
+      `SELECT b.*, t.name as technician_name, biz.name as business_name
+       FROM bookings b 
+       LEFT JOIN technicians t ON b.technician_id = t.id
+       JOIN tenants biz ON b.tenant_id = biz.id
+       ${where}
+       ORDER BY b.${activeSort} ${sortDir}, b.created_at DESC 
+       LIMIT $${i++} OFFSET $${i++}`,
+      params
+    );
+
+    res.json({ 
+      bookings: result.rows,
+      pagination: {
+        total,
+        limit,
+        offset
+      }
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.patch("/bookings/:id", async (req, res) => {
+  try {
+    const { status, technician_id, preferred_date, appointment_time, notes } = req.body || {};
+    const allowed = ["status", "technician_id", "preferred_date", "appointment_time", "notes"];
+    const setParts = [];
+    const values = [];
+    let i = 1;
+
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) {
+        setParts.push(`${key} = $${i}`);
+        values.push(req.body[key]);
+        i++;
+      }
+    }
+
+    if (setParts.length === 0) return res.status(400).json({ error: "No updates provided" });
+
+    values.push(req.params.id);
+    const query = `UPDATE bookings SET ${setParts.join(", ")}, updated_at = now() WHERE id = $${i} RETURNING *`;
+    const result = await db.query(query, values);
+
+    if (result.rows.length === 0) return res.status(404).json({ error: "Not found" });
+    const booking = result.rows[0];
+
+    if (technician_id != null && technician_id !== "") {
+      const tenantId = booking.tenant_id;
+      const [tenantResult, techResult] = await Promise.all([
+        getTenantById(tenantId),
+        db.query("SELECT id, name, email, phone FROM technicians WHERE id = $1", [technician_id]),
+      ]);
+      const technician = techResult.rows[0];
+      const tenant = tenantResult;
+      if (technician && tenant) {
+        emailService.sendTechnicianAssignmentEmail(tenant, technician, booking).then((r) => {
+          if (r.ok) console.log("[Bookings] Technician assignment email sent to", technician.email);
+          else console.warn("[Bookings] Technician assignment email failed:", r.error);
+        }).catch((e) => console.error("[Bookings] Technician assignment email error:", e));
+      }
+    }
+
+    if (status === "Completed" && booking.lead_id) {
+      const serviceDate = booking.preferred_date
+        ? (typeof booking.preferred_date === "string" && booking.preferred_date.includes("T")
+            ? booking.preferred_date.slice(0, 10)
+            : booking.preferred_date)
+        : new Date().toISOString().slice(0, 10);
+      await db.query(
+        "UPDATE leads SET last_service_date = $1::date, updated_at = now() WHERE id = $2",
+        [serviceDate, booking.lead_id]
+      ).catch((e) => console.error("[Bookings] Update lead last_service_date:", e));
+      nurturingService.schedulePostServiceCampaigns(booking.tenant_id, booking).catch((e) =>
+        console.error("[Bookings] Schedule nurturing campaigns:", e)
+      );
+    }
+
+    res.json(booking);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// Everything below this requires at least Manager-level access
+router.use(requireRole([ROLES.OWNER, ROLES.ADMIN, ROLES.MANAGER]));
+
 router.get("/calls", async (req, res) => {
   try {
-    const tenantId = getTenantIdFromQuery(req);
-    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+    const tenantIds = await getTargetTenantIds(req);
+    if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
     const offset = parseInt(req.query.offset, 10) || 0;
     const status = req.query.status;
     let q = `
       SELECT c.*, 
+             t.name as business_name,
              r.id as recording_id, 
              r.transcript as transcript_preview
       FROM calls c
+      JOIN tenants t ON c.tenant_id = t.id
       LEFT JOIN LATERAL (
         SELECT id, transcript 
         FROM recordings 
@@ -53,9 +185,9 @@ router.get("/calls", async (req, res) => {
         ORDER BY created_at DESC 
         LIMIT 1
       ) r ON true
-      WHERE c.tenant_id = $1
+      WHERE c.tenant_id = ANY($1)
     `;
-    const params = [tenantId];
+    const params = [tenantIds];
     if (status) {
       params.push(status);
       q += " AND c.status = $2";
@@ -158,131 +290,7 @@ router.get("/recordings/:id/audio", async (req, res) => {
   }
 });
 
-router.get("/bookings", async (req, res) => {
-  try {
-    const tenantId = getTenantIdFromQuery(req);
-    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
-
-    const limit = Math.min(parseInt(req.query.limit, 10) || 15, 100);
-    const offset = parseInt(req.query.offset, 10) || 0;
-    const search = req.query.search || "";
-    const status = req.query.status || "";
-    const sortBy = req.query.sortBy || "preferred_date";
-    const sortDir = req.query.sortDir === "asc" ? "ASC" : "DESC";
-
-    const params = [tenantId];
-    let where = "WHERE b.tenant_id = $1";
-    let i = 2;
-
-    if (status && status !== "all") {
-      where += ` AND LOWER(b.status) = $${i++}`;
-      params.push(status.toLowerCase());
-    }
-
-    if (search) {
-      where += ` AND (b.contact_name ILIKE $${i} OR b.contact_phone ILIKE $${i} OR b.scope ILIKE $${i} OR b.address ILIKE $${i})`;
-      params.push(`%${search}%`);
-      i++;
-    }
-
-    // Sort column validation
-    const allowedSort = ["contact_name", "preferred_date", "estimated_revenue_cents", "status", "created_at"];
-    const activeSort = allowedSort.includes(sortBy) ? sortBy : "preferred_date";
-
-    const countRes = await db.query(
-      `SELECT COUNT(*) FROM bookings b ${where}`,
-      params
-    );
-    const total = parseInt(countRes.rows[0].count, 10);
-
-    params.push(limit, offset);
-    const result = await db.query(
-      `SELECT b.*, t.name as technician_name 
-       FROM bookings b 
-       LEFT JOIN technicians t ON b.technician_id = t.id
-       ${where}
-       ORDER BY b.${activeSort} ${sortDir}, b.created_at DESC 
-       LIMIT $${i++} OFFSET $${i++}`,
-      params
-    );
-
-    res.json({ 
-      bookings: result.rows,
-      pagination: {
-        total,
-        limit,
-        offset
-      }
-    });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-
-router.patch("/bookings/:id", async (req, res) => {
-  try {
-    const { status, technician_id, preferred_date, appointment_time, notes } = req.body || {};
-    const allowed = ["status", "technician_id", "preferred_date", "appointment_time", "notes"];
-    const setParts = [];
-    const values = [];
-    let i = 1;
-
-    for (const key of allowed) {
-      if (req.body[key] !== undefined) {
-        setParts.push(`${key} = $${i}`);
-        values.push(req.body[key]);
-        i++;
-      }
-    }
-
-    if (setParts.length === 0) return res.status(400).json({ error: "No updates provided" });
-
-    values.push(req.params.id);
-    const query = `UPDATE bookings SET ${setParts.join(", ")}, updated_at = now() WHERE id = $${i} RETURNING *`;
-    const result = await db.query(query, values);
-
-    if (result.rows.length === 0) return res.status(404).json({ error: "Not found" });
-    const booking = result.rows[0];
-
-    if (technician_id != null && technician_id !== "") {
-      const tenantId = booking.tenant_id;
-      const [tenantResult, techResult] = await Promise.all([
-        getTenantById(tenantId),
-        db.query("SELECT id, name, email, phone FROM technicians WHERE id = $1", [technician_id]),
-      ]);
-      const technician = techResult.rows[0];
-      const tenant = tenantResult;
-      if (technician && tenant) {
-        emailService.sendTechnicianAssignmentEmail(tenant, technician, booking).then((r) => {
-          if (r.ok) console.log("[Bookings] Technician assignment email sent to", technician.email);
-          else console.warn("[Bookings] Technician assignment email failed:", r.error);
-        }).catch((e) => console.error("[Bookings] Technician assignment email error:", e));
-      }
-    }
-
-    if (status === "Completed" && booking.lead_id) {
-      const serviceDate = booking.preferred_date
-        ? (typeof booking.preferred_date === "string" && booking.preferred_date.includes("T")
-            ? booking.preferred_date.slice(0, 10)
-            : booking.preferred_date)
-        : new Date().toISOString().slice(0, 10);
-      await db.query(
-        "UPDATE leads SET last_service_date = $1::date, updated_at = now() WHERE id = $2",
-        [serviceDate, booking.lead_id]
-      ).catch((e) => console.error("[Bookings] Update lead last_service_date:", e));
-      nurturingService.schedulePostServiceCampaigns(booking.tenant_id, booking).catch((e) =>
-        console.error("[Bookings] Schedule nurturing campaigns:", e)
-      );
-    }
-
-    res.json(booking);
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Server error" });
-  }
-});
+// (Moving this section up)
 
 // -------------------- Technicians --------------------
 
@@ -446,13 +454,14 @@ router.patch("/followups/:id/status", async (req, res) => {
 
 router.get("/metrics", async (req, res) => {
   try {
-    const tenantId = getTenantIdFromQuery(req);
-    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+    const tenantIds = await getTargetTenantIds(req);
+    if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
 
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    console.log(`[Metrics] Fetching for tenant=${tenantId}`);
+    const isRollup = tenantIds.length > 1;
+    console.log(`[Metrics] Fetching for tenants=[${tenantIds.join(",")}] rollup=${isRollup}`);
 
     const [
       salesStats,
@@ -473,39 +482,55 @@ router.get("/metrics", async (req, res) => {
          FROM leads l
          LEFT JOIN estimate_recoveries er ON er.lead_id = l.id AND er.created_at > $2
          LEFT JOIN bookings b ON b.lead_id = l.id AND b.created_at > $2
-         WHERE l.tenant_id = $1 AND l.created_at > $2`,
-        [tenantId, thirtyDaysAgo]
+         WHERE l.tenant_id = ANY($1) AND l.created_at > $2`,
+        [tenantIds, thirtyDaysAgo]
       ),
       // 2. AI Performance
       db.query(
         `SELECT 
           COUNT(*) as calls_handled,
           COUNT(*) FILTER (WHERE transferred = true) as human_transferred,
-          (SELECT COUNT(*) FROM bookings WHERE tenant_id = $1 AND call_id IS NOT NULL AND created_at > $2) as appointments_booked,
-          (SELECT COUNT(*) FROM estimate_recoveries WHERE tenant_id = $1 AND status = 'converted' AND updated_at > $2) as missed_calls_recovered
+          (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND call_id IS NOT NULL AND created_at > $2) as appointments_booked,
+          (SELECT COUNT(*) FROM estimate_recoveries WHERE tenant_id = ANY($1) AND status = 'converted' AND updated_at > $2) as missed_calls_recovered
          FROM calls 
-         WHERE tenant_id = $1 AND started_at > $2`,
-        [tenantId, thirtyDaysAgo]
+         WHERE tenant_id = ANY($1) AND started_at > $2`,
+        [tenantIds, thirtyDaysAgo]
       ),
       // 3. Lead Sources (Distribution & Revenue)
       db.query(
         `SELECT 
-          COALESCE(lead_source, 'Direct') as source,
-          COUNT(*) as count,
-          COALESCE(SUM(estimated_revenue_cents), 0) as revenue
-         FROM bookings
-         WHERE tenant_id = $1 AND created_at > $2
-         GROUP BY lead_source
-         UNION ALL
-         SELECT 
-          COALESCE(lead_source, 'Direct') as source,
-          COUNT(*) as count,
-          0 as revenue
-         FROM calls
-         WHERE tenant_id = $1 AND started_at > $2 AND twilio_call_sid NOT IN (SELECT twilio_call_sid FROM calls JOIN bookings ON bookings.call_id = calls.id WHERE calls.tenant_id = $1)
-         GROUP BY lead_source
-         ORDER BY count DESC`,
-        [tenantId, thirtyDaysAgo]
+          source,
+          SUM(leads) as leads,
+          SUM(booked) as booked,
+          SUM(revenue) as revenue
+         FROM (
+           SELECT 
+             COALESCE(NULLIF(TRIM(lead_source), ''), 'Direct') as source,
+             COUNT(*) as leads,
+             COUNT(*) as booked,
+             COALESCE(SUM(estimated_revenue_cents), 0) as revenue
+           FROM bookings
+           WHERE tenant_id = ANY($1) AND created_at > $2
+           GROUP BY lead_source
+           UNION ALL
+           SELECT 
+             COALESCE(NULLIF(TRIM(lead_source), ''), 'Direct') as source,
+             COUNT(*) as leads,
+             0 as booked,
+             0 as revenue
+           FROM calls
+           WHERE tenant_id = ANY($1) AND started_at > $2 
+             AND twilio_call_sid NOT IN (
+               SELECT c.twilio_call_sid 
+               FROM calls c 
+               JOIN bookings b ON b.call_id = c.id 
+               WHERE c.tenant_id = ANY($1) AND c.twilio_call_sid IS NOT NULL
+             )
+           GROUP BY lead_source
+         ) t
+         GROUP BY source
+         ORDER BY leads DESC`,
+        [tenantIds, thirtyDaysAgo]
       ),
       // 4. Trend Data (Last 7 Days)
       db.query(
@@ -514,52 +539,54 @@ router.get("/metrics", async (req, res) => {
           COUNT(l.id) as leads,
           COUNT(b.id) as bookings
          FROM generate_series(now() - interval '6 days', now(), interval '1 day') d(day)
-         LEFT JOIN leads l ON l.tenant_id = $1 AND l.created_at::date = d.day::date
-         LEFT JOIN bookings b ON b.tenant_id = $1 AND b.created_at::date = d.day::date
+         LEFT JOIN leads l ON l.tenant_id = ANY($1) AND l.created_at::date = d.day::date
+         LEFT JOIN bookings b ON b.tenant_id = ANY($1) AND b.created_at::date = d.day::date
          GROUP BY d.day
          ORDER BY d.day ASC`,
-        [tenantId]
+        [tenantIds]
       ),
       // 5. Today Stats
       db.query(
         `SELECT
-          (SELECT COUNT(*) FROM calls WHERE tenant_id = $1 AND started_at >= now() - interval '24 hours') as calls,
-          (SELECT COUNT(*) FROM estimate_recoveries WHERE tenant_id = $1 AND status = 'converted' AND updated_at >= now() - interval '24 hours') as recovered,
-          (SELECT COUNT(*) FROM leads WHERE tenant_id = $1 AND created_at >= now() - interval '24 hours') as leads,
-          (SELECT COUNT(*) FROM bookings WHERE tenant_id = $1 AND created_at >= now() - interval '24 hours') as booked`,
-        [tenantId]
+          (SELECT COUNT(*) FROM calls WHERE tenant_id = ANY($1) AND started_at >= now() - interval '24 hours') as calls,
+          (SELECT COUNT(*) FROM estimate_recoveries WHERE tenant_id = ANY($1) AND status = 'converted' AND updated_at >= now() - interval '24 hours') as recovered,
+          (SELECT COUNT(*) FROM leads WHERE tenant_id = ANY($1) AND created_at >= now() - interval '24 hours') as leads,
+          (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND created_at >= now() - interval '24 hours') as booked`,
+        [tenantIds]
       ),
       // 6. Pipeline Stats
       db.query(
         `SELECT
-          (SELECT COUNT(*) FROM leads WHERE tenant_id = $1 AND status NOT IN ('Closed', 'Lost')) as open_estimates,
-          (SELECT COUNT(*) FROM bookings WHERE tenant_id = $1 AND status = 'scheduled') as jobs_scheduled,
-          (SELECT COALESCE(SUM(estimated_revenue_cents), 0) FROM bookings WHERE tenant_id = $1 AND status = 'scheduled') as estimated_revenue`,
-        [tenantId]
+          (SELECT COUNT(*) FROM leads WHERE tenant_id = ANY($1) AND status NOT IN ('Closed', 'Lost')) as open_estimates,
+          (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND status = 'scheduled') as jobs_scheduled,
+          (SELECT COALESCE(SUM(estimated_revenue_cents), 0) FROM bookings WHERE tenant_id = ANY($1) AND status = 'scheduled') as estimated_revenue`,
+        [tenantIds]
       ),
-      // 7. Nurturing metrics (campaign_log, referral_leads, referral-sourced bookings)
+      // 7. Nurturing metrics
       db.query(
         `SELECT
-          (SELECT COUNT(*) FROM campaign_log WHERE tenant_id = $1 AND sent_at > $2 AND (channel = 'email' OR channel = 'email+sms')) as emails_sent,
-          (SELECT COUNT(*) FROM campaign_log WHERE tenant_id = $1 AND sent_at > $2 AND (channel = 'sms' OR channel = 'email+sms')) as sms_sent,
-          (SELECT COUNT(*) FROM campaign_log WHERE tenant_id = $1 AND sent_at > $2 AND channel = 'voice') as ai_calls_made,
-          (SELECT COUNT(*) FROM messages WHERE tenant_id = $1 AND direction = 'inbound' AND created_at > $2) as customer_replies,
-          (SELECT COUNT(*) FROM referral_leads WHERE tenant_id = $1 AND created_at > $2) as referrals_generated,
-          (SELECT COUNT(*) FROM bookings b JOIN leads l ON l.id = b.lead_id AND l.tenant_id = $1 AND l.lead_source = 'referral' WHERE b.tenant_id = $1 AND b.created_at > $2) as appointments_booked,
-          (SELECT COALESCE(SUM(b.estimated_revenue_cents), 0) FROM bookings b JOIN leads l ON l.id = b.lead_id AND l.tenant_id = $1 AND l.lead_source = 'referral' WHERE b.tenant_id = $1 AND b.created_at > $2) as estimated_revenue`,
-        [tenantId, thirtyDaysAgo]
+          (SELECT COUNT(*) FROM campaign_log WHERE tenant_id = ANY($1) AND sent_at > $2 AND (channel = 'email' OR channel = 'email+sms')) as emails_sent,
+          (SELECT COUNT(*) FROM campaign_log WHERE tenant_id = ANY($1) AND sent_at > $2 AND (channel = 'sms' OR channel = 'email+sms')) as sms_sent,
+          (SELECT COUNT(*) FROM campaign_log WHERE tenant_id = ANY($1) AND sent_at > $2 AND channel = 'voice') as ai_calls_made,
+          (SELECT COUNT(*) FROM messages WHERE tenant_id = ANY($1) AND direction = 'inbound' AND created_at > $2) as customer_replies,
+          (SELECT COUNT(*) FROM referral_leads WHERE tenant_id = ANY($1) AND created_at > $2) as referrals_generated,
+          (SELECT COUNT(*) FROM bookings b JOIN leads l ON l.id = b.lead_id AND l.tenant_id = ANY($1) AND l.lead_source = 'referral' WHERE b.tenant_id = ANY($1) AND b.created_at > $2) as appointments_booked,
+          (SELECT COALESCE(SUM(b.estimated_revenue_cents), 0) FROM bookings b JOIN leads l ON l.id = b.lead_id AND l.tenant_id = ANY($1) AND l.lead_source = 'referral' WHERE b.tenant_id = ANY($1) AND b.created_at > $2) as estimated_revenue`,
+        [tenantIds, thirtyDaysAgo]
       )
     ]);
 
     const sales = salesStats.rows[0];
     const ai = aiStats.rows[0];
     
-    // Calculate close rate
     const closeRate = sales.leads_generated > 0 
       ? Math.round((sales.estimates_accepted / sales.leads_generated) * 100) 
       : 0;
 
-    const tenantForGate = await db.query("SELECT id, plan, plan_overrides FROM tenants WHERE id = $1", [tenantId]).then((r) => r.rows[0]);
+    // For roll-up, check if any of the tenants have nurturing access
+    // For now, we'll check the primary tenant (first in list) or the parent
+    const primaryTenantId = req.user.tenant_id || tenantIds[0];
+    const tenantForGate = await db.query("SELECT id, plan, plan_overrides FROM tenants WHERE id = $1", [primaryTenantId]).then((r) => r.rows[0]);
     const nurturingRow = nurturingStats?.rows?.[0];
     const nurturing = (tenantForGate && hasNurturingReferralAccess(tenantForGate) && nurturingRow)
       ? {
@@ -572,13 +599,6 @@ router.get("/metrics", async (req, res) => {
           estimated_revenue: parseInt(nurturingRow.estimated_revenue || 0, 10)
         }
       : undefined;
-
-    console.log(`[Metrics] Response structure:`, { 
-      period: "30d", 
-      today: !!todayStats.rows[0], 
-      pipeline: !!pipelineStats.rows[0],
-      sales: !!salesStats.rows[0]
-    });
 
     res.json({
       period: "30d",
@@ -611,8 +631,10 @@ router.get("/metrics", async (req, res) => {
       },
       sources: sourceStats.rows.map(r => ({
         label: r.source,
-        value: parseInt(r.count, 10),
-        revenue: parseInt(r.revenue, 10)
+        leads: parseInt(r.leads, 10),
+        booked: parseInt(r.booked, 10),
+        revenue: parseInt(r.revenue, 10),
+        value: parseInt(r.leads, 10) // Fallback for existing chart logic
       })),
       trends: trendStats.rows.map(r => ({
         date: r.date,
@@ -630,52 +652,53 @@ router.get("/metrics", async (req, res) => {
 
 router.get("/activity-feed", async (req, res) => {
   try {
-    const tenantId = getTenantIdFromQuery(req);
-    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+    const tenantIds = await getTargetTenantIds(req);
+    if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
 
     const [calls, bookings, recoveries, followUps] = await Promise.all([
       db.query(
-        "SELECT id, started_at as at, 'call' as type, disposition, transferred FROM calls WHERE tenant_id = $1 ORDER BY started_at DESC LIMIT 15",
-        [tenantId]
+        "SELECT c.id, c.started_at as at, 'call' as type, c.disposition, c.transferred, t.name as business_name FROM calls c JOIN tenants t ON c.tenant_id = t.id WHERE c.tenant_id = ANY($1) ORDER BY c.started_at DESC LIMIT 15",
+        [tenantIds]
       ),
       db.query(
-        "SELECT id, created_at as at, 'booking' as type, contact_name, status FROM bookings WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 15",
-        [tenantId]
+        "SELECT b.id, b.created_at as at, 'booking' as type, b.contact_name, b.status, t.name as business_name FROM bookings b JOIN tenants t ON b.tenant_id = t.id WHERE b.tenant_id = ANY($1) ORDER BY b.created_at DESC LIMIT 15",
+        [tenantIds]
       ),
       db.query(
-        "SELECT id, updated_at as at, 'recovery' as type, status, contact_name FROM estimate_recoveries WHERE tenant_id = $1 ORDER BY updated_at DESC LIMIT 15",
-        [tenantId]
+        "SELECT er.id, er.updated_at as at, 'recovery' as type, er.status, er.contact_name, t.name as business_name FROM estimate_recoveries er JOIN tenants t ON er.tenant_id = t.id WHERE er.tenant_id = ANY($1) ORDER BY er.updated_at DESC LIMIT 15",
+        [tenantIds]
       ),
       db.query(
-        "SELECT id, created_at as at, 'follow_up' as type, follow_up_type, status FROM follow_ups WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 15",
-        [tenantId]
+        "SELECT f.id, f.created_at as at, 'follow_up' as type, f.follow_up_type, f.status, t.name as business_name FROM follow_ups f JOIN tenants t ON f.tenant_id = t.id WHERE f.tenant_id = ANY($1) ORDER BY f.created_at DESC LIMIT 15",
+        [tenantIds]
       ),
     ]);
 
+    const isRollup = tenantIds.length > 1;
     const events = [
       ...calls.rows.map(r => ({
         id: r.id,
         at: r.at,
         type: "call",
-        text: r.transferred ? "AI transferred call to human" : (r.disposition === 'booked' ? "AI booked appointment on call" : "AI answered call")
+        text: (r.transferred ? "AI transferred call to human" : (r.disposition === 'booked' ? "AI booked appointment on call" : "AI answered call")) + (isRollup ? ` (${r.business_name})` : "")
       })),
       ...bookings.rows.map(r => ({
         id: r.id,
         at: r.at,
         type: "booking",
-        text: r.status === 'scheduled' ? `Appointment booked: ${r.contact_name || 'Lead'}` : `Lead captured: ${r.contact_name || 'Lead'}`
+        text: (r.status === 'scheduled' ? `Appointment booked: ${r.contact_name || 'Lead'}` : `Lead captured: ${r.contact_name || 'Lead'}`) + (isRollup ? ` (${r.business_name})` : "")
       })),
       ...recoveries.rows.map(r => ({
         id: r.id,
         at: r.at,
         type: "recovery",
-        text: r.status === 'converted' ? `Missed call recovered: ${r.contact_name || 'Lead'}` : `Recovery sequence active: ${r.contact_name || 'Lead'}`
+        text: (r.status === 'converted' ? `Missed call recovered: ${r.contact_name || 'Lead'}` : `Recovery sequence active: ${r.contact_name || 'Lead'}`) + (isRollup ? ` (${r.business_name})` : "")
       })),
       ...followUps.rows.map(r => ({
         id: r.id,
         at: r.at,
         type: "follow_up",
-        text: `SMS followup sent: ${r.follow_up_type}`
+        text: `SMS followup sent: ${r.follow_up_type}` + (isRollup ? ` (${r.business_name})` : "")
       }))
     ];
 
@@ -702,16 +725,12 @@ function maskFacebookToken(token) {
 }
 
 const TENANT_SELECT_TWILIO = `t.twilio_account_sid, t.twilio_auth_token`;
-const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.plan, t.facebook_page_id, t.facebook_page_access_token, t.tone_of_voice, t.objection_handling_config, t.business_hours, t.afterhours_behavior, t.google_calendar_linked, t.google_calendar_id, t.google_calendar_email, t.zapier_webhook_url, t.api_key, t.website, t.voice_model, t.faqs, t.plan_overrides, t.promo_label, t.logo_url, t.nurturing_enabled, t.referral_enabled, t.seasonal_campaigns_enabled, t.maintenance_reminder_months, t.reengagement_reminder_months, t.referral_request_days_after_service, t.nurturing_campaign_calendar, t.maintenance_touchpoints, t.reengagement_touchpoints`;
-const TENANT_SELECT_BASE_LEGACY = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled`;
+const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.plan, t.facebook_page_id, t.facebook_page_access_token, t.tone_of_voice, t.objection_handling_config, t.business_hours, t.afterhours_behavior, t.google_calendar_linked, t.google_calendar_id, t.google_calendar_email, t.zapier_webhook_url, t.api_key, t.website, t.voice_model, t.faqs, t.plan_overrides, t.promo_label, t.logo_url, t.nurturing_enabled, t.referral_enabled, t.seasonal_campaigns_enabled, t.maintenance_reminder_months, t.reengagement_reminder_months, t.referral_request_days_after_service, t.nurturing_campaign_calendar, t.maintenance_touchpoints, t.reengagement_touchpoints, t.parent_id, t.business_type, t.default_lead_source`;
+const TENANT_SELECT_BASE_LEGACY = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.parent_id, t.business_type`;
 
 router.get("/tenants/:id", async (req, res) => {
   try {
     const id = req.params.id;
-    // Authorization check
-    if (req.user?.tenant_id && req.user.tenant_id !== id && !req.user.is_super_admin) {
-      return res.status(403).json({ error: "Forbidden" });
-    }
 
     const r = await db.query(
       `SELECT ${TENANT_SELECT_BASE}, ${TENANT_SELECT_TWILIO},
@@ -720,6 +739,13 @@ router.get("/tenants/:id", async (req, res) => {
     );
     const tenant = r.rows[0];
     if (!tenant) return res.status(404).json({ error: "Not found" });
+
+    // Authorization: Must be super admin, the tenant itself, or its parent.
+    if (req.user?.tenant_id && req.user.tenant_id !== tenant.id && !req.user.is_super_admin) {
+      if (req.user.tenant_business_type !== 'parent' || tenant.parent_id !== req.user.tenant_id) {
+        return res.status(403).json({ error: "Forbidden — insufficient permissions to access this location" });
+      }
+    }
 
     const masked = { ...tenant };
     masked.twilio_account_sid_masked = maskTwilioSid(tenant.twilio_account_sid);
@@ -748,7 +774,13 @@ router.get("/tenants", async (req, res) => {
     let params = [];
     
     if (userTenantId) {
-      query = `SELECT ${TENANT_SELECT_BASE}, (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1`;
+      console.log(`[GET /tenants] user tenant_id=${userTenantId}, business_type=${req.user.tenant_business_type}, parent_id=${req.user.tenant_parent_id}`);
+      if (req.user.tenant_business_type === 'parent') {
+        // If parent, return the parent and all children
+        query = `SELECT ${TENANT_SELECT_BASE}, (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1 OR t.parent_id = $1 ORDER BY (CASE WHEN t.id = $1 THEN 0 ELSE 1 END), t.name`;
+      } else {
+        query = `SELECT ${TENANT_SELECT_BASE}, (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1`;
+      }
       params = [userTenantId];
     }
 
@@ -778,11 +810,21 @@ router.post("/tenants", async (req, res) => {
   try {
     const userId = req.user?.sub;
     const userTenantId = req.user?.tenant_id;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    if (userTenantId) {
-      return res.status(400).json({ error: "You already have a business. Use Settings or the Businesses page to manage it." });
-    }
     const body = req.body || {};
+    const businessType = body.business_type || 'standalone';
+    const parentId = body.parent_id || null;
+
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    
+    // Check if user is allowed to create another business
+    if (userTenantId) {
+      // If they have a business, they can only create another if they are a parent AND creating a child
+      if (req.user.tenant_business_type === 'parent' && parentId === userTenantId) {
+        // Allowed: adding a location to their parent account
+      } else {
+        return res.status(400).json({ error: "You already have a business. Use Settings or the Businesses page to manage it." });
+      }
+    }
     const name = body.name || "";
     const company_name = body.company_name || body.companyName || "";
     const slugInput = body.slug;
@@ -847,8 +889,8 @@ router.post("/tenants", async (req, res) => {
       return res.status(409).json({ error: "A business with this slug already exists. Try a different name." });
     }
     const insert = await db.query(
-      "INSERT INTO tenants (name, slug, company_name) VALUES ($1, $2, $3) RETURNING id, name, slug, company_name",
-      [finalName, slug, finalCompany]
+      "INSERT INTO tenants (name, slug, company_name, business_type, parent_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, slug, company_name, business_type, parent_id",
+      [finalName, slug, finalCompany, businessType, parentId]
     );
     const tenant = insert.rows[0];
 
@@ -879,14 +921,19 @@ router.post("/tenants", async (req, res) => {
         console.warn("[Onboarding] Could not configure webhook for %s: %s", phone, webhookResult.error);
       }
     }
-    await db.query(
-      "UPDATE dashboard_users SET tenant_id = $1, role = $2, updated_at = now() WHERE id = $3",
-      [tenant.id, "admin", userId]
-    );
+    // Only link the user to the new tenant if they don't already have one (first business)
+    if (!userTenantId) {
+      await db.query(
+        "UPDATE dashboard_users SET tenant_id = $1, role = $2, updated_at = now() WHERE id = $3",
+        [tenant.id, "admin", userId]
+      );
+    }
+    // When creating a child location, keep the user linked to the parent tenant
+    const effectiveTenantId = userTenantId || tenant.id;
     const newToken = auth.signToken({
       sub: userId,
       email: req.user.email,
-      tenant_id: tenant.id,
+      tenant_id: effectiveTenantId,
       role: "admin",
     });
     const userRow = await db.query(
@@ -897,7 +944,7 @@ router.post("/tenants", async (req, res) => {
     res.status(201).json({
       token: newToken,
       user: { id: user.id, email: user.email, tenant_id: user.tenant_id, role: user.role },
-      tenant: { ...tenant, phones: [{ phone, is_primary: true }] },
+      tenant: { ...tenant, phones: phone ? [{ phone, is_primary: true }] : [] },
     });
   } catch (e) {
     console.error(e);
@@ -923,15 +970,22 @@ function normalizeTransferNumbers(value) {
   }
   return [];
 }
-
 router.patch("/tenants/:id", async (req, res) => {
   try {
     const id = req.params.id;
 
-    // Rule based authorization: Only super admins or the tenant themselves can edit
+    // Fetch the tenant first to check ownership/parentage
+    const checkResult = await db.query("SELECT parent_id FROM tenants WHERE id = $1", [id]);
+    const targetTenant = checkResult.rows[0];
+    if (!targetTenant) return res.status(404).json({ error: "Tenant not found" });
+
+    // Authorization check
     if (req.user?.tenant_id && req.user.tenant_id !== id && !req.user.is_super_admin) {
-      return res.status(403).json({ error: "Forbidden: You do not have permission to edit this business." });
+      if (req.user.tenant_business_type !== 'parent' || targetTenant.parent_id !== req.user.tenant_id) {
+        return res.status(403).json({ error: "Forbidden — insufficient permissions to modify this location" });
+      }
     }
+
     let allowed = [
       "name", "company_name", "timezone", "website", "logo_url",
       "welcome_message", "instructions", "transfer_numbers", "transfer_sms_brief", 
@@ -1410,6 +1464,19 @@ router.get("/conversations/:id/timeline", async (req, res) => {
 router.post("/tenants/:id/reset-api-key", async (req, res) => {
   try {
     const id = req.params.id;
+
+    // Fetch the tenant first to check ownership/parentage
+    const checkResult = await db.query("SELECT parent_id FROM tenants WHERE id = $1", [id]);
+    const targetTenant = checkResult.rows[0];
+    if (!targetTenant) return res.status(404).json({ error: "Tenant not found" });
+
+    // Authorization check
+    if (req.user?.tenant_id && req.user.tenant_id !== id && !req.user.is_super_admin) {
+      if (req.user.tenant_business_type !== 'parent' || targetTenant.parent_id !== req.user.tenant_id) {
+        return res.status(403).json({ error: "Forbidden — insufficient permissions to reset this location's API key" });
+      }
+    }
+
     const newKey = require("crypto").randomBytes(24).toString("base64");
     const result = await db.query(
       "UPDATE tenants SET api_key = $1, updated_at = now() WHERE id = $2 RETURNING api_key",

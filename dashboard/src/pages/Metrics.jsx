@@ -24,10 +24,9 @@ import {
  * Custom SVG Pie Chart
  */
 const PieChart = ({ data, size = 200 }) => {
-  // Defensive check for data
   if (!data || !Array.isArray(data)) return null;
 
-  const total = data.reduce((sum, item) => sum + (item.value || 0), 0);
+  const total = data.reduce((sum, item) => sum + (item.leads || item.value || 0), 0);
   let cumulativePercent = 0;
 
   const getCoordinatesForPercent = (percent) => {
@@ -36,14 +35,14 @@ const PieChart = ({ data, size = 200 }) => {
     return [x, y];
   };
 
-  const colors = ["#3b82f6", "#10b981", "#8b5cf6", "#f59e0b", "#ef4444", "#6366f1"];
+  const colors = ["#3b82f6", "#10b981", "#f59e0b", "#f87171", "#8b5cf6", "#6366f1"];
 
   return (
     <div className="relative flex items-center justify-center" style={{ width: size, height: size }}>
       <svg viewBox="-1 -1 2 2" className="transform -rotate-90 w-full h-full">
         {data.map((item, i) => {
           if (total === 0) return null;
-          const value = item.value || 0;
+          const value = item.leads || item.value || 0;
           const [startX, startY] = getCoordinatesForPercent(cumulativePercent);
           cumulativePercent += value / total;
           const [endX, endY] = getCoordinatesForPercent(cumulativePercent);
@@ -57,9 +56,10 @@ const PieChart = ({ data, size = 200 }) => {
         })}
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-        <div className="w-2/3 h-2/3 bg-white rounded-full flex items-center justify-center shadow-inner">
-          <div className="text-center font-bold text-gray-900 leading-tight">
-            {total}<br/><span className="text-[10px] text-gray-400 font-medium">TOTAL</span>
+        <div className="w-3/5 h-3/5 bg-white rounded-full flex items-center justify-center shadow-lg border border-gray-50">
+          <div className="text-center">
+            <div className="text-xl font-black text-gray-900 leading-none">{total}</div>
+            <div className="text-[8px] text-gray-400 font-black tracking-widest mt-1 uppercase">TOTAL</div>
           </div>
         </div>
       </div>
@@ -215,34 +215,81 @@ export default function Metrics({ tenantId }) {
           <BarChart data={metrics.trends} />
         </div>
 
-        {/* Lead Sources Pie */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 flex flex-col items-center">
-          <div className="w-full mb-6">
-            <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wider">Lead Attribution</h3>
-            <p className="text-xs text-gray-400 font-medium">Distribution by channel</p>
+        {/* Lead Attribution Card */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 flex flex-col h-full">
+          <div className="flex justify-between items-start mb-6">
+            <div>
+              <h3 className="text-sm font-bold text-gray-900 tracking-tight">Lead attribution</h3>
+              <p className="text-xs text-gray-400 font-medium">Distribution by channel</p>
+            </div>
+            <div className="px-2 py-1 bg-gray-50 border border-gray-100 rounded text-[10px] font-bold text-gray-500 uppercase tracking-wider">30 days</div>
           </div>
-          <PieChart data={metrics.sources} size={180} />
-          <div className="w-full mt-6 space-y-3">
-            {(metrics.sources || []).map((s, i) => (
-              <div key={i} className="flex flex-col gap-1">
-                <div className="flex items-center justify-between text-[11px] font-bold">
-                  <div className="flex items-center gap-2">
-                    <span className={`w-2.5 h-2.5 rounded-full shadow-sm`} style={{ backgroundColor: ["#3b82f6", "#10b981", "#8b5cf6", "#f59e0b", "#ef4444", "#6366f1"][i % 6] }}></span>
-                    <span className="text-gray-500 uppercase tracking-tighter">{s.label}</span>
-                  </div>
-                  <span className="text-gray-900">{s.value} <span className="text-gray-400 font-medium">LDS</span></span>
-                </div>
-                <div className="flex justify-between items-center pl-4.5">
-                   <div className="h-1 flex-1 bg-gray-100 rounded-full overflow-hidden mr-3">
-                      <div 
-                        className="h-full bg-gray-900/10 rounded-full" 
-                        style={{ width: `${(s.value / metrics.sources.reduce((a,b)=>a+b.value,0)) * 100}%` }}
-                      ></div>
+
+          <div className="flex flex-col sm:flex-row items-center gap-6 mb-8">
+            <div className="shrink-0">
+              <PieChart data={metrics.sources} size={130} />
+            </div>
+            <div className="flex-1 w-full space-y-3">
+              {(metrics.sources || []).slice(0, 4).map((s, i) => (
+                <div key={i} className="flex flex-col gap-0.5">
+                   <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: ["#3b82f6", "#10b981", "#f59e0b", "#f87171", "#8b5cf6", "#6366f1"][i % 6] }}></span>
+                        <span className="text-xs font-bold text-gray-700">{s.label}</span>
+                      </div>
+                      <div className="text-xs font-bold text-gray-900">
+                        {s.leads} <span className="text-gray-400 font-medium">LDS</span>
+                        <span className="mx-1.5 text-gray-300">·</span>
+                        ${((s.revenue || 0) / 100).toLocaleString()}
+                      </div>
                    </div>
-                   <span className="text-[10px] font-black text-emerald-600">${((s.revenue || 0) / 100).toLocaleString()}</span>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
+          </div>
+
+          <hr className="border-gray-100 mb-6" />
+
+          <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">REVENUE BY SOURCE</h4>
+          
+          <div className="overflow-hidden border border-gray-100 rounded-xl">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50/50 border-b border-gray-100">
+                    <th className="px-4 py-2.5 text-[9px] font-black text-gray-400 uppercase tracking-tighter">Source</th>
+                    <th className="px-4 py-2.5 text-[9px] font-black text-gray-400 uppercase tracking-tighter text-right">Leads</th>
+                    <th className="px-4 py-2.5 text-[9px] font-black text-gray-400 uppercase tracking-tighter text-right">Booked</th>
+                    <th className="px-4 py-2.5 text-[9px] font-black text-gray-400 uppercase tracking-tighter text-right">Revenue</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {(metrics.sources || []).map((s, i) => (
+                    <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-gray-50/20"}>
+                      <td className="px-4 py-3 text-xs font-bold text-gray-900">
+                        <div className="flex items-center gap-2">
+                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: ["#3b82f6", "#10b981", "#f59e0b", "#f87171", "#8b5cf6", "#6366f1"][i % 6] }}></span>
+                          {s.label}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-xs font-bold text-gray-600 text-right">{s.leads}</td>
+                      <td className="px-4 py-3 text-xs font-bold text-gray-600 text-right">{s.booked}</td>
+                      <td className="px-4 py-3 text-xs font-black text-gray-900 text-right">${((s.revenue || 0) / 100).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-stone-50 border-t border-gray-200">
+                    <td className="px-4 py-3 text-xs font-black text-gray-900">Total</td>
+                    <td className="px-4 py-3 text-xs font-black text-gray-900 text-right">{metrics.sources.reduce((sum, item) => sum + (item.leads || 0), 0)}</td>
+                    <td className="px-4 py-3 text-xs font-black text-gray-900 text-right">{metrics.sources.reduce((sum, item) => sum + (item.booked || 0), 0)}</td>
+                    <td className="px-4 py-3 text-xs font-black text-gray-900 text-right">
+                      ${((metrics.sources.reduce((sum, item) => sum + (item.revenue || 0), 0)) / 100).toLocaleString()}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
           </div>
         </div>
 

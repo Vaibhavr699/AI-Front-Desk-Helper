@@ -5,22 +5,24 @@ const router = express.Router();
 const leadsService = require("../services/leads");
 const messagesService = require("../services/messages");
 const callsService = require("../services/calls");
-const { authMiddleware, getTenantIdFromQuery } = require("../lib/auth");
+const { authMiddleware, getTenantIdFromQuery, getTargetTenantIds, requireRole, ROLES } = require("../lib/auth");
 const db = require("../lib/db");
 
-// All routes require authentication
+// All routes require authentication and at least Manager-level access
 router.use(authMiddleware);
+router.use(requireRole([ROLES.OWNER, ROLES.ADMIN, ROLES.MANAGER]));
 
 /** GET /api/leads - List all leads for a tenant */
 router.get("/", async (req, res) => {
   try {
-    const tenantId = getTenantIdFromQuery(req);
-    if (!tenantId) return res.status(400).json({ error: "Missing tenantId" });
+    const tenantIds = await getTargetTenantIds(req);
+    if (!tenantIds.length) return res.status(400).json({ error: "Missing tenantId" });
     
     const limit = parseInt(req.query.limit) || 50;
     const offset = parseInt(req.query.offset) || 0;
     
-    const leads = await leadsService.getLeadsByTenant(tenantId, limit, offset);
+    // For single tenant, pass one. For roll-up, pass the array.
+    const leads = await leadsService.getLeadsByTenant(tenantIds, limit, offset);
     res.json(leads);
   } catch (err) {
     console.error("[Leads API] List failed:", err.message);
@@ -34,8 +36,14 @@ router.get("/:id", async (req, res) => {
     const lead = await leadsService.getLeadById(req.params.id);
     if (!lead) return res.status(404).json({ error: "Lead not found" });
 
-    // Authorization check
-    if (lead.tenant_id !== req.user?.tenant_id && !req.user?.is_super_admin) {
+    // Authorization check – owner, parent of owner, or super admin
+    const isOwner = lead.tenant_id === req.user?.tenant_id;
+    let isParentOfOwner = false;
+    if (!isOwner && req.user?.tenant_business_type === 'parent') {
+      const check = await db.query("SELECT 1 FROM tenants WHERE id = $1 AND parent_id = $2", [lead.tenant_id, req.user.tenant_id]);
+      isParentOfOwner = check.rows.length > 0;
+    }
+    if (!isOwner && !isParentOfOwner && !req.user?.is_super_admin) {
       return res.status(403).json({ error: "Forbidden" });
     }
 
@@ -52,8 +60,14 @@ router.patch("/:id", async (req, res) => {
     const lead = await leadsService.getLeadById(req.params.id);
     if (!lead) return res.status(404).json({ error: "Lead not found" });
 
-    // Authorization check
-    if (lead.tenant_id !== req.user?.tenant_id && !req.user?.is_super_admin) {
+    // Authorization check – owner, parent of owner, or super admin
+    const isOwner = lead.tenant_id === req.user?.tenant_id;
+    let isParentOfOwner = false;
+    if (!isOwner && req.user?.tenant_business_type === 'parent') {
+      const check = await db.query("SELECT 1 FROM tenants WHERE id = $1 AND parent_id = $2", [lead.tenant_id, req.user.tenant_id]);
+      isParentOfOwner = check.rows.length > 0;
+    }
+    if (!isOwner && !isParentOfOwner && !req.user?.is_super_admin) {
       return res.status(403).json({ error: "Forbidden" });
     }
 

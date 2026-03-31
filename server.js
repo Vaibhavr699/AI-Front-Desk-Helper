@@ -583,6 +583,7 @@ app.use("/api/billing", authMiddleware, billingRoutes);
 app.use("/api/leads", leadRoutes);
 app.use("/api/stripe", authMiddleware, require("./routes/stripe"));
 app.use("/api/admin", authMiddleware, requireSuperAdmin, require("./routes/admin"));
+app.use("/api/team", authMiddleware, require("./routes/team"));
 app.use("/api", authMiddleware, dashboardRoutes);
 app.use("/auth/google/calendar", require("./routes/google-calendar"));
 app.use("/api/google-calendar", authMiddleware, require("./routes/google-calendar"));
@@ -2827,17 +2828,18 @@ wss.on("connection", async (twilioSocket, req) => {
         `You are a professional receptionist for ${tenant?.company_name || 'our business'}. Be warm, confident, and helpful.`,
         `TONE OF VOICE: Your tone of voice is ${tenant?.tone_of_voice || 'professional'}. Maintain this personality throughout the call.`,
         "Default language is English. ONLY switch languages if the human caller EXPLICITLY and CLEARLY requests it in speech. NEVER change language based on static, background noise, or ambiguous sounds. If a switch is requested, call the change_language tool with the ISO 639-1 code (es, fr, hi, zh, ar, bpo, etc.), confirm the switch in the new language, and stay in that language unless asked to switch back. Do NOT switch languages back and forth spontaneously.",
-        "CONVERSATIONAL FLOW: Let the conversation flow naturally like a real human. If they ask a question, answer it directly using the Knowledge Base (FAQs) before steering them back to your questions. Do NOT rigidly fire questions one after another.",
-        "GOAL: When it feels natural, try to collect the following to book an appointment or estimate: Full Name, Phone Number, Email Address, Address or City, and the scope of what they need (e.g. 'What type of service can we help you with today?').",
-        "SERVICE TYPES: Do NOT assume the caller wants a specific service (like interior or exterior painting) unless it is explicitly mentioned in the business details or by the caller. If unsure, ALWAYS ask: 'What type of service are you looking for?'",
-        "OFFER: Offer a free on-site estimate or appointment. ALWAYS confirm the specific Date and Time with the caller before calling book_appointment.",
-        "APPOINTMENT MANAGEMENT: If the caller wants to CANCEL or RESCHEDULE, ask for their phone number to find their booking. Use 'cancel_appointment' or 'reschedule_appointment' only after confirming the details. For rescheduling, confirm the NEW date and time first.",
-        "REVENUE ESTIMATION: You MUST provide a non-zero 'estimated_value' (in dollars) for every booking. After the caller describes their project scope, ask professionally about their budget by saying something like: 'To help us provide the most accurate estimate, did you have a specific budget range in mind for this project?'. If they don't have one, ask for project size (e.g. 'How many rooms?') to form a reasonable estimate. As a rule of thumb: $500 per room, $2500 for a small project, $5000+ for large projects. NEVER leave revenue at 0.",
-        "LEAD ANALYSIS: Always provide a 'lead_score' (1-100) and a brief 'ai_summary' (1-2 sentences) when calling tools.",
-        "ONLY call book_appointment when you have obtained REAL details from the human for: name, phone, email, and address/city. Do NOT call it with placeholders or before asking for these details.",
-        "Right after calling book_appointment successfully, say: 'I have scheduled that for [Confirmed Date] at [Confirmed Time]. You will receive a confirmation text shortly. Is there anything else I can help you with today?'. ONLY call the 'hang_up' tool if they say no or if the conversation is clearly finished.",
-        "Do NOT say you are transferring or connecting to someone unless you actually need a live agent. Only use request_human_transfer for: emergencies, situations requiring a manager, frustrated/angry callers, or VIP/repeat customers. For normal requests, always complete the booking with book_appointment.",
-        "STRICT RULE: NEVER hallucinate or use placeholder/example data (like 'Armando', '555-1234', or 'Cancun') for any tool fields. If you are missing a required field, ASK the caller. Only use data provided by the human on the other end of the line.",
+        "CONVERSATIONAL FLOW: Let the conversation flow naturally like a real human. If they ask a question, answer it directly using the Knowledge Base (FAQs) before steering them back to your questions. Your primary flow is: (1) Warm welcome, (2) Ask for name and what they need, (3) ANSWER any questions about the business, (4) Get lead details (phone/email/address), (5) Ask about budget/size, (6) Book the time.",
+        "GOAL: Always collect: Full Name, Phone Number, Email Address, Address or City, and a detailed 'scope' of the project.",
+        "SERVICE TYPES: Do NOT assume service types. If unsure, ALWAYS ask: 'To clarify, is this for an interior or exterior project?' or similar.",
+        "OFFER: Offer a free on-site estimate. ALWAYS call 'check_availability' BEFORE calling 'book_appointment' if the caller suggests a specific date or time.",
+        "APPOINTMENT MANAGEMENT: If the caller wants to CANCEL or RESCHEDULE, handle it via its specific tool only after finding their booking. For rescheduling, ALWAYS check availability of the new time first.",
+        "AVAILABILITY RULES: If 'check_availability' returns 'available: false', you MUST inform the caller that the time is taken and suggest the alternative times provided by the tool (e.g. 'I'm sorry, that time is taken, but I have [Time 1], [Time 2], or [Time 3] available. Would one of those work?'). If no alternatives are provided, ask for another day.",
+        "REVENUE ESTIMATION (MANDATORY): You MUST collect and report a non-zero 'estimated_value' (in dollars) for every single booking. CRITICAL: Ask the caller: 'Do you have a specific budget range in mind for this project?' after they describe the work. If they don't have one, ask for a quantity (e.g. 'How many rooms?') so you can calculate a reasonable estimate. Rule of thumb: $500 per room, $2500 per house/floor, $5000+ for large jobs. NEVER leave revenue at 0.",
+        "LEAD ANALYSIS: Provide a 'lead_score' (1-100) and 'ai_summary' when calling tools.",
+        "STRICT TOOL RULE: ONLY call book_appointment when you have REAL details from the human caller. No placeholders. Call with ALL details including 'estimated_value'.",
+        "POST-BOOKING: Immediately confirm the time to the caller and ask if there is anything else you can help with today. Only call the 'hang_up' tool once they say no.",
+        "TRANSFER RULE: Only use request_human_transfer for high-value projects (over $10,000), commercial jobs, angry callers, or VIP/repeat customers. For regular residential calls, use 'book_appointment'.",
+        "STRICT RULE: NEVER hallucinate data. If you miss a field, ASK.",
       ].join("\n");
 
       // 2. TENANT CUSTOM INSTRUCTIONS
@@ -3045,13 +3047,14 @@ wss.on("connection", async (twilioSocket, req) => {
           try {
             if (name === "check_availability" && tenant) {
               const { appointment_date, appointment_time } = args;
-              const isAvailable = await calendar.checkAvailability(appointment_date, appointment_time, tenant);
+              const av = await calendar.checkAvailability(appointment_date, appointment_time, tenant);
               output = JSON.stringify({ 
                 success: true, 
-                available: isAvailable, 
-                message: isAvailable 
+                available: av.available, 
+                suggested_alternatives: av.suggestedTimes,
+                message: av.available 
                   ? "That time is available. You can proceed with book_appointment." 
-                  : "That time is unfortunately taken. Please ask the caller for another preferred time." 
+                  : `That time is unfortunately taken. I found these available slots on ${appointment_date}: ${av.suggestedTimes.join(", ")}. Please suggest these to the caller or ask for another time.` 
               });
             } else if (name === "cancel_appointment" && tenant && callId) {
               const { contact_phone, reason } = args;

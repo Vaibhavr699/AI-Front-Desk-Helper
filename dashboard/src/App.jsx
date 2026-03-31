@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useOutletContext, useLocation } from "react-router-dom";
 import { getUser } from "./api";
 import { DashboardLayout } from "./layouts";
-import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy } from "./pages";
+import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy, AddLocation, Team } from "./pages";
 import "./App.css";
 
 /** Scroll window to top on every route change so new pages (e.g. policy, login) are not shown at previous scroll position. */
@@ -23,8 +23,18 @@ function Protected({ children }) {
 /** Rendered when route is /login so we read user on this render (after logout, App may not have re-rendered). */
 function LoginRoute() {
   const user = getUser();
-  if (user) return <Navigate to="/dashboard" replace />;
-  return <Login onLogin={() => { window.location.href = "/dashboard"; }} />;
+  if (user) {
+    const to = user.role === 'staff' ? "/bookings" : "/dashboard";
+    return <Navigate to={to} replace />;
+  }
+  return (
+    <Login
+      onLogin={(u) => {
+        const to = u?.role === 'staff' ? "/bookings" : "/dashboard";
+        window.location.href = to;
+      }}
+    />
+  );
 }
 
 /** Logged-in layout wrapper: handles tenant guards and renders DashboardLayout. */
@@ -33,6 +43,9 @@ function AuthenticatedRoot() {
   const { pathname } = useLocation();
   if (!user) return <Navigate to="/login" replace />;
   const isImpersonating = !!localStorage.getItem("impersonate_tenant_id");
+  if (user?.role === 'staff' && pathname === '/dashboard') {
+    return <Navigate to="/bookings" replace />;
+  }
   if (user && !user.tenant_id && user.is_super_admin && !pathname.startsWith("/admin") && !isImpersonating) {
     return <Navigate to="/admin/tenants" replace />;
   }
@@ -49,7 +62,10 @@ function AuthenticatedRoot() {
 /** Root "/" route: landing page for guests, redirect to /dashboard for logged-in users. */
 function RootElement() {
   const user = getUser();
-  if (user) return <Navigate to="/dashboard" replace />;
+  if (user) {
+    const to = user.role === 'staff' ? "/bookings" : "/dashboard";
+    return <Navigate to={to} replace />;
+  }
   return <Home />;
 }
 
@@ -85,6 +101,8 @@ export default function App() {
           <Route path="/admin" element={<Navigate to="/admin/tenants" replace />} />
           <Route path="/admin/tenants" element={<AdminWithContext view="tenants" />} />
           <Route path="/admin/admins" element={<AdminWithContext view="admins" />} />
+          <Route path="/add-location" element={<AddLocation />} />
+          <Route path="/team" element={<Team />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -41,7 +41,7 @@ export const ContainerScroll = ({
                     perspective: "1000px",
                 }}
             >
-                <div className="relative z-[10] pointer-events-auto">
+                <div className="relative z-[20] pointer-events-auto">
                     <Header translate={translate} titleComponent={titleComponent} />
                 </div>
                 <Card rotate={rotate} translate={translate} scale={scale}>

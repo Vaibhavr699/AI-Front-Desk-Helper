@@ -110,7 +110,8 @@ export function resetApiKey(id) {
 }
 
 export function getCalls(tenantId, params = {}) {
-  const q = new URLSearchParams({ tenant_id: tenantId, ...params });
+  const extra = tenantId === 'all' ? { tenant_id: 'all', rollup: 'true', ...params } : { tenant_id: tenantId, ...params };
+  const q = new URLSearchParams(extra);
   return api(`/api/calls?${q}`);
 }
 
@@ -126,7 +127,8 @@ export function updateCall(id, body) {
 }
 
 export function getMetrics(tenantId) {
-  return api(`/api/metrics?tenant_id=${tenantId}`);
+  const query = tenantId === 'all' ? 'tenant_id=all&rollup=true' : `tenant_id=${tenantId}`;
+  return api(`/api/metrics?${query}`);
 }
 
 export function getUsage(tenantId) {
@@ -137,16 +139,35 @@ export function getConversations(tenantId) {
   return api(`/api/conversations?tenant_id=${tenantId}`);
 }
 
+export function getTeam() {
+  return api(`/api/team`);
+}
+
+export function inviteTeamMember(data) {
+  return api(`/api/team/invite`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function removeTeamMember(id) {
+  return api(`/api/team/${id}`, {
+    method: "DELETE",
+  });
+}
+
 export function getConversationTimeline(leadId) {
   return api(`/api/conversations/${leadId}/timeline`);
 }
 
 export function getActivityFeed(tenantId) {
-  return api(`/api/activity-feed?tenant_id=${tenantId}`);
+  const query = tenantId === 'all' ? 'tenant_id=all&rollup=true' : `tenant_id=${tenantId}`;
+  return api(`/api/activity-feed?${query}`);
 }
 
 export async function getBookings(tenantId, params = {}) {
-  const q = new URLSearchParams({ tenant_id: tenantId, ...params });
+  const extra = tenantId === 'all' ? { tenant_id: 'all', rollup: 'true', ...params } : { tenant_id: tenantId, ...params };
+  const q = new URLSearchParams(extra);
   return api(`/api/bookings?${q}`);
 }
 

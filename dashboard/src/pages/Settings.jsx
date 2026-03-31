@@ -651,7 +651,7 @@ export default function Settings({ tenantId }) {
                     <Lock className="w-10 h-10 text-gray-400 mx-auto mb-3" />
                     <p className="text-sm font-medium text-gray-900 mb-1">Subscription required</p>
                     <p className="text-xs text-gray-500 mb-4">Add a plan to provision a dedicated AI phone line.</p>
-                    <Link to="/billing" className="inline-flex px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800">
+                    <Link to="/plans" className="inline-flex px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800">
                       View plans
                     </Link>
                   </div>

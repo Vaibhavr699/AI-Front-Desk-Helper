@@ -1,7 +1,10 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../lib/db");
-const { getTenantIdFromQuery } = require("../lib/auth");
+const { getTenantIdFromQuery, requireRole, ROLES } = require("../lib/auth");
+
+// Only Owners and Admins can access billing
+router.use(requireRole([ROLES.OWNER, ROLES.ADMIN]));
 
 const PLAN_LIMITS = {
   basic: { minutes: 500, sms: 500, price: 297 },

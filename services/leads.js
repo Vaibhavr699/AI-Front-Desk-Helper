@@ -80,10 +80,12 @@ async function getLeadById(id) {
   return res.rows[0];
 }
 
-async function getLeadsByTenant(tenantId, limit = 50, offset = 0) {
+async function getLeadsByTenant(tenantIds, limit = 50, offset = 0) {
+  // Accept either a single ID string or an array
+  const ids = Array.isArray(tenantIds) ? tenantIds : [tenantIds];
   const res = await db.query(
-    "SELECT * FROM leads WHERE tenant_id = $1 ORDER BY updated_at DESC LIMIT $2 OFFSET $3",
-    [tenantId, limit, offset]
+    "SELECT * FROM leads WHERE tenant_id = ANY($1) ORDER BY updated_at DESC LIMIT $2 OFFSET $3",
+    [ids, limit, offset]
   );
   return res.rows;
 }

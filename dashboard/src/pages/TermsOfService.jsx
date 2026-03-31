@@ -73,6 +73,22 @@ export default function TermsOfService() {
             </section>
 
             <section>
+              <h2 className="font-serif text-xl font-semibold text-stone-900 mb-4">4A. Outbound Calling — Business Responsibility and TCPA Compliance</h2>
+              <p className="mb-4">Businesses using the AIFrontDeskHelper outbound calling feature are solely responsible for ensuring that all contacts on uploaded call lists have provided appropriate prior express written consent to be contacted by phone, automated system, or AI-powered voice technology as required by the Telephone Consumer Protection Act (TCPA) and all applicable federal, state, and local telemarketing laws and regulations.</p>
+              <p className="mb-4">By uploading a contact list and initiating outbound calling campaigns through the platform, the business account holder represents and warrants that:</p>
+              <ul className="list-disc pl-6 space-y-2 mb-4">
+                <li>All contacts on the uploaded list have provided prior express written consent to receive calls from the business</li>
+                <li>The business has maintained records of consent that can be produced upon request</li>
+                <li>All contacts have been scrubbed against the National Do Not Call Registry where required</li>
+                <li>The business will honor all opt-out requests immediately and permanently</li>
+                <li>All outbound calling activity complies with applicable calling hour restrictions</li>
+              </ul>
+              <p className="mb-4">AIFrontDeskHelper provides outbound calling as a technology platform only. AIFrontDeskHelper assumes no liability whatsoever for outbound communications made to contacts without proper consent, TCPA violations, Do Not Call violations, or any other regulatory violation arising from the business account holder's use of the outbound calling feature.</p>
+              <p className="mb-4">Violation of TCPA or applicable telemarketing laws is the exclusive legal and financial responsibility of the business account holder. The business account holder agrees to indemnify, defend, and hold harmless AIFrontDeskHelper from any claims, penalties, fines, or legal costs arising from the business's outbound calling activity on the platform.</p>
+              <p>AIFrontDeskHelper reserves the right to immediately suspend or terminate outbound calling access for any account suspected of TCPA violations or prohibited calling practices without prior notice.</p>
+            </section>
+
+            <section>
               <h2 className="font-serif text-xl font-semibold text-stone-900 mb-4">5. Customer Communications</h2>
               <p>AIFrontDeskHelper uses artificial intelligence to assist in responding to customer inquiries. While the platform strives to provide helpful responses, AI-generated replies may not always fully address complex or unique situations. Businesses remain responsible for ensuring the accuracy of information provided to customers.</p>
             </section>
@@ -154,7 +170,7 @@ export default function TermsOfService() {
 
             <section>
               <h2 className="font-serif text-xl font-semibold text-stone-900 mb-4">14. Governing Law</h2>
-              <p>These Terms shall be governed and interpreted according to the laws of the jurisdiction in which AIFrontDeskHelper operates, without regard to conflict of law principles.</p>
+              <p>These Terms of Service shall be governed by and construed in accordance with the laws of the State of Nebraska, without regard to its conflict of law principles. Any legal action or proceeding arising out of or relating to these Terms shall be brought exclusively in the state or federal courts located in Nebraska, and both parties consent to personal jurisdiction in such courts.</p>
             </section>
 
             <section>
@@ -163,6 +179,42 @@ export default function TermsOfService() {
               <p className="mb-1"><strong>AIFrontDeskHelper Support</strong></p>
               <p className="mb-1">Email: <a href="mailto:drew@aifrontdeskhelper.com" className="text-stone-900 underline hover:no-underline">drew@aifrontdeskhelper.com</a></p>
               <p>Website: <a href="https://www.aifrontdeskhelper.com" target="_blank" rel="noopener noreferrer" className="text-stone-900 underline hover:no-underline">www.aifrontdeskhelper.com</a></p>
+            </section>
+
+            <section>
+              <h2 className="font-serif text-xl font-semibold text-stone-900 mb-4">16. Refund Policy</h2>
+              <h3 className="font-semibold mb-2">Setup Fees</h3>
+              <p className="mb-4">All setup fees are non-refundable. Setup fees cover the cost of account configuration, onboarding, system integration, and initial platform setup. By paying the setup fee and proceeding with onboarding the customer acknowledges that setup services have been rendered and no refund will be issued.</p>
+              
+              <h3 className="font-semibold mb-2">Monthly Subscription Fees</h3>
+              <p className="mb-4">Monthly subscription fees are non-refundable once a billing cycle has begun. If a customer cancels their subscription mid-cycle the account will remain active until the end of the current billing period. No partial month refunds will be issued.</p>
+              
+              <h3 className="font-semibold mb-2">Minute and SMS Bundle Purchases</h3>
+              <p className="mb-4">Purchased minute and SMS bundles are non-refundable. Unused bundle minutes roll over for 90 days from the date of purchase. After 90 days unused bundle minutes expire with no refund or credit issued.</p>
+              
+              <h3 className="font-semibold mb-2">Exceptions</h3>
+              <p className="mb-4">AIFrontDeskHelper may at its sole discretion issue credits or partial refunds in cases of documented platform failure or service outage that prevents normal platform use for more than 72 consecutive hours. Refund requests must be submitted in writing to <a href="mailto:drew@aifrontdeskhelper.com" className="underline">drew@aifrontdeskhelper.com</a> within 14 days of the billing date in question. AIFrontDeskHelper is not obligated to issue refunds for customer dissatisfaction, underutilization of the platform, or business decisions made by the account holder.</p>
+              
+              <h3 className="font-semibold mb-2">Chargebacks</h3>
+              <p>Customers who initiate a chargeback or payment dispute without first contacting AIFrontDeskHelper support will have their account immediately suspended pending resolution. AIFrontDeskHelper reserves the right to recover chargeback fees and associated costs from the account holder.</p>
+            </section>
+
+            <section>
+              <h2 className="font-serif text-xl font-semibold text-stone-900 mb-4">17. Dispute Resolution and Arbitration</h2>
+              <h3 className="font-semibold mb-2">Informal Resolution First</h3>
+              <p className="mb-4">Before initiating any formal dispute process, both parties agree to attempt to resolve any dispute informally by contacting AIFrontDeskHelper support at <a href="mailto:drew@aifrontdeskhelper.com" className="underline">drew@aifrontdeskhelper.com</a>. Both parties agree to make a good faith effort to resolve the dispute within 30 days of written notice.</p>
+              
+              <h3 className="font-semibold mb-2">Binding Arbitration</h3>
+              <p className="mb-4">If informal resolution fails, any dispute, claim, or controversy arising out of or relating to these Terms or the use of AIFrontDeskHelper services shall be resolved by binding arbitration rather than in court, except that either party may bring claims in small claims court if the claim qualifies.</p>
+              
+              <h3 className="font-semibold mb-2">Arbitration Rules</h3>
+              <p className="mb-4">Arbitration shall be conducted by a single arbitrator under the rules of the American Arbitration Association. The arbitration shall take place in Nebraska or by remote hearing. The arbitrator's decision shall be final and binding and may be entered as a judgment in any court of competent jurisdiction.</p>
+              
+              <h3 className="font-semibold mb-2">No Class Actions</h3>
+              <p className="mb-4">Both parties agree that any dispute resolution proceedings will be conducted on an individual basis only. Class actions, class arbitrations, and consolidation of individual arbitrations are not permitted under these Terms.</p>
+              
+              <h3 className="font-semibold mb-2">Costs</h3>
+              <p>Each party shall bear its own legal costs and fees in any arbitration proceeding unless the arbitrator determines that a party has acted in bad faith, in which case the arbitrator may award reasonable fees and costs to the prevailing party.</p>
             </section>
           </div>
         </article>

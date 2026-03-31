@@ -53,17 +53,17 @@ const ToastItem = ({ toast, onRemove }) => {
   };
 
   const borderColors = {
-    success: 'border-emerald-200 border-t-emerald-600',
-    error: 'border-rose-200 border-t-rose-600',
-    warning: 'border-amber-200 border-t-amber-600',
-    info: 'border-blue-200 border-t-blue-600'
+    success: 'border-emerald-500/20 border-t-emerald-500',
+    error: 'border-rose-500/20 border-t-rose-500',
+    warning: 'border-amber-500/20 border-t-amber-500',
+    info: 'border-blue-500/20 border-t-blue-500'
   };
 
   const bgColors = {
-    success: 'bg-emerald-50/95 shadow-emerald-900/5',
-    error: 'bg-rose-50/95 shadow-rose-900/5',
-    warning: 'bg-amber-50/95 shadow-amber-900/5',
-    info: 'bg-blue-50/95 shadow-blue-900/5'
+    success: 'bg-emerald-600 text-white shadow-emerald-500/20',
+    error: 'bg-rose-600 text-white shadow-rose-500/20',
+    warning: 'bg-amber-500 text-white shadow-amber-500/20',
+    info: 'bg-blue-600 text-white shadow-blue-500/20'
   };
 
   return (
@@ -74,20 +74,22 @@ const ToastItem = ({ toast, onRemove }) => {
       exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
       className={`pointer-events-auto flex items-start gap-3 p-4 rounded-xl border-2 border-t-4 shadow-xl backdrop-blur-md transition-all duration-300 ${bgColors[toast.type]} ${borderColors[toast.type]} min-w-[280px]`}
     >
-      <div className="mt-0.5">{icons[toast.type]}</div>
+      <div className="mt-0.5">
+        {React.cloneElement(icons[toast.type], { className: "w-5 h-5 text-white" })}
+      </div>
       <div className="flex-1 mr-2">
-        <p className="text-[11px] font-bold text-stone-900 leading-tight">
-          {toast.type.toUpperCase()}
+        <p className="text-[10px] font-black uppercase tracking-widest opacity-80 leading-tight">
+          {toast.type}
         </p>
-        <p className="text-[12px] font-medium text-stone-600 mt-0.5 leading-snug">
+        <p className="text-[13px] font-bold mt-0.5 leading-snug">
           {toast.message}
         </p>
       </div>
       <button 
         onClick={onRemove}
-        className="text-stone-400 hover:text-stone-900 transition-colors p-0.5"
+        className="text-white/60 hover:text-white transition-colors p-1 hover:bg-white/10 rounded-lg"
       >
-        <X className="w-3.5 h-3.5" />
+        <X className="w-4 h-4" />
       </button>
     </motion.div>
   );

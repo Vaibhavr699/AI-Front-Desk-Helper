@@ -48,6 +48,7 @@ import {
   Lock,
   CalendarDays,
   UserPlus,
+  User,
   AtSign,
   Mail
 } from "lucide-react";
@@ -144,6 +145,7 @@ export default function Settings({ tenantId }) {
     google_calendar_email: "",
     faqs: [],
     outbound_instructions: "",
+    outbound_agent_name: "Alex",
     nurturing_enabled: false,
     referral_enabled: false,
     seasonal_campaigns_enabled: false,
@@ -233,6 +235,7 @@ export default function Settings({ tenantId }) {
         google_calendar_email: t.google_calendar_email || "",
         faqs: Array.isArray(t.faqs) ? t.faqs : [],
         outbound_instructions: t.outbound_instructions || "",
+        outbound_agent_name: t.outbound_agent_name || "Alex",
         nurturing_enabled: t.nurturing_enabled === true,
         referral_enabled: t.referral_enabled === true,
         seasonal_campaigns_enabled: t.seasonal_campaigns_enabled === true,
@@ -518,6 +521,7 @@ export default function Settings({ tenantId }) {
       facebook_page_id: form.facebook_page_id.trim() || null,
       faqs: form.faqs.filter(f => f.question.trim() && f.answer.trim()),
       outbound_instructions: form.outbound_instructions || null,
+      outbound_agent_name: form.outbound_agent_name || "Alex",
       nurturing_enabled: form.nurturing_enabled,
       referral_enabled: form.referral_enabled,
       seasonal_campaigns_enabled: form.seasonal_campaigns_enabled,
@@ -1178,7 +1182,21 @@ export default function Settings({ tenantId }) {
                 <p className="text-sm text-gray-500 mb-6 italic bg-blue-50/50 p-4 rounded-xl border border-blue-100/50 leading-relaxed">
                   These instructions are used when your AI assistant calls or follows up with leads. Focus on outreach, professional follow-up, and engaging existing contacts.
                 </p>
-                <div className="space-y-4">
+                <div className="space-y-6">
+                  <div className="md:w-1/3">
+                    <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">AI Caller Name</label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                      <input 
+                        type="text"
+                        value={form.outbound_agent_name}
+                        onChange={(e) => handleUpdateForm("outbound_agent_name", e.target.value)}
+                        className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-blue-500/5 transition-all outline-none font-bold text-xs"
+                        placeholder="e.g. Alex, Sarah"
+                      />
+                    </div>
+                    <p className="text-[10px] text-gray-400 mt-1 italic">Default name for outbound calls.</p>
+                  </div>
                   <div className="col-span-2">
                     <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Outbound Personality & Instructions</label>
                     <textarea

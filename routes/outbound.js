@@ -33,7 +33,7 @@ router.get("/campaigns", async (req, res) => {
 router.post("/campaigns", requireRole([ROLES.OWNER, ROLES.ADMIN]), upload.single("csv"), async (req, res) => {
   try {
     const tenantId = getTenantIdFromQuery(req);
-    const { name, mode, prompt_description, calling_hours_start, calling_hours_end, max_attempts, consent_confirmed } = req.body;
+    const { name, mode, prompt_description, calling_hours_start, calling_hours_end, max_attempts, consent_confirmed, agent_name, persona_instructions } = req.body;
 
     console.log(`[Campaign Route] New campaign: ${name}, mode=${mode}, tenantId=${tenantId}`);
     console.log(`[Campaign Route] File received: ${req.file ? req.file.originalname : 'NONE'}, size=${req.file ? req.file.size : 0}`);
@@ -45,13 +45,16 @@ router.post("/campaigns", requireRole([ROLES.OWNER, ROLES.ADMIN]), upload.single
     const campaignRes = await db.query(
       `INSERT INTO outbound_campaigns (
         tenant_id, name, mode, status, prompt_description, 
-        calling_hours_start, calling_hours_end, max_attempts
-      ) VALUES ($1, $2, $3, 'active', $4, $5, $6, $7) RETURNING *`,
+        calling_hours_start, calling_hours_end, max_attempts,
+        agent_name, persona_instructions
+      ) VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9) RETURNING *`,
       [
         tenantId, name, mode, prompt_description, 
         calling_hours_start || "08:00:00", 
         calling_hours_end || "19:00:00", 
-        max_attempts || 3
+        max_attempts || 3,
+        agent_name || null,
+        persona_instructions || null
       ]
     );
 
@@ -110,7 +113,7 @@ router.get("/campaigns/:id/contacts", async (req, res) => {
  */
 router.patch("/campaigns/:id", async (req, res) => {
   try {
-    const { prompt_description, name } = req.body;
+    const { prompt_description, name, agent_name, persona_instructions } = req.body;
     const updates = [];
     const values = [];
     
@@ -121,6 +124,14 @@ router.patch("/campaigns/:id", async (req, res) => {
     if (name !== undefined) {
       updates.push(`name = $${updates.length + 1}`);
       values.push(name);
+    }
+    if (agent_name !== undefined) {
+      updates.push(`agent_name = $${updates.length + 1}`);
+      values.push(agent_name);
+    }
+    if (persona_instructions !== undefined) {
+      updates.push(`persona_instructions = $${updates.length + 1}`);
+      values.push(persona_instructions);
     }
 
     if (updates.length > 0) {

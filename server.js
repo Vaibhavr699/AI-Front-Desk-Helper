@@ -2693,6 +2693,10 @@ wss.on("connection", async (twilioSocket, req) => {
       const cRes = await db.query("SELECT * FROM outbound_campaigns WHERE id = $1", [campaignId]);
       const campaign = cRes.rows[0];
       if (campaign) {
+        // AI PERSONA OVERRIDES
+        if (campaign.agent_name) tenant.outbound_agent_name = campaign.agent_name;
+        if (campaign.persona_instructions) tenant.outbound_instructions = campaign.persona_instructions;
+
         if (campaign.mode === 'manual') {
           outboundScript = campaign.prompt_description;
         } else if (scriptId) {
@@ -2909,8 +2913,8 @@ wss.on("connection", async (twilioSocket, req) => {
       ];
 
       const baseOutboundRules = [
-        `You are a professional outreach and follow-up agent for ${tenant?.company_name || 'our business'}. Be professional, respectful, and direct.`,
-        `CONVERSATIONAL FLOW: You are CALLING the customer. Do NOT say 'How can I help you?'. Instead, introduce yourself, state that you are calling from ${tenant?.company_name || 'the business'}, and then proceed with your script. Your primary goal is to engage the user, answer their questions, and move them toward booking an appointment or confirming their project details.`,
+        `You are ${tenant?.outbound_agent_name || 'Alex'}, a professional outreach and follow-up agent for ${tenant?.company_name || 'the business'}. Be professional, respectful, and direct.`,
+        `CONVERSATIONAL FLOW: You are CALLING the customer. Do NOT say 'How can I help you?'. Instead, introduce yourself (e.g., "Hi, I am ${tenant?.outbound_agent_name || 'Alex'} from ${tenant?.company_name || 'the business'}..."), and then proceed with your script. Your primary goal is to engage the user, answer their questions, and move them toward booking an appointment or confirming their project details.`,
       ];
 
       const universalRules = [

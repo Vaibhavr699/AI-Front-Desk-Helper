@@ -17,6 +17,8 @@ export default function CampaignCreator({ tenantId, onClose, onCreated }) {
     max_attempts: 3,
     consent_confirmed: false,
     csv: null,
+    agent_name: "Alex",
+    persona_instructions: "",
   });
 
   const isFormValid = formData.name && formData.csv && formData.consent_confirmed;
@@ -44,6 +46,8 @@ export default function CampaignCreator({ tenantId, onClose, onCreated }) {
       data.append("consent_confirmed", formData.consent_confirmed);
       data.append("csv", formData.csv);
       data.append("tenantId", tenantId);
+      data.append("agent_name", formData.agent_name);
+      data.append("persona_instructions", formData.persona_instructions);
 
       const res = await postFormData("/api/outbound/campaigns", data);
       onCreated(res);
@@ -151,6 +155,48 @@ export default function CampaignCreator({ tenantId, onClose, onCreated }) {
                 </div>
               </motion.div>
             </AnimatePresence>
+          </section>
+
+          <section className="space-y-4 p-5 bg-stone-50/50 border border-stone-200 rounded-2xl relative overflow-hidden group">
+            <div className="absolute top-0 right-0 p-4 opacity-[0.03] group-hover:opacity-[0.07] transition-all group-hover:scale-110">
+              <User size={80} />
+            </div>
+            
+            <div className="flex items-center gap-2 mb-2">
+               <div className="w-1.5 h-4 bg-orange-400 rounded-full"></div>
+               <h3 className="text-[10px] font-black uppercase tracking-widest text-stone-900">AI Personal Identity</h3>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+               <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-stone-400 ml-0.5">AI Caller Name</label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-300" size={14} />
+                    <input 
+                      type="text"
+                      placeholder="e.g. Alex, Drew, Sarah"
+                      className="w-full pl-9 pr-4 py-2.5 bg-white border border-stone-200 rounded-xl focus:ring-1 focus:ring-stone-900 transition-all outline-none text-stone-900 font-bold text-xs"
+                      value={formData.agent_name}
+                      onChange={(e) => setFormData({...formData, agent_name: e.target.value})}
+                    />
+                  </div>
+                  <p className="text-[9px] text-stone-400 italic px-1">"Hi, I'm {formData.agent_name || '...'} from [Business]..."</p>
+               </div>
+
+               <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-stone-400 ml-0.5">Tone & Persona</label>
+                  <div className="relative">
+                    <ShieldCheck className="absolute left-3 top-3 text-stone-300" size={14} />
+                    <textarea 
+                      rows={2}
+                      placeholder="e.g. Energetic assistant, Professional estimator"
+                      className="w-full pl-9 pr-4 py-2.5 bg-white border border-stone-200 rounded-xl focus:ring-1 focus:ring-stone-900 transition-all outline-none text-stone-900 font-medium text-xs resize-none"
+                      value={formData.persona_instructions}
+                      onChange={(e) => setFormData({...formData, persona_instructions: e.target.value})}
+                    />
+                  </div>
+               </div>
+            </div>
           </section>
 
           <section className="space-y-1.5 focus-within:translate-x-1 transition-transform">

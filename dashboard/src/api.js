@@ -33,6 +33,46 @@ export async function api(path, options = {}) {
   return res.json();
 }
 
+export function get(path, params = {}) {
+  const q = new URLSearchParams(params);
+  const fullPath = q.toString() ? `${path}?${q}` : path;
+  return api(fullPath, { method: "GET" });
+}
+
+export function post(path, body = {}) {
+  return api(path, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function patch(path, body = {}) {
+  return api(path, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function del(path) {
+  return api(path, { method: "DELETE" });
+}
+
+export async function postFormData(path, formData) {
+  const token = getToken();
+  const headers = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+  return res.json();
+}
+
 export async function login(email, password) {
   const data = await api("/api/auth/login", {
     method: "POST",

@@ -55,6 +55,8 @@ const dashboardRoutes = require("./routes/dashboard");
 const authRoutes = require("./routes/auth");
 const leadRoutes = require("./routes/leads");
 const billingRoutes = require("./routes/billing");
+const outboundRoutes = require("./routes/outbound");
+const { startOutboundEngine } = require("./services/outboundEngine");
 const { authMiddleware, requireSuperAdmin } = require("./lib/auth");
 
 const WEBSITE_CONTEXT_URL = process.env.WEBSITE_CONTEXT_URL || "https://www.gladiatorspainting.com";
@@ -580,6 +582,7 @@ app.use("/api/public", require("./routes/public"));
 app.use("/twilio", twilioRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/billing", authMiddleware, billingRoutes);
+app.use("/api/outbound", authMiddleware, outboundRoutes);
 app.use("/api/leads", leadRoutes);
 app.use("/api/stripe", authMiddleware, require("./routes/stripe"));
 app.use("/api/admin", authMiddleware, requireSuperAdmin, require("./routes/admin"));
@@ -873,7 +876,56 @@ async function safeUpdateCallSummary(callId, options = {}) {
            WHERE id = $1`;
 
       if (!pool) return;
-      await pool.query(query, values);
+      const res = await pool.query(query, values);
+
+      // MINUTE DEDUCTION LOGIC
+      if (markEnded && callsTableHasDurationColumn) {
+        try {
+          // 1. Get tenant usage
+          const callRes = await pool.query("SELECT tenant_id, started_at, ended_at FROM calls WHERE id = $1", [callId]);
+          const callRow = callRes.rows[0];
+          if (callRow && callRow.tenant_id) {
+            const tenantId = callRow.tenant_id;
+            const durationSec = (new Date(callRow.ended_at) - new Date(callRow.started_at)) / 1000;
+            const durationMin = Math.ceil(durationSec / 60);
+
+            if (durationMin > 0) {
+              const startOfMonth = new Date();
+              startOfMonth.setDate(1);
+              startOfMonth.setHours(0,0,0,0);
+
+              const tenantRes = await pool.query("SELECT plan, bundle_minutes_balance FROM tenants WHERE id = $1", [tenantId]);
+              const tenant = tenantRes.rows[0];
+              const PLAN_LIMITS = { basic: 500, pro: 1200, elite: 3000 };
+              const planLimit = PLAN_LIMITS[tenant?.plan] || 500;
+
+              const usageRes = await pool.query(
+                "SELECT COALESCE(SUM(duration_sec), 0) as total_sec FROM recordings WHERE tenant_id = $1 AND created_at >= $2",
+                [tenantId, startOfMonth]
+              );
+              const usedMinutesBefore = Math.ceil(usageRes.rows[0].total_sec / 60);
+
+              // If we are already over plan limit or this call pushes us over
+              if (usedMinutesBefore >= planLimit) {
+                // Entire call is overage
+                await pool.query(
+                  "UPDATE tenants SET bundle_minutes_balance = GREATEST(0, bundle_minutes_balance - $1) WHERE id = $2",
+                  [durationMin, tenantId]
+                );
+              } else if (usedMinutesBefore + durationMin > planLimit) {
+                // Partial overage
+                const overage = (usedMinutesBefore + durationMin) - planLimit;
+                await pool.query(
+                  "UPDATE tenants SET bundle_minutes_balance = GREATEST(0, bundle_minutes_balance - $1) WHERE id = $2",
+                  [overage, tenantId]
+                );
+              }
+            }
+          }
+        } catch (e) {
+          console.error("[Billing] Minutes deduction failed:", e.message);
+        }
+      }
     }
 
     try {
@@ -2558,8 +2610,11 @@ wss.on("connection", async (twilioSocket, req) => {
 
   const isRecovery = q.type === "recovery";
   const isNurturing = q.type === "nurturing";
+  const isOutbound = q.type === "outbound";
   const recoveryId = q.recoveryId;
   const scheduleId = q.scheduleId;
+  const campaignId = q.campaignId;
+  const scriptId = q.scriptId;
   const recoveryScript = q.script ? decodeURIComponent(q.script) : "";
   const leadSource = q.leadSource || null;
 
@@ -2631,6 +2686,29 @@ wss.on("connection", async (twilioSocket, req) => {
     }
   }
 
+  // OUTBOUND SCRIPT RESOLUTION
+  let outboundScript = null;
+  if (isOutbound && campaignId) {
+    try {
+      const cRes = await db.query("SELECT * FROM outbound_campaigns WHERE id = $1", [campaignId]);
+      const campaign = cRes.rows[0];
+      if (campaign) {
+        if (campaign.mode === 'manual') {
+          outboundScript = campaign.prompt_description;
+        } else if (scriptId) {
+          const sRes = await db.query("SELECT content FROM outbound_scripts WHERE id = $1", [scriptId]);
+          outboundScript = sRes.rows[0]?.content;
+        }
+        // Overwrite tenant if campaign belongs to another tenant (safety)
+        if (campaign.tenant_id !== tenant?.id) {
+          tenant = await getTenantById(campaign.tenant_id);
+        }
+      }
+    } catch (e) {
+      console.error("[Outbound] Failed to fetch campaign script:", e.message);
+    }
+  }
+
   if (tenant && tenant.is_suspended) {
     console.warn("[AI-Desk] Call blocked for suspended tenant:", tenant.slug);
     twilioSocket.close();
@@ -2684,13 +2762,14 @@ wss.on("connection", async (twilioSocket, req) => {
             instructions: "Greet the user warmly as a professional receptionist. Ask how you can help them today."
           }
         });
-      } else if (recoveryScript) {
-        console.log("[AI-Desk] Triggering recovery greeting (StreamReady & OpenAIReady): %s", recoveryScript);
+      } else if (recoveryScript || outboundScript) {
+        const scriptToUse = outboundScript || recoveryScript;
+        console.log("[AI-Desk] Triggering greeting (StreamReady & OpenAIReady): %s", scriptToUse);
         sendToOpenAI({
           type: "response.create",
           response: {
             modalities: ["audio", "text"],
-            instructions: `Greet the user by saying EXACTLY this and nothing else yet: "${recoveryScript}"`
+            instructions: `Greet the user by saying EXACTLY this and nothing else yet: "${scriptToUse}"`
           }
         });
       }
@@ -3885,5 +3964,6 @@ cron.schedule("0 9 * * *", () => {
 loadTenants().then(() => {
   server.listen(PORT, () => {
     console.log(`AI front desk backend listening on port ${PORT}`);
+    startOutboundEngine().catch(e => console.error("Outbound Engine start failed:", e));
   });
 });

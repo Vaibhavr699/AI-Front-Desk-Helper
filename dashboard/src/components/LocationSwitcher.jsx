@@ -58,8 +58,8 @@ export default function LocationSwitcher({ tenantId, tenants, onTenantChange }) 
       </button>
 
       {isOpen && (
-        <div className="absolute left-0 top-full mt-2 w-64 rounded-xl bg-white border border-stone-200 shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-200">
-          <div className="p-2 space-y-1">
+        <div className="absolute left-[2]  top-full mt-2 w-56 border-2 rounded-xl bg-white border border-stone-200 shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-200">
+          <div className="space-y-1">
             {/* Roll-up Option */}
             <button
               onClick={() => {
@@ -81,7 +81,7 @@ export default function LocationSwitcher({ tenantId, tenants, onTenantChange }) 
               </div>
             </button>
 
-            <div className="h-px bg-stone-100 my-1 mx-2" />
+            <div className="h-px bg-stone-200 mx-2" />
 
             {/* Parent Location */}
             <button

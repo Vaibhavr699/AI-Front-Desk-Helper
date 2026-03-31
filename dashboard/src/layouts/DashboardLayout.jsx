@@ -3,6 +3,8 @@ import { Outlet, Link } from "react-router-dom";
 import CookieConsent from "react-cookie-consent";
 import { getTenants, getUser } from "../api";
 import { Header, Sidebar } from "../components";
+import { useToast } from "../components/ui/Toast";
+import { useRef } from "react";
 
 const TENANT_STORAGE_KEY = "tenantId";
 const SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
@@ -42,7 +44,9 @@ function ChatWidget({ tenantId }) {
 export default function DashboardLayout() {
   const [tenants, setTenants] = useState([]);
   const user = getUser();
-  const [tenantId, setTenantId] = useState(user?.tenant_id || "");
+  const [tenantId, setTenantId] = useState(
+    () => localStorage.getItem("tenantId") || user?.tenant_id || ""
+  );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) !== "0"
   );
@@ -51,6 +55,9 @@ export default function DashboardLayout() {
     () => localStorage.getItem("impersonate_tenant_id")
   );
   const impersonateName = localStorage.getItem("impersonate_tenant_name");
+  const { success } = useToast();
+  const isFirstRender = useRef(true);
+  const prevTenantIdRef = useRef(null);
 
   useEffect(() => {
     // Override tenantId if impersonating
@@ -98,9 +105,24 @@ export default function DashboardLayout() {
       if (active) {
         setTenant(active);
         setIsSuspended(active.is_suspended && !user?.is_super_admin && !impersonating);
+        
+        // Only show toast if the tenantId has ACTUALLY changed from a previously known value
+        // and it's not the initial load of the application.
+        const hasIdChanged = prevTenantIdRef.current && prevTenantIdRef.current !== tenantId;
+        
+        if (!isFirstRender.current && hasIdChanged) {
+          success(`Switched to: ${active.name}`);
+        }
+        
+        prevTenantIdRef.current = tenantId;
       }
     }
-  }, [tenantId]);
+    
+    // Set first render to false only after we have actually loaded something or if it's clear it's stable.
+    if (tenants.length > 0) {
+      isFirstRender.current = false;
+    }
+  }, [tenantId, tenants]);
 
   useEffect(() => {
     if (tenantId) {

@@ -16,6 +16,7 @@ import {
   ShieldAlert,
   ChevronRight
 } from "lucide-react";
+import { useToast } from "../components/ui/Toast";
 
 function AudioPlayer({ recordingId }) {
   const [src, setSrc] = useState(null);
@@ -60,6 +61,7 @@ function CallCard({ call, onUpdate }) {
   const summary = lead.ai_summary || meta.ai_summary || "No summary available.";
   const projectType = lead.project_type || lead.scope || "General Inquiry";
   const projectValue = lead.estimated_value ? `$${parseFloat(lead.estimated_value).toLocaleString()}` : "N/A";
+  const { success, error: toastError } = useToast();
 
   const [isUpdating, setIsUpdating] = useState(false);
 
@@ -67,9 +69,10 @@ function CallCard({ call, onUpdate }) {
     setIsUpdating(true);
     try {
       await updateCall(call.id, { status: action });
+      success(`Lead state updated: ${action}`);
       onUpdate();
     } catch (e) {
-      console.error("Action failed:", e);
+      toastError("Mission protocol adjustment failed.");
     } finally {
       setIsUpdating(false);
     }
@@ -184,33 +187,53 @@ function CallCard({ call, onUpdate }) {
         <button
           onClick={() => handleAction('Estimate Scheduled')}
           disabled={isUpdating}
-          className="flex items-center gap-2 w-full px-3 py-2 bg-white border border-stone-200 text-stone-700 rounded-lg text-xs font-semibold hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-700 transition-all text-left disabled:opacity-50"
+          className={`flex items-center gap-2 w-full px-3 py-2 border rounded-lg text-xs font-semibold transition-all text-left disabled:opacity-50 ${
+            call.status === 'Estimate Scheduled' 
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-700 ring-1 ring-emerald-100' 
+              : 'bg-white border-stone-200 text-stone-700 hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-700'
+          }`}
         >
-          <Calendar className="w-3.5 h-3.5" /> Schedule Estimate
+          <div className="shrink-0">{call.status === 'Estimate Scheduled' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Calendar className="w-3.5 h-3.5" />}</div>
+          <span>Schedule Estimate</span>
         </button>
 
         <button
           onClick={() => handleAction('FollowUp Needed')}
           disabled={isUpdating}
-          className="flex items-center gap-2 w-full px-3 py-2 bg-white border border-stone-200 text-stone-700 rounded-lg text-xs font-semibold hover:bg-amber-50 hover:border-amber-200 hover:text-amber-700 transition-all text-left disabled:opacity-50"
+          className={`flex items-center gap-2 w-full px-3 py-2 border rounded-lg text-xs font-semibold transition-all text-left disabled:opacity-50 ${
+            call.status === 'FollowUp Needed' 
+              ? 'bg-amber-50 border-amber-200 text-amber-700 ring-1 ring-amber-100' 
+              : 'bg-white border-stone-200 text-stone-700 hover:bg-amber-50 hover:border-amber-200 hover:text-amber-700'
+          }`}
         >
-          <AlertCircle className="w-3.5 h-3.5" /> FollowUp
+          <div className="shrink-0">{call.status === 'FollowUp Needed' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}</div>
+          <span>FollowUp</span>
         </button>
 
         <button
           onClick={() => handleAction('Lost Lead')}
           disabled={isUpdating}
-          className="flex items-center gap-2 w-full px-3 py-2 bg-white border border-stone-200 text-stone-700 rounded-lg text-xs font-semibold hover:bg-rose-50 hover:border-rose-200 hover:text-rose-700 transition-all text-left disabled:opacity-50"
+          className={`flex items-center gap-2 w-full px-3 py-2 border rounded-lg text-xs font-semibold transition-all text-left disabled:opacity-50 ${
+            call.status === 'Lost Lead' 
+              ? 'bg-rose-50 border-rose-200 text-rose-700 ring-1 ring-rose-100' 
+              : 'bg-white border-stone-200 text-stone-700 hover:bg-rose-50 hover:border-rose-200 hover:text-rose-700'
+          }`}
         >
-          <XCircle className="w-3.5 h-3.5" /> Lost Lead
+          <div className="shrink-0">{call.status === 'Lost Lead' ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}</div>
+          <span>Lost Lead</span>
         </button>
 
         <button
           onClick={() => handleAction('Spam')}
           disabled={isUpdating}
-          className="flex items-center gap-2 w-full px-3 py-2 bg-white border border-stone-200 text-stone-700 rounded-lg text-xs font-semibold hover:bg-stone-200 hover:text-stone-900 transition-all text-left disabled:opacity-50"
+          className={`flex items-center gap-2 w-full px-3 py-2 border rounded-lg text-xs font-semibold transition-all text-left disabled:opacity-50 ${
+            call.status === 'Spam' 
+              ? 'bg-stone-200 border-stone-300 text-stone-900 ring-1 ring-stone-100' 
+              : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-200 hover:text-stone-900'
+          }`}
         >
-          <ShieldAlert className="w-3.5 h-3.5" /> Spam
+          <div className="shrink-0">{call.status === 'Spam' ? <ShieldAlert className="w-3.5 h-3.5" /> : <ShieldAlert className="w-3.5 h-3.5" />}</div>
+          <span>Spam</span>
         </button>
       </div>
     </div>
@@ -220,6 +243,7 @@ function CallCard({ call, onUpdate }) {
 export default function Calls({ tenantId }) {
   const [calls, setCalls] = useState([]);
   const [loading, setLoading] = useState(true);
+  const { error: toastError } = useToast();
   const [error, setError] = useState("");
 
   const fetchCalls = () => {
@@ -227,7 +251,10 @@ export default function Calls({ tenantId }) {
     setLoading(true);
     getCalls(tenantId)
       .then((data) => setCalls(data.calls || []))
-      .catch((e) => setError(e.message))
+      .catch((e) => {
+        setError(e.message);
+        toastError("Data sync failed. Retrying...");
+      })
       .finally(() => setLoading(false));
   };
 

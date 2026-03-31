@@ -180,4 +180,27 @@ router.post("/recovery-call-status", (req, res) => {
   }
 });
 
+// Outbound campaign entry (Supports both GET and POST from Twilio)
+router.all("/outbound", (req, res) => {
+  const campaignId = req.query.campaignId || req.body.campaignId;
+  const contactId = req.query.contactId || req.body.contactId;
+  const scriptId = req.query.scriptId || req.body.scriptId;
+
+  const wsUrl = (BASE_URL || "")
+    .replace("https://", "wss://")
+    .replace("http://", "ws://") + "/twilio-media";
+
+  let streamUrl = `${wsUrl}?type=outbound&campaignId=${encodeURIComponent(campaignId)}&contactId=${encodeURIComponent(contactId)}`;
+  if (scriptId) streamUrl += `&scriptId=${encodeURIComponent(scriptId)}`;
+
+  const twiml = `
+    <Response>
+      <Connect>
+        <Stream url="${escapeXml(streamUrl)}" />
+      </Connect>
+    </Response>
+  `;
+  res.type("text/xml").send(twiml);
+});
+
 module.exports = router;

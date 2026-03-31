@@ -4,6 +4,7 @@ import { motion, AnimatePresence, useMotionValue, useTransform } from "framer-mo
 import { Mail, Lock, Eye, EyeClosed, ArrowRight, ArrowLeft } from "lucide-react";
 import { login, signup } from "../api";
 import { cn } from "../lib/utils";
+import { useToast } from "../components/ui/Toast";
 
 function Input({ className, type, ...props }) {
   return (
@@ -27,7 +28,7 @@ export default function Login({ onLogin }) {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState("");
+  const { success, error } = useToast();
   const [focusedInput, setFocusedInput] = useState(null);
 
   const mouseX = useMotionValue(0);
@@ -49,23 +50,23 @@ export default function Login({ onLogin }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError("");
     setIsLoading(true);
     try {
       let data;
       if (isSignup) {
         data = await signup(email, password);
+        success("Account created! Redirecting to setup...");
       } else {
         data = await login(email, password);
+        success("Welcome back! Redirecting...");
       }
       onLogin(data?.user);
     } catch (err) {
       const msg = err.message || "";
-      setError(
-        msg.toLowerCase().includes("unauthorized")
-          ? "Invalid email or password. Please try again."
-          : msg || (isSignup ? "Sign up failed" : "Login failed")
-      );
+      const friendlyMsg = msg.toLowerCase().includes("unauthorized")
+        ? "Invalid email or password. Please try again."
+        : msg || (isSignup ? "Sign up failed" : "Login failed");
+      error(friendlyMsg);
     } finally {
       setIsLoading(false);
     }
@@ -230,11 +231,6 @@ export default function Login({ onLogin }) {
                   )}
                 </motion.div>
 
-                {error && (
-                  <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-sm text-red-600 font-medium">
-                    {error}
-                  </motion.p>
-                )}
 
                 {/* Submit button */}
                 <motion.button

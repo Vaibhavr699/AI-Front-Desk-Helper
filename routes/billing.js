@@ -27,9 +27,10 @@ router.get("/usage", async (req, res) => {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     
-    // Get tenant plan
-    const tenantRes = await db.query("SELECT plan FROM tenants WHERE id = $1", [tenantId]);
+    // Get tenant plan & bundle info
+    const tenantRes = await db.query("SELECT plan, bundle_minutes_balance FROM tenants WHERE id = $1", [tenantId]);
     const planKey = (tenantRes.rows[0]?.plan || "basic").toLowerCase();
+    const bundleMinutesBalance = tenantRes.rows[0]?.bundle_minutes_balance || 0;
     const limits = PLAN_LIMITS[planKey] || PLAN_LIMITS.basic;
 
     const [voiceRes, smsRes] = await Promise.all([
@@ -73,7 +74,8 @@ router.get("/usage", async (req, res) => {
       current: {
         minutes: usedMinutes,
         sms: usedSms,
-        seconds: usedSeconds
+        seconds: usedSeconds,
+        bundle_minutes_balance: bundleMinutesBalance
       },
       overage: {
         extraMinutes,

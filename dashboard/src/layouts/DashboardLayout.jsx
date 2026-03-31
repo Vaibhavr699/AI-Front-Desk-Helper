@@ -44,12 +44,11 @@ function ChatWidget({ tenantId }) {
 export default function DashboardLayout() {
   const [tenants, setTenants] = useState([]);
   const user = getUser();
-  const [tenantId, setTenantId] = useState(
-    () => localStorage.getItem("tenantId") || user?.tenant_id || ""
-  );
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(
-    () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) !== "0"
-  );
+  const [tenantId, setTenantId] = useState(() => {
+    const stored = localStorage.getItem("tenantId");
+    if (stored === "all") return user?.tenant_id || "";
+    return stored || user?.tenant_id || "";
+  });
   const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
   const [impersonating, setImpersonating] = useState(
     () => localStorage.getItem("impersonate_tenant_id")
@@ -111,7 +110,8 @@ export default function DashboardLayout() {
         const hasIdChanged = prevTenantIdRef.current && prevTenantIdRef.current !== tenantId;
         
         if (!isFirstRender.current && hasIdChanged) {
-          success(`Switched to: ${active.name}`);
+          const locationName = tenantId === "all" ? "Reporting" : active.name;
+          success(`Switched to: ${locationName}`);
         }
         
         prevTenantIdRef.current = tenantId;
@@ -129,14 +129,6 @@ export default function DashboardLayout() {
       localStorage.setItem(TENANT_STORAGE_KEY, tenantId);
     }
   }, [tenantId]);
-
-  useEffect(() => {
-    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? "1" : "0");
-  }, [sidebarCollapsed]);
-
-  function toggleSidebar() {
-    setSidebarCollapsed((c) => !c);
-  }
 
   function openMobileSidebar() {
     setSidebarMobileOpen(true);
@@ -200,7 +192,7 @@ export default function DashboardLayout() {
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* Desktop sidebar: fixed height, no scroll */}
         <div className="hidden lg:block h-full shrink-0">
-          <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} activeTenant={tenant} />
+          <Sidebar activeTenant={tenant} />
         </div>
 
         {/* Mobile sidebar overlay */}
@@ -216,8 +208,6 @@ export default function DashboardLayout() {
             }`}
         >
           <Sidebar
-            collapsed={false}
-            onToggle={closeMobileSidebar}
             closeMobile={closeMobileSidebar}
             activeTenant={tenant}
           />

@@ -204,7 +204,7 @@ function BillingIcon({ className }) {
  * Collapsible sidebar with nav links and icons.
  * closeMobile: optional, called when a link is clicked (for mobile drawer).
  */
-export default function Sidebar({ collapsed, onToggle, closeMobile, activeTenant }) {
+export default function Sidebar({ closeMobile, activeTenant }) {
   const [isHovered, setIsHovered] = useState(false);
   const location = useLocation();
 
@@ -212,7 +212,7 @@ export default function Sidebar({ collapsed, onToggle, closeMobile, activeTenant
     if (closeMobile) closeMobile();
   }
 
-  const isExpanded = !collapsed || isHovered;
+  const isExpanded = isHovered;
 
   return (
     <aside

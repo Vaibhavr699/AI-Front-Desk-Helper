@@ -296,11 +296,11 @@ router.get("/recordings/:id/audio", async (req, res) => {
 
 router.get("/technicians", async (req, res) => {
   try {
-    const tenantId = getTenantIdFromQuery(req);
-    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+    const tenantIds = await getTargetTenantIds(req);
+    if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
     const result = await db.query(
-      "SELECT * FROM technicians WHERE tenant_id = $1 ORDER BY name ASC",
-      [tenantId]
+      "SELECT * FROM technicians WHERE tenant_id = ANY($1) ORDER BY name ASC",
+      [tenantIds]
     );
     res.json({ technicians: result.rows });
   } catch (e) {
@@ -353,8 +353,8 @@ router.delete("/technicians/:id", async (req, res) => {
 
 router.get("/followups", async (req, res) => {
   try {
-    const tenantId = getTenantIdFromQuery(req);
-    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+    const tenantIds = await getTargetTenantIds(req);
+    if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
 
     // Join with leads to get estimated revenue and other CRM data
     const result = await db.query(
@@ -365,9 +365,9 @@ router.get("/followups", async (req, res) => {
               (SELECT MAX(created_at) FROM recovery_touches WHERE recovery_id = er.id) as last_contact
        FROM estimate_recoveries er
        LEFT JOIN leads l ON er.lead_id = l.id
-       WHERE er.tenant_id = $1 AND er.status IN ('active', 'paused')
+       WHERE er.tenant_id = ANY($1) AND er.status IN ('active', 'paused')
        ORDER BY er.next_action_at ASC`,
-      [tenantId]
+      [tenantIds]
     );
 
     res.json({ followups: result.rows });
@@ -730,7 +730,16 @@ const TENANT_SELECT_BASE_LEGACY = `t.id, t.name, t.slug, t.company_name, t.welco
 
 router.get("/tenants/:id", async (req, res) => {
   try {
-    const id = req.params.id;
+    let id = req.params.id;
+    
+    // Handle 'all' rollup request
+    if (id === "all") {
+      if (req.user?.tenant_id) {
+        id = req.user.tenant_id;
+      } else {
+        return res.status(400).json({ error: "Target ID required for details" });
+      }
+    }
 
     const r = await db.query(
       `SELECT ${TENANT_SELECT_BASE}, ${TENANT_SELECT_TWILIO},
@@ -1115,11 +1124,11 @@ router.get("/twilio/available-numbers", async (req, res) => {
 
 router.get("/phone-numbers", async (req, res) => {
   try {
-    const tenantId = getTenantIdFromQuery(req);
-    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+    const tenantIds = await getTargetTenantIds(req);
+    if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
     const result = await db.query(
-      "SELECT id, tenant_id, phone, is_primary, lead_source, created_at FROM phone_numbers WHERE tenant_id = $1 ORDER BY is_primary DESC, created_at",
-      [tenantId]
+      "SELECT id, tenant_id, phone, is_primary, lead_source, created_at FROM phone_numbers WHERE tenant_id = ANY($1) ORDER BY is_primary DESC, created_at",
+      [tenantIds]
     );
     res.json({ phone_numbers: result.rows });
   } catch (e) {
@@ -1289,12 +1298,12 @@ router.patch("/phone-numbers/:id", async (req, res) => {
 // List sales wins (converted recoveries)
 router.get("/sales-wins", async (req, res) => {
   try {
-    const tenantId = getTenantIdFromQuery(req);
-    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+    const tenantIds = await getTargetTenantIds(req);
+    if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
     const result = await db.query(
-      "SELECT * FROM estimate_recoveries WHERE tenant_id = $1 AND status = 'converted' ORDER BY updated_at DESC LIMIT $2",
-      [tenantId, limit]
+      "SELECT * FROM estimate_recoveries WHERE tenant_id = ANY($1) AND status = 'converted' ORDER BY updated_at DESC LIMIT $2",
+      [tenantIds, limit]
     );
     res.json({ sales_wins: result.rows });
   } catch (e) {
@@ -1306,9 +1315,9 @@ router.get("/sales-wins", async (req, res) => {
 // Recovery stats
 router.get("/recoveries/stats", async (req, res) => {
   try {
-    const tenantId = getTenantIdFromQuery(req);
-    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
-    const stats = await estimateRecovery.getRecoveryStats(tenantId);
+    const tenantIds = await getTargetTenantIds(req);
+    if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
+    const stats = await estimateRecovery.getRecoveryStats(tenantIds);
     res.json(stats);
   } catch (e) {
     console.error(e);

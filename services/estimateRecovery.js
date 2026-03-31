@@ -614,12 +614,13 @@ async function getTouchesByRecovery(recoveryId) {
 /**
  * Get recovery stats for a tenant (conversion rate, etc.).
  */
-async function getRecoveryStats(tenantId) {
+async function getRecoveryStats(tenantIds) {
+    const ids = Array.isArray(tenantIds) ? tenantIds : [tenantIds];
     const [total, active, converted, dormant] = await Promise.all([
-        db.query("SELECT COUNT(*) as count FROM estimate_recoveries WHERE tenant_id = $1", [tenantId]),
-        db.query("SELECT COUNT(*) as count FROM estimate_recoveries WHERE tenant_id = $1 AND status = 'active'", [tenantId]),
-        db.query("SELECT COUNT(*) as count FROM estimate_recoveries WHERE tenant_id = $1 AND status = 'converted'", [tenantId]),
-        db.query("SELECT COUNT(*) as count FROM estimate_recoveries WHERE tenant_id = $1 AND status = 'dormant'", [tenantId]),
+        db.query("SELECT COUNT(*) as count FROM estimate_recoveries WHERE tenant_id = ANY($1)", [ids]),
+        db.query("SELECT COUNT(*) as count FROM estimate_recoveries WHERE tenant_id = ANY($1) AND status = 'active'", [ids]),
+        db.query("SELECT COUNT(*) as count FROM estimate_recoveries WHERE tenant_id = ANY($1) AND status = 'converted'", [ids]),
+        db.query("SELECT COUNT(*) as count FROM estimate_recoveries WHERE tenant_id = ANY($1) AND status = 'dormant'", [ids]),
     ]);
     const t = parseInt(total.rows[0].count, 10) || 0;
     const c = parseInt(converted.rows[0].count, 10) || 0;

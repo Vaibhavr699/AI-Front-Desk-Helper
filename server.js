@@ -2610,7 +2610,7 @@ wss.on("connection", async (twilioSocket, req) => {
 
   const isRecovery = q.type === "recovery";
   const isNurturing = q.type === "nurturing";
-  const isOutbound = q.type === "outbound";
+  let isOutbound = q.type === "outbound";
   const recoveryId = q.recoveryId;
   const scheduleId = q.scheduleId;
   const campaignId = q.campaignId;
@@ -2618,8 +2618,22 @@ wss.on("connection", async (twilioSocket, req) => {
   const scriptId = q.scriptId;
   const recoveryScript = q.script ? decodeURIComponent(q.script) : "";
   const leadSource = q.leadSource || null;
+  const callSidFromQuery = q.CallSid || q.callSid;
 
-  console.log("[AI-Desk] Connection path=%s isRecovery=%s isNurturing=%s recoveryId=%s scheduleId=%s", pathname, isRecovery, isNurturing, recoveryId, scheduleId);
+  // ROBUST DIRECTION DETECTION: Even if type param is missing, check DB for call direction
+  if (!isOutbound && callSidFromQuery) {
+     try {
+       const callDirRes = await db.query("SELECT direction FROM calls WHERE twilio_sid = $1", [callSidFromQuery]);
+       if (callDirRes.rows[0]?.direction === 'outbound') {
+         isOutbound = true;
+         console.log("[AI-Desk] Robust Detect: Call %s is OUTBOUND from DB", callSidFromQuery);
+       }
+     } catch (e) {
+       console.error("[AI-Desk] Direction lookup failed:", e.message);
+     }
+  }
+
+  console.log("[AI-Desk] Connection path=%s isRecovery=%s isNurturing=%s isOutbound=%s", pathname, isRecovery, isNurturing, isOutbound);
 
   const isTurnBased = q.turnBased === "1";
   if (isTurnBased) {
@@ -2807,6 +2821,8 @@ wss.on("connection", async (twilioSocket, req) => {
       greetingTriggered = true;
       const useRecoveryFlow = isRecovery || isOutbound || (isNurturing && recoveryScript);
       
+      console.log("[AI-Desk] triggerGreetingIfReady useRecoveryFlow=%s isOutbound=%s", useRecoveryFlow, isOutbound);
+
       if (!useRecoveryFlow) {
         console.log("[AI-Desk] Triggering initial greeting (StreamReady & OpenAIReady)");
         sendToOpenAI({

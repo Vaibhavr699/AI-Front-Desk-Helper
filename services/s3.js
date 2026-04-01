@@ -4,8 +4,21 @@ const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const db = require("../lib/db");
 const twilio = require("../lib/twilio");
 
-const bucket = process.env.AWS_S3_BUCKET_RECORDINGS;
+let bucket = process.env.AWS_S3_BUCKET_RECORDINGS;
 const region = process.env.AWS_REGION || "us-east-1";
+
+// Sanitize bucket name: if it's a URL like https://bucket-name.s3..., extract just 'bucket-name'
+if (bucket && (bucket.startsWith("http://") || bucket.startsWith("https://"))) {
+  try {
+    const url = new URL(bucket);
+    const hostParts = url.hostname.split('.');
+    // For bucket-name.s3.region.amazonaws.com, the first part is the bucket name
+    bucket = hostParts[0];
+  } catch (e) {
+    console.error("[S3] Failed to parse bucket URL:", e.message);
+  }
+}
+
 const client =
   process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY
     ? new S3Client({

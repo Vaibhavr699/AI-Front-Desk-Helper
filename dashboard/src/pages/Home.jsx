@@ -683,7 +683,7 @@ export default function Home() {
                 "HVAC and plumbing — capture after-hours emergency calls",
                 "Fencing and landscaping — outbound AI calls your past customers",
                 "Multi-location contractors — one dashboard for all locations",
-                "Franchise groups — volume pricing from $247/location/month",
+                "Franchise groups — built for multi-location growth",
               ].map((item, i) => (
                 <li key={i} className="flex items-start gap-3 text-stone-700">
                   <span className="flex-shrink-0 w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-xs font-bold mt-0.5">

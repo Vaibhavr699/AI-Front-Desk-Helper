@@ -2610,7 +2610,6 @@ wss.on("connection", async (twilioSocket, req) => {
 
   const isRecovery = q.type === "recovery";
   const isNurturing = q.type === "nurturing";
-  let isOutbound = q.type === "outbound";
   const recoveryId = q.recoveryId;
   const scheduleId = q.scheduleId;
   const campaignId = q.campaignId;
@@ -2618,22 +2617,31 @@ wss.on("connection", async (twilioSocket, req) => {
   const scriptId = q.scriptId;
   const recoveryScript = q.script ? decodeURIComponent(q.script) : "";
   const leadSource = q.leadSource || null;
+
+  // TENANT RESOLUTION: Prioritize pathname segment, fallback to number lookup
+  const pathSegments = pathname.split("/").filter(Boolean);
+  const tenantIdFromPath = pathSegments.length >= 2 ? pathSegments[1] : "";
+  let tenantId = tenantIdFromPath;
+
+  // Use CallSid context if we have it for direction detection
+  let isOutbound = q.type === "outbound";
   const callSidFromQuery = q.CallSid || q.callSid;
 
-  // ROBUST DIRECTION DETECTION: Even if type param is missing, check DB for call direction
   if (!isOutbound && callSidFromQuery) {
      try {
-       const callDirRes = await db.query("SELECT direction FROM calls WHERE twilio_sid = $1", [callSidFromQuery]);
+       const callDirRes = await db.query("SELECT direction, tenant_id FROM calls WHERE twilio_sid = $1", [callSidFromQuery]);
        if (callDirRes.rows[0]?.direction === 'outbound') {
          isOutbound = true;
-         console.log("[AI-Desk] Robust Detect: Call %s is OUTBOUND from DB", callSidFromQuery);
+         // Sync tenantId if it was missing from path
+         if (!tenantId) tenantId = callDirRes.rows[0].tenant_id;
+         console.log("[AI-Desk] Robust Detect: Call %s is OUTBOUND to tenant %s from DB", callSidFromQuery, tenantId);
        }
      } catch (e) {
        console.error("[AI-Desk] Direction lookup failed:", e.message);
      }
   }
 
-  console.log("[AI-Desk] Connection path=%s isRecovery=%s isNurturing=%s isOutbound=%s", pathname, isRecovery, isNurturing, isOutbound);
+  console.log("[AI-Desk] Connection path=%s isRecovery=%s isNurturing=%s isOutbound=%s tenantId=%s", pathname, isRecovery, isNurturing, isOutbound, tenantId);
 
   const isTurnBased = q.turnBased === "1";
   if (isTurnBased) {
@@ -2824,35 +2832,21 @@ wss.on("connection", async (twilioSocket, req) => {
       console.log("[AI-Desk] triggerGreetingIfReady useRecoveryFlow=%s isOutbound=%s", useRecoveryFlow, isOutbound);
 
       if (!useRecoveryFlow) {
-        console.log("[AI-Desk] Triggering initial greeting (StreamReady & OpenAIReady)");
+        console.log("[AI-Desk] Triggering initial INBOUND greeting");
         sendToOpenAI({
           type: "response.create",
           response: {
             modalities: ["audio", "text"],
-            instructions: "Greet the user warmly IN ENGLISH as a professional receptionist for " + (tenant?.company_name || "the business") + ". Ask how you can help them today. DO NOT USE ANY OTHER LANGUAGE UNLESS EXPLICITLY REQUESTED."
+            instructions: "Greet the user warmly IN ENGLISH as a professional receptionist for " + (tenant?.company_name || "the business") + ". Ask how you can help them today. DO NOT USE ANY OTHER LANGUAGE."
           }
         });
-      } else if (recoveryScript || outboundScript) {
-        const scriptToUse = outboundScript || recoveryScript;
-        console.log("[AI-Desk] Triggering greeting (StreamReady & OpenAIReady) with script: %s", scriptToUse);
+      } else {
+        // For OUTBOUND/RECOVERY, initiate response using campaign persona set in session.update
+        console.log("[AI-Desk] Triggering initial OUTBOUND/RECOVERY introduction");
         sendToOpenAI({
           type: "response.create",
           response: {
-            modalities: ["audio", "text"],
-            instructions: `Greet the user by saying EXACTLY this and nothing else yet: "${scriptToUse}"`
-          }
-        });
-      } else if (isOutbound) {
-        // SAFETY FALLBACK for outbound if script is somehow missing
-        const biz = tenant?.company_name || 'the team';
-        const agent = tenant?.outbound_agent_name || 'Alex';
-        const fallbackText = `Hi, this is ${agent} from ${biz}. I was calling to follow up on your recent inquiry, how are you doing today?`;
-        console.log("[AI-Desk] Triggering greeting Safety Fallback for outbound");
-        sendToOpenAI({
-          type: "response.create",
-          response: {
-            modalities: ["audio", "text"],
-            instructions: `Greet the user by saying EXACTLY this: "${fallbackText}"`
+            modalities: ["audio", "text"]
           }
         });
       }

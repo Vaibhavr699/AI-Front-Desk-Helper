@@ -129,11 +129,20 @@ router.get("/recovery-call", (req, res) => {
   const recoveryId = req.query.recoveryId || "";
   const script = req.query.script || "";
 
+  const db = require("../lib/db");
   const wsUrl = (BASE_URL || "")
     .replace("https://", "wss://")
     .replace("http://", "ws://") + "/twilio-media";
 
-  const streamUrl = `${wsUrl}?type=recovery&recoveryId=${encodeURIComponent(recoveryId)}&script=${encodeURIComponent(script)}&callSid=${encodeURIComponent(req.query.CallSid || "")}`;
+  let tenantId = "";
+  try {
+    const res = await db.query("SELECT tenant_id FROM estimate_recoveries WHERE id = $1", [recoveryId]);
+    tenantId = res.rows[0]?.tenant_id || "";
+  } catch (e) {
+    console.error("[Twilio] recovery-call tenant lookup failed:", e.message);
+  }
+
+  const streamUrl = `${wsUrl}${tenantId ? '/' + tenantId : ''}?type=recovery&recoveryId=${encodeURIComponent(recoveryId)}&script=${encodeURIComponent(script)}&callSid=${encodeURIComponent(req.query.CallSid || "")}`;
   const actionUrl = BASE_URL ? `${BASE_URL}/twilio/status` : "";
   const connectAttrs = actionUrl
     ? ` action="${escapeXml(actionUrl)}" method="POST"`
@@ -186,11 +195,20 @@ router.all("/outbound", (req, res) => {
   const contactId = req.query.contactId || req.body.contactId;
   const scriptId = req.query.scriptId || req.body.scriptId;
 
+  const db = require("../lib/db");
   const wsUrl = (BASE_URL || "")
     .replace("https://", "wss://")
     .replace("http://", "ws://") + "/twilio-media";
 
-  let streamUrl = `${wsUrl}?type=outbound&campaignId=${encodeURIComponent(campaignId)}&contactId=${encodeURIComponent(contactId)}&callSid=${encodeURIComponent(req.body.CallSid || req.query.CallSid)}`;
+  let tenantId = "";
+  if (campaignId) {
+    try {
+      const res = await db.query("SELECT tenant_id FROM outbound_campaigns WHERE id = $1", [campaignId]);
+      tenantId = res.rows[0]?.tenant_id || "";
+    } catch (e) {}
+  }
+
+  let streamUrl = `${wsUrl}${tenantId ? '/' + tenantId : ''}?type=outbound&campaignId=${encodeURIComponent(campaignId)}&contactId=${encodeURIComponent(contactId)}&callSid=${encodeURIComponent(req.body.CallSid || req.query.CallSid)}`;
   if (scriptId) streamUrl += `&scriptId=${encodeURIComponent(scriptId)}`;
 
   const twiml = `

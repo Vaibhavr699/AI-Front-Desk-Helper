@@ -52,7 +52,7 @@ export default function PrivacyPolicy() {
                 <li>Contact forms</li>
                 <li>Estimate request forms</li>
                 <li>Business messaging platforms</li>
-                <li>Phone calls or voicemail interactions</li>
+                <li>Phone calls or voicemail interactions initiated by the user</li>
               </ul>
               <p className="mb-4">
                 you consent to receive SMS messages or communications related to your inquiry

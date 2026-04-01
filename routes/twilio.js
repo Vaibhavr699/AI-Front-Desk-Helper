@@ -125,7 +125,7 @@ router.post("/status", (req, res) => {
 // -------------------- Estimate Recovery Outbound Calls --------------------
 
 // TwiML for recovery outbound calls — connects to live AI via WebSocket stream
-router.get("/recovery-call", (req, res) => {
+router.get("/recovery-call", async (req, res) => {
   const recoveryId = req.query.recoveryId || "";
   const script = req.query.script || "";
 
@@ -190,7 +190,7 @@ router.post("/recovery-call-status", (req, res) => {
 });
 
 // Outbound campaign entry (Supports both GET and POST from Twilio)
-router.all("/outbound", (req, res) => {
+router.all("/outbound", async (req, res) => {
   const campaignId = req.query.campaignId || req.body.campaignId;
   const contactId = req.query.contactId || req.body.contactId;
   const scriptId = req.query.scriptId || req.body.scriptId;

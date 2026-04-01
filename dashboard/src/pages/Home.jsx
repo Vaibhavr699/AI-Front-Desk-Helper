@@ -21,9 +21,155 @@ const NAV_ITEMS = [
   { name: "Why us",       url: "#why-us",       icon: ShieldCheck },
 ];
 
+/* ─────────────────────────────────────────────────────────────
+   SMS CONSENT MODAL
+   Fires when any "Get Started" or "Start setup" button is clicked.
+   User must check the consent box before proceeding to signup.
+───────────────────────────────────────────────────────────── */
+function SmsConsentModal({ isOpen, onClose, onAccept }) {
+  const [checked, setChecked] = useState(false);
+
+  if (!isOpen) return null;
+
+  function handleAccept() {
+    if (!checked) return;
+    onAccept();
+    setChecked(false);
+  }
+
+  function handleClose() {
+    setChecked(false);
+    onClose();
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sms-consent-title"
+    >
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm"
+        onClick={handleClose}
+      />
+
+      {/* Modal box */}
+      <div className="relative z-10 w-full max-w-md bg-white rounded-2xl shadow-2xl p-8 flex flex-col gap-6">
+
+        {/* Header */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <div className="w-10 h-10 bg-orange-50 rounded-xl flex items-center justify-center">
+              <svg className="w-5 h-5 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+            </div>
+            <button
+              type="button"
+              onClick={handleClose}
+              className="text-stone-400 hover:text-stone-600 transition-colors p-1 rounded-lg hover:bg-stone-100"
+              aria-label="Close"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <h2 id="sms-consent-title" className="text-xl font-bold text-stone-900">
+            Before you get started
+          </h2>
+          <p className="mt-1 text-sm text-stone-500">
+            Please review and agree to our messaging policy.
+          </p>
+        </div>
+
+        {/* Consent text box */}
+        <div className="bg-stone-50 rounded-xl p-4 border border-stone-200 text-xs text-stone-600 leading-relaxed space-y-3">
+          <p>
+            By submitting this form, you agree to receive text messages from{" "}
+            <span className="font-semibold text-stone-800">AI Front Desk Helper</span>{" "}
+            related to your inquiry, including appointment updates, follow-ups, and service
+            notifications. Message frequency varies. Message &amp; data rates may apply.
+            Reply <strong>STOP</strong> to opt out.
+          </p>
+          <p>
+            I agree to receive SMS text messages from{" "}
+            <span className="font-semibold text-stone-800">AI Front Desk Helper</span>{" "}
+            regarding my estimate request, appointment scheduling, and project updates.
+            Message &amp; data rates may apply. Reply <strong>STOP</strong> to opt out.{" "}
+            <a
+              href="/privacy-policy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-orange-500 hover:text-orange-600 underline underline-offset-2 font-medium"
+            >
+              View Privacy Policy
+            </a>
+            .
+          </p>
+          <p className="text-[11px] text-stone-400">
+            Consent is not required as a condition of purchasing services.
+          </p>
+        </div>
+
+        {/* Checkbox */}
+        <label className="flex items-start gap-3 cursor-pointer group">
+          <div className="flex-shrink-0 mt-0.5">
+            <input
+              type="checkbox"
+              checked={checked}
+              onChange={(e) => setChecked(e.target.checked)}
+              className="w-4 h-4 rounded border-stone-300 text-orange-500 focus:ring-orange-500 focus:ring-offset-0 cursor-pointer"
+            />
+          </div>
+          <span className="text-sm text-stone-700 leading-snug">
+            I have read and agree to the SMS messaging terms above.
+          </span>
+        </label>
+
+        {/* Buttons */}
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={handleClose}
+            className="flex-1 px-4 py-3 rounded-xl border border-stone-200 bg-white text-sm font-semibold text-stone-600 hover:border-stone-300 hover:text-stone-800 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleAccept}
+            disabled={!checked}
+            className={`flex-1 px-4 py-3 rounded-xl text-sm font-semibold text-white transition-all ${
+              checked
+                ? "bg-orange-500 hover:bg-orange-600 shadow-lg shadow-orange-200 cursor-pointer"
+                : "bg-stone-200 text-stone-400 cursor-not-allowed"
+            }`}
+          >
+            Continue to sign up →
+          </button>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const navigate = useNavigate();
   const [isContactOpen, setIsContactOpen] = useState(false);
+  const [isSmsConsentOpen, setIsSmsConsentOpen] = useState(false);
+
+  function handleGetStarted() {
+    setIsSmsConsentOpen(true);
+  }
+
+  function handleConsentAccepted() {
+    setIsSmsConsentOpen(false);
+    navigate("/login?signup=1");
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-stone-50">
@@ -385,7 +531,7 @@ export default function Home() {
                   <p className="text-xs text-stone-500 mb-3">500 voice min · 500 SMS/mo</p>
                   <button
                     type="button"
-                    onClick={() => navigate("/login?signup=1")}
+                    onClick={handleGetStarted}
                     className="w-full inline-flex items-center justify-center px-6 py-3 rounded-xl text-sm font-semibold text-white bg-stone-800 hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-stone-600 transition-colors"
                   >
                     Get started
@@ -425,7 +571,7 @@ export default function Home() {
                   <p className="text-xs text-stone-500 mb-3">1,200 voice min · 1,500 SMS/mo</p>
                   <button
                     type="button"
-                    onClick={() => navigate("/login?signup=1")}
+                    onClick={handleGetStarted}
                     className="w-full inline-flex items-center justify-center px-6 py-3 rounded-xl text-sm font-semibold text-white bg-orange-500 hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 transition-colors"
                   >
                     Get started
@@ -460,7 +606,7 @@ export default function Home() {
                   <p className="text-xs text-stone-500 mb-3">3,000 voice min · 4,000 SMS/mo</p>
                   <button
                     type="button"
-                    onClick={() => navigate("/login?signup=1")}
+                    onClick={handleGetStarted}
                     className="w-full inline-flex items-center justify-center px-6 py-3 rounded-xl text-sm font-semibold text-white bg-stone-800 hover:bg-stone-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-stone-600 transition-colors"
                   >
                     Get started
@@ -537,7 +683,7 @@ export default function Home() {
                 "HVAC and plumbing — capture after-hours emergency calls",
                 "Fencing and landscaping — outbound AI calls your past customers",
                 "Multi-location contractors — one dashboard for all locations",
-                "Franchise groups — volume pricing available",
+                "Franchise groups — volume pricing from $247/location/month",
               ].map((item, i) => (
                 <li key={i} className="flex items-start gap-3 text-stone-700">
                   <span className="flex-shrink-0 w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-xs font-bold mt-0.5">
@@ -561,41 +707,9 @@ export default function Home() {
             <p className="mt-4 text-lg text-stone-600">
               Create your account and connect your first number in minutes.
             </p>
-
-            {/* ── SMS CONSENT CHECKBOX ── */}
-            <div className="mt-8 max-w-xl mx-auto">
-              <label className="flex items-start gap-3 cursor-pointer group text-left p-4 rounded-xl border border-stone-200 bg-stone-50 hover:border-stone-300 hover:bg-white transition-all">
-                <div className="flex-shrink-0 mt-0.5">
-                  <input
-                    type="checkbox"
-                    id="sms-consent"
-                    className="w-4 h-4 rounded border-stone-300 text-orange-500 focus:ring-orange-500 focus:ring-offset-0 cursor-pointer"
-                  />
-                </div>
-                <span className="text-xs text-stone-500 leading-relaxed">
-                  I agree to receive SMS text messages from{" "}
-                  <span className="font-semibold text-stone-700">AI Front Desk Helper</span>{" "}
-                  regarding my estimate request, appointment scheduling, and project updates.
-                  Message &amp; data rates may apply. Reply STOP to opt out.{" "}
-                  <a
-                    href="https://www.aifrontdeskhelper.com/privacy-policy"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-orange-500 hover:text-orange-600 underline underline-offset-2 font-medium"
-                  >
-                    View Privacy Policy
-                  </a>
-                  .
-                </span>
-              </label>
-              <p className="mt-2 text-[11px] text-stone-400 text-left px-1">
-                Consent is not required as a condition of purchasing services.
-              </p>
-            </div>
-
-            <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-4">
+            <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
               <ShimmerButton
-                onClick={() => navigate("/login?signup=1")}
+                onClick={handleGetStarted}
                 className="w-full sm:w-auto text-base text-white font-semibold px-8 py-4"
                 shimmerSize="0.05em"
                 background="rgba(41, 37, 36, 1)"
@@ -610,6 +724,10 @@ export default function Home() {
                 I already have an account
               </button>
             </div>
+            <p className="mt-4 text-xs text-stone-400">
+              By signing up you agree to receive SMS messages from AI Front Desk Helper.{" "}
+              <a href="/privacy-policy" className="underline hover:text-stone-600">Privacy Policy</a>.
+            </p>
           </div>
         </section>
 
@@ -620,6 +738,13 @@ export default function Home() {
       <ContactModal
         isOpen={isContactOpen}
         onClose={() => setIsContactOpen(false)}
+      />
+
+      {/* SMS Consent Modal — fires on all Get Started / Start setup clicks */}
+      <SmsConsentModal
+        isOpen={isSmsConsentOpen}
+        onClose={() => setIsSmsConsentOpen(false)}
+        onAccept={handleConsentAccepted}
       />
 
     </div>

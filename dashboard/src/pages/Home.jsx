@@ -331,9 +331,8 @@ export default function Home() {
                 Icon={Headphones}
                 name="AI Receptionist"
                 description="Natural conversations 24/7. Answers calls, asks the right questions, and sounds like a real team member. Live transcripts of every call in your dashboard."
-                href="#"
-                onClick={(e) => { e.preventDefault(); handleGetStarted(); }}
                 cta="Get started"
+                onClick={handleGetStarted}
                 background={
                   <>
                     <img src="https://images.unsplash.com/photo-1596524430615-b46475ddff6e?auto=format&fit=crop&w=800&q=80" alt="" className="absolute inset-0 w-full h-full object-cover opacity-30" />
@@ -346,9 +345,8 @@ export default function Home() {
                 Icon={CalendarDays}
                 name="Book & Transfer"
                 description="Books estimates and appointments directly into Google Calendar and your CRM. Live-transfer to your team when the caller needs a human."
-                href="#"
-                onClick={(e) => { e.preventDefault(); handleGetStarted(); }}
                 cta="Get started"
+                onClick={handleGetStarted}
                 background={
                   <>
                     <img src="https://images.unsplash.com/photo-1506784983877-45594efa4cbe?auto=format&fit=crop&w=800&q=80" alt="" className="absolute inset-0 w-full h-full object-cover opacity-30" />
@@ -361,9 +359,8 @@ export default function Home() {
                 Icon={Zap}
                 name="Objection Detection"
                 description="When someone says 'too expensive' or 'need to think about it' the AI detects it and automatically switches to the right recovery sequence. No competitor does this."
-                href="#"
-                onClick={(e) => { e.preventDefault(); handleGetStarted(); }}
                 cta="See how it works"
+                onClick={handleGetStarted}
                 background={
                   <>
                     <img src="https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=800&q=80" alt="" className="absolute inset-0 w-full h-full object-cover opacity-30" />
@@ -376,9 +373,8 @@ export default function Home() {
                 Icon={Users}
                 name="Referral Autopilot"
                 description="Customer texts back a referral name and number — AI reads the reply, extracts their contact, and calls the referral within minutes. Completely automatic."
-                href="#"
-                onClick={(e) => { e.preventDefault(); handleGetStarted(); }}
                 cta="See how it works"
+                onClick={handleGetStarted}
                 background={
                   <>
                     <img src="https://images.unsplash.com/photo-1553877522-43269d4ea984?auto=format&fit=crop&w=800&q=80" alt="" className="absolute inset-0 w-full h-full object-cover opacity-30" />
@@ -391,9 +387,8 @@ export default function Home() {
                 Icon={Smartphone}
                 name="SMS Follow-ups"
                 description="Automated follow-ups at 24h, 3d, 5d, and 10d so quotes don't go cold. Intelligent sequences — not generic blasts."
-                href="#"
-                onClick={(e) => { e.preventDefault(); handleGetStarted(); }}
                 cta="Get started"
+                onClick={handleGetStarted}
                 background={
                   <>
                     <img src="https://images.unsplash.com/photo-1611746872915-64382b5c76da?auto=format&fit=crop&w=800&q=80" alt="" className="absolute inset-0 w-full h-full object-cover opacity-30" />
@@ -406,9 +401,8 @@ export default function Home() {
                 Icon={BarChart2}
                 name="Revenue by Source"
                 description="Every phone number tagged to a lead source. Know exactly which marketing — Google Ads, yard signs, Facebook — is producing booked revenue. Not just calls."
-                href="#"
-                onClick={(e) => { e.preventDefault(); handleGetStarted(); }}
                 cta="See the dashboard"
+                onClick={handleGetStarted}
                 background={
                   <>
                     <img src="https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=800&q=80" alt="" className="absolute inset-0 w-full h-full object-cover opacity-30" />
@@ -421,9 +415,8 @@ export default function Home() {
                 Icon={Link2}
                 name="CRM Sync"
                 description="Sends every lead and booking to Jobber, DripJobs, Housecall Pro, or any system via Zapier. Zero manual entry."
-                href="#"
-                onClick={(e) => { e.preventDefault(); handleGetStarted(); }}
                 cta="Get started"
+                onClick={handleGetStarted}
                 background={
                   <>
                     <img src="https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=800&q=80" alt="" className="absolute inset-0 w-full h-full object-cover opacity-30" />

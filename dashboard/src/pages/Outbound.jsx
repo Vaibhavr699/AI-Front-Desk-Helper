@@ -240,9 +240,9 @@ export default function Outbound({ tenantId }) {
             </div>
 
             <div className="space-y-3">
-              <BundleCard minutes={500} price={99} tenantId={tenantId} onBuy={fetchBalance} />
-              <BundleCard minutes={1500} price={249} tenantId={tenantId} onBuy={fetchBalance} isPopular />
-              <BundleCard minutes={3000} price={499} tenantId={tenantId} onBuy={fetchBalance} />
+              <BundleCard minutes={500} price={99} tenantId={tenantId} priceId="price_1THKUPG4V3F53niEHhA2bVXn" />
+              <BundleCard minutes={1500} price={249} tenantId={tenantId} priceId="price_1THKUgG4V3F53niEYscU5jY8" isPopular />
+              <BundleCard minutes={3000} price={499} tenantId={tenantId} priceId="price_1THKV0G4V3F53niETnjtOmf4" />
             </div>
 
             <div className="p-4 bg-blue-50/50 rounded-xl border border-blue-100 flex items-start gap-3">
@@ -270,18 +270,27 @@ function StatCard({ label, value, icon: Icon, color, bg }) {
   );
 }
 
-function BundleCard({ minutes, price, tenantId, onBuy, isPopular }) {
+function BundleCard({ minutes, price, tenantId, priceId, isPopular }) {
   const [loading, setLoading] = useState(false);
-  const { success, error } = useToast();
+  const { error } = useToast();
 
   async function handleBuy() {
     setLoading(true);
     try {
-      await post("/api/outbound/purchase-bundle", { minutes, amount: price, tenantId });
-      onBuy();
-      success(`${minutes.toLocaleString()} Min added to your mission balance.`);
+      const res = await post("/api/stripe/checkout-bundle", { 
+        minutes, 
+        price_id: priceId, 
+        tenantId,
+        return_url: window.location.href.split('?')[0] 
+      });
+      if (res.url) {
+        window.location.href = res.url;
+      } else {
+        throw new Error("No URL returned");
+      }
     } catch (e) {
-      error("Transaction failed. Check network.");
+      console.error(e);
+      error("Stripe Checkout failed. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -291,7 +300,7 @@ function BundleCard({ minutes, price, tenantId, onBuy, isPopular }) {
     <button 
       onClick={handleBuy}
       disabled={loading}
-      className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all text-left group ${isPopular ? 'border-brand-500 bg-brand-50/30' : 'border-stone-200 hover:border-brand-300 hover:bg-stone-50/50'}`}
+      className={`w-full flex items-center cursor-pointer justify-between p-4 rounded-xl border transition-all text-left group ${isPopular ? 'border-brand-500 bg-brand-50/30' : 'border-stone-200 hover:border-brand-300 hover:bg-stone-50/50'}`}
     >
       <div>
         <div className="flex items-center gap-2">

@@ -161,8 +161,8 @@ router.patch("/bookings/:id", async (req, res) => {
   }
 });
 
-// Everything below this requires at least Manager-level access
-router.use(requireRole([ROLES.OWNER, ROLES.ADMIN, ROLES.MANAGER]));
+// Everything below this requires at least Staff-level access
+router.use(requireRole([ROLES.OWNER, ROLES.ADMIN, ROLES.MANAGER, ROLES.STAFF]));
 
 router.get("/calls", async (req, res) => {
   try {
@@ -1002,7 +1002,7 @@ router.patch("/tenants/:id", async (req, res) => {
       "twilio_account_sid", "twilio_auth_token", "facebook_page_id", "facebook_page_access_token",
       "tone_of_voice", "objection_handling_config", "business_hours", "afterhours_behavior", 
       "google_calendar_linked", "google_calendar_id", "zapier_webhook_url",
-      "voice_model", "faqs",
+      "voice_model", "faqs", "inbound_voice", "outbound_voice", "outbound_agent_name", "outbound_instructions",
       "nurturing_enabled", "referral_enabled", "seasonal_campaigns_enabled",
       "maintenance_reminder_months", "reengagement_reminder_months", "referral_request_days_after_service",
       "nurturing_campaign_calendar",
@@ -1142,23 +1142,29 @@ router.post("/phone-numbers", async (req, res) => {
     const tenantId = getTenantIdFromQuery(req);
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
 
-    // Enforce Plan Limits: Basic (1), Pro (3), Elite (5)
-    // Additional lines are $12/mo (handled via subscription, but we check limits here for automated add)
-    const tenant = await getTenantById(tenantId);
+    // Enforce Plan Limits: Standard Plan Limit + Purchased Extras ($12/mo)
+    const tenant = await db.query(
+      "SELECT plan, extra_numbers_count FROM tenants WHERE id = $1",
+      [tenantId]
+    ).then((r) => r.rows[0]);
+
     const countRes = await db.query("SELECT COUNT(*) FROM phone_numbers WHERE tenant_id = $1", [tenantId]);
     const currentCount = parseInt(countRes.rows[0].count, 10);
-    const plan = tenant.plan || "basic";
     
-    let limit = 1;
-    if (plan === "pro") limit = 3;
-    if (plan === "elite") limit = 5;
+    const { getPlan } = require("../lib/plans");
+    const planDef = getPlan(tenant.plan || "basic");
+    const planLimit = planDef.numberLimit || 1;
+    const extraLimit = tenant.extra_numbers_count || 0;
+    const totalLimit = planLimit + extraLimit;
 
-    if (currentCount >= limit) {
+    if (currentCount >= totalLimit) {
       return res.status(403).json({ 
-        error: `Plan limit reached. Your '${plan}' plan includes up to ${limit} phone number(s). Please upgrade to add more.`,
+        error: `Phone number limit reached. Your '${tenant.plan || "basic"}' plan includes ${planLimit} number(s) plus ${extraLimit} purchased extra(s). Total allowed: ${totalLimit}.`,
         limit_reached: true,
-        current_plan: plan,
-        limit: limit
+        current_plan: tenant.plan || "basic",
+        plan_limit: planLimit,
+        extra_limit: extraLimit,
+        total_limit: totalLimit
       });
     }
     const phone = normalizePhoneInput(req.body?.phone);

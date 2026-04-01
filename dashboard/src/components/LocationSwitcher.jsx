@@ -19,8 +19,8 @@ export default function LocationSwitcher({ tenantId, tenants, onTenantChange }) 
     return (
       <div className="flex items-center gap-2 min-w-0 max-w-[200px] sm:max-w-[280px]">
         <span className="hidden sm:inline text-xs font-semibold text-stone-400 uppercase tracking-wider shrink-0">Business</span>
-        <span className="text-sm font-bold text-stone-900 truncate" title={current.name}>
-          {current.name || "—"}
+        <span className="text-sm font-bold text-stone-900 truncate" title={current.business_type === 'location' ? (current.name || current.company_name) : (current.company_name || current.name)}>
+          {current.business_type === 'location' ? (current.name || current.company_name) : (current.company_name || current.name || "—")}
         </span>
       </div>
     );
@@ -44,7 +44,7 @@ export default function LocationSwitcher({ tenantId, tenants, onTenantChange }) 
             {currentTenant?.business_type === 'parent' ? "HQ / Parent" : "Location"}
           </div>
           <div className="text-sm font-bold text-stone-900 truncate">
-            {currentTenant?.name || "Select..."}
+             {currentTenant?.business_type === 'location' ? (currentTenant?.name || currentTenant?.company_name) : (currentTenant?.company_name || currentTenant?.name || "Select...")}
           </div>
         </div>
         <svg
@@ -80,7 +80,7 @@ export default function LocationSwitcher({ tenantId, tenants, onTenantChange }) 
                 )}
               </div>
               <div className="text-left">
-                <div className="font-bold">{parent.name}</div>
+                <div className="font-bold">{parent.company_name || parent.name}</div>
                 <div className={`text-[10px] ${tenantId === parent.id ? "text-stone-300" : "text-stone-400"}`}>HQ / Parent account</div>
               </div>
             </button>
@@ -110,7 +110,7 @@ export default function LocationSwitcher({ tenantId, tenants, onTenantChange }) 
                        )}
                     </div>
                     <div className="text-left">
-                      <div className="font-bold">{child.name}</div>
+                      <div className="font-bold">{child.name || child.company_name}</div>
                       <div className={`text-[10px] ${tenantId === child.id ? "text-stone-300" : "text-stone-400"}`}>Local branch</div>
                     </div>
                   </button>

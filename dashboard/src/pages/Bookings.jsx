@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { getBookings, updateBooking, getTechnicians } from "../api";
+import { getBookings, updateBooking, getTechnicians, getUser } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import {
   Calendar, List, Users, Clock, CheckCircle2, AlertCircle,
@@ -167,14 +167,16 @@ export default function Bookings({ tenantId }) {
             <Calendar className="w-4 h-4" />
             Calendar
           </button>
-          <button
-            onClick={() => setView("technicians")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${view === "technicians" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-700"
-              }`}
-          >
-            <Users className="w-4 h-4" />
-            Crew
-          </button>
+          {getUser()?.role !== 'staff' && (
+            <button
+              onClick={() => setView("technicians")}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${view === "technicians" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500 hover:text-stone-700"
+                }`}
+            >
+              <Users className="w-4 h-4" />
+              Crew
+            </button>
+          )}
         </div>
       </div>
 

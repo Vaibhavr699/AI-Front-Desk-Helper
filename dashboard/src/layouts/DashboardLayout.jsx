@@ -46,8 +46,9 @@ export default function DashboardLayout() {
   const [tenants, setTenants] = useState([]);
   const user = getUser();
   const [tenantId, setTenantId] = useState(() => {
-    const stored = localStorage.getItem("tenantId");
-    if (stored === "all") return user?.tenant_id || "";
+    const stored = localStorage.getItem(TENANT_STORAGE_KEY);
+    // If we have a stored preference, use it unless it is 'all' and we're not a parent
+    if (stored === "all" && user?.tenant_business_type !== "parent") return user?.tenant_id || "";
     return stored || user?.tenant_id || "";
   });
   const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
@@ -99,12 +100,16 @@ export default function DashboardLayout() {
         console.log("[DashboardLayout] Fetched tenants:", list.length, list.map(t => t.name + " (" + t.business_type + ")"));
         setTenants(list);
         
-        // Find the current active tenant from the list
-        const active = list.find(t => t.id === tenantId) || list[0];
-        if (active) {
-          setTenant(active);
-          setIsSuspended(active.is_suspended && !user?.is_super_admin && !impersonating);
-          if (!tenantId) setTenantId(active.id);
+        // Correct active tenant if it's not in the list (e.g. session carry-over)
+        const inList = list.find(t => t.id === tenantId);
+        if (!inList) {
+          const resetId = list[0]?.id || "";
+          console.warn("[DashboardLayout] Current tenantId %s not in list, resetting to %s", tenantId, resetId);
+          setTenantId(resetId);
+          setTenant(list[0]);
+        } else {
+          setTenant(inList);
+          setIsSuspended(inList.is_suspended && !user?.is_super_admin && !impersonating);
         }
       })
       .catch((err) => {

@@ -30,6 +30,48 @@ router.post("/checkout", async (req, res) => {
 });
 
 /**
+ * POST /api/stripe/checkout-bundle
+ * Create a Stripe Checkout session for a one-time minute bundle purchase.
+ * Body: { tenant_id, minutes, price_id, return_url? }
+ */
+router.post("/checkout-bundle", async (req, res) => {
+    try {
+        const tenant_id = getTenantIdFromQuery(req);
+        const { minutes, price_id, return_url } = req.body || {};
+        if (!tenant_id) return res.status(400).json({ error: "tenant_id required" });
+        if (!minutes) return res.status(400).json({ error: "minutes required" });
+        if (!price_id) return res.status(400).json({ error: "price_id required" });
+
+        const { createBundleCheckoutSession } = require("../lib/stripe");
+        const result = await createBundleCheckoutSession(tenant_id, minutes, price_id, return_url);
+        res.json(result);
+    } catch (e) {
+        console.error("[Stripe] Bundle checkout error:", e.message);
+        res.status(400).json({ error: e.message });
+    }
+});
+
+/**
+ * POST /api/stripe/checkout-addon-number
+ * Create a Stripe Checkout session for a recurring $12/mo additional phone number.
+ * Body: { tenant_id, return_url? }
+ */
+router.post("/checkout-addon-number", async (req, res) => {
+    try {
+        const tenant_id = getTenantIdFromQuery(req);
+        const { return_url } = req.body || {};
+        if (!tenant_id) return res.status(400).json({ error: "tenant_id required" });
+
+        const { createAddonNumberCheckoutSession } = require("../lib/stripe");
+        const result = await createAddonNumberCheckoutSession(tenant_id, return_url);
+        res.json(result);
+    } catch (e) {
+        console.error("[Stripe] Add-on number checkout error:", e.message);
+        res.status(400).json({ error: e.message });
+    }
+});
+
+/**
  * POST /api/stripe/portal
  * Create a Stripe Billing Portal session for managing the subscription.
  * Body: { tenant_id, return_url? }

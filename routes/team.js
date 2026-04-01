@@ -8,11 +8,14 @@ const auth = require("../lib/auth");
 const router = express.Router();
 
 // Middleware: Only allow access if the user is an admin of a parent tenant
-function requireParentAdmin(req, res, next) {
-  if (req.user?.tenant_business_type !== 'parent') {
-    return res.status(403).json({ error: "Only HQ Admins can access team management" });
+// Middleware: Only allow access if the user is an admin of a parent tenant OR a manager of a specific branch
+function requireTeamManager(req, res, next) {
+  const isParentAdmin = req.user?.tenant_business_type === 'parent' && (req.user?.role === 'admin' || req.user?.role === 'owner');
+  const isLocalManager = (req.user?.role === 'manager' || req.user?.role === 'admin' || req.user?.role === 'owner');
+
+  if (!isParentAdmin && !isLocalManager) {
+    return res.status(403).json({ error: "Insufficient permissions to manage teams", code: "INSUFFICIENT_PERMISSIONS" });
   }
-  // Optional: check if they actually have role='admin'. Assuming owner=admin for now.
   next();
 }
 
@@ -20,21 +23,53 @@ function requireParentAdmin(req, res, next) {
  * GET /api/team
  * List all users for the current parent tenant and all its child locations.
  */
-router.get("/", requireParentAdmin, async (req, res) => {
+router.get("/", requireTeamManager, async (req, res) => {
   try {
     const parentId = req.user.tenant_id;
-    // Get all users assigned to the parent, OR any child of the parent
-    const query = `
-      SELECT u.id, u.email, u.role, u.tenant_id, t.name as tenant_name, t.business_type, u.created_at
-      FROM dashboard_users u
-      JOIN tenants t ON u.tenant_id = t.id
-      WHERE t.id = $1 OR t.parent_id = $1
-      ORDER BY 
-        CASE WHEN t.id = $1 THEN 0 ELSE 1 END,
-        t.name ASC, 
-        u.email ASC
-    `;
-    const r = await db.query(query, [parentId]);
+    const isParentAdmin = req.user?.tenant_business_type === 'parent';
+    
+    // Use helper to resolve which tenant is being viewed
+    const targetTenantId = auth.getTenantIdFromQuery(req);
+    
+    let query;
+    let params;
+
+    if (targetTenantId && targetTenantId !== 'all') {
+      // 1. Specific location requested - Only show members of THAT location
+      query = `
+        SELECT u.id, u.email, u.role, u.tenant_id, t.name as tenant_name, t.business_type, u.created_at
+        FROM dashboard_users u
+        JOIN tenants t ON u.tenant_id = t.id
+        WHERE t.id = $1 AND (t.id = $2 OR t.parent_id = $2)
+        ORDER BY u.email ASC
+      `;
+      params = [targetTenantId, parentId];
+    } else if (isParentAdmin) {
+      // 2. HQ Admin viewing all locations
+      query = `
+        SELECT u.id, u.email, u.role, u.tenant_id, t.name as tenant_name, t.business_type, u.created_at
+        FROM dashboard_users u
+        JOIN tenants t ON u.tenant_id = t.id
+        WHERE t.id = $1 OR t.parent_id = $1
+        ORDER BY 
+          CASE WHEN t.id = $1 THEN 0 ELSE 1 END,
+          t.name ASC, 
+          u.email ASC
+      `;
+      params = [parentId];
+    } else {
+      // 3. Fallback for non-HQ users: Only show their own location team
+      query = `
+        SELECT u.id, u.email, u.role, u.tenant_id, t.name as tenant_name, t.business_type, u.created_at
+        FROM dashboard_users u
+        JOIN tenants t ON u.tenant_id = t.id
+        WHERE t.id = $1
+        ORDER BY u.email ASC
+      `;
+      params = [req.user.tenant_id];
+    }
+
+    const r = await db.query(query, params);
     res.json({ team: r.rows });
   } catch (err) {
     console.error("GET /api/team error:", err);
@@ -46,7 +81,7 @@ router.get("/", requireParentAdmin, async (req, res) => {
  * POST /api/team/invite
  * Invite a new user to a specific location or to the HQ.
  */
-router.post("/invite", requireParentAdmin, async (req, res) => {
+router.post("/invite", requireTeamManager, async (req, res) => {
   try {
     const { email, role, location_id } = req.body;
     
@@ -55,15 +90,23 @@ router.post("/invite", requireParentAdmin, async (req, res) => {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    
-    // Verify the requested location is either the parent or a valid child of this parent
     const parentId = req.user.tenant_id;
+    const isParentAdmin = req.user?.tenant_business_type === 'parent';
+
+    // Verify authorized location
+    // HQ Admin can invite to any child or HQ. Branch Manager can only invite to their own branch.
+    let authorizedLocationId = location_id;
+    if (!isParentAdmin) {
+       // Force the location to their own branch if they aren't HQ
+       authorizedLocationId = parentId;
+    }
+
     const rCheck = await db.query(
       "SELECT id, name FROM tenants WHERE (id = $1 OR parent_id = $1) AND id = $2",
-      [parentId, location_id]
+      [parentId, authorizedLocationId]
     );
     if (rCheck.rows.length === 0) {
-      return res.status(403).json({ error: "Invalid location. You can only invite users to your own branch locations." });
+      return res.status(403).json({ error: "Invalid location. You can only invite users to your authorized branch." });
     }
     const locationName = rCheck.rows[0].name;
 
@@ -139,14 +182,15 @@ router.post("/invite", requireParentAdmin, async (req, res) => {
  * DELETE /api/team/:id
  * Remove a user
  */
-router.delete("/:id", requireParentAdmin, async (req, res) => {
+router.delete("/:id", requireTeamManager, async (req, res) => {
   try {
     const targetUserId = req.params.id;
     const parentId = req.user.tenant_id;
+    const isParentAdmin = req.user?.tenant_business_type === 'parent';
 
-    // Verify the target user belongs to the parent's hierarchy
+    // Verify the target user belongs to the hierarchy AND is within the manager's scope
     const rCheck = await db.query(`
-      SELECT u.id 
+      SELECT u.id, u.tenant_id 
       FROM dashboard_users u 
       JOIN tenants t ON u.tenant_id = t.id 
       WHERE u.id = $1 AND (t.id = $2 OR t.parent_id = $2)
@@ -154,6 +198,13 @@ router.delete("/:id", requireParentAdmin, async (req, res) => {
 
     if (rCheck.rows.length === 0) {
       return res.status(403).json({ error: "User not found in your organization." });
+    }
+
+    const targetUserTenantId = rCheck.rows[0].tenant_id;
+
+    // Enforce scoping for non-HQ admins
+    if (!isParentAdmin && targetUserTenantId !== parentId) {
+      return res.status(403).json({ error: "You can only remove members from your own branch." });
     }
 
     // Delete user

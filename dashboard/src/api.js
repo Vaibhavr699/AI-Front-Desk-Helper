@@ -96,6 +96,7 @@ export async function signup(email, password) {
 export function logout() {
   localStorage.removeItem("token");
   localStorage.removeItem("user");
+  localStorage.removeItem("tenantId");
 }
 
 export function getUser() {
@@ -186,8 +187,9 @@ export function getConversations(tenantId) {
   return api(`/api/conversations?tenant_id=${tenantId}`);
 }
 
-export function getTeam() {
-  return api(`/api/team`);
+export function getTeam(tenantId = null) {
+  const url = tenantId ? `/api/team?tenant_id=${tenantId}` : "/api/team";
+  return api(url);
 }
 
 export function inviteTeamMember(data) {
@@ -332,6 +334,13 @@ export function createCheckout(tenantId, planId) {
   return api("/api/stripe/checkout", {
     method: "POST",
     body: JSON.stringify({ tenant_id: tenantId, plan_id: planId, return_url: window.location.origin + "/plans" }),
+  });
+}
+
+export function createAddonNumberCheckout(tenantId) {
+  return api("/api/stripe/checkout-addon-number", {
+    method: "POST",
+    body: JSON.stringify({ tenant_id: tenantId, return_url: window.location.origin + "/settings?tab=numbers" }),
   });
 }
 

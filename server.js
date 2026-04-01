@@ -2614,6 +2614,7 @@ wss.on("connection", async (twilioSocket, req) => {
   const recoveryId = q.recoveryId;
   const scheduleId = q.scheduleId;
   const campaignId = q.campaignId;
+  const contactId = q.contactId;
   const scriptId = q.scriptId;
   const recoveryScript = q.script ? decodeURIComponent(q.script) : "";
   const leadSource = q.leadSource || null;
@@ -2634,39 +2635,67 @@ wss.on("connection", async (twilioSocket, req) => {
 
   const pathSegments = pathname.split("/").filter(Boolean);
   const tenantIdFromPath = pathSegments.length >= 2 ? pathSegments[1] : "";
-  let tenantId = tenantIdFromPath || "gladiators";
-  let tenant = TENANTS[tenantId];
+  let tenantId = tenantIdFromPath;
+  let tenant = null;
 
-  // If not in cache, try DB lookup (handles new tenants without server restart)
-  if (!tenant && tenantId !== "gladiators") {
-    // Determine if it's a UUID or a slug
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId);
+  // 1. PRIORITIZE RESOLVING TENANT FROM CAMPAIGN/RECOVERY/NURTURING
+  if (isOutbound && campaignId) {
     try {
-      if (isUuid) {
+      const cRes = await db.query("SELECT tenant_id FROM outbound_campaigns WHERE id = $1", [campaignId]);
+      if (cRes.rows[0]) {
+        tenantId = cRes.rows[0].tenant_id;
         tenant = await getTenantById(tenantId);
-      } else {
-        // Search by slug if it wasn't a UUID
-        const dbTenants = await getAllTenants();
-        tenant = dbTenants.find(t => t.slug === tenantId);
       }
     } catch (e) {
-      console.error("[AI-Desk] WebSocket tenant lookup failed:", e.message);
+      console.error("[Outbound] Campaign tenant lookup failed:", e.message);
     }
+  } else if (isRecovery && recoveryId) {
+     try {
+       const rRes = await db.query("SELECT tenant_id FROM estimate_recovery WHERE id = $1", [recoveryId]);
+       if (rRes.rows[0]) {
+         tenantId = rRes.rows[0].tenant_id;
+         tenant = await getTenantById(tenantId);
+       }
+     } catch (e) {
+       console.error("[Recovery] lookup failed:", e.message);
+     }
+  } else if (isNurturing && scheduleId) {
+     try {
+       const sRes = await db.query("SELECT tenant_id FROM nurturing_schedule WHERE id = $1", [scheduleId]);
+       if (sRes.rows[0]) {
+         tenantId = sRes.rows[0].tenant_id;
+         tenant = await getTenantById(tenantId);
+       }
+     } catch (e) {
+       console.error("[Nurturing] lookup failed:", e.message);
+     }
   }
 
-  // Final fallback to memory cache if still null
-  if (!tenant) tenant = TENANTS[tenantId] || TENANTS["gladiators"];
-
-  // If still no tenant, pick the first one from TENANTS as a last resort
+  // 2. FALLBACK TO PATH SEGMENT OR DEFAULT "GLADIATORS"
   if (!tenant) {
-    const availableTenantIds = Object.keys(TENANTS);
-    if (availableTenantIds.length > 0) {
-      tenant = TENANTS[availableTenantIds[0]];
-      console.log("[AI-Desk] Tenant lookup fallback to first available:", tenant?.slug);
+    if (!tenantId) tenantId = "gladiators";
+    tenant = TENANTS[tenantId];
+    
+    // If slug lookup failed, try finding first Available if path was empty
+    if (!tenant && !tenantIdFromPath) {
+      const availableTenantIds = Object.keys(TENANTS);
+      if (availableTenantIds.length > 0) {
+        tenant = TENANTS[availableTenantIds[0]];
+        console.log("[AI-Desk] Tenant lookup fallback to first available:", tenant?.slug);
+      }
+    }
+
+    // Try DB lookup if not in cache (handles new tenants without server restart)
+    if (!tenant && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId)) {
+      try {
+        tenant = await getTenantById(tenantId);
+      } catch (e) {
+        console.error("[AI-Desk] WebSocket tenant lookup failed:", e.message);
+      }
     }
   }
 
-  if (!tenant && !isRecovery && !isNurturing) {
+  if (!tenant && !isRecovery && !isNurturing && !isOutbound) {
     console.error("[AI-Desk] No tenant for path segment:", tenantIdFromPath, "- ensure DB is seeded and loadTenants ran.");
     twilioSocket.close();
     return;
@@ -2696,6 +2725,7 @@ wss.on("connection", async (twilioSocket, req) => {
         // AI PERSONA OVERRIDES
         if (campaign.agent_name) tenant.outbound_agent_name = campaign.agent_name;
         if (campaign.persona_instructions) tenant.outbound_instructions = campaign.persona_instructions;
+        if (campaign.agent_voice) tenant.outbound_voice = campaign.agent_voice;
 
         if (campaign.mode === 'manual') {
           outboundScript = campaign.prompt_description;
@@ -2703,13 +2733,33 @@ wss.on("connection", async (twilioSocket, req) => {
           const sRes = await db.query("SELECT content FROM outbound_scripts WHERE id = $1", [scriptId]);
           outboundScript = sRes.rows[0]?.content;
         }
+        
+        // Fetch contact details if available
+        if (q.contactId) {
+          const contactRes = await db.query("SELECT * FROM outbound_contacts WHERE id = $1", [q.contactId]);
+          const contact = contactRes.rows[0];
+          if (contact) {
+            tenant.contactName = contact.name || null;
+            tenant.contactPhone = contact.phone || null;
+          }
+        }
+
         // Overwrite tenant if campaign belongs to another tenant (safety)
         if (campaign.tenant_id !== tenant?.id) {
           tenant = await getTenantById(campaign.tenant_id);
         }
+
+        // AUTO INTRODUCTION FALLBACK if no script found
+        if (!outboundScript && isOutbound) {
+          const biz = tenant?.company_name || 'the team';
+          const agent = tenant?.outbound_agent_name || 'Alex';
+          outboundScript = tenant.contactName 
+            ? `Hi ${tenant.contactName}, this is ${agent} from ${biz}. I was calling to follow up on your recent request, how are you doing today?`
+            : `Hello, this is ${agent} from ${biz}. I was calling to follow up on your recent inquiry, how are you doing today?`;
+        }
       }
     } catch (e) {
-      console.error("[Outbound] Failed to fetch campaign script:", e.message);
+      console.error("[Outbound] Failed to fetch campaign/contact data:", e.message);
     }
   }
 
@@ -2755,7 +2805,7 @@ wss.on("connection", async (twilioSocket, req) => {
   function triggerGreetingIfReady() {
     if (openaiReady && streamStarted && !greetingTriggered) {
       greetingTriggered = true;
-      const useRecoveryFlow = isRecovery || (isNurturing && recoveryScript);
+      const useRecoveryFlow = isRecovery || isOutbound || (isNurturing && recoveryScript);
       
       if (!useRecoveryFlow) {
         console.log("[AI-Desk] Triggering initial greeting (StreamReady & OpenAIReady)");
@@ -2763,17 +2813,30 @@ wss.on("connection", async (twilioSocket, req) => {
           type: "response.create",
           response: {
             modalities: ["audio", "text"],
-            instructions: "Greet the user warmly as a professional receptionist. Ask how you can help them today."
+            instructions: "Greet the user warmly as a professional receptionist for " + (tenant?.company_name || "the business") + ". Ask how you can help them today."
           }
         });
       } else if (recoveryScript || outboundScript) {
         const scriptToUse = outboundScript || recoveryScript;
-        console.log("[AI-Desk] Triggering greeting (StreamReady & OpenAIReady): %s", scriptToUse);
+        console.log("[AI-Desk] Triggering greeting (StreamReady & OpenAIReady) with script: %s", scriptToUse);
         sendToOpenAI({
           type: "response.create",
           response: {
             modalities: ["audio", "text"],
             instructions: `Greet the user by saying EXACTLY this and nothing else yet: "${scriptToUse}"`
+          }
+        });
+      } else if (isOutbound) {
+        // SAFETY FALLBACK for outbound if script is somehow missing
+        const biz = tenant?.company_name || 'the team';
+        const agent = tenant?.outbound_agent_name || 'Alex';
+        const fallbackText = `Hi, this is ${agent} from ${biz}. I was calling to follow up on your recent inquiry, how are you doing today?`;
+        console.log("[AI-Desk] Triggering greeting Safety Fallback for outbound");
+        sendToOpenAI({
+          type: "response.create",
+          response: {
+            modalities: ["audio", "text"],
+            instructions: `Greet the user by saying EXACTLY this: "${fallbackText}"`
           }
         });
       }
@@ -2884,7 +2947,7 @@ wss.on("connection", async (twilioSocket, req) => {
           console.error("[AI-Desk] Nurturing schedule load error:", e.message);
         }
       }
-      const useRecoveryFlow = isRecovery || (isNurturing && recoveryScript);
+      const useRecoveryFlow = isRecovery || isOutbound || (isNurturing && recoveryScript);
 
       if (callSid) {
         const call = await callsService.getCallByTwilioSid(callSid);
@@ -2908,13 +2971,13 @@ wss.on("connection", async (twilioSocket, req) => {
 
       // 1. CORE SYSTEM RULES (Always included to protect tool usage and flow)
       const baseInboundRules = [
-        `You are a professional receptionist for ${tenant?.company_name || 'our business'}. Be warm, confident, and helpful.`,
+        `You are a professional receptionist for ${tenant?.company_name || 'Gladiators Painting'}. Be warm, confident, and helpful.`,
         "CONVERSATIONAL FLOW: Let the conversation flow naturally like a real human. If they ask a question, answer it directly using the Knowledge Base (FAQs) before steering them back to your questions. Your primary flow is: (1) Warm welcome, (2) Ask for name and what they need, (3) ANSWER any questions about the business, (4) Get lead details (phone/email/address), (5) Ask about budget/size, (6) Book the time.",
       ];
-
+ 
       const baseOutboundRules = [
-        `You are ${tenant?.outbound_agent_name || 'Alex'}, a professional outreach and follow-up agent for ${tenant?.company_name || 'the business'}. Be professional, respectful, and direct.`,
-        `CONVERSATIONAL FLOW: You are CALLING the customer. Do NOT say 'How can I help you?'. Instead, introduce yourself (e.g., "Hi, I am ${tenant?.outbound_agent_name || 'Alex'} from ${tenant?.company_name || 'the business'}..."), and then proceed with your script. Your primary goal is to engage the user, answer their questions, and move them toward booking an appointment or confirming their project details.`,
+        `You are ${tenant?.outbound_agent_name || 'Alex'}, a professional outreach and follow-up agent for ${tenant?.company_name || 'Gladiators Painting'}. Be professional, respectful, and direct.`,
+        `CONVERSATIONAL FLOW: You are the one CALLING the customer${tenant.contactName ? ` (${tenant.contactName})` : ''}. Do NOT ask for their name or what they need as if you don't know who they are. Instead, follow the campaign script to lead the conversation. Do NOT start by asking 'How can I help you today?' as this is an OUTBOUND call.`,
       ];
 
       const universalRules = [
@@ -2935,7 +2998,11 @@ wss.on("connection", async (twilioSocket, req) => {
 
       const coreSystemRules = [
         ...(isOutbound ? baseOutboundRules : baseInboundRules),
-        ...universalRules
+        ...universalRules.filter(r => {
+          if (!isOutbound) return true;
+          // Filter out inbound-specific goals for outbound calls to avoid asking for known data
+          return !r.includes("Ask for name") && !r.includes("Ask about budget/size") && !r.includes("is this for an interior or exterior project");
+        })
       ].join("\n");
 
       // 2. TENANT CUSTOM INSTRUCTIONS
@@ -3014,7 +3081,7 @@ wss.on("connection", async (twilioSocket, req) => {
         Be warm, helpful, and professional. The goal is to open conversation, not pressure them.`;
       }
 
-      const voice = process.env.OPENAI_REALTIME_VOICE || "shimmer";
+      const voice = isOutbound ? (tenant?.outbound_voice || "ash") : (tenant?.inbound_voice || process.env.OPENAI_REALTIME_VOICE || "shimmer");
       const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 1000;
       const vadThreshold = parseFloat(process.env.REALTIME_VAD_THRESHOLD) || 0.6;
       const payloadToOpenAI = {

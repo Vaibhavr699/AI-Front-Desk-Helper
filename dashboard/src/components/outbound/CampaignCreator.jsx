@@ -19,9 +19,24 @@ export default function CampaignCreator({ tenantId, onClose, onCreated }) {
     csv: null,
     agent_name: "Alex",
     persona_instructions: "",
+    agent_voice: "ash"
   });
 
   const isFormValid = formData.name && formData.csv && formData.consent_confirmed;
+ 
+  const downloadCsvTemplate = () => {
+    const headers = "first_name,last_name,phone,email,notes\n";
+    const example = "John,Doe,+15551234567,john@example.com,Interested in service";
+    const blob = new Blob([headers + example], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", "campaign_template.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
   async function handleSubmit(e) {
     if (e && e.preventDefault) e.preventDefault();
@@ -48,7 +63,8 @@ export default function CampaignCreator({ tenantId, onClose, onCreated }) {
       data.append("tenantId", tenantId);
       data.append("agent_name", formData.agent_name);
       data.append("persona_instructions", formData.persona_instructions);
-
+      data.append("agent_voice", formData.agent_voice);
+      
       const res = await postFormData("/api/outbound/campaigns", data);
       onCreated(res);
       onClose();
@@ -167,7 +183,7 @@ export default function CampaignCreator({ tenantId, onClose, onCreated }) {
                <h3 className="text-[10px] font-black uppercase tracking-widest text-stone-900">AI Personal Identity</h3>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
                <div className="space-y-1.5">
                   <label className="text-[10px] font-bold uppercase tracking-widest text-stone-400 ml-0.5">AI Caller Name</label>
                   <div className="relative">
@@ -180,7 +196,27 @@ export default function CampaignCreator({ tenantId, onClose, onCreated }) {
                       onChange={(e) => setFormData({...formData, agent_name: e.target.value})}
                     />
                   </div>
-                  <p className="text-[9px] text-stone-400 italic px-1">"Hi, I'm {formData.agent_name || '...'} from [Business]..."</p>
+               </div>
+
+               <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-stone-400 ml-0.5">Agent Voice</label>
+                  <div className="relative">
+                    <Zap className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-300" size={14} />
+                    <select
+                      className="w-full pl-9 pr-4 py-2.5 bg-white border border-stone-200 rounded-xl focus:ring-1 focus:ring-stone-900 transition-all outline-none text-stone-900 font-bold text-xs appearance-none"
+                      value={formData.agent_voice}
+                      onChange={e => setFormData({...formData, agent_voice: e.target.value})}
+                    >
+                      <option value="ash">Ash (Male - Deep)</option>
+                      <option value="echo">Echo (Male - Calm)</option>
+                      <option value="alloy">Alloy (Male - Neutral)</option>
+                      <option value="ballad">Ballad (Male - Professional)</option>
+                      <option value="sage">Sage (Male - Warm)</option>
+                      <option value="shimmer">Shimmer (Female - Default)</option>
+                      <option value="coral">Coral (Female - Formal)</option>
+                      <option value="verse">Verse (Female - Energetic)</option>
+                    </select>
+                  </div>
                </div>
 
                <div className="space-y-1.5">
@@ -189,14 +225,15 @@ export default function CampaignCreator({ tenantId, onClose, onCreated }) {
                     <ShieldCheck className="absolute left-3 top-3 text-stone-300" size={14} />
                     <textarea 
                       rows={2}
-                      placeholder="e.g. Energetic assistant, Professional estimator"
-                      className="w-full pl-9 pr-4 py-2.5 bg-white border border-stone-200 rounded-xl focus:ring-1 focus:ring-stone-900 transition-all outline-none text-stone-900 font-medium text-xs resize-none"
+                      placeholder="e.g. Energetic follow-up expert"
+                      className="w-full pl-9 pr-4 py-2.5 bg-white text-xs border border-stone-200 rounded-xl focus:ring-1 focus:ring-stone-900 transition-all outline-none text-stone-900 font-medium text-xs resize-none"
                       value={formData.persona_instructions}
                       onChange={(e) => setFormData({...formData, persona_instructions: e.target.value})}
                     />
                   </div>
                </div>
             </div>
+            <p className="text-[9px] text-stone-400 italic px-1">"Hi, I'm {formData.agent_name || '...'} from [Business]..."</p>
           </section>
 
           <section className="space-y-1.5 focus-within:translate-x-1 transition-transform">
@@ -236,6 +273,25 @@ export default function CampaignCreator({ tenantId, onClose, onCreated }) {
                        </div>
                     )}
                   </div>
+                </div>
+                
+                <div className="flex justify-between items-center mt-3 relative group/template">
+                   <button 
+                     type="button"
+                     onClick={downloadCsvTemplate}
+                     className="flex items-center gap-2 text-[10px] font-black text-stone-400 uppercase tracking-widest hover:text-stone-900 transition-all px-1"
+                   >
+                     <FileText size={12} className="text-stone-300 group-hover/template:text-stone-900 transition-colors" />
+                     Download Template
+                   </button>
+                   
+                   {/* Tooltip */}
+                   <div className="absolute left-0 -bottom-8 opacity-0 group-hover/template:opacity-100 transition-all duration-300 pointer-events-none translate-y-1 group-hover/template:translate-y-0 z-50">
+                      <div className="bg-stone-900 text-white text-[8px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg shadow-xl shadow-stone-900/10 whitespace-nowrap">
+                         Download template CSV format
+                      </div>
+                      <div className="w-2 h-2 bg-stone-900 rotate-45 absolute -top-1 left-4"></div>
+                   </div>
                 </div>
              </section>
 

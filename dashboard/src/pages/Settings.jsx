@@ -16,6 +16,7 @@ import {
   triggerFollowupCall,
   updateFollowupStatus,
   disconnectGoogleCalendar,
+  createAddonNumberCheckout,
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import { ConfirmationModal } from "../components/ConfirmationModal";
@@ -50,7 +51,9 @@ import {
   UserPlus,
   User,
   AtSign,
-  Mail
+  Mail,
+  Mic2,
+  Volume2
 } from "lucide-react";
 
 const TENANT_STORAGE_KEY = "tenantId";
@@ -144,6 +147,8 @@ export default function Settings({ tenantId }) {
     google_calendar_linked: false,
     google_calendar_email: "",
     faqs: [],
+    inbound_voice: "shimmer",
+    outbound_voice: "ash",
     outbound_instructions: "",
     outbound_agent_name: "Alex",
     nurturing_enabled: false,
@@ -174,6 +179,7 @@ export default function Settings({ tenantId }) {
   const [provisionLoading, setProvisionLoading] = useState(false);
   const [provisionMessage, setProvisionMessage] = useState("");
   const [suggestedNumbers, setSuggestedNumbers] = useState([]);
+  const [buyAddonLoading, setBuyAddonLoading] = useState(false);
 
   // Facebook integration steps (tooltip / expandable)
   const [showFbSteps, setShowFbSteps] = useState(false);
@@ -234,6 +240,8 @@ export default function Settings({ tenantId }) {
         google_calendar_linked: t.google_calendar_linked === true,
         google_calendar_email: t.google_calendar_email || "",
         faqs: Array.isArray(t.faqs) ? t.faqs : [],
+        inbound_voice: t.inbound_voice || "shimmer",
+        outbound_voice: t.outbound_voice || "ash",
         outbound_instructions: t.outbound_instructions || "",
         outbound_agent_name: t.outbound_agent_name || "Alex",
         nurturing_enabled: t.nurturing_enabled === true,
@@ -350,6 +358,21 @@ export default function Settings({ tenantId }) {
       setProvisionMessage(`Error: ${err.message}`);
     } finally {
       setProvisionLoading(false);
+    }
+  };
+
+  const handleBuyAddonNumber = async () => {
+    if (!tenantId) return;
+    setBuyAddonLoading(true);
+    try {
+      const res = await createAddonNumberCheckout(tenantId);
+      if (res.url) {
+        window.location.href = res.url;
+      }
+    } catch (e) {
+      toastError(`Failed to start checkout: ${e.message}`);
+    } finally {
+      setBuyAddonLoading(false);
     }
   };
 
@@ -520,6 +543,8 @@ export default function Settings({ tenantId }) {
       objection_handling_config: form.objection_handling,
       facebook_page_id: form.facebook_page_id.trim() || null,
       faqs: form.faqs.filter(f => f.question.trim() && f.answer.trim()),
+      inbound_voice: form.inbound_voice || "shimmer",
+      outbound_voice: form.outbound_voice || "ash",
       outbound_instructions: form.outbound_instructions || null,
       outbound_agent_name: form.outbound_agent_name || "Alex",
       nurturing_enabled: form.nurturing_enabled,
@@ -682,19 +707,43 @@ export default function Settings({ tenantId }) {
                   </div>
                 ) : (
                   <>
-                    <div className="mb-6 px-4 py-2 bg-blue-50 border border-blue-100 rounded-2xl flex items-center justify-between">
+                    <div className="mb-6 px-4 py-3 bg-blue-50 border border-blue-100 rounded-2xl flex items-center justify-between flex-wrap gap-4 shadow-sm">
                       <div className="flex items-center gap-3">
-                        <Phone className="w-5 h-5 text-blue-500" />
+                        <div className="w-10 h-10 rounded-xl bg-blue-100 border border-blue-200 flex items-center justify-center text-blue-600 shadow-sm">
+                          <Phone className="w-5 h-5 text-blue-500" />
+                        </div>
                         <div>
-                          <p className="text-sm font-bold text-blue-900">Plan Usage: {phoneNumbers.length} / {tenant?.plan === 'elite' ? 5 : (tenant?.plan === 'pro' ? 3 : 1)} Numbers</p>
-                          <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wider">{tenant?.plan ? `${tenant.plan.toUpperCase()} PLAN` : 'BASIC PLAN'}</p>
+                          <p className="text-sm font-bold text-blue-900 leading-none mb-1">
+                            Plan Usage: <span className="text-blue-600">{phoneNumbers.length}</span> / <span className="text-stone-500">{(tenant?.plan === 'elite' ? 5 : (tenant?.plan === 'pro' ? 3 : 1)) + (tenant?.extra_numbers_count || 0)}</span> Numbers
+                          </p>
+                          <div className="flex items-center gap-2">
+                             <p className="text-[10px] text-blue-600 font-black uppercase tracking-[0.05em]">{tenant?.plan ? `${tenant.plan.toUpperCase()} PLAN` : 'BASIC PLAN'}</p>
+                             {tenant?.extra_numbers_count > 0 && (
+                               <>
+                                 <span className="w-1 h-1 rounded-full bg-blue-300"></span>
+                                 <p className="text-[10px] text-blue-500 font-bold uppercase tracking-wider">{tenant.extra_numbers_count} Extra Purchased</p>
+                               </>
+                             )}
+                          </div>
                         </div>
                       </div>
-                      {phoneNumbers.length >= (tenant?.plan === 'elite' ? 5 : (tenant?.plan === 'pro' ? 3 : 1)) && (
-                        <Link to="/billing" className="text-[10px] font-black bg-blue-600 text-white px-3 py-1.5 rounded-lg uppercase tracking-widest hover:bg-blue-700 transition-all">
-                          Upgrade for more
-                        </Link>
-                      )}
+                      
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleBuyAddonNumber}
+                          disabled={buyAddonLoading}
+                          className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition-all shadow-md shadow-blue-200 disabled:opacity-50"
+                        >
+                          {buyAddonLoading ? <RefreshCw className="animate-spin w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                          Buy Extra ($12/mo)
+                        </button>
+                        
+                        {(tenant?.plan === 'basic' || tenant?.plan === 'pro') && (
+                          <Link to="/plans" className="px-3 py-1.5 bg-white border border-blue-200 text-blue-600 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-blue-50 transition-all outline-none">
+                            Upgrade Plan
+                          </Link>
+                        )}
+                      </div>
                     </div>
 
                     <div className="mb-10 p-6 bg-slate-50 border border-slate-100 rounded-[1.5rem] shadow-sm">
@@ -737,7 +786,7 @@ export default function Settings({ tenantId }) {
                               <button
                                 type="button"
                                 onClick={() => fetchAvailableNumbers(areaCode)}
-                                disabled={loadingNumbers || phoneNumbers.length >= (tenant?.plan === 'elite' ? 5 : (tenant?.plan === 'pro' ? 3 : 1))}
+                                disabled={loadingNumbers || phoneNumbers.length >= ((tenant?.plan === 'elite' ? 5 : (tenant?.plan === 'pro' ? 3 : 1)) + (tenant?.extra_numbers_count || 0))}
                                 className="px-6 py-2.5 bg-slate-900 text-white text-[10px] font-black rounded-xl hover:bg-black disabled:opacity-50 flex items-center gap-2 transition-all uppercase tracking-widest shadow-lg shadow-slate-900/10"
                               >
                                 {loadingNumbers ? <LumaSpin className="w-3.5 h-3.5 border-white" /> : <Search size={14} />}
@@ -1161,6 +1210,26 @@ export default function Settings({ tenantId }) {
                       placeholder="e.g. Thanks for calling Gladiators Painting..."
                     />
                   </div>
+                  <div className="col-span-1">
+                    <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Inbound Voice</label>
+                    <div className="relative">
+                      <Mic2 className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                      <select
+                        value={form.inbound_voice}
+                        onChange={(e) => handleUpdateForm("inbound_voice", e.target.value)}
+                        className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-primary/5 transition-all outline-none font-bold text-xs appearance-none"
+                      >
+                         <option value="shimmer">Shimmer (Female - Default)</option>
+                         <option value="coral">Coral (Female - Formal)</option>
+                         <option value="verse">Verse (Female - Energetic)</option>
+                         <option value="ash">Ash (Male - Deep)</option>
+                         <option value="echo">Echo (Male - Calm)</option>
+                         <option value="alloy">Alloy (Male - Neutral)</option>
+                         <option value="ballad">Ballad (Male - Professional)</option>
+                         <option value="sage">Sage (Male - Warm)</option>
+                      </select>
+                    </div>
+                  </div>
                   <div className="col-span-2">
                     <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Detailed AI Instructions</label>
                     <textarea
@@ -1196,6 +1265,26 @@ export default function Settings({ tenantId }) {
                       />
                     </div>
                     <p className="text-[10px] text-gray-400 mt-1 italic">Default name for outbound calls.</p>
+                  </div>
+                  <div className="md:w-1/3">
+                    <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Outbound Voice</label>
+                    <div className="relative">
+                      <Volume2 className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                      <select
+                        value={form.outbound_voice}
+                        onChange={(e) => handleUpdateForm("outbound_voice", e.target.value)}
+                        className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-blue-500/5 transition-all outline-none font-bold text-xs appearance-none"
+                      >
+                         <option value="ash">Ash (Male - Deep)</option>
+                         <option value="echo">Echo (Male - Calm)</option>
+                         <option value="alloy">Alloy (Male - Neutral)</option>
+                         <option value="ballad">Ballad (Male - Professional)</option>
+                         <option value="sage">Sage (Male - Warm)</option>
+                         <option value="shimmer">Shimmer (Female - Default)</option>
+                         <option value="coral">Coral (Female - Formal)</option>
+                         <option value="verse">Verse (Female - Energetic)</option>
+                      </select>
+                    </div>
                   </div>
                   <div className="col-span-2">
                     <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Outbound Personality & Instructions</label>

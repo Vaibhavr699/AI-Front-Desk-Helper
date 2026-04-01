@@ -25,12 +25,13 @@ export function AnimatedHeroTitle({ onStart, onLogin, onContact }) {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.5 }}
                 >
-                    <div className="inline-flex items-center gap-2.5 px-4 py-2 rounded-2xl bg-white border border-stone-200 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07),0_10px_20px_-2px_rgba(0,0,0,0.04)] hover:shadow-lg transition-all cursor-default group">
-                        <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-orange-500 text-white shadow-orange-200 shadow-lg">
+                    <div className="inline-flex items-center gap-2.5 px-4 py-2 rounded-2xl bg-emerald-50 border border-emerald-100 shadow-sm hover:shadow-md transition-all cursor-default group">
+                        <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-emerald-600 text-white shadow-emerald-200 shadow-lg">
                             <Sparkles className="w-3.5 h-3.5" />
                         </div>
-                        <div className="flex flex-col">
-                            <span className="text-[12px] font-bold text-stone-900 tracking-tight">Built for Home Service Pros</span>
+                        <div className="flex items-center gap-2">
+                            <span className="text-[12px] font-bold text-emerald-900 tracking-tight">Built for Home Service Contractors</span>
+                            <MoveRight className="w-3.5 h-3.5 text-emerald-600 group-hover:translate-x-0.5 transition-transform" />
                         </div>                        
                     </div>
                 </motion.div>

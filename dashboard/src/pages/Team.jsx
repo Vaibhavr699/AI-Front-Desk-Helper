@@ -4,6 +4,7 @@ import { LumaSpin } from "../components/ui/luma-spin";
 import { Users, Crown, MapPin, Trash2, Mail, Plus, AlertCircle, Building2, Shield, User } from "lucide-react";
 
 export default function Team() {
+  const currentUser = getUser();
   const [team, setTeam] = useState([]);
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -18,17 +19,26 @@ export default function Team() {
   const [inviteError, setInviteError] = useState("");
   const [inviteSuccess, setInviteSuccess] = useState("");
 
+  const activeTenantId = localStorage.getItem("tenantId");
+
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [activeTenantId]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [teamRes, tenantsRes] = await Promise.all([getTeam(), getTenants()]);
+      const [teamRes, tenantsRes] = await Promise.all([
+        getTeam(activeTenantId), 
+        getTenants()
+      ]);
       setTeam(teamRes.team || []);
       setLocations(tenantsRes.tenants || []);
-      if (tenantsRes.tenants && tenantsRes.tenants.length > 0) {
+      
+      // Smart location selection for invite modal
+      if (activeTenantId && activeTenantId !== 'all') {
+        setInviteLocation(activeTenantId);
+      } else if (tenantsRes.tenants && tenantsRes.tenants.length > 0) {
         setInviteLocation(tenantsRes.tenants[0].id);
       }
     } catch (err) {
@@ -264,26 +274,28 @@ export default function Team() {
                     )}
                   </div>
 
-                  <div className="space-y-1.5">
-                    <label className="text-sm font-medium text-stone-700">Assign Location</label>
-                    <div className="p-3 bg-stone-50 rounded-xl border border-stone-200 mb-2">
-                       <p className="text-[10px] text-stone-400 uppercase font-bold tracking-wider mb-1">Accessibility Note</p>
-                       <p className="text-xs text-stone-600 leading-relaxed italic">
-                         Role permissions apply across the selected location. Members assigned to HQ gain visibility across the whole organization to the level of their role.
-                       </p>
+                  {(currentUser?.tenant_business_type === 'parent') && (
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-medium text-stone-700">Assign Location</label>
+                      <div className="p-3 bg-stone-50 rounded-xl border border-stone-200 mb-2">
+                        <p className="text-[10px] text-stone-400 uppercase font-bold tracking-wider mb-1">Accessibility Note</p>
+                        <p className="text-xs text-stone-600 leading-relaxed italic">
+                          Role permissions apply across the selected location. Members assigned to HQ gain visibility across the whole organization to the level of their role.
+                        </p>
+                      </div>
+                      <select 
+                        value={inviteLocation}
+                        onChange={e => setInviteLocation(e.target.value)}
+                        className="w-full px-3 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-stone-500 outline-none"
+                      >
+                        {locations.map(t => (
+                          <option key={t.id} value={t.id}>
+                            {t.name} {t.business_type === 'parent' ? '(HQ / Corporate)' : '(Branch)'}
+                          </option>
+                        ))}
+                      </select>
                     </div>
-                    <select 
-                      value={inviteLocation}
-                      onChange={e => setInviteLocation(e.target.value)}
-                      className="w-full px-3 py-2 border border-stone-200 rounded-lg focus:ring-2 focus:ring-stone-500 outline-none"
-                    >
-                      {locations.map(t => (
-                        <option key={t.id} value={t.id}>
-                          {t.name} {t.business_type === 'parent' ? '(HQ / Corporate)' : '(Branch)'}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  )}
 
                   <div className="pt-4 flex gap-3">
                     <button 

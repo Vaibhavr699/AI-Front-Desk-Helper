@@ -245,9 +245,10 @@ export default function Plans({ tenantId }) {
           const isLoading = checkoutLoading === plan.id;
           const isPro = plan.id === "pro";
           const isElite = plan.id === "elite";
+          const isLocation = tenant?.business_type === "location";
 
           const originalMonthly = plan.priceMonthly ?? (plan.id === "basic" ? 297 : plan.id === "pro" ? 497 : 997);
-          const originalSetup = plan.setupFee ?? (plan.id === "basic" ? 197 : plan.id === "pro" ? 297 : 497);
+          const originalSetup = isLocation ? 197 : (plan.setupFee ?? (plan.id === "basic" ? 197 : plan.id === "pro" ? 297 : 497));
           
           let displayMonthly = originalMonthly;
           let displaySetup = originalSetup;

@@ -2819,10 +2819,17 @@ wss.on("connection", async (twilioSocket, req) => {
   let openaiSocket = null;
   let streamStarted = false;
   let greetingTriggered = false;
+  let sessionUpdated = false;
   let responseInProgress = false;
 
   function triggerGreetingIfReady() {
     if (openaiReady && streamStarted && !greetingTriggered) {
+      if (isOutbound || isRecovery) {
+        if (!sessionUpdated) {
+          console.log("[AI-Desk] triggerGreetingIfReady waiting for sessionUpdated (Outbound/Recovery)");
+          return;
+        }
+      }
       greetingTriggered = true;
       const useRecoveryFlow = isRecovery || isOutbound || (isNurturing && recoveryScript);
       
@@ -3123,6 +3130,12 @@ wss.on("connection", async (twilioSocket, req) => {
         }
       } catch (e) {
         return;
+      }
+
+      if (data.type === "session.updated") {
+        console.log("[AI-Desk] OpenAI session.updated received. Instructions established.");
+        sessionUpdated = true;
+        triggerGreetingIfReady();
       }
 
       if (data.type === "response.created") {

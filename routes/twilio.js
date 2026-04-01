@@ -136,10 +136,18 @@ router.get("/recovery-call", async (req, res) => {
 
   let tenantId = "";
   try {
-    const res = await db.query("SELECT tenant_id FROM estimate_recoveries WHERE id = $1", [recoveryId]);
-    tenantId = res.rows[0]?.tenant_id || "";
+    const res = await db.query("SELECT tenant_id, contact_phone FROM estimate_recoveries WHERE id = $1", [recoveryId]);
+    if (res.rows[0]) {
+      tenantId = res.rows[0].tenant_id;
+      const contactPhone = res.rows[0].contact_phone;
+      // CREATE CALL RECORD if it doesn't exist (using CallSid if available)
+      const callSid = req.query.CallSid || "";
+      if (callSid) {
+        await callsService.createCall(tenantId, callSid, "RECOVERY", contactPhone, "outbound");
+      }
+    }
   } catch (e) {
-    console.error("[Twilio] recovery-call tenant lookup failed:", e.message);
+    console.error("[Twilio] recovery-call tenant/call setup failed:", e.message);
   }
 
   const streamUrl = `${wsUrl}${tenantId ? '/' + tenantId : ''}?type=recovery&recoveryId=${encodeURIComponent(recoveryId)}&script=${encodeURIComponent(script)}&callSid=${encodeURIComponent(req.query.CallSid || "")}`;
@@ -203,9 +211,27 @@ router.all("/outbound", async (req, res) => {
   let tenantId = "";
   if (campaignId) {
     try {
-      const res = await db.query("SELECT tenant_id FROM outbound_campaigns WHERE id = $1", [campaignId]);
-      tenantId = res.rows[0]?.tenant_id || "";
-    } catch (e) {}
+      const db = require("../lib/db");
+      const campaignRes = await db.query("SELECT tenant_id FROM outbound_campaigns WHERE id = $1", [campaignId]);
+      if (campaignRes.rows[0]) {
+        tenantId = campaignRes.rows[0].tenant_id;
+        
+        // Fetch contact phone to create call record
+        let contactPhone = "";
+        if (contactId) {
+          const contactRes = await db.query("SELECT phone FROM outbound_contacts WHERE id = $1", [contactId]);
+          contactPhone = contactRes.rows[0]?.phone || "";
+        }
+        
+        const callSid = req.body.CallSid || req.query.CallSid;
+        if (callSid && tenantId) {
+          await callsService.createCall(tenantId, callSid, "CAMPAIGN", contactPhone, "outbound");
+          console.log("[Twilio] Outbound call record created CallSid=%s tenantId=%s", callSid, tenantId);
+        }
+      }
+    } catch (e) {
+      console.error("[Twilio] outbound tenant/call setup failed:", e.message);
+    }
   }
 
   let streamUrl = `${wsUrl}${tenantId ? '/' + tenantId : ''}?type=outbound&campaignId=${encodeURIComponent(campaignId)}&contactId=${encodeURIComponent(contactId)}&callSid=${encodeURIComponent(req.body.CallSid || req.query.CallSid)}`;

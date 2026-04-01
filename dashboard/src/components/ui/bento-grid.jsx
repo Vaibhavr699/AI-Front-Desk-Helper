@@ -15,7 +15,7 @@ const BentoGrid = ({ children, className }) => {
     );
 };
 
-const BentoCard = ({ name, className, background, Icon, description, href, cta }) => (
+const BentoCard = ({ name, className, background, Icon, description, href, cta, onClick }) => (
     <div
         key={name}
         className={cn(
@@ -33,17 +33,27 @@ const BentoCard = ({ name, className, background, Icon, description, href, cta }
             </h3>
             <p className="max-w-lg text-stone-500">{description}</p>
         </div>
-
         <div
             className={cn(
                 "pointer-events-none absolute bottom-0 flex w-full translate-y-10 transform-gpu flex-row items-center p-4 opacity-0 transition-all duration-300 group-hover:translate-y-0 group-hover:opacity-100"
             )}
         >
             <Button variant="ghost" asChild size="sm" className="pointer-events-auto">
-                <a href={href}>
-                    {cta}
-                    <ArrowRightIcon className="ml-2 h-4 w-4" />
-                </a>
+                {onClick ? (
+                    <button
+                        type="button"
+                        onClick={onClick}
+                        className="flex items-center"
+                    >
+                        {cta}
+                        <ArrowRightIcon className="ml-2 h-4 w-4" />
+                    </button>
+                ) : (
+                    <a href={href}>
+                        {cta}
+                        <ArrowRightIcon className="ml-2 h-4 w-4" />
+                    </a>
+                )}
             </Button>
         </div>
         <div className="pointer-events-none absolute inset-0 transform-gpu transition-all duration-300 group-hover:bg-black/[.03]" />

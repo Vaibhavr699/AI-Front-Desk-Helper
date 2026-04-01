@@ -133,7 +133,7 @@ router.get("/recovery-call", (req, res) => {
     .replace("https://", "wss://")
     .replace("http://", "ws://") + "/twilio-media";
 
-  const streamUrl = `${wsUrl}?type=recovery&recoveryId=${encodeURIComponent(recoveryId)}&script=${encodeURIComponent(script)}`;
+  const streamUrl = `${wsUrl}?type=recovery&recoveryId=${encodeURIComponent(recoveryId)}&script=${encodeURIComponent(script)}&callSid=${encodeURIComponent(req.query.CallSid || "")}`;
   const actionUrl = BASE_URL ? `${BASE_URL}/twilio/status` : "";
   const connectAttrs = actionUrl
     ? ` action="${escapeXml(actionUrl)}" method="POST"`
@@ -190,7 +190,7 @@ router.all("/outbound", (req, res) => {
     .replace("https://", "wss://")
     .replace("http://", "ws://") + "/twilio-media";
 
-  let streamUrl = `${wsUrl}?type=outbound&campaignId=${encodeURIComponent(campaignId)}&contactId=${encodeURIComponent(contactId)}`;
+  let streamUrl = `${wsUrl}?type=outbound&campaignId=${encodeURIComponent(campaignId)}&contactId=${encodeURIComponent(contactId)}&callSid=${encodeURIComponent(req.body.CallSid || req.query.CallSid)}`;
   if (scriptId) streamUrl += `&scriptId=${encodeURIComponent(scriptId)}`;
 
   const twiml = `

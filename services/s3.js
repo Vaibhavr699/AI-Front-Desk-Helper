@@ -5,33 +5,51 @@ const db = require("../lib/db");
 const twilio = require("../lib/twilio");
 
 let bucket = process.env.AWS_S3_BUCKET_RECORDINGS;
-const region = process.env.AWS_REGION || "us-east-1";
+let region = process.env.AWS_REGION || "us-east-1";
 
-// Sanitize bucket name: if it's a URL like https://bucket-name.s3..., extract just 'bucket-name'
+// Sanitize bucket name & detect region: 
+// if it's a URL like https://bucket-name.s3.region.amazonaws.com, extract both
 if (bucket && (bucket.startsWith("http://") || bucket.startsWith("https://"))) {
   try {
     const url = new URL(bucket);
     const hostParts = url.hostname.split('.');
-    // For bucket-name.s3.region.amazonaws.com, the first part is the bucket name
+    
+    // Pattern 1: [bucket, s3, region, amazonaws, com]
+    // Pattern 2: [bucket, s3-external-*, amazonaws, com]
+    // Pattern 3: [bucket, s3, amazonaws, com] (default us-east-1)
+    
     bucket = hostParts[0];
+    if (hostParts.length >= 4 && hostParts[1].startsWith("s3")) {
+      // If it's bucket.s3.region.amazonaws.com, region is segment 2
+      if (hostParts[2] !== "amazonaws") {
+        region = hostParts[2];
+      }
+    }
+    console.log("[S3] Auto-detected bucket=%s region=%s", bucket, region);
   } catch (e) {
     console.error("[S3] Failed to parse bucket URL:", e.message);
   }
 }
 
-const client =
-  process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY
-    ? new S3Client({
-      region,
-      credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-      },
-    })
-    : null;
+let client = null;
+function getClient() {
+  if (client) return client;
+  if (!process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) return null;
+
+  client = new S3Client({
+    region,
+    credentials: {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    }
+  });
+  console.log("[S3] Initialized client for region=%s bucket=%s", region, bucket);
+  return client;
+}
 
 async function uploadRecordingToS3(tenantId, recordingSid) {
-  if (!client || !bucket) return;
+  const s3 = getClient();
+  if (!s3 || !bucket) return;
   const rec = await db.query(
     "SELECT id FROM recordings WHERE twilio_sid = $1",
     [recordingSid]
@@ -56,7 +74,7 @@ async function uploadRecordingToS3(tenantId, recordingSid) {
   if (!resp.ok) throw new Error("Fetch recording failed");
   const body = await resp.arrayBuffer();
   const key = `recordings/${tenantId}/${recordingSid}.mp3`;
-  await client.send(
+  await s3.send(
     new PutObjectCommand({
       Bucket: bucket,
       Key: key,

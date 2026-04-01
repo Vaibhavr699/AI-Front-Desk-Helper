@@ -2829,7 +2829,7 @@ wss.on("connection", async (twilioSocket, req) => {
           type: "response.create",
           response: {
             modalities: ["audio", "text"],
-            instructions: "Greet the user warmly as a professional receptionist for " + (tenant?.company_name || "the business") + ". Ask how you can help them today."
+            instructions: "Greet the user warmly IN ENGLISH as a professional receptionist for " + (tenant?.company_name || "the business") + ". Ask how you can help them today. DO NOT USE ANY OTHER LANGUAGE UNLESS EXPLICITLY REQUESTED."
           }
         });
       } else if (recoveryScript || outboundScript) {
@@ -3106,7 +3106,7 @@ wss.on("connection", async (twilioSocket, req) => {
           input_audio_format: "g711_ulaw",
           output_audio_format: "g711_ulaw",
           voice,
-          instructions: `${instructions}\n\nSpeak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English.`,
+          instructions: `${instructions}\n\nSpeak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English. DO NOT USE ANY OTHER LANGUAGE AT THE START OF THE CALL.`,
           tools: useRecoveryFlow ? RECOVERY_TOOLS : REALTIME_TOOLS,
           turn_detection: {
             type: "server_vad",

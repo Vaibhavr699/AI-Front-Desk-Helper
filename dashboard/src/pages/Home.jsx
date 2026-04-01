@@ -188,7 +188,7 @@ export default function Home() {
           <ContainerScroll
             titleComponent={
               <AnimatedHeroTitle
-                onStart={() => navigate("/login?signup=1")}
+                onStart={handleGetStarted}
                 onLogin={() => navigate("/login")}
                 onContact={() => {
                   console.log("Opening contact modal");

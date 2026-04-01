@@ -2655,9 +2655,6 @@ wss.on("connection", async (twilioSocket, req) => {
     return;
   }
 
-  const pathSegments = pathname.split("/").filter(Boolean);
-  const tenantIdFromPath = pathSegments.length >= 2 ? pathSegments[1] : "";
-  let tenantId = tenantIdFromPath;
   let tenant = null;
 
   // 1. PRIORITIZE RESOLVING TENANT FROM CAMPAIGN/RECOVERY/NURTURING

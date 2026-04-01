@@ -19,8 +19,38 @@ export function AnimatedHeroTitle({ onStart, onLogin, onContact }) {
 
     return (
         <div className="w-full">
+            {/* ── PROOF BAR ── */}
+            <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4 }}
+                className="w-full mb-2"
+            >
+                <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-1 py-2 px-4 bg-emerald-50 border border-emerald-100 rounded-2xl text-xs font-semibold text-emerald-800">
+                    <span className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+                        28 calls answered last month
+                    </span>
+                    <span className="hidden sm:block text-emerald-200">|</span>
+                    <span className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+                        53% booking rate
+                    </span>
+                    <span className="hidden sm:block text-emerald-200">|</span>
+                    <span className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+                        $11,500 revenue tracked
+                    </span>
+                    <span className="hidden sm:block text-emerald-200">|</span>
+                    <span className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+                        Built by a painting contractor
+                    </span>
+                </div>
+            </motion.div>
+
             <div className="flex gap-6 py-4 lg:py-8 items-center justify-center flex-col mb-4">
-                <motion.div 
+                <motion.div
                     initial={{ opacity: 0, y: -20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.5 }}
@@ -32,9 +62,10 @@ export function AnimatedHeroTitle({ onStart, onLogin, onContact }) {
                         <div className="flex items-center gap-2">
                             <span className="text-[12px] font-bold text-emerald-900 tracking-tight">Built for Home Service Contractors</span>
                             <MoveRight className="w-3.5 h-3.5 text-emerald-600 group-hover:translate-x-0.5 transition-transform" />
-                        </div>                        
+                        </div>
                     </div>
                 </motion.div>
+
                 <div className="flex gap-3 flex-col">
                     <h1 className="text-5xl md:text-6xl max-w-2xl tracking-tight text-center font-bold text-stone-900">
                         Never miss
@@ -57,11 +88,17 @@ export function AnimatedHeroTitle({ onStart, onLogin, onContact }) {
                             ))}
                         </span>
                     </h1>
+
+                    {/* ── UPDATED SUBTITLE WITH PROOF NUMBERS ── */}
                     <p className="text-lg md:text-xl leading-relaxed tracking-tight text-stone-600 max-w-2xl text-center mx-auto">
-                        Answer every call. Book more jobs. Recover lost revenue - automatically
-                        Your AI front desk handles calls, qualifies leads, schedules work, and follows up.
+                        Answer every call. Book more jobs. Recover lost revenue — automatically.{" "}
+                        Your AI front desk handles calls, qualifies leads, schedules work, and follows up 24/7.{" "}
+                        <span className="font-bold text-stone-900">
+                            Running live: 28 calls answered, 15 bookings, $11,500 tracked last 30 days.
+                        </span>
                     </p>
                 </div>
+
                 <div className="flex flex-row gap-3 mt-4 relative z-50 pointer-events-auto">
                     <button
                         type="button"

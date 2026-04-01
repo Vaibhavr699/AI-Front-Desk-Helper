@@ -4,9 +4,6 @@ import { getUser } from "./api";
 import { DashboardLayout } from "./layouts";
 import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, Outbound, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy, AddLocation, Team } from "./pages";
 import { ToastProvider } from "./components/ui/Toast";
-import PrivacyPolicy from "./pages/PrivacyPolicy";
-import TermsOfService from "./pages/TermsOfService";
-import CookiePolicy from "./pages/CookiePolicy";
 import "./App.css";
 
 /** Scroll window to top on every route change so new pages (e.g. policy, login) are not shown at previous scroll position. */

@@ -4,6 +4,7 @@ const db = require("../lib/db");
 const twilio = require("../lib/twilio");
 const { hasNurturingReferralAccess } = require("../lib/plans");
 const emailService = require("./email");
+const { DateTime } = require("luxon");
 
 const POST_SERVICE_DAYS = 1;
 
@@ -53,7 +54,7 @@ async function schedulePostServiceCampaigns(tenantId, booking) {
  */
 async function processDueNurturing() {
   const rows = await db.query(
-    `SELECT ns.*, ns.metadata as schedule_metadata, t.company_name, t.name as tenant_name, t.plan, t.plan_overrides, t.nurturing_enabled,
+    `SELECT ns.*, ns.metadata as schedule_metadata, t.company_name, t.name as tenant_name, t.plan, t.plan_overrides, t.nurturing_enabled, t.timezone,
             (SELECT pn.phone FROM phone_numbers pn WHERE pn.tenant_id = ns.tenant_id ORDER BY pn.is_primary DESC NULLS LAST LIMIT 1) as tenant_phone,
             l.phone as lead_phone, l.email as lead_email, l.name as lead_name
      FROM nurturing_schedule ns
@@ -65,6 +66,16 @@ async function processDueNurturing() {
   );
 
   for (const row of rows.rows) {
+    // Restrict outreach to 8 AM - 7 PM in the tenant's timezone
+    const tz = row.timezone || "America/Chicago";
+    const nowLocal = DateTime.now().setZone(tz);
+    const hour = nowLocal.hour;
+
+    if (hour < 8 || hour >= 19) {
+      console.log(`[Nurturing] Outside outreach window for tenant ${row.tenant_name} (${row.tenant_id}). Local time: ${nowLocal.toFormat("HH:mm")}. Skipping.`);
+      continue;
+    }
+
     if (!hasNurturingReferralAccess({ 
       plan: row.plan, 
       plan_overrides: row.plan_overrides,

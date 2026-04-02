@@ -2629,15 +2629,18 @@ wss.on("connection", async (twilioSocket, req) => {
 
   if (!isOutbound && callSidFromQuery) {
      try {
-       const callDirRes = await db.query("SELECT direction, tenant_id FROM calls WHERE twilio_sid = $1", [callSidFromQuery]);
+       // BUG FIX: The column name is twilio_call_sid, not twilio_sid
+       const callDirRes = await db.query("SELECT direction, tenant_id FROM calls WHERE twilio_call_sid = $1", [callSidFromQuery]);
        if (callDirRes.rows[0]?.direction === 'outbound') {
          isOutbound = true;
          // Sync tenantId if it was missing from path
          if (!tenantId) tenantId = callDirRes.rows[0].tenant_id;
-         console.log("[AI-Desk] Robust Detect: Call %s is OUTBOUND to tenant %s from DB", callSidFromQuery, tenantId);
+         console.log("[AI-Desk] Robust Detect SUCCESS: Call %s is OUTBOUND to tenant %s from DB", callSidFromQuery, tenantId);
+       } else {
+         console.log("[AI-Desk] Direction lookup: Found call %s but direction is %s", callSidFromQuery, callDirRes.rows[0]?.direction || "unknown");
        }
      } catch (e) {
-       console.error("[AI-Desk] Direction lookup failed:", e.message);
+       console.error("[AI-Desk] Direction lookup CRITICAL fail:", e.message);
      }
   }
 
@@ -2741,10 +2744,10 @@ wss.on("connection", async (twilioSocket, req) => {
       const cRes = await db.query("SELECT * FROM outbound_campaigns WHERE id = $1", [campaignId]);
       const campaign = cRes.rows[0];
       if (campaign) {
-        // AI PERSONA OVERRIDES
-        if (campaign.agent_name) tenant.outbound_agent_name = campaign.agent_name;
-        if (campaign.persona_instructions) tenant.outbound_instructions = campaign.persona_instructions;
-        if (campaign.agent_voice) tenant.outbound_voice = campaign.agent_voice;
+        // AI PERSONA OVERRIDES (Strict Priority: Campaign > Outbound Settings > Defaults)
+        tenant.outbound_agent_name = campaign.agent_name || tenant.outbound_agent_name || "Alex";
+        tenant.outbound_instructions = campaign.persona_instructions || tenant.outbound_instructions || "";
+        tenant.outbound_voice = campaign.agent_voice || tenant.outbound_voice || tenant.openai_realtime_voice || "ash";
 
         if (campaign.mode === 'manual') {
           outboundScript = campaign.prompt_description;
@@ -2990,8 +2993,10 @@ wss.on("connection", async (twilioSocket, req) => {
       ];
  
       const baseOutboundRules = [
-        `You are ${tenant?.outbound_agent_name || 'Alex'}, a professional outreach and follow-up agent for ${tenant?.company_name || 'Gladiators Painting'}. Be professional, respectful, and direct.`,
-        `CONVERSATIONAL FLOW: You are the one CALLING the customer${tenant.contactName ? ` (${tenant.contactName})` : ''}. Do NOT ask for their name or what they need as if you don't know who they are. Instead, follow the campaign script to lead the conversation. Do NOT start by asking 'How can I help you today?' as this is an OUTBOUND call.`,
+        `You are ${tenant?.outbound_agent_name || 'Alex'}, a professional outreach specialist for ${tenant?.company_name || 'Gladiators Painting'}.`,
+        tenant.outbound_instructions ? `PERSONA GUIDELINES: ${tenant.outbound_instructions}` : "Be professional, respectful, and direct.",
+        `CONVERSATIONAL FLOW: You are initiating an OUTBOUND follow-up call to the customer${tenant.contactName ? ` (${tenant.contactName})` : ''}. Do NOT ask for their name or treat them as a stranger. Instead, focus on the following strategy:`,
+        `STRATEGY: ${outboundScript || "Follow up on previous request and offer help."}`,
       ];
 
       const universalRules = [

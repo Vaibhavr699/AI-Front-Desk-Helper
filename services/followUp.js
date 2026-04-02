@@ -2,6 +2,7 @@
 
 const db = require("../lib/db");
 const twilio = require("../lib/twilio");
+const { DateTime } = require("luxon");
 
 const FOLLOW_UP_SCHEDULE = [
   { type: "24h", hours: 24 },
@@ -38,7 +39,7 @@ async function scheduleFollowUps(tenantId, booking) {
 
 async function processDueFollowUps() {
   const res = await db.query(
-    `SELECT f.*, t.name as tenant_name, t.company_name
+    `SELECT f.*, t.name as tenant_name, t.company_name, t.timezone
      FROM follow_ups f
      JOIN tenants t ON t.id = f.tenant_id
      WHERE f.status = 'pending' AND f.due_at <= now()
@@ -46,6 +47,16 @@ async function processDueFollowUps() {
      LIMIT 100`
   );
   for (const row of res.rows) {
+    // Restrict outreach to 8 AM - 7 PM in the tenant's timezone
+    const tz = row.timezone || "America/Chicago";
+    const nowLocal = DateTime.now().setZone(tz);
+    const hour = nowLocal.hour;
+
+    if (hour < 8 || hour >= 19) {
+      console.log(`[Follow-up] Outside outreach window for tenant ${row.tenant_name} (${row.tenant_id}). Local time: ${nowLocal.toFormat("HH:mm")}. Skipping.`);
+      continue;
+    }
+
     await sendFollowUp(row);
   }
 }

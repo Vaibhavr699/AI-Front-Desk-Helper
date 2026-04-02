@@ -686,9 +686,97 @@ function TrackingBoard({ campaignId, onBack, tenantId }) {
       {/* NEW: Script Evolution Scoreboard */}
       <ScriptScoreboard scripts={data.scripts} isAuto={data.campaign.mode === 'auto'} />
 
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-        {/* Main Content: Lead Registry */}
-        <div className="xl:col-span-9 space-y-6">
+      <div className="space-y-8">
+        {/* Row 1: High-Level Tracking (Controls + Performance Side-by-Side) */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+           <div className="bg-white border border-stone-200 rounded-3xl p-8 shadow-sm flex flex-col justify-between group hover:border-brand-200 transition-all">
+              <div className="flex items-center justify-between border-b border-stone-100 pb-5 mb-6">
+                 <div className="flex items-center gap-3">
+                    <div className="p-2.5 bg-brand-50 text-brand-600 rounded-2xl">
+                       <Zap className="w-5 h-5 fill-current" />
+                    </div>
+                    <h3 className="text-sm font-black text-stone-900 uppercase tracking-widest">Mission Controls</h3>
+                 </div>
+                 <div className="w-4 h-4 rounded-full bg-brand-500 animate-pulse border-4 border-brand-100" />
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-6">
+                 <ConfigRow label="Intelligence Mode" value={`${data.campaign.mode === 'auto' ? 'Auto-Scripted A/B' : 'Manual Instruction'}`} icon={Zap} />
+                 <ConfigRow label="Active Window" value={`${data.campaign.calling_hours_start.substring(0, 5)} - ${data.campaign.calling_hours_end.substring(0, 5)}`} icon={Clock} />
+                 <ConfigRow label="Dial Attempts" value={`${data.campaign.max_attempts} max per contact`} icon={Activity} />
+              </div>
+
+              {data.campaign.mode !== 'auto' && (
+                <div className="pt-6 border-t border-stone-100">
+                   <div className="flex items-center justify-between mb-4">
+                      <span className="text-[10px] font-black text-stone-400 uppercase tracking-widest">Base Instruction</span>
+                      <button onClick={() => setIsEditingPrompt(true)} className="p-2 hover:bg-stone-100 rounded-xl transition-colors">
+                        <Pencil className="w-4 h-4 text-brand-600" />
+                      </button>
+                   </div>
+                   <div className="p-5 bg-stone-50 border border-stone-100 rounded-2xl text-sm text-stone-600 leading-relaxed italic shadow-inner">
+                      "{data.campaign.prompt_description}"
+                   </div>
+                </div>
+              )}
+           </div>
+
+           <div className="bg-stone-900 rounded-3xl p-8 shadow-2xl relative overflow-hidden group">
+              <div className="relative z-10 h-full flex flex-col">
+                 <div className="flex items-center justify-between mb-8">
+                    <div className="flex items-center gap-3">
+                       <div className="p-2.5 bg-white/10 text-white rounded-2xl">
+                          <BarChart2 className="w-5 h-5" />
+                       </div>
+                       <h3 className="text-sm font-black text-stone-400 uppercase tracking-widest">Mission Performance</h3>
+                    </div>
+                    <div className="flex items-center gap-1.5 px-3 py-1 bg-brand-500 text-[10px] font-black text-white rounded-full uppercase tracking-tighter shadow-lg shadow-brand-500/30">
+                       <Activity className="w-3 h-3" />
+                       Real-time sync
+                    </div>
+                 </div>
+
+                 <div className="space-y-8 mt-auto">
+                    <div>
+                       <div className="flex items-center justify-between text-[11px] font-black text-stone-500 mb-3 uppercase tracking-widest">
+                          <span>Outreach Efficiency</span>
+                          <span className="text-white text-base">{winRate}%</span>
+                       </div>
+                       <div className="h-2.5 bg-white/10 rounded-full overflow-hidden p-0.5">
+                          <motion.div 
+                             initial={{ width: 0 }}
+                             animate={{ width: `${winRate}%` }}
+                             className="h-full bg-brand-500 rounded-full shadow-[0_0_15px_rgba(235,53,60,0.5)]"
+                          />
+                       </div>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                       <div className="p-4 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all cursor-default">
+                          <div className="text-[10px] font-bold text-stone-500 uppercase tracking-widest mb-1.5">Bookings</div>
+                          <div className="text-2xl font-black text-white leading-none">{booked}</div>
+                       </div>
+                       <div className="p-4 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all cursor-default">
+                          <div className="text-[10px] font-bold text-stone-500 uppercase tracking-widest mb-1.5">Engaged</div>
+                          <div className="text-2xl font-black text-white leading-none">{data.statusCounts.contacted || 0}</div>
+                       </div>
+                       <div className="p-4 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all cursor-default">
+                          <div className="text-[10px] font-bold text-stone-500 uppercase tracking-widest mb-1.5">Reached</div>
+                          <div className="text-2xl font-black text-white leading-none">{data.statusCounts.no_answer + data.statusCounts.contacted || 0}</div>
+                       </div>
+                       <div className="p-4 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all cursor-default">
+                          <div className="text-[10px] font-bold text-stone-500 uppercase tracking-widest mb-1.5">Evolution</div>
+                          <div className="text-2xl font-black text-brand-500 leading-none">v{Math.floor((data.campaign.calls_made || 0) / 50) + 1}</div>
+                       </div>
+                    </div>
+                 </div>
+              </div>
+              <div className="absolute top-0 right-0 w-64 h-64 bg-brand-500/10 blur-[100px] pointer-events-none" />
+              <div className="absolute -bottom-20 -left-20 w-80 h-80 bg-brand-500/5 blur-[120px] pointer-events-none" />
+           </div>
+        </div>
+
+        {/* Row 2: Main Content - Lead Registry (Full Width) */}
+        <div className="w-full space-y-6">
           <div className="bg-white border border-stone-200 rounded-2xl shadow-sm overflow-hidden min-h-[600px] flex flex-col">
             <div className="px-6 py-4 border-b border-stone-100 bg-stone-50/30 flex items-center justify-between">
                <div className="flex items-center gap-2">
@@ -735,13 +823,22 @@ function TrackingBoard({ campaignId, onBack, tenantId }) {
                       <td className="px-6 py-4">
                         <StatusBadge status={contact.status} />
                       </td>
-                      <td className="px-6 py-4 max-w-[200px]">
+                      <td className="px-6 py-4 max-w-[220px]">
                         {contact.script_content ? (
-                           <div className="text-[11px] text-stone-500 italic line-clamp-1 group-hover:line-clamp-none transition-all group-hover:text-stone-900">
-                             "{contact.script_content}"
+                           <div className="flex flex-col gap-1.5 group-hover:bg-stone-50 transition-all rounded-lg">
+                              <div className="flex items-center gap-1.5">
+                                 <span className="px-1.5 py-0.5 bg-brand-100 text-brand-700 text-[8px] font-black rounded uppercase tracking-tighter shrink-0 border border-brand-200">Var {String.fromCharCode(64 + (data.scripts.findIndex(s => s.content === contact.script_content) + 1) || 1)}</span>
+                                 <span className="text-[9px] font-bold text-stone-400 uppercase tracking-widest">Active Script</span>
+                              </div>
+                              <div className="text-[11px] text-stone-600 italic line-clamp-1 group-hover:line-clamp-none transition-all">
+                                "{contact.script_content}"
+                              </div>
                            </div>
                         ) : (
-                           <span className="text-[10px] font-bold text-stone-300 uppercase tracking-widest">Manual Mode</span>
+                           <div className="flex items-center gap-2 opacity-40">
+                              <Pencil className="w-3 h-3 text-stone-400" />
+                              <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Initial Context</span>
+                           </div>
                         )}
                       </td>
                       <td className="px-6 py-4 font-mono text-[11px] font-bold text-stone-500">
@@ -755,15 +852,16 @@ function TrackingBoard({ campaignId, onBack, tenantId }) {
                         </div>
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
+                        <div className="flex items-center justify-end gap-2.5">
                            {contact.transcript && (
                              <motion.button 
-                                whileHover={{ scale: 1.05 }}
+                                whileHover={{ scale: 1.05, backgroundColor: '#f5f5f4' }}
                                 whileTap={{ scale: 0.95 }}
                                 onClick={() => setSelectedTranscript(contact.transcript)}
-                                className="p-2 bg-stone-100 text-stone-500 rounded-lg border border-stone-200 hover:bg-white hover:text-brand-600 transition-all shadow-sm"
+                                className="h-8 px-3 flex items-center gap-2 bg-white text-stone-600 rounded-xl border border-stone-200 hover:text-brand-600 hover:border-brand-200 transition-all shadow-sm"
                              >
                                 <MessageSquare className="w-3.5 h-3.5" />
+                                <span className="text-[10px] font-bold uppercase tracking-tight">Transcript</span>
                              </motion.button>
                            )}
 
@@ -776,19 +874,21 @@ function TrackingBoard({ campaignId, onBack, tenantId }) {
                                  e.stopPropagation();
                                  handlePlayAudio(contact.recording_id, contact.name || contact.phone);
                                }}
-                               className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border shadow-sm font-bold text-[10px] uppercase transition-all ${
-                                  isPlayingAudio ? 'bg-stone-50 text-stone-400 border-stone-200' : 'bg-brand-50 text-brand-600 border-brand-100 hover:bg-brand-600 hover:text-white'
+                               className={`h-8 px-4 inline-flex items-center gap-2 rounded-xl border shadow-sm font-black text-[10px] uppercase tracking-tight transition-all ${
+                                  isPlayingAudio ? 'bg-stone-50 text-stone-400 border-stone-200' : 'bg-brand-600 text-white border-brand-500 hover:bg-brand-700'
                                }`}
                             >
                                {isPlayingAudio ? (
-                                 <Activity className="w-3 h-3 animate-pulse" />
+                                 <Activity className="w-3.5 h-3.5 animate-pulse" />
                                ) : (
-                                 <Play className="w-3 h-3 fill-current" />
+                                 <Play className="w-3.5 h-3.5 fill-current" />
                                )}
-                               {isPlayingAudio ? "Loading..." : "Play"}
+                               {isPlayingAudio ? "Loading..." : "Listen recording"}
                             </motion.button>
                           ) : (
-                             <span className="text-[9px] font-bold text-stone-300 uppercase tracking-widest mr-4">No Data</span>
+                             <div className="px-3 py-1 bg-stone-50 border border-stone-100 rounded-lg text-stone-300 flex items-center gap-2">
+                                <span className="text-[9px] font-bold uppercase tracking-widest">No Audio</span>
+                             </div>
                           )}
                         </div>
                       </td>
@@ -806,101 +906,6 @@ function TrackingBoard({ campaignId, onBack, tenantId }) {
                   )}
                 </tbody>
               </table>
-            </div>
-          </div>
-        </div>
-
-        {/* Sidebar: Mission Control */}
-        <div className="xl:col-span-3 space-y-6">
-          {data.campaign.mode === 'auto' ? (
-            <div className="bg-stone-900 rounded-2xl p-6 shadow-xl space-y-6 relative overflow-hidden">
-              <h3 className="text-[10px] font-black text-stone-500 uppercase tracking-[0.2em] relative z-10">Mission Scripting</h3>
-              <div className="space-y-4 relative z-10">
-                {data.scripts.length > 0 ? (
-                  data.scripts.map((s, i) => (
-                    <div key={s.id} className="p-5 bg-white/5 border border-white/10 rounded-xl space-y-4 hover:border-brand-500/30 transition-all cursor-default group">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                           <span className="w-5 h-5 rounded bg-brand-500/20 text-brand-400 flex items-center justify-center text-[10px] font-black">{String.fromCharCode(65 + i)}</span>
-                           <span className="text-[9px] font-bold text-stone-400 uppercase tracking-widest">VARIATION</span>
-                        </div>
-                        {i === 0 && <span className="px-1.5 py-0.5 bg-brand-500 text-[8px] font-black text-white rounded uppercase tracking-widest">Champion</span>}
-                      </div>
-                      <p className="text-[12px] text-stone-300 leading-relaxed italic group-hover:text-white transition-colors line-clamp-3">
-                        "{s.content}"
-                      </p>
-                      <div className="pt-2 border-t border-white/5 flex items-center justify-between">
-                        <span className="text-[9px] font-bold text-stone-500 uppercase tracking-widest leading-none">Effectiveness</span>
-                        <span className="text-xs font-black text-brand-400 italic">{s.performance_pct || 0}%</span>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-[10px] text-stone-600 font-bold uppercase tracking-widest py-10 text-center border border-white/5 rounded-xl">
-                    Generating Scripts...
-                  </div>
-                )}
-              </div>
-              <div className="absolute top-0 right-0 w-32 h-32 bg-brand-500/10 blur-[60px] pointer-events-none" />
-            </div>
-          ) : (
-            <div className="bg-white border border-stone-200 rounded-2xl p-6 shadow-sm space-y-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <BarChart2 className="w-4 h-4 text-brand-500" />
-                  <h3 className="text-[10px] font-black text-stone-400 uppercase tracking-[0.15em]">Primary Instruction</h3>
-                </div>
-                {!isEditingPrompt && (
-                   <button 
-                    onClick={() => setIsEditingPrompt(true)}
-                    className="text-[9px] font-bold text-stone-400 hover:text-brand-600 uppercase tracking-widest transition-colors flex items-center gap-1"
-                   >
-                     <Pencil className="w-5 h-5" />
-                   </button>
-                )}
-              </div>
-              
-              {isEditingPrompt ? (
-                <div className="space-y-3">
-                  <textarea 
-                    value={editedPrompt}
-                    onChange={(e) => setEditedPrompt(e.target.value)}
-                    className="w-full min-h-[140px] p-3 text-[11px] bg-stone-50 border border-stone-200 rounded-xl focus:ring-1 focus:ring-brand-500 outline-none leading-relaxed text-stone-600 font-medium"
-                    placeholder="Enter new AI instructions..."
-                  />
-                  <div className="flex items-center gap-2">
-                    <Button 
-                      className="flex-1 bg-brand-600 text-white h-8 text-[10px] font-bold rounded-lg shadow-sm"
-                      onClick={handleUpdatePrompt}
-                      disabled={actionLoading}
-                    >
-                      {actionLoading ? "Saving..." : "Save Changes"}
-                    </Button>
-                    <button 
-                      onClick={() => {
-                        setIsEditingPrompt(false);
-                        setEditedPrompt(data.campaign.prompt_description);
-                      }}
-                      className="px-3 h-8 text-[10px] font-bold text-stone-400 hover:text-stone-900 transition-colors uppercase tracking-widest"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="p-4 bg-stone-50 rounded-xl border border-stone-100 italic text-stone-600 text-xs leading-relaxed">
-                  "{data.campaign.prompt_description}"
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="bg-white border border-stone-200 rounded-2xl p-6 shadow-sm space-y-6">
-            <h3 className="text-[10px] font-bold text-stone-400 uppercase tracking-widest border-b border-stone-50 pb-4">Configuration Data</h3>
-            <div className="space-y-4">
-               <ConfigRow label="Intelligence Mode" value={`${data.campaign.mode === 'auto' ? 'Auto-Scripted A/B' : 'Manual Instruction'}`} icon={Zap} />
-               <ConfigRow label="Registry Status" value="Live Ingestion Active" icon={Activity} />
-               <ConfigRow label="Active Window" value={`${data.campaign.calling_hours_start.substring(0, 5)} - ${data.campaign.calling_hours_end.substring(0, 5)}`} icon={Clock} />
             </div>
           </div>
         </div>

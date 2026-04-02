@@ -25,8 +25,8 @@ export default function CampaignCreator({ tenantId, onClose, onCreated }) {
   const isFormValid = formData.name && formData.csv && formData.consent_confirmed;
  
   const downloadCsvTemplate = () => {
-    const headers = "first_name,last_name,phone,email,notes\n";
-    const example = "John,Doe,+15551234567,john@example.com,Interested in service";
+    const headers = "name,phone\n";
+    const example = "John Doe,+14155552671";
     const blob = new Blob([headers + example], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");

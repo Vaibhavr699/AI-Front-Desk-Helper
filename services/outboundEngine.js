@@ -25,7 +25,7 @@ async function startOutboundEngine() {
 async function processActiveCampaigns() {
   // 1. Find active campaigns
   const campaigns = await db.query(
-    "SELECT id, tenant_id, name, mode, calling_hours_start, calling_hours_end, max_attempts FROM outbound_campaigns WHERE status = 'active'"
+    "SELECT id, tenant_id, name, mode, calling_hours_start, calling_hours_end, max_attempts, calls_made FROM outbound_campaigns WHERE status = 'active'"
   );
 
   for (const campaign of campaigns.rows) {
@@ -53,20 +53,26 @@ async function processActiveCampaigns() {
       // 5. Pick a script (for Auto mode)
       let scriptId = null;
       if (campaign.mode === 'auto') {
+        const scriptRes = await db.query(
+          "SELECT id FROM outbound_scripts WHERE campaign_id = $1 AND status = 'active'", 
+          [campaign.id]
+        );
+        
+        // CRITICAL: If scripts aren't generated yet (OpenAI delay), skip this tick 
+        // to prevent 'Manual Mode' leakage.
+        if (scriptRes.rows.length === 0) {
+           console.log("[Outbound] Skipping campaign %s: Waiting for script generation...", campaign.name);
+           continue; 
+        }
+
         // SCRIPTS SURVIVAL LOOP: Evolve every 50 calls made in campaign
         if (campaign.calls_made > 0 && campaign.calls_made % 50 === 0) {
            console.log("[Outbound] Triggering AI Evolution Loop for campaign %s", campaign.name);
            evolveScripts(campaign.id).catch(e => console.error("[Outbound] Evolution failed:", e.message));
         }
 
-        const scriptRes = await db.query(
-          "SELECT id FROM outbound_scripts WHERE campaign_id = $1 AND status = 'active'", 
-          [campaign.id]
-        );
-        if (scriptRes.rows.length > 0) {
-          const randomScript = scriptRes.rows[Math.floor(Math.random() * scriptRes.rows.length)];
-          scriptId = randomScript.id;
-        }
+        const randomScript = scriptRes.rows[Math.floor(Math.random() * scriptRes.rows.length)];
+        scriptId = randomScript.id;
       }
 
       // 6. Initiate Call

@@ -2825,7 +2825,7 @@ wss.on("connection", async (twilioSocket, req) => {
   }
 
   let callId = crypto.randomUUID();
-  let callSid = null;
+  // callSid and isOutbound are handled at the top of handleConnection
   let streamSid = null;
   let from = null;
   let to = null;

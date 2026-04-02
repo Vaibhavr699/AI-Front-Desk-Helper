@@ -2608,7 +2608,7 @@ wss.on("connection", async (twilioSocket, req) => {
   const pathname = parsedUrl.pathname || "";
   const q = Object.fromEntries(parsedUrl.searchParams.entries());
 
-  const isNurturing = q.type === "nurturing";
+  let isNurturing = q.type === "nurturing";
   const recoveryId = q.recoveryId;
   const scheduleId = q.scheduleId;
   const campaignId = q.campaignId;
@@ -2637,9 +2637,9 @@ wss.on("connection", async (twilioSocket, req) => {
     callSidFromPath = pathSegments[3];
   }
 
-  const callSid = callSidFromPath || q.CallSid || q.callSid;
-  const isOutboundFromPath = typeFromPath === "outbound";
-  const isRecoveryFromPath = typeFromPath === "recovery";
+  let callSid = callSidFromPath || q.CallSid || q.callSid;
+  let isOutboundFromPath = typeFromPath === "outbound";
+  let isRecoveryFromPath = typeFromPath === "recovery";
 
   let isOutbound = isOutboundFromPath || q.type === "outbound";
   let isRecovery = isRecoveryFromPath || q.type === "recovery";

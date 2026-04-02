@@ -357,7 +357,29 @@ function TrackingBoard({ campaignId, onBack, tenantId }) {
   const [isEditingPrompt, setIsEditingPrompt] = useState(false);
   const [editedPrompt, setEditedPrompt] = useState("");
   const [selectedAudio, setSelectedAudio] = useState(null);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const { success, error } = useToast();
+
+  const handlePlayAudio = async (recordingId, name) => {
+    if (!recordingId) {
+       error("Recording not found");
+       return;
+    }
+    
+    setIsPlayingAudio(true);
+    try {
+      const resp = await axios.get(`/api/recordings/${recordingId}/audio`, {
+        responseType: 'blob'
+      });
+      const blobUrl = URL.createObjectURL(resp.data);
+      setSelectedAudio({ url: blobUrl, name: name || "Call Recording" });
+    } catch (e) {
+      console.error("[Audio] Fetch failed:", e);
+      error("Failed to load call recording");
+    } finally {
+      setIsPlayingAudio(false);
+    }
+  };
 
   useEffect(() => {
     fetchData();
@@ -538,18 +560,25 @@ function TrackingBoard({ campaignId, onBack, tenantId }) {
                         )}
                       </td>
                       <td className="px-6 py-4 text-right">
-                        {contact.recording_url ? (
+                        {contact.recording_id ? (
                           <motion.button 
                              whileHover={{ scale: 1.05 }}
                              whileTap={{ scale: 0.95 }}
+                             disabled={isPlayingAudio}
                              onClick={(e) => {
                                e.stopPropagation();
-                               setSelectedAudio({ url: contact.recording_url, name: contact.name || contact.phone });
+                               handlePlayAudio(contact.recording_id, contact.name || contact.phone);
                              }}
-                             className="inline-flex items-center gap-2 px-3 py-1.5 bg-brand-50 text-brand-600 rounded-lg border border-brand-100 hover:bg-brand-600 hover:text-white transition-all shadow-sm font-bold text-[10px] uppercase"
+                             className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border shadow-sm font-bold text-[10px] uppercase transition-all ${
+                                isPlayingAudio ? 'bg-stone-50 text-stone-400 border-stone-200' : 'bg-brand-50 text-brand-600 border-brand-100 hover:bg-brand-600 hover:text-white'
+                             }`}
                           >
-                             <Play className="w-3 h-3 fill-current" />
-                             Play
+                             {isPlayingAudio ? (
+                               <Activity className="w-3 h-3 animate-pulse" />
+                             ) : (
+                               <Play className="w-3 h-3 fill-current" />
+                             )}
+                             {isPlayingAudio ? "Loading..." : "Play"}
                           </motion.button>
                         ) : (
                            <span className="text-[9px] font-bold text-stone-300 uppercase tracking-widest mr-4">No Data</span>

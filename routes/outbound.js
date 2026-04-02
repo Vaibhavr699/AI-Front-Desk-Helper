@@ -104,14 +104,16 @@ router.get("/campaigns/:id/contacts", async (req, res) => {
         oc.*, 
         c.id as last_call_id, 
         c.recording_url, 
+        c.recording_id,
         c.started_at as last_call_at
       FROM outbound_contacts oc
       LEFT JOIN LATERAL (
-        SELECT id, recording_url, started_at
-        FROM calls 
-        WHERE (to_number = oc.phone OR from_number = oc.phone)
-          AND tenant_id = oc.tenant_id
-        ORDER BY started_at DESC
+        SELECT c.id, r.recording_url, r.id as recording_id, c.started_at
+        FROM calls c
+        LEFT JOIN recordings r ON r.call_id = c.id
+        WHERE (c.to_number = oc.phone OR c.from_number = oc.phone)
+          AND c.tenant_id = oc.tenant_id
+        ORDER BY c.started_at DESC
         LIMIT 1
       ) c ON true
       WHERE oc.campaign_id = $1 

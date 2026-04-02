@@ -2608,7 +2608,6 @@ wss.on("connection", async (twilioSocket, req) => {
   const pathname = parsedUrl.pathname || "";
   const q = Object.fromEntries(parsedUrl.searchParams.entries());
 
-  const isRecovery = q.type === "recovery";
   const isNurturing = q.type === "nurturing";
   const recoveryId = q.recoveryId;
   const scheduleId = q.scheduleId;
@@ -2647,8 +2646,6 @@ wss.on("connection", async (twilioSocket, req) => {
   
   console.log("[AI-Desk] Connection Context: tenantId=%s type=%s callSid=%s (extracted from %s segments)", 
     tenantId, (isOutbound ? "outbound" : (isRecovery ? "recovery" : "inbound")), callSid, pathSegments.length);
-
-  const isNurturing = q.type === "nurturing";
 
   // Use CallSid context if we have it for direction detection
   if (!isOutbound && callSid) {

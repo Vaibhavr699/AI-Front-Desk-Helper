@@ -62,14 +62,20 @@ router.post("/campaigns", requireRole([ROLES.OWNER, ROLES.ADMIN]), upload.single
     const campaign = campaignRes.rows[0];
     const campaignId = campaign.id;
 
-    // Trigger Automated Background Processes (Don't let them block the response)
+    // Trigger Automated Background Processes
     if (req.file) {
-      await generateAutoScripts(campaign.id, tenantId, prompt_description);
+      console.log(`[Campaign Route] Processing CSV for campaign ${campaignId}...`);
+      await processCSV(campaignId, tenantId, req.file.buffer);
+    }
+
+    if (mode === "auto" && prompt_description) {
+       console.log(`[Campaign Route] Generating AI scripts for campaign ${campaignId}...`);
+       await generateAutoScripts(campaignId, tenantId, prompt_description);
     }
 
     res.json(campaign);
   } catch (err) {
-    console.error(err);
+    console.error("[Campaign Route] Error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });

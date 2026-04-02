@@ -153,8 +153,61 @@ async function getTrackingBoard(campaignId) {
   };
 }
 
+/**
+ * Script Evolution (Survival of the Fittest): 
+ * 1. Identify champion (best performance)
+ * 2. Identify loser (worst performance)
+ * 3. Retire loser
+ * 4. Generate new variation based on champion
+ */
+async function evolveScripts(campaignId) {
+   const scripts = await db.query(
+     "SELECT id, content, performance_pct FROM outbound_scripts WHERE campaign_id = $1 AND status = 'active' ORDER BY performance_pct DESC",
+     [campaignId]
+   ).then(r => r.rows);
+
+   if (scripts.length < 3) return; // Need a pool to evolve
+
+   const champion = scripts[0];
+   const loser = scripts[scripts.length - 1];
+
+   if (parseFloat(champion.performance_pct) === 0 && scripts.length >= 5) {
+      console.log("[Outbound] No winners yet for campaign %s. Skipping evolution.", campaignId);
+      return; 
+   }
+
+   console.log("[Outbound] Evolving scripts for campaign %s. Champion=%s, Retiring=%s", campaignId, champion.id, loser.id);
+
+   // 1. Retire loser
+   await db.query("UPDATE outbound_scripts SET status = 'retired' WHERE id = $1", [loser.id]);
+
+   // 2. Generate new variation based on champion
+   const prompt = `
+     You are an AI sales optimization engine. 
+     Our current best performing outbound call script is: "${champion.content}".
+     It has a high conversion rate. Generate a new experimental variation that is slightly different but preserves the core winning elements.
+     Keep it to 1-2 sentences. 
+     Return ONLY the new script text.
+   `;
+
+   const completion = await openai.chat.completions.create({
+     model: "gpt-4o",
+     messages: [{ role: "user", content: prompt }],
+   });
+
+   const newContent = completion.choices[0].message.content.trim().replace(/^"/, '').replace(/"$/, '');
+
+   await db.query(
+     "INSERT INTO outbound_scripts (campaign_id, content) VALUES ($1, $2)",
+     [campaignId, newContent]
+   );
+
+   return { retired: loser.id, created: newContent };
+}
+
 module.exports = {
   processCSV,
   generateAutoScripts,
   getTrackingBoard,
+  evolveScripts,
 };

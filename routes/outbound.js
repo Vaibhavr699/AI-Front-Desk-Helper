@@ -60,18 +60,10 @@ router.post("/campaigns", requireRole([ROLES.OWNER, ROLES.ADMIN]), upload.single
     );
 
     const campaign = campaignRes.rows[0];
+    const campaignId = campaign.id;
 
-    // Process CSV
+    // Trigger Automated Background Processes (Don't let them block the response)
     if (req.file) {
-      console.log(`[Campaign Route] Processing CSV for campaign ${campaign.id}...`);
-      const count = await processCSV(campaign.id, tenantId, req.file.buffer);
-      console.log(`[Campaign Route] CSV processed. ${count} contacts added.`);
-    } else {
-      console.warn(`[Campaign Route] No CSV file found in request!`);
-    }
-
-    // Auto Script Generation
-    if (mode === "auto" && prompt_description) {
       await generateAutoScripts(campaign.id, tenantId, prompt_description);
     }
 
@@ -105,10 +97,12 @@ router.get("/campaigns/:id/contacts", async (req, res) => {
         c.id as last_call_id, 
         c.recording_url, 
         c.recording_id,
-        c.started_at as last_call_at
+        c.started_at as last_call_at,
+        c.transcript,
+        s.content as script_content
       FROM outbound_contacts oc
       LEFT JOIN LATERAL (
-        SELECT c.id, r.recording_url, r.id as recording_id, c.started_at
+        SELECT c.id, r.recording_url, r.id as recording_id, c.started_at, c.transcript
         FROM calls c
         LEFT JOIN recordings r ON r.call_id = c.id
         WHERE (c.to_number = oc.phone OR c.from_number = oc.phone)
@@ -116,12 +110,25 @@ router.get("/campaigns/:id/contacts", async (req, res) => {
         ORDER BY c.started_at DESC
         LIMIT 1
       ) c ON true
+      LEFT JOIN outbound_scripts s ON s.id = oc.last_script_id
       WHERE oc.campaign_id = $1 
       ORDER BY oc.created_at ASC 
       LIMIT 100`, 
       [req.params.id]
     );
     res.json(r.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Detailed Tracking Board Stats (For Auto Evolution)
+ */
+router.get("/campaigns/:id/tracking", async (req, res) => {
+  try {
+    const board = await getTrackingBoard(req.params.id);
+    res.json(board);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

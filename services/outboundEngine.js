@@ -3,6 +3,7 @@
 const db = require("../lib/db");
 const twilio = require("twilio");
 const cron = require("node-cron");
+const { evolveScripts } = require("./outbound");
 
 /**
  * Background worker that processes active outbound campaigns.
@@ -52,6 +53,12 @@ async function processActiveCampaigns() {
       // 5. Pick a script (for Auto mode)
       let scriptId = null;
       if (campaign.mode === 'auto') {
+        // SCRIPTS SURVIVAL LOOP: Evolve every 50 calls made in campaign
+        if (campaign.calls_made > 0 && campaign.calls_made % 50 === 0) {
+           console.log("[Outbound] Triggering AI Evolution Loop for campaign %s", campaign.name);
+           evolveScripts(campaign.id).catch(e => console.error("[Outbound] Evolution failed:", e.message));
+        }
+
         const scriptRes = await db.query(
           "SELECT id FROM outbound_scripts WHERE campaign_id = $1 AND status = 'active'", 
           [campaign.id]

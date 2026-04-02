@@ -112,6 +112,44 @@ async function createBooking(tenantId, callId, data, leadId = null, leadSource =
   }
   const booking = res.rows[0];
   console.log("[AI-Desk] Booking saved id=%s tenantId=%s contact=%s", booking.id, tenantId, norm.contact_phone);
+
+  // ATTRIBUTION: Link success back to Outbound Campaign & Script
+  if (callId) {
+    try {
+      const contactRes = await db.query(
+        "UPDATE outbound_contacts SET status = 'booked' WHERE last_call_id = $1 RETURNING campaign_id, last_script_id",
+        [callId]
+      );
+      if (contactRes.rows.length > 0) {
+         const { campaign_id, last_script_id } = contactRes.rows[0];
+         console.log("[AI-Desk] Outbound Success attributed: campaign=%s script=%s", campaign_id, last_script_id);
+         
+         // Increment campaign-wide booking count
+         await db.query("UPDATE outbound_campaigns SET booked_count = booked_count + 1 WHERE id = $1", [campaign_id]);
+         
+         // Increment specific script booking count and update performance_pct
+         if (last_script_id) {
+           await db.query(`
+              WITH stats AS (
+                SELECT 
+                  COUNT(*) FILTER (WHERE status = 'booked') as bookings,
+                  COUNT(*) as total_calls
+                FROM outbound_contacts
+                WHERE last_script_id = $1
+              )
+              UPDATE outbound_scripts 
+              SET performance_pct = ROUND((stats.bookings::numeric / NULLIF(stats.total_calls, 0)) * 100, 2)
+              FROM stats
+              WHERE id = $1`, 
+              [last_script_id]
+           );
+         }
+      }
+    } catch (e) {
+       console.error("[AI-Desk] Outbound attribution error:", e.message);
+    }
+  }
+
   const tenant = await getTenantById(tenantId);
   let crmSynced = false;
   try {

@@ -2773,8 +2773,22 @@ wss.on("connection", async (twilioSocket, req) => {
         if (campaign.mode === 'manual') {
           outboundScript = campaign.prompt_description;
         } else if (scriptId) {
-          const sRes = await db.query("SELECT content FROM outbound_scripts WHERE id = $1", [scriptId]);
-          outboundScript = sRes.rows[0]?.content;
+          try {
+            const sRes = await db.query("SELECT content FROM outbound_scripts WHERE id = $1", [scriptId]);
+            outboundScript = sRes.rows[0]?.content;
+            if (outboundScript) {
+              console.log("[Outbound] Success: Using script variation %s", scriptId);
+            } else {
+              console.warn("[Outbound] Warning: Script variation %s not found in DB. Falling back to default.", scriptId);
+            }
+          } catch (err) {
+             console.error("[Outbound] Error fetching script %s:", scriptId, err.message);
+          }
+        }
+        
+        // Final fallback to campaign-wide prompt if variation failed/missing
+        if (!outboundScript && campaign.prompt_description) {
+           outboundScript = campaign.prompt_description;
         }
         
         // Fetch contact details if available

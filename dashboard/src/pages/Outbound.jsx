@@ -5,7 +5,7 @@ import {
   Rocket, Package, Search, Plus, Play, Pause, MoreVertical, 
   CheckCircle2, XCircle, Clock, AlertCircle, ShoppingCart, 
   Users, Activity, Zap, TrendingUp, ArrowRight, BarChart2, 
-  Pencil
+  Pencil, MessageSquare, Info, Trash2, Award
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import CampaignCreator from "../components/outbound/CampaignCreator";
@@ -324,14 +324,206 @@ function StatusBadge({ status }) {
     active: "bg-green-50 text-green-700 border-green-100",
     paused: "bg-stone-50 text-stone-600 border-stone-200",
     completed: "bg-brand-50 text-brand-700 border-brand-100",
-    draft: "bg-stone-50 text-stone-400 border-stone-200"
+    draft: "bg-stone-50 text-stone-400 border-stone-200",
+    booked: "bg-emerald-50 text-emerald-700 border-emerald-100",
+    no_answer: "bg-orange-50 text-orange-700 border-orange-100",
+    follow_up: "bg-blue-50 text-blue-700 border-blue-100",
+    dnc: "bg-red-50 text-red-700 border-red-100",
+    failed: "bg-stone-50 text-stone-500 border-stone-200"
+  };
+  const labelMap = {
+    booked: "Booked",
+    no_answer: "No Answer",
+    follow_up: "Follow Up",
+    dnc: "DNC",
+    active: "Active",
+    paused: "Paused",
+    completed: "Completed"
   };
   return (
-    <div className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest border inline-flex items-center gap-1.5 ${styles[status]}`}>
+    <div className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-widest border inline-flex items-center gap-1.5 ${styles[status] || styles.draft}`}>
       {status === 'active' && <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />}
-      {status}
+      {labelMap[status] || status}
     </div>
   );
+}
+
+function TranscriptViewer({ transcript, onClose }) {
+  if (!transcript) return null;
+  return (
+    <motion.div 
+      initial={{ opacity: 0, x: 20 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 20 }}
+      className="fixed inset-y-0 right-0 w-[450px] bg-white border-l border-stone-200 shadow-2xl z-50 flex flex-col"
+    >
+      <div className="p-6 border-b border-stone-100 flex items-center justify-between bg-stone-50/50">
+         <div className="flex items-center gap-3">
+            <div className="p-2 bg-white border border-stone-200 rounded-lg shadow-sm">
+               <MessageSquare className="w-4 h-4 text-brand-500" />
+            </div>
+            <h3 className="text-sm font-bold text-stone-900 tracking-tight uppercase tracking-wider">AI Conversation Log</h3>
+         </div>
+         <button onClick={onClose} className="p-2 hover:bg-stone-200 rounded-lg transition-colors">
+            <XCircle className="w-5 h-5 text-stone-400" />
+         </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-8 space-y-6 bg-white">
+        {typeof transcript === 'string' ? (
+           transcript.split('\n').filter(Boolean).map((line, idx) => (
+             <div key={idx} className={`flex flex-col ${line.startsWith('User:') ? 'items-end' : 'items-start'}`}>
+                <div className={`max-w-[85%] rounded-2xl p-4 text-[13px] leading-relaxed shadow-sm border ${
+                   line.startsWith('User:') 
+                     ? 'bg-stone-50 border-stone-100 text-stone-800 rounded-tr-none' 
+                     : 'bg-brand-50 border-brand-100 text-brand-900 rounded-tl-none'
+                }`}>
+                   <span className="font-black opacity-30 text-[9px] uppercase tracking-widest block mb-1">
+                      {line.startsWith('User:') ? 'Customer' : 'AI Assistant'}
+                   </span>
+                   {line.replace(/^(User:|Assistant:)\s*/, '')}
+                </div>
+             </div>
+           ))
+        ) : (
+           <div className="text-stone-400 italic text-sm py-20 text-center font-medium">Transcript data format not recognized.</div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+function ScriptScoreboard({ scripts, isAuto }) {
+   const [selectedViewScript, setSelectedViewScript] = useState(null);
+   if (!isAuto || !scripts || scripts.length === 0) return null;
+   
+   const active = scripts.filter(s => s.status === 'active').sort((a,b) => b.performance_pct - a.performance_pct);
+   const retired = scripts.filter(s => s.status === 'retired');
+
+   return (
+     <>
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+          <div className="md:col-span-8 bg-white border border-stone-200 rounded-2xl shadow-sm overflow-hidden flex flex-col">
+            <div className="px-6 py-4 border-b border-stone-100 bg-stone-50/30 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Award className="w-4 h-4 text-brand-500" />
+                  <h3 className="text-xs font-bold text-stone-900 uppercase tracking-widest">Active Evolution scripts</h3>
+                </div>
+            </div>
+            <div className="divide-y divide-stone-100">
+                {active.map((s, i) => (
+                  <div 
+                    key={s.id} 
+                    className="p-4 hover:bg-stone-50/50 transition-colors flex items-center gap-4 cursor-pointer group"
+                    onClick={() => setSelectedViewScript(s)}
+                  >
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-black text-sm ${i === 0 ? 'bg-amber-100 text-amber-700' : 'bg-stone-100 text-stone-500'}`}>
+                        {i + 1}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <p className="text-[12px] font-medium text-stone-700 line-clamp-1 italic group-hover:text-stone-900 transition-colors">"{s.content}"</p>
+                        <div className="flex items-center gap-3 mt-1">
+                          <div className="h-1 flex-1 bg-stone-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-brand-500" style={{ width: `${s.performance_pct}%` }} />
+                          </div>
+                          <span className="text-[10px] font-black text-brand-600">{s.performance_pct}% <span className="text-stone-400 font-bold ml-0.5">CONV</span></span>
+                        </div>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </div>
+          <div className="md:col-span-4 bg-stone-50 border border-stone-200 rounded-2xl p-6 shadow-sm flex flex-col">
+            <div className="flex items-center gap-2 mb-4 border-b border-stone-200 pb-3">
+                <Trash2 className="w-4 h-4 text-stone-400" />
+                <h3 className="text-xs font-bold text-stone-500 uppercase tracking-widest">Retired versions</h3>
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-3">
+                {retired.length > 0 ? retired.map(s => (
+                  <div 
+                    key={s.id} 
+                    className="p-3 bg-white border border-stone-200 rounded-xl opacity-60 hover:opacity-100 transition-all cursor-pointer"
+                    onClick={() => setSelectedViewScript(s)}
+                  >
+                    <p className="text-[10px] text-stone-500 line-clamp-2 italic mb-2">"{s.content}"</p>
+                    <div className="flex items-center justify-between text-[9px] font-bold text-stone-400">
+                        <span>ELIMINATED</span>
+                        <span className="text-stone-300 font-black">{s.performance_pct}%</span>
+                    </div>
+                  </div>
+                )) : (
+                  <div className="flex flex-col items-center justify-center h-full opacity-20">
+                    <Info className="w-6 h-6 mb-2" />
+                    <span className="text-[9px] font-bold uppercase tracking-widest text-center">No retired scripts yet</span>
+                  </div>
+                )}
+            </div>
+          </div>
+      </div>
+
+      <AnimatePresence>
+        {selectedViewScript && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedViewScript(null)}
+              className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative bg-white w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden border border-stone-200 flex flex-col"
+            >
+              <div className="px-8 py-6 border-b border-stone-100 flex items-center justify-between bg-stone-50/50">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2 rounded-lg ${selectedViewScript.status === 'active' ? 'bg-amber-50 text-amber-600' : 'bg-stone-100 text-stone-500'}`}>
+                    <Award className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-stone-900 uppercase tracking-widest">Script variation</h3>
+                    <div className="flex items-center gap-2 mt-0.5">
+                       <StatusBadge status={selectedViewScript.status} />
+                       <span className="text-[10px] font-black text-brand-600 italic">{selectedViewScript.performance_pct}% Conversion</span>
+                    </div>
+                  </div>
+                </div>
+                <button onClick={() => setSelectedViewScript(null)} className="p-2 hover:bg-stone-200 rounded-xl transition-colors">
+                  <XCircle className="w-5 h-5 text-stone-400" />
+                </button>
+              </div>
+              <div className="p-8">
+                <div className="p-6 bg-stone-50 rounded-2xl border border-stone-100 shadow-inner relative">
+                  <p className="text-base text-stone-700 leading-relaxed font-medium italic">
+                    "{selectedViewScript.content}"
+                  </p>
+                  <div className="absolute -top-3 -left-2 text-4xl text-stone-200 font-serif">“</div>
+                  <div className="absolute -bottom-8 -right-2 text-4xl text-stone-200 font-serif">”</div>
+                </div>
+                
+                <div className="mt-10 flex items-center justify-between p-4 bg-brand-50/50 rounded-xl border border-brand-100">
+                   <div className="flex items-center gap-3">
+                      <Zap className="w-4 h-4 text-brand-500" />
+                      <span className="text-[11px] font-bold text-brand-900 uppercase tracking-tight">AI Strategy Insight</span>
+                   </div>
+                   <span className="text-[10px] text-brand-700 font-medium">Auto-evolved from Champion variation</span>
+                </div>
+              </div>
+              <div className="px-8 py-4 bg-stone-50 border-t border-stone-100 flex justify-end">
+                <Button 
+                  onClick={() => setSelectedViewScript(null)}
+                  className="bg-stone-900 text-white px-8 h-10 rounded-xl text-[11px] font-bold"
+                >
+                  Close View
+                </Button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+     </>
+   );
 }
 
 function EmptyState({ onAdd }) {
@@ -358,6 +550,7 @@ function TrackingBoard({ campaignId, onBack, tenantId }) {
   const [editedPrompt, setEditedPrompt] = useState("");
   const [selectedAudio, setSelectedAudio] = useState(null);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [selectedTranscript, setSelectedTranscript] = useState(null);
   const { success, error } = useToast();
 
   const handlePlayAudio = async (recordingId, name) => {
@@ -490,6 +683,9 @@ function TrackingBoard({ campaignId, onBack, tenantId }) {
         <MiniStatCard label="Goal Conversion" value={booked} icon={CheckCircle2} color="text-emerald-600" />
       </div>
 
+      {/* NEW: Script Evolution Scoreboard */}
+      <ScriptScoreboard scripts={data.scripts} isAuto={data.campaign.mode === 'auto'} />
+
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
         {/* Main Content: Lead Registry */}
         <div className="xl:col-span-9 space-y-6">
@@ -517,9 +713,9 @@ function TrackingBoard({ campaignId, onBack, tenantId }) {
                   <tr className="bg-stone-50/50 text-[10px] font-bold text-stone-400 uppercase tracking-widest border-b border-stone-100">
                     <th className="px-6 py-4">Lead Information</th>
                     <th className="px-6 py-4">Current Stage</th>
+                    <th className="px-6 py-4">Script Used</th>
                     <th className="px-6 py-4">Dial Attempts</th>
-                    <th className="px-6 py-4">Last Activity</th>
-                    <th className="px-6 py-4 text-right">Call Audio</th>
+                    <th className="px-6 py-4 text-right">Activity Hub</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-50">
@@ -537,7 +733,16 @@ function TrackingBoard({ campaignId, onBack, tenantId }) {
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        <StatusBadge status={contact.status === 'pending' || contact.status === 'contacted' ? 'active' : contact.status} />
+                        <StatusBadge status={contact.status} />
+                      </td>
+                      <td className="px-6 py-4 max-w-[200px]">
+                        {contact.script_content ? (
+                           <div className="text-[11px] text-stone-500 italic line-clamp-1 group-hover:line-clamp-none transition-all group-hover:text-stone-900">
+                             "{contact.script_content}"
+                           </div>
+                        ) : (
+                           <span className="text-[10px] font-bold text-stone-300 uppercase tracking-widest">Manual Mode</span>
+                        )}
                       </td>
                       <td className="px-6 py-4 font-mono text-[11px] font-bold text-stone-500">
                         <div className="flex items-center gap-1.5">
@@ -549,40 +754,43 @@ function TrackingBoard({ campaignId, onBack, tenantId }) {
                            <span className="opacity-60">{contact.attempts || 0}/3</span>
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-[11px] text-stone-500">
-                        {(contact.last_call_at || contact.last_attempt_at) ? (
-                          <div className="flex flex-col">
-                            <span className="font-bold text-stone-700">{new Date(contact.last_call_at || contact.last_attempt_at).toLocaleDateString()}</span>
-                            <span className="opacity-60">{new Date(contact.last_call_at || contact.last_attempt_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                          </div>
-                        ) : (
-                           <span className="text-stone-300 italic tracking-tight font-medium">Pending initial dial</span>
-                        )}
-                      </td>
                       <td className="px-6 py-4 text-right">
-                        {contact.recording_id ? (
-                          <motion.button 
-                             whileHover={{ scale: 1.05 }}
-                             whileTap={{ scale: 0.95 }}
-                             disabled={isPlayingAudio}
-                             onClick={(e) => {
-                               e.stopPropagation();
-                               handlePlayAudio(contact.recording_id, contact.name || contact.phone);
-                             }}
-                             className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border shadow-sm font-bold text-[10px] uppercase transition-all ${
-                                isPlayingAudio ? 'bg-stone-50 text-stone-400 border-stone-200' : 'bg-brand-50 text-brand-600 border-brand-100 hover:bg-brand-600 hover:text-white'
-                             }`}
-                          >
-                             {isPlayingAudio ? (
-                               <Activity className="w-3 h-3 animate-pulse" />
-                             ) : (
-                               <Play className="w-3 h-3 fill-current" />
-                             )}
-                             {isPlayingAudio ? "Loading..." : "Play"}
-                          </motion.button>
-                        ) : (
-                           <span className="text-[9px] font-bold text-stone-300 uppercase tracking-widest mr-4">No Data</span>
-                        )}
+                        <div className="flex items-center justify-end gap-2">
+                           {contact.transcript && (
+                             <motion.button 
+                                whileHover={{ scale: 1.05 }}
+                                whileTap={{ scale: 0.95 }}
+                                onClick={() => setSelectedTranscript(contact.transcript)}
+                                className="p-2 bg-stone-100 text-stone-500 rounded-lg border border-stone-200 hover:bg-white hover:text-brand-600 transition-all shadow-sm"
+                             >
+                                <MessageSquare className="w-3.5 h-3.5" />
+                             </motion.button>
+                           )}
+
+                          {contact.recording_id ? (
+                            <motion.button 
+                               whileHover={{ scale: 1.05 }}
+                               whileTap={{ scale: 0.95 }}
+                               disabled={isPlayingAudio}
+                               onClick={(e) => {
+                                 e.stopPropagation();
+                                 handlePlayAudio(contact.recording_id, contact.name || contact.phone);
+                               }}
+                               className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border shadow-sm font-bold text-[10px] uppercase transition-all ${
+                                  isPlayingAudio ? 'bg-stone-50 text-stone-400 border-stone-200' : 'bg-brand-50 text-brand-600 border-brand-100 hover:bg-brand-600 hover:text-white'
+                               }`}
+                            >
+                               {isPlayingAudio ? (
+                                 <Activity className="w-3 h-3 animate-pulse" />
+                               ) : (
+                                 <Play className="w-3 h-3 fill-current" />
+                               )}
+                               {isPlayingAudio ? "Loading..." : "Play"}
+                            </motion.button>
+                          ) : (
+                             <span className="text-[9px] font-bold text-stone-300 uppercase tracking-widest mr-4">No Data</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -728,6 +936,18 @@ function TrackingBoard({ campaignId, onBack, tenantId }) {
                </button>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {selectedTranscript && (
+          <>
+            <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm z-[45]" onClick={() => setSelectedTranscript(null)} />
+            <TranscriptViewer 
+              transcript={selectedTranscript} 
+              onClose={() => setSelectedTranscript(null)} 
+            />
+          </>
         )}
       </AnimatePresence>
     </div>

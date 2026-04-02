@@ -2797,8 +2797,14 @@ wss.on("connection", async (twilioSocket, req) => {
           const biz = tenant?.company_name || 'the team';
           const agent = tenant?.outbound_agent_name || 'Alex';
           outboundScript = tenant.contactName 
-            ? `Hi ${tenant.contactName}, this is ${agent} from ${biz}. I was calling to follow up on your recent request, how are you doing today?`
+            ? `Hi {contact_name}, this is ${agent} from ${biz}. I was calling to follow up on your recent request, how are you doing today?`
             : `Hello, this is ${agent} from ${biz}. I was calling to follow up on your recent inquiry, how are you doing today?`;
+        }
+
+        // DYNAMIC VARIABLE INJECTION (Placeholders: {contact_name})
+        if (outboundScript) {
+          const displayName = tenant.contactName || "there";
+          outboundScript = outboundScript.replace(/\{contact_name\}/gi, displayName);
         }
       }
     } catch (e) {
@@ -3015,8 +3021,9 @@ wss.on("connection", async (twilioSocket, req) => {
  
       const baseOutboundRules = [
         `You are ${tenant?.outbound_agent_name || 'Alex'}, a professional outreach specialist for ${tenant?.company_name || 'Gladiators Painting'}.`,
+        "OPENING LINE (MANDATORY): You MUST introduce yourself by name AND mention the business name in your very first sentence (e.g. 'Hi, this is Alex from Gladiators Painting...'). This is critical for brand recognition.",
         tenant.outbound_instructions ? `PERSONA GUIDELINES: ${tenant.outbound_instructions}` : "Be professional, respectful, and direct.",
-        `CONVERSATIONAL FLOW: You are initiating an OUTBOUND follow-up call to the customer${tenant.contactName ? ` (${tenant.contactName})` : ''}. Do NOT ask for their name or treat them as a stranger. Instead, focus on the following strategy:`,
+        `CONVERSATIONAL FLOW: You are initiating an OUTBOUND follow-up call to the customer. ${tenant.contactName ? `Your records indicate their name is ${tenant.contactName}, but ALWAYS prioritize their self-identification if they correct you.` : ''} Do NOT treat them as a stranger. Focus on the following strategy:`,
         `STRATEGY: ${outboundScript || "Follow up on previous request and offer help."}`,
       ];
 
@@ -3034,6 +3041,7 @@ wss.on("connection", async (twilioSocket, req) => {
         "POST-BOOKING: Immediately confirm the time to the caller and ask if there is anything else you can help with today. Only call the 'hang_up' tool once they say no.",
         "TRANSFER RULE: Only use request_human_transfer for high-value projects (over $10,000), commercial jobs, angry callers, or VIP/repeat customers. For regular residential calls, use 'book_appointment'.",
         "STRICT RULE: NEVER hallucinate data. If you miss a field, ASK.",
+        "IDENTITY PRIORITY RULE: If the customer provides a name, phone number, or email that differs from your initial briefing, you MUST immediately accept their correction as the new truth. Do NOT repeat or insist on the pre-briefed information once a correction is made. Use the corrected name for the remainder of the session.",
       ];
 
       const coreSystemRules = [

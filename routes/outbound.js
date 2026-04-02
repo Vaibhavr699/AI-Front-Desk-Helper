@@ -100,7 +100,23 @@ router.get("/campaigns/:id", async (req, res) => {
 router.get("/campaigns/:id/contacts", async (req, res) => {
   try {
     const r = await db.query(
-      "SELECT * FROM outbound_contacts WHERE campaign_id = $1 ORDER BY created_at ASC LIMIT 100", 
+      `SELECT 
+        oc.*, 
+        c.id as last_call_id, 
+        c.recording_url, 
+        c.started_at as last_call_at
+      FROM outbound_contacts oc
+      LEFT JOIN LATERAL (
+        SELECT id, recording_url, started_at
+        FROM calls 
+        WHERE (to_number = oc.phone OR from_number = oc.phone)
+          AND tenant_id = oc.tenant_id
+        ORDER BY started_at DESC
+        LIMIT 1
+      ) c ON true
+      WHERE oc.campaign_id = $1 
+      ORDER BY oc.created_at ASC 
+      LIMIT 100`, 
       [req.params.id]
     );
     res.json(r.rows);

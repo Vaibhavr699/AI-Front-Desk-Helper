@@ -356,6 +356,7 @@ function TrackingBoard({ campaignId, onBack, tenantId }) {
   const [actionLoading, setActionLoading] = useState(false);
   const [isEditingPrompt, setIsEditingPrompt] = useState(false);
   const [editedPrompt, setEditedPrompt] = useState("");
+  const [selectedAudio, setSelectedAudio] = useState(null);
   const { success, error } = useToast();
 
   useEffect(() => {
@@ -527,20 +528,24 @@ function TrackingBoard({ campaignId, onBack, tenantId }) {
                         </div>
                       </td>
                       <td className="px-6 py-4 text-[11px] text-stone-500">
-                        {contact.last_attempt_at ? (
+                        {(contact.last_call_at || contact.last_attempt_at) ? (
                           <div className="flex flex-col">
-                            <span className="font-bold text-stone-700">{new Date(contact.last_attempt_at).toLocaleDateString()}</span>
-                            <span className="opacity-60">{new Date(contact.last_attempt_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            <span className="font-bold text-stone-700">{new Date(contact.last_call_at || contact.last_attempt_at).toLocaleDateString()}</span>
+                            <span className="opacity-60">{new Date(contact.last_call_at || contact.last_attempt_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                           </div>
                         ) : (
                            <span className="text-stone-300 italic tracking-tight font-medium">Pending initial dial</span>
                         )}
                       </td>
                       <td className="px-6 py-4 text-right">
-                        {contact.last_call_id ? (
+                        {contact.recording_url ? (
                           <motion.button 
                              whileHover={{ scale: 1.05 }}
                              whileTap={{ scale: 0.95 }}
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               setSelectedAudio({ url: contact.recording_url, name: contact.name || contact.phone });
+                             }}
                              className="inline-flex items-center gap-2 px-3 py-1.5 bg-brand-50 text-brand-600 rounded-lg border border-brand-100 hover:bg-brand-600 hover:text-white transition-all shadow-sm font-bold text-[10px] uppercase"
                           >
                              <Play className="w-3 h-3 fill-current" />
@@ -663,6 +668,39 @@ function TrackingBoard({ campaignId, onBack, tenantId }) {
           </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {selectedAudio && (
+          <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50">
+            <motion.div 
+               initial={{ y: 100, opacity: 0 }}
+               animate={{ y: 0, opacity: 1 }}
+               exit={{ y: 100, opacity: 0 }}
+               className="bg-stone-900 text-white rounded-2xl p-4 shadow-2xl border border-white/10 w-[400px] flex items-center gap-4"
+            >
+               <div className="w-10 h-10 rounded-full bg-brand-500 flex items-center justify-center shrink-0">
+                  <Activity className="w-5 h-5 text-white animate-pulse" />
+               </div>
+               <div className="flex-1 min-w-0">
+                  <div className="text-[10px] font-bold text-stone-500 uppercase tracking-widest leading-none mb-1">Recording playback</div>
+                  <div className="text-sm font-bold truncate">{selectedAudio.name}</div>
+                  <audio 
+                    src={selectedAudio.url} 
+                    autoPlay 
+                    controls 
+                    className="h-8 mt-2 w-full brightness-0 invert opacity-60 hover:opacity-100 transition-opacity" 
+                  />
+               </div>
+               <button 
+                onClick={() => setSelectedAudio(null)}
+                className="p-2 hover:bg-white/10 rounded-lg transition-colors self-start"
+               >
+                 <XCircle className="w-4 h-4 text-stone-500" />
+               </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

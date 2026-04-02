@@ -2618,26 +2618,50 @@ wss.on("connection", async (twilioSocket, req) => {
   const recoveryScript = q.script ? decodeURIComponent(q.script) : "";
   const leadSource = q.leadSource || null;
 
-  // TENANT RESOLUTION: Prioritize pathname segment, fallback to number lookup
-  const pathSegments = pathname.split("/").filter(Boolean);
-  const tenantIdFromPath = pathSegments.length >= 2 ? pathSegments[1] : "";
-  let tenantId = tenantIdFromPath;
+  // PATH-BASED METADATA EXTRACTION (Robust against query-string stripping)
+  // Patterns: 
+  // 1. /twilio-media/{tenantId}/{callSid}
+  // 2. /twilio-media/{tenantId}/outbound/{callSid}
+  // 3. /twilio-media/{tenantId}/recovery/{callSid}
+  const pathSegments = pathname.split("/").filter(Boolean); // e.g. ["twilio-media", "{tenantId}", "{type or callSid}", "{callSid}"]
+  
+  let tenantId = pathSegments[1] || "";
+  let callSidFromPath = "";
+  let typeFromPath = "";
+
+  if (pathSegments.length === 3) {
+    // Standard Inbound: /twilio-media/{tenantId}/{callSid}
+    callSidFromPath = pathSegments[2];
+  } else if (pathSegments.length === 4) {
+    // Outbound or Recovery: /twilio-media/{tenantId}/{type}/{callSid}
+    typeFromPath = pathSegments[2];
+    callSidFromPath = pathSegments[3];
+  }
+
+  const callSid = callSidFromPath || q.CallSid || q.callSid;
+  const isOutboundFromPath = typeFromPath === "outbound";
+  const isRecoveryFromPath = typeFromPath === "recovery";
+
+  let isOutbound = isOutboundFromPath || q.type === "outbound";
+  let isRecovery = isRecoveryFromPath || q.type === "recovery";
+  
+  console.log("[AI-Desk] Connection Context: tenantId=%s type=%s callSid=%s (extracted from %s segments)", 
+    tenantId, (isOutbound ? "outbound" : (isRecovery ? "recovery" : "inbound")), callSid, pathSegments.length);
+
+  const isNurturing = q.type === "nurturing";
 
   // Use CallSid context if we have it for direction detection
-  let isOutbound = q.type === "outbound";
-  const callSidFromQuery = q.CallSid || q.callSid;
-
-  if (!isOutbound && callSidFromQuery) {
+  if (!isOutbound && callSid) {
      try {
        // BUG FIX: The column name is twilio_call_sid, not twilio_sid
-       const callDirRes = await db.query("SELECT direction, tenant_id FROM calls WHERE twilio_call_sid = $1", [callSidFromQuery]);
+       const callDirRes = await db.query("SELECT direction, tenant_id FROM calls WHERE twilio_call_sid = $1", [callSid]);
        if (callDirRes.rows[0]?.direction === 'outbound') {
          isOutbound = true;
          // Sync tenantId if it was missing from path
          if (!tenantId) tenantId = callDirRes.rows[0].tenant_id;
-         console.log("[AI-Desk] Robust Detect SUCCESS: Call %s is OUTBOUND to tenant %s from DB", callSidFromQuery, tenantId);
+         console.log("[AI-Desk] Robust Detect SUCCESS: Call %s is OUTBOUND to tenant %s from DB", callSid, tenantId);
        } else {
-         console.log("[AI-Desk] Direction lookup: Found call %s but direction is %s", callSidFromQuery, callDirRes.rows[0]?.direction || "unknown");
+         console.log("[AI-Desk] Direction lookup: Found call %s but direction is %s", callSid, callDirRes.rows[0]?.direction || "unknown");
        }
      } catch (e) {
        console.error("[AI-Desk] Direction lookup CRITICAL fail:", e.message);

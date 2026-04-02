@@ -51,10 +51,8 @@ router.post("/voice/:tenantId?", async (req, res) => {
     await callsService.createCall(tenant.id, CallSid, fromNumber, toNumber, direction);
     console.log("[AI-Desk] Voice webhook call created CallSid=%s tenantId=%s direction=%s", CallSid, tenant.id, direction);
 
-    const wsUrl = (BASE_URL || "")
-      .replace("https://", "wss://")
-      .replace("http://", "ws://") + "/twilio-media/" + tenant.id;
-    let streamUrl = `${wsUrl}?CallSid=${encodeURIComponent(CallSid)}&From=${encodeURIComponent(fromNumber)}&To=${encodeURIComponent(toNumber)}`;
+    const wsUrl = (BASE_URL || "").replace("https://", "wss://").replace("http://", "ws://") + "/twilio-media";
+    let streamUrl = `${wsUrl}/${tenant.id}/${CallSid}?From=${encodeURIComponent(fromNumber)}&To=${encodeURIComponent(toNumber)}`;
     const testCallFrom = (process.env.TEST_CALL_FROM || "").replace(/\s/g, "");
     if (testCallFrom && fromNumber && fromNumber.replace(/\D/g, "") === testCallFrom.replace(/\D/g, "")) {
       streamUrl += "&turnBased=1";
@@ -234,7 +232,7 @@ router.all("/outbound", async (req, res) => {
     }
   }
 
-  let streamUrl = `${wsUrl}${tenantId ? '/' + tenantId : ''}?type=outbound&campaignId=${encodeURIComponent(campaignId)}&contactId=${encodeURIComponent(contactId)}&callSid=${encodeURIComponent(req.body.CallSid || req.query.CallSid)}`;
+  let streamUrl = `${wsUrl}${tenantId ? '/' + tenantId : ''}/outbound/${req.body.CallSid || req.query.CallSid}?campaignId=${encodeURIComponent(campaignId)}&contactId=${encodeURIComponent(contactId)}`;
   if (scriptId) streamUrl += `&scriptId=${encodeURIComponent(scriptId)}`;
 
   const twiml = `

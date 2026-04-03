@@ -2439,7 +2439,7 @@ wss.on("connection", async (twilioSocket, req) => {
     tenant = TENANTS[tenantId];
     
     // If slug lookup failed, try finding first Available if path was empty
-    if (!tenant && !tenantIdFromPath) {
+    if (!tenant && !tenantId) {
       const availableTenantIds = Object.keys(TENANTS);
       if (availableTenantIds.length > 0) {
         tenant = TENANTS[availableTenantIds[0]];
@@ -2458,7 +2458,7 @@ wss.on("connection", async (twilioSocket, req) => {
   }
 
   if (!tenant && !isRecovery && !isNurturing && !isOutbound) {
-    console.error("[AI-Desk] No tenant for path segment:", tenantIdFromPath, "- ensure DB is seeded and loadTenants ran.");
+    console.error("[AI-Desk] No tenant for path segment:", tenantId, "- ensure DB is seeded and loadTenants ran.");
     twilioSocket.close();
     return;
   }
@@ -2758,27 +2758,27 @@ wss.on("connection", async (twilioSocket, req) => {
 
       const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 1000;
       const vadThreshold = parseFloat(process.env.REALTIME_VAD_THRESHOLD) || 0.6;
-      const payloadToOpenAI = {
-        type: "session.update",
-        session: {
-          input_audio_format: "g711_ulaw",
-          output_audio_format: "g711_ulaw",
-          voice: aiConfig.voice,
-          instructions: `${aiConfig.instructions}\n\nSpeak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English. DO NOT USE ANY OTHER LANGUAGE AT THE START OF THE CALL.`,
-          tools: aiConfig.tools,
-          turn_detection: {
-            type: "server_vad",
-            threshold: vadThreshold,
-            prefix_padding_ms: 500,
-            silence_duration_ms: silenceMs,
-          },
-          input_audio_transcription: { model: "whisper-1" },
-        },
-      };
-
-      console.log("[DEBUG] Sending payload to OpenAI:", JSON.stringify(sessionUpdate, null, 2));
-      sendToOpenAI(sessionUpdate);
-
+      const sessionUpdate = {
+  type: "session.update",
+  session: {
+    input_audio_format: "g711_ulaw",
+    output_audio_format: "g711_ulaw",
+    voice: aiConfig.voice,
+    instructions: `${aiConfig.instructions}\n\nSpeak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English. DO NOT USE ANY OTHER LANGUAGE AT THE START OF THE CALL.`,
+    tools: aiConfig.tools,
+    turn_detection: {
+      type: "server_vad",
+      threshold: vadThreshold,
+      prefix_padding_ms: 500,
+      silence_duration_ms: silenceMs,
+    },
+    input_audio_transcription: { model: "whisper-1" },
+  },
+};
+ 
+console.log("[DEBUG] Sending session.update to OpenAI:", JSON.stringify(sessionUpdate, null, 2));
+sendToOpenAI(sessionUpdate);
+      
       // For inbound calls, trigger an initial welcome message
       if (!isOutbound) {
         const welcomeMessage = tenant?.welcome_message || "Hi, thanks for calling. How can I help you today?";
@@ -2976,7 +2976,7 @@ wss.on("connection", async (twilioSocket, req) => {
               });
 
               // 5. Mark any active estimate recovery as CONVERTED (Sales Win)
-              const bookingPhone = norm.contact_phone || args.contact_phone || args.phone;
+              const bookingPhone = args.contact_phone || args.phone;
               if (bookingPhone) {
                 try {
                   const activeRecovery = await db.query(

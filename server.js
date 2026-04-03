@@ -2787,7 +2787,7 @@ sendToOpenAI(sessionUpdate);
           item: {
             type: "message",
             role: "assistant",
-            content: [{ type: "input_text", text: welcomeMessage }],
+            content: [{ type: "text", text: welcomeMessage }],
           },
         };
         sendToOpenAI(welcomeEvent);

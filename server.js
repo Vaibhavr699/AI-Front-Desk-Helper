@@ -2588,7 +2588,7 @@ wss.on("connection", async (twilioSocket, req) => {
   function triggerGreetingIfReady() {
     if (openaiReady && streamStarted && !greetingTriggered) {
         if (!sessionUpdated) {
-          console.log("[AI-Desk] triggerGreetingIfReady waiting for sessionUpdated");
+          console.log("[AI-Desk] triggerGreetingIfReady waiting for sessionUpdated (Outbound/Recovery)");
           return;
         }
       greetingTriggered = true;

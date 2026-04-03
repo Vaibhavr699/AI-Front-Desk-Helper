@@ -2779,20 +2779,6 @@ wss.on("connection", async (twilioSocket, req) => {
 console.log("[DEBUG] Sending session.update to OpenAI:", JSON.stringify(sessionUpdate, null, 2));
 sendToOpenAI(sessionUpdate);
       
-      // For inbound calls, trigger an initial welcome message
-      if (!isOutbound) {
-        const welcomeMessage = tenant?.welcome_message || "Hi, thanks for calling. How can I help you today?";
-        const welcomeEvent = {
-          type: "conversation.item.create",
-          item: {
-            type: "message",
-            role: "assistant",
-            content: [{ type: "text", text: welcomeMessage }],
-          },
-        };
-        sendToOpenAI(welcomeEvent);
-        sendToOpenAI({ type: "response.create" });
-      }
     });
 
     openaiSocket.on("message", async (msg) => {

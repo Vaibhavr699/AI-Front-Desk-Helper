@@ -3104,7 +3104,7 @@ sendToOpenAI(sessionUpdate);
 
         if (hasBooked && !hasScheduledHangup) {
           hasScheduledHangup = true;
-          console.log("[AI-Desk] Booking confirmed, closing call in 6s...");
+          console.log("[AI-Desk] Booking confirmed, closing call in 15s...");
           setTimeout(async () => {
             try {
               const client = twilioLib.getClientForTenant(tenant);
@@ -3126,7 +3126,7 @@ sendToOpenAI(sessionUpdate);
               status: 'completed',
               markEnded: true
             });
-          }, 6000);
+          }, 15000);
         }
         return;
       }

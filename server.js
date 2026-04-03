@@ -2591,7 +2591,6 @@ wss.on("connection", async (twilioSocket, req) => {
           console.log("[AI-Desk] triggerGreetingIfReady waiting for sessionUpdated");
           return;
         }
-      }
       greetingTriggered = true;
       const useRecoveryFlow = isRecovery || isOutbound || (isNurturing && recoveryScript);
       

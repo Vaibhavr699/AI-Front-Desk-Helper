@@ -70,7 +70,9 @@ export default function LeadDetail({ tenantId }) {
             </svg>
           </button>
           <div>
-            <h1 className="text-2xl font-bold text-stone-900">{lead.name || lead.phone}</h1>
+            <h1 className="text-2xl font-bold text-stone-900">
+              {lead.name || (lead.phone.startsWith('fb-') ? 'Facebook Visitor' : lead.phone.startsWith('web-') ? 'Website Visitor' : lead.phone)}
+            </h1>
             <p className="text-sm text-stone-500">Customer Record · Created {new Date(lead.created_at).toLocaleDateString()}</p>
           </div>
           
@@ -153,6 +155,57 @@ export default function LeadDetail({ tenantId }) {
                 </div>
               </div>
             </div>
+
+            {/* SMS Compliance Section */}
+            {lead.has_sms_consent && (
+              <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-6">
+                <div className="flex items-center gap-2 mb-6">
+                  <div className="p-1.5 bg-blue-100 rounded-lg text-blue-600">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                  </div>
+                  <h3 className="font-bold text-stone-900 uppercase text-xs tracking-widest">Compliance Audit</h3>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Status</label>
+                      <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-blue-50 text-blue-700 text-[10px] font-bold uppercase rounded-md border border-blue-100">
+                        Verified Opt-in
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Captured</label>
+                      <div className="text-stone-900 text-[10px] font-mono">{new Date(lead.last_consent_at).toLocaleString()}</div>
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Disclosure Agreed To</label>
+                    <div className="text-stone-600 text-[11px] bg-stone-50 p-3 rounded-xl border border-stone-100 italic leading-relaxed">
+                      "{lead.consent_text}"
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-stone-50 space-y-3">
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="text-stone-400 font-bold uppercase tracking-wider">IP Address</span>
+                      <span className="text-stone-900 font-mono">{lead.ip_address || "---"}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="text-stone-400 font-bold uppercase tracking-wider">Platform Source</span>
+                      <span className="text-stone-900 font-medium">{lead.consent_source || "AI Chat Widget"}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="text-stone-400 font-bold uppercase tracking-wider">Page URL</span>
+                      <span className="text-stone-900 truncate max-w-[150px]" title={lead.page_url}>{lead.page_url ? new URL(lead.page_url).pathname : "---"}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Right: Conversation History & Activity Feed */}
@@ -183,7 +236,7 @@ export default function LeadDetail({ tenantId }) {
                       <div key={idx} className={`flex flex-col ${isUser ? 'items-start' : 'items-end'}`}>
                         <div className="flex items-center gap-2 mb-1.5 px-1">
                           <span className="text-[10px] font-bold text-stone-400 uppercase tracking-wide">
-                            {isCall ? '📞 Voice Call' : isBooking ? '📅 Booking' : (event.channel === 'facebook' ? '💬 Facebook' : '📱 SMS')}
+                            {isCall ? '📞 Voice Call' : isBooking ? '📅 Booking' : (event.channel === 'facebook' ? '💬 Facebook' : event.channel === 'website' ? '🌐 Website' : '📱 SMS')}
                           </span>
                           <span className="text-[10px] text-stone-300">•</span>
                           <span className="text-[10px] font-medium text-stone-400 font-mono">

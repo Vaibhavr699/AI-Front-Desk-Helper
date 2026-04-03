@@ -46,6 +46,7 @@ const salesEngine = require("./services/salesEngine");
 const leadsService = require("./services/leads");
 const messagesService = require("./services/messages");
 const emailService = require("./services/email");
+const { getAIConfig, REALTIME_TOOLS, RECOVERY_TOOLS } = require("./lib/orchestrator");
 
 const _resetBase = (process.env.DASHBOARD_URL || process.env.BASE_URL || "").replace(/\/$/, "");
 console.log("[Startup] Password reset: Resend=" + (process.env.RESEND_API_KEY && process.env.EMAIL_FROM ? "yes" : "no") + ", ResetLinkBase=" + (_resetBase || "NOT SET – set DASHBOARD_URL or BASE_URL"));
@@ -78,233 +79,6 @@ const LEAD_CAPTURE_FIELDS = [
 function isValidE164(phone) {
   return /^\+?[1-9]\d{1,14}$/.test(String(phone || ""));
 }
-
-const REALTIME_TOOLS = [
-  {
-    type: "function",
-    name: "capture_lead_info",
-    description: "Capture the caller's information (name, phone, email, etc.) before they book or if they are just inquiring. ALWAYS call this if you've collected ANY details like name or scope, even if they haven't committed to a date yet. This ensures we save their lead record for follow-ups.",
-    parameters: {
-      type: "object",
-      properties: {
-        contact_name: { type: "string" },
-        contact_phone: { type: "string" },
-        contact_email: { type: "string" },
-        address: { type: "string" },
-        city: { type: "string" },
-        scope: { type: "string" },
-        job_type: { type: "string" },
-        notes: { type: "string" },
-        estimated_value: { type: "number" },
-        lead_score: { type: "integer" }
-      },
-      required: ["contact_name", "contact_phone"]
-    }
-  },
-  {
-    type: "function",
-    name: "book_appointment",
-    description: "Finalize and save the booking. Call this ONLY when you have real details from the caller: contact name, contact phone, contact email, and address OR city. NEVER use placeholder or dummy data. Include EVERY detail the caller gave: contact_name, contact_phone, contact_email, address, city, scope, job_type, preferred_date, appointment_time, notes, estimated_value, lead_score, and ai_summary. Do not omit any field the caller provided.",
-    parameters: {
-      type: "object",
-      properties: {
-        contact_name: { type: "string" },
-        contact_phone: { type: "string" },
-        contact_email: { type: "string" },
-        address: { type: "string" },
-        city: { type: "string" },
-        state: { type: "string", description: "The state of the job location (e.g. New York, NY, Florida, etc.)" },
-        scope: { type: "string" },
-        job_type: { type: "string" },
-        preferred_date: { type: "string", description: "Preferred date (YYYY-MM-DD)" },
-        appointment_time: { type: "string", description: "Preferred time (e.g. 1:30 PM or 13:30)" },
-        notes: { type: "string" },
-        estimated_value: { type: "number", description: "Estimated job value in dollars (e.g. 1500 or 4500.50). ALWAYS provide an estimate based on the project scope (e.g. $500 for a room, $3000 for a house). Do not leave at 0 if project details are known." },
-        lead_score: { type: "integer", description: "Score from 1 to 100 based on lead quality. 100 is a perfect lead." },
-        ai_summary: { type: "string", description: "A concise 1-2 sentence summary of the caller's needs and sentiment." },
-      },
-      required: ["contact_name", "contact_phone", "address", "estimated_value"],
-    },
-  },
-
-  {
-    type: "function",
-    name: "check_availability",
-    description: "Check if a specific date and time is available for an appointment. Use this BEFORE calling book_appointment if the user provides a specific time.",
-    parameters: {
-      type: "object",
-      properties: {
-        appointment_date: { type: "string", description: "The date (YYYY-MM-DD)" },
-        appointment_time: { type: "string", description: "The time (e.g. 10:00 AM)" },
-      },
-      required: ["appointment_date", "appointment_time"],
-    },
-  },
-  {
-    type: "function",
-    name: "request_human_transfer",
-    description: "Transfer the caller to a live team member. Trigger this ONLY when one of these conditions is clearly met: (1) caller explicitly says it is a COMMERCIAL job, (2) caller states a project budget or value OVER $10,000, (3) caller is clearly frustrated, angry, confused, or repeatedly asks for a real person, (4) caller identifies themselves as a VIP, returning customer, or says they've called before. Do NOT transfer for normal residential estimates—use book_appointment instead. Before transferring, try to collect the caller's name and what they need so the agent receiving the call has context.",
-    parameters: {
-      type: "object",
-      properties: {
-        reason: {
-          type: "string",
-          enum: ["commercial_job", "high_value_over_10k", "frustrated_caller", "vip_repeat_customer", "caller_requested_human", "asked_owner_by_name"]
-        },
-        caller_name: { type: "string" },
-        caller_phone: { type: "string" },
-        project_type: { type: "string" },
-        budget_estimate: { type: "string" },
-        sentiment: { type: "string", enum: ["positive", "neutral", "frustrated", "angry"] },
-        location: { type: "string" },
-        summary: { type: "string" },
-        lead_score: { type: "integer", description: "Score from 1 to 100 based on lead quality." },
-        ai_summary: { type: "string", description: "Brief summary of the call details for the agent." },
-      },
-      required: ["reason", "summary"],
-    },
-  },
-  {
-    type: "function",
-    name: "change_language",
-    description: "Call this when the caller asks to speak in a different language. Use the ISO 639-1 code: en=English, es=Spanish, fr=French, hi=Hindi, zh=Chinese, ar=Arabic, etc.",
-    parameters: {
-      type: "object",
-      properties: {
-        language: { type: "string" },
-      },
-      required: ["language"],
-    },
-  },
-  {
-    type: "function",
-    name: "cancel_appointment",
-    description: "Cancel an existing appointment. Use this when the caller explicitly wants to cancel. Before calling this, you MUST search for their booking (e.g., by asking for their phone number if not already known) and confirm the details with them.",
-    parameters: {
-      type: "object",
-      properties: {
-        contact_phone: { type: "string", description: "The phone number used for the booking." },
-        reason: { type: "string", description: "Brief reason for cancellation." },
-      },
-      required: ["contact_phone"],
-    },
-  },
-  {
-    type: "function",
-    name: "reschedule_appointment",
-    description: "Reschedule an existing appointment to a new date and time. Use this when the caller wants to change their appointment. Before calling this, you MUST search for their booking and confirm the new details with them.",
-    parameters: {
-      type: "object",
-      properties: {
-        contact_phone: { type: "string", description: "The phone number used for the booking." },
-        new_date: { type: "string", description: "The new date (YYYY-MM-DD)" },
-        new_time: { type: "string", description: "The new time (e.g. 10:30 AM)" },
-        notes: { type: "string", description: "Any additional notes about the reschedule." },
-      },
-      required: ["contact_phone", "new_date", "new_time"],
-    },
-  },
-  {
-    type: "function",
-    name: "hang_up",
-    description: "End the call. Call this ONLY after you have confirmed the booking, summarized the details, and said a final 'Goodbye'. Also use this if the caller explicitly says they have to go or the conversation is clearly finished.",
-    parameters: {
-      type: "object",
-      properties: {},
-    },
-  },
-];
-
-const SALES_CLOSE_PROMPT = `
-You are a friendly sales assistant for {{company_name}}. Your goal is to help customers feel comfortable moving forward with their project.
-When customers hesitate, ask helpful questions and address concerns. If the customer seems interested, offer to reserve a project start date.
-Be helpful, never pushy.
-
-OBJECTION HANDLING SCRIPTS:
-- "Too expensive": "I completely understand. Many homeowners compare a few options before deciding. What most of our customers appreciate is the quality of work and durability of the finish, which helps avoid repainting sooner. Would it help if I walked through what is included in the estimate?"
-- "I need to think about it": "That makes sense. Many homeowners take some time to review everything. Is there anything about the project or estimate that you'd like me to clarify?"
-- "Not right now": "No problem at all. When do you think might be a better time for the project? I can make a note and follow up closer to that time."
-- "I'm waiting on my spouse": "That makes sense. If it helps, I can send over the estimate details again so you both can review them together."
-- "Stop calling": "Of course — I understand. I'll make a note so we don't bother you again. If you ever need painting services in the future, feel free to reach out."
-`;
-
-const RECOVERY_TOOLS = [
-  {
-    type: "function",
-    name: "book_appointment",
-    description: "The customer agreed to book! Collect name, phone, address, scope, and finalize. IMPORTANT: ONLY use information explicitly provided by the caller in this conversation. NEVER hallucinate or use dummy data. This also marks the recovery as converted.",
-    parameters: {
-      type: "object",
-      properties: {
-        contact_name: { type: "string", description: "Full name" },
-        contact_phone: { type: "string", description: "Phone number" },
-        contact_email: { type: "string", description: "Email if given" },
-        address: { type: "string", description: "Street address" },
-        city: { type: "string", description: "City" },
-        scope: { type: "string", description: "What services or products they need, specific details about their request" },
-        job_type: { type: "string", description: "Residential or commercial" },
-        preferred_date: { type: "string", description: "Preferred date (YYYY-MM-DD)" },
-        appointment_time: { type: "string", description: "Preferred time (e.g. 1:30 PM)" },
-        notes: { type: "string", description: "Extra notes" },
-        estimated_value: { type: "number", description: "Estimated job value in dollars. ALWAYS provide a reasonable estimate ($500-$5000)." },
-        lead_score: { type: "integer", description: "Score from 1 to 100 based on lead quality. 100 is a perfect lead." },
-        ai_summary: { type: "string", description: "A concise 1-2 sentence summary of the call." },
-      },
-      required: ["contact_name", "contact_phone", "address", "estimated_value"],
-    },
-  },
-  {
-    type: "function",
-    name: "check_availability",
-    description: "Check if a specific date and time is available for an appointment.",
-    parameters: {
-      type: "object",
-      properties: {
-        appointment_date: { type: "string", description: "The date (YYYY-MM-DD)" },
-        appointment_time: { type: "string", description: "The time (e.g. 10:00 AM)" },
-      },
-      required: ["appointment_date", "appointment_time"],
-    },
-  },
-  {
-    type: "function",
-    name: "detect_objection",
-    description: "Call this when the customer expresses a specific objection. Types: 'price' (they say it's expensive, comparing quotes), 'thinking' (need to think about it, not sure yet), 'spouse' (need to talk to partner/spouse). This adjusts the follow-up sequence after the call.",
-    parameters: {
-      type: "object",
-      properties: {
-        objection_type: {
-          type: "string",
-          enum: ["price", "thinking", "spouse"],
-          description: "The type of objection detected",
-        },
-        details: { type: "string", description: "What exactly they said" },
-      },
-      required: ["objection_type"],
-    },
-  },
-  {
-    type: "function",
-    name: "change_language",
-    description: "Switch to another language if the customer asks.",
-    parameters: {
-      type: "object",
-      properties: {
-        language: { type: "string" },
-      },
-      required: ["language"],
-    },
-  },
-  {
-    type: "function",
-    name: "hang_up",
-    description: "End the call. Call this ONLY after you have confirmed the booking and said a final 'Goodbye'. Also use this if the caller explicitly says they have to go or the conversation is finished.",
-    parameters: {
-      type: "object",
-      properties: {},
-    },
-  },
-];
 
 // -------------------- App --------------------
 const app = express();
@@ -480,11 +254,12 @@ app.post("/api/widget/start-sms", async (req, res) => {
     if (!tenant) return res.status(404).json({ error: "Tenant not found" });
 
     // 1. Record Consent
-    await db.query(
+    const consentRes = await db.query(
       `INSERT INTO sms_consents (tenant_id, phone, consent_text, source, ip_address, user_agent, page_url, session_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, consent_given_at`,
       [tenantId, phone, consentText || "Consent given via widget", source || "widget_sms_popup", req.ip, req.headers["user-agent"], pageUrl, sessionId]
     );
+    const consent = consentRes.rows[0];
 
     // 2. Find or Create Lead
     let lead = await db.query("SELECT id FROM leads WHERE tenant_id = $1 AND phone = $2", [tenantId, phone]).then(r => r.rows[0]);
@@ -495,6 +270,13 @@ app.post("/api/widget/start-sms", async (req, res) => {
       );
       lead = leadRes.rows[0];
     }
+
+    // 3. Link Consent to Lead
+    await leadsService.updateLeadInfo(lead.id, {
+      has_sms_consent: true,
+      last_consent_at: consent.consent_given_at,
+      last_consent_id: consent.id
+    }).catch(e => console.error("[SMS Opt-in] Failed to update lead consent status:", e.message));
 
     // 3. Send Initial SMS
     try {
@@ -867,65 +649,12 @@ async function safeUpdateCallSummary(callId, options = {}) {
         setParts.push(`lead_id = $${values.length}`);
       }
 
-      if (callsTableHasDurationColumn) {
-        setParts.push("duration_minutes = EXTRACT(EPOCH FROM (now() - started_at)) / 60");
-      }
-
       const query = `UPDATE calls
            SET ${setParts.join(",\n             ")}
            WHERE id = $1`;
 
       if (!pool) return;
-      const res = await pool.query(query, values);
-
-      // MINUTE DEDUCTION LOGIC
-      if (markEnded && callsTableHasDurationColumn) {
-        try {
-          // 1. Get tenant usage
-          const callRes = await pool.query("SELECT tenant_id, started_at, ended_at FROM calls WHERE id = $1", [callId]);
-          const callRow = callRes.rows[0];
-          if (callRow && callRow.tenant_id) {
-            const tenantId = callRow.tenant_id;
-            const durationSec = (new Date(callRow.ended_at) - new Date(callRow.started_at)) / 1000;
-            const durationMin = Math.ceil(durationSec / 60);
-
-            if (durationMin > 0) {
-              const startOfMonth = new Date();
-              startOfMonth.setDate(1);
-              startOfMonth.setHours(0,0,0,0);
-
-              const tenantRes = await pool.query("SELECT plan, bundle_minutes_balance FROM tenants WHERE id = $1", [tenantId]);
-              const tenant = tenantRes.rows[0];
-              const PLAN_LIMITS = { basic: 500, pro: 1200, elite: 3000 };
-              const planLimit = PLAN_LIMITS[tenant?.plan] || 500;
-
-              const usageRes = await pool.query(
-                "SELECT COALESCE(SUM(duration_sec), 0) as total_sec FROM recordings WHERE tenant_id = $1 AND created_at >= $2",
-                [tenantId, startOfMonth]
-              );
-              const usedMinutesBefore = Math.ceil(usageRes.rows[0].total_sec / 60);
-
-              // If we are already over plan limit or this call pushes us over
-              if (usedMinutesBefore >= planLimit) {
-                // Entire call is overage
-                await pool.query(
-                  "UPDATE tenants SET bundle_minutes_balance = GREATEST(0, bundle_minutes_balance - $1) WHERE id = $2",
-                  [durationMin, tenantId]
-                );
-              } else if (usedMinutesBefore + durationMin > planLimit) {
-                // Partial overage
-                const overage = (usedMinutesBefore + durationMin) - planLimit;
-                await pool.query(
-                  "UPDATE tenants SET bundle_minutes_balance = GREATEST(0, bundle_minutes_balance - $1) WHERE id = $2",
-                  [overage, tenantId]
-                );
-              }
-            }
-          }
-        } catch (e) {
-          console.error("[Billing] Minutes deduction failed:", e.message);
-        }
-      }
+      await pool.query(query, values);
     }
 
     try {
@@ -1519,13 +1248,20 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
 
   mergeLeadCapture(thread, ai.lead_capture);
   if (tenant && thread.leadId && ai.lead_capture && Object.keys(ai.lead_capture).length > 0) {
-    leadsService.updateLeadInfo(thread.leadId, {
+    const updateData = {
       name: thread.leadCapture.full_name,
       email: thread.leadCapture.email,
       address: thread.leadCapture.address,
       project_type: thread.leadCapture.project_type,
       notes: thread.leadCapture.project_details
-    }).catch(e => console.error("[Sync] Lead info update failed:", e.message));
+    };
+
+    // If we captured an actual phone number (during a website chat or similar session), update it in the CRM lead record
+    if (thread.leadCapture.phone && !thread.leadCapture.phone.startsWith("fb-") && !thread.leadCapture.phone.startsWith("web-")) {
+      updateData.phone = thread.leadCapture.phone;
+    }
+
+    leadsService.updateLeadInfo(thread.leadId, updateData).catch(e => console.error("[Sync] Lead info update failed:", e.message));
   }
 
   if (thread.leadCapture?.full_name || thread.phone) {
@@ -1629,13 +1365,21 @@ async function processFacebookConversation(senderId, messageText, tenant = null,
   // Update thread with any captured lead info
   mergeLeadCapture(thread, ai.lead_capture);
   if (tenant && thread.leadId && ai.lead_capture && Object.keys(ai.lead_capture).length > 0) {
-    leadsService.updateLeadInfo(thread.leadId, {
+    const updateData = {
       name: thread.leadCapture.full_name,
       email: thread.leadCapture.email,
       address: thread.leadCapture.address,
       project_type: thread.leadCapture.project_type,
       notes: thread.leadCapture.project_details
-    }).catch(e => console.error("[Sync] FB Lead info update failed:", e.message));
+    };
+
+    // If we captured an actual phone number, update it in the CRM lead record
+    if (thread.leadCapture.phone && !thread.leadCapture.phone.startsWith("fb-") && !thread.leadCapture.phone.startsWith("web-")) {
+      updateData.phone = thread.leadCapture.phone;
+      console.log(`[Facebook] Updating lead ${thread.leadId} phone to real number: ${thread.leadCapture.phone}`);
+    }
+
+    leadsService.updateLeadInfo(thread.leadId, updateData).catch(e => console.error("[Sync] FB Lead info update failed:", e.message));
   }
 
   // If we have a name or an actual phone number (not the fb- thread key), send to CRM/Zapier
@@ -2639,10 +2383,9 @@ wss.on("connection", async (twilioSocket, req) => {
 
   let callSid = callSidFromPath || q.CallSid || q.callSid;
   let isOutboundFromPath = typeFromPath === "outbound";
-  let isRecoveryFromPath = typeFromPath === "recovery";
-
-  let isOutbound = isOutboundFromPath || q.type === "outbound";
-  let isRecovery = isRecoveryFromPath || q.type === "recovery";
+  let isOutbound = isOutboundFromPath || q.type === "outbound" || q.direction === "outbound";
+  if (q.direction === "inbound") isOutbound = false;
+  let isRecovery = typeFromPath === "recovery" || q.type === "recovery";
   
   console.log("[AI-Desk] Connection Context: tenantId=%s type=%s callSid=%s (extracted from %s segments)", 
     tenantId, (isOutbound ? "outbound" : (isRecovery ? "recovery" : "inbound")), callSid, pathSegments.length);
@@ -2672,9 +2415,10 @@ wss.on("connection", async (twilioSocket, req) => {
     console.log("[AI-Desk] Handoff to Turn-Based Stream Handler (Owner/Test Mode)");
     const { handleTurnBasedStream } = require("./handlers/turnBasedStream");
     handleTurnBasedStream(twilioSocket, { 
-      callSid: q.CallSid || q.callSid, 
-      from: q.From || q.from, 
-      to: q.To || q.to 
+      callSid: callSidFromPath, 
+      from: q.From, 
+      to: q.To,
+      isOutbound 
     }, getTenantByPhone, callsService, recordingService);
     return;
   }
@@ -3027,123 +2771,16 @@ wss.on("connection", async (twilioSocket, req) => {
         }
       }
 
-      // 1. CORE SYSTEM RULES (Always included to protect tool usage and flow)
-      const baseInboundRules = [
-        `You are a professional receptionist for ${tenant?.company_name || 'Gladiators Painting'}. Be warm, confident, and helpful.`,
-        "CONVERSATIONAL FLOW: Let the conversation flow naturally like a real human. If they ask a question, answer it directly using the Knowledge Base (FAQs) before steering them back to your questions. Your primary flow is: (1) Warm welcome, (2) Ask for name and what they need, (3) ANSWER any questions about the business, (4) Get lead details (phone/email/address), (5) Ask about budget/size, (6) Book the time.",
-      ];
- 
-      const baseOutboundRules = [
-        `You are ${tenant?.outbound_agent_name || 'Alex'}, a professional outreach specialist for ${tenant?.company_name || 'Gladiators Painting'}.`,
-        "OPENING LINE (MANDATORY): You MUST introduce yourself by name AND mention the business name in your very first sentence (e.g. 'Hi, this is Alex from Gladiators Painting...'). This is critical for brand recognition.",
-        tenant.outbound_instructions ? `PERSONA GUIDELINES: ${tenant.outbound_instructions}` : "Be professional, respectful, and direct.",
-        `CONVERSATIONAL FLOW: You are initiating an OUTBOUND follow-up call to the customer. ${tenant.contactName ? `Your records indicate their name is ${tenant.contactName}, but ALWAYS prioritize their self-identification if they correct you.` : ''} Do NOT treat them as a stranger. Focus on the following strategy:`,
-        `STRATEGY: ${outboundScript || "Follow up on previous request and offer help."}`,
-      ];
+      // Use Orchestrator for tools, instructions and voice
+      const aiConfig = getAIConfig({
+        tenant,
+        isOutbound,
+        isRecovery,
+        isNurturing,
+        recoveryScript,
+        outboundScript,
+      });
 
-      const universalRules = [
-        `TONE OF VOICE: Your tone of voice is ${tenant?.tone_of_voice || 'professional'}. Maintain this personality throughout the call.`,
-        "Default language is English. ONLY switch languages if the human caller EXPLICITLY and CLEARLY requests it in speech. NEVER change language based on static, background noise, or ambiguous sounds. If a switch is requested, call the change_language tool with the ISO 639-1 code (es, fr, hi, zh, ar, bpo, etc.), confirm the switch in the new language, and stay in that language unless asked to switch back. Do NOT switch languages back and forth spontaneously.",
-        "GOAL: Always collect: Full Name, Phone Number, Email Address, Address or City, and a detailed 'scope' of the project.",
-        "SERVICE TYPES: Do NOT assume service types. If unsure, ALWAYS ask: 'To clarify, is this for an interior or exterior project?' or similar.",
-        "OFFER: Offer a free on-site estimate. ALWAYS call 'check_availability' BEFORE calling 'book_appointment' if the caller suggests a specific date or time.",
-        "APPOINTMENT MANAGEMENT: If the caller wants to CANCEL or RESCHEDULE, handle it via its specific tool only after finding their booking. For rescheduling, ALWAYS check availability of the new time first.",
-        "AVAILABILITY RULES: If 'check_availability' returns 'available: false', you MUST inform the caller that the time is taken and suggest the alternative times provided by the tool (e.g. 'I'm sorry, that time is taken, but I have [Time 1], [Time 2], or [Time 3] available. Would one of those work?'). If no alternatives are provided, ask for another day.",
-        "REVENUE ESTIMATION (MANDATORY): You MUST collect and report a non-zero 'estimated_value' (in dollars) for every single booking. CRITICAL: Ask the caller: 'Do you have a specific budget range in mind for this project?' after they describe the work. If they don't have one, ask for a quantity (e.g. 'How many rooms?') so you can calculate a reasonable estimate. Rule of thumb: $500 per room, $2500 per house/floor, $5000+ for large jobs. NEVER leave revenue at 0.",
-        "LEAD ANALYSIS: Provide a 'lead_score' (1-100) and 'ai_summary' when calling tools.",
-        "STRICT TOOL RULE: ONLY call book_appointment when you have REAL details from the human caller. No placeholders. Call with ALL details including 'estimated_value'.",
-        "POST-BOOKING: Immediately confirm the time to the caller and ask if there is anything else you can help with today. Only call the 'hang_up' tool once they say no.",
-        "TRANSFER RULE: Only use request_human_transfer for high-value projects (over $10,000), commercial jobs, angry callers, or VIP/repeat customers. For regular residential calls, use 'book_appointment'.",
-        "STRICT RULE: NEVER hallucinate data. If you miss a field, ASK.",
-        "IDENTITY PRIORITY RULE: If the customer provides a name, phone number, or email that differs from your initial briefing, you MUST immediately accept their correction as the new truth. Do NOT repeat or insist on the pre-briefed information once a correction is made. Use the corrected name for the remainder of the session.",
-      ];
-
-      const coreSystemRules = [
-        ...(isOutbound ? baseOutboundRules : baseInboundRules),
-        ...universalRules.filter(r => {
-          if (!isOutbound) return true;
-          // Filter out inbound-specific goals for outbound calls to avoid asking for known data
-          return !r.includes("Ask for name") && !r.includes("Ask about budget/size") && !r.includes("is this for an interior or exterior project");
-        })
-      ].join("\n");
-
-      // 2. TENANT CUSTOM INSTRUCTIONS
-      const isOfficeCurrentlyOpen = isWithinBusinessHours(tenant);
-      const businessHoursContext = isOfficeCurrentlyOpen 
-        ? "The office is currently OPEN. You may use request_human_transfer if appropriate based on your instructions." 
-        : "The office is currently CLOSED. Do NOT use request_human_transfer. If the caller asks for a human, politely inform them the office is closed and offer to take a message, book an appointment, or have someone call back during business hours.";
-      
-      let combinedInstructions = coreSystemRules + `\n\nOFFICE STATUS: ${businessHoursContext}`;
-
-      // Inject current date/time context so the AI knows what "today" and "tomorrow" mean
-      const tenantTz = (tenant && tenant.timezone) || "America/Chicago";
-      const nowForTenant = new Date();
-      const tenantDateStr = nowForTenant.toLocaleDateString("en-US", { timeZone: tenantTz, weekday: "long", year: "numeric", month: "long", day: "numeric" });
-      const tenantTimeStr = nowForTenant.toLocaleTimeString("en-US", { timeZone: tenantTz, hour: "2-digit", minute: "2-digit", hour12: true });
-      const tenantIsoDate = nowForTenant.toLocaleDateString("en-CA", { timeZone: tenantTz }); // YYYY-MM-DD format
-      combinedInstructions += `\n\nCURRENT DATE & TIME: Today is ${tenantDateStr}, ${tenantTimeStr} (${tenantTz}). The ISO date is ${tenantIsoDate}. Use this to calculate correct dates when the caller says "today", "tomorrow", "next week", etc. Always use YYYY-MM-DD format for preferred_date.`;
-      
-      const customInstructions = (isOutbound ? tenant?.outbound_instructions : tenant?.instructions) || tenant?.instructions;
-      if (customInstructions) {
-        combinedInstructions += "\n\nBUSINESS SPECIFIC INSTRUCTIONS:\n" + customInstructions;
-      }
-
-      // 3. OBJECTION HANDLING
-      if (tenant && tenant.objection_handling_config) {
-        const oh = tenant.objection_handling_config;
-        let lines = [];
-        if (Array.isArray(oh) && oh.length) {
-          lines = oh
-            .filter(c => c && (c.script || "").trim())
-            .map(c => `- When they say something like "${(c.trigger || "").trim() || "..."}": respond with: ${(c.script || "").trim()}`);
-        } else if (typeof oh === "object") {
-          if (oh.price) lines.push(`- If price is a concern: ${oh.price}`);
-          if (oh.thinking) lines.push(`- If they need to think about it: ${oh.thinking}`);
-          if (oh.spouse) lines.push(`- If they need to talk to a spouse: ${oh.spouse}`);
-        }
-        if (lines.length) {
-          combinedInstructions += "\n\nOBJECTION HANDLING STRATEGIES:\n" + lines.join("\n");
-        }
-      }
-
-      // 4. KNOWLEDGE BASE (FAQs)
-      if (tenant && Array.isArray(tenant.faqs) && tenant.faqs.length > 0) {
-        const faqText = "\n\nKNOWLEDGE BASE (FAQs):\n" + tenant.faqs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n");
-        combinedInstructions += faqText;
-      }
-
-      instructions = combinedInstructions;
-
-      if (useRecoveryFlow && recoveryScript) {
-        instructions = `You are a professional receptionist for ${tenant?.company_name || 'our business'}. 
-        TONE OF VOICE: Your tone of voice is ${tenant?.tone_of_voice || 'professional'}. Maintain this personality throughout the call.
-
-        You are performing an automated outbound follow-up call.
-        START the call by saying EXACTLY this: "${recoveryScript}". 
-        
-        YOUR GOAL: Open conversation and move them toward booking the estimate they received. 
-        
-        OBJECTION HANDLING:
-        1. If they say "I need to think about it" or similar:
-           Your response: "Totally understand — it’s a big decision. Is there anything specific you’re weighing that I can help with?"
-           Immediately call 'detect_objection' with type 'thinking'.
-        
-        2. If they say "The price is high", "Getting other quotes", or similar:
-           Your response: "I completely understand — most homeowners compare 2–3 options. Besides price, is there anything else important in your decision?"
-           Immediately call 'detect_objection' with type 'price'.
-           
-        3. If they say "I need to talk to my wife/spouse/partner" or similar:
-           Your response: "Of course — would it help if I sent over a quick summary you can share?"
-           Immediately call 'detect_objection' with type 'spouse'.
-           
-        4. If they are ready to book:
-           Confirm their project scope and ask professionally about their budget by saying: 'To help us provide the most accurate estimate, did you have a specific budget range in mind for this project?'. 
-           Collect any missing details (name, phone, address, scope, preferred date) and call 'book_appointment'. Always include an 'estimated_value' based on the conversation.
-           
-        Be warm, helpful, and professional. The goal is to open conversation, not pressure them.`;
-      }
-
-      const voice = isOutbound ? (tenant?.outbound_voice || "ash") : (tenant?.inbound_voice || process.env.OPENAI_REALTIME_VOICE || "shimmer");
       const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 1000;
       const vadThreshold = parseFloat(process.env.REALTIME_VAD_THRESHOLD) || 0.6;
       const payloadToOpenAI = {
@@ -3151,9 +2788,9 @@ wss.on("connection", async (twilioSocket, req) => {
         session: {
           input_audio_format: "g711_ulaw",
           output_audio_format: "g711_ulaw",
-          voice,
-          instructions: `${instructions}\n\nSpeak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English. DO NOT USE ANY OTHER LANGUAGE AT THE START OF THE CALL.`,
-          tools: useRecoveryFlow ? RECOVERY_TOOLS : REALTIME_TOOLS,
+          voice: aiConfig.voice,
+          instructions: `${aiConfig.instructions}\n\nSpeak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English. DO NOT USE ANY OTHER LANGUAGE AT THE START OF THE CALL.`,
+          tools: aiConfig.tools,
           turn_detection: {
             type: "server_vad",
             threshold: vadThreshold,
@@ -3164,9 +2801,23 @@ wss.on("connection", async (twilioSocket, req) => {
         },
       };
 
-      console.log("[DEBUG] Sending payload to OpenAI:", JSON.stringify(payloadToOpenAI, null, 2));
-      sendToOpenAI(payloadToOpenAI);
+      console.log("[DEBUG] Sending payload to OpenAI:", JSON.stringify(sessionUpdate, null, 2));
+      sendToOpenAI(sessionUpdate);
 
+      // For inbound calls, trigger an initial welcome message
+      if (!isOutbound) {
+        const welcomeMessage = tenant?.welcome_message || "Hi, thanks for calling. How can I help you today?";
+        const welcomeEvent = {
+          type: "conversation.item.create",
+          item: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "input_text", text: welcomeMessage }],
+          },
+        };
+        sendToOpenAI(welcomeEvent);
+        sendToOpenAI({ type: "response.create" });
+      }
     });
 
     openaiSocket.on("message", async (msg) => {

@@ -6,12 +6,12 @@ const path = require("path");
 const { pool } = require("./lib/db");
 
 async function run() {
-  const sqlFile = path.join(__dirname, "migrations", "027_parent_child_tenants.sql");
+  const sqlFile = path.join(__dirname, "migrations", "033_add_external_ids_to_leads.sql");
   const sql = fs.readFileSync(sqlFile, "utf8");
   
-  console.log("Applying migration 027...");
+  console.log("Applying migration 033...");
   await pool.query(sql);
-  console.log("Migration 027 applied successfully.");
+  console.log("Migration 033 applied successfully.");
   process.exit(0);
 }
 

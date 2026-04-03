@@ -25,13 +25,14 @@ async function placeCall() {
   const ringNumber = (process.env.TEST_RING_NUMBER || DEFAULT_TEST_RING_NUMBER).replace(/\s/g, "");
   const aiNumber = (process.env.TEST_CALL_TO || "+14027738795").replace(/\s/g, "");
   const caller716 = (process.env.TEST_CALL_FROM || "+14027738795").replace(/\s/g, "");
-  const voiceUrl = BASE_URL.replace(/\/$/, "") + "/twilio/voice";
+  let voiceUrl = BASE_URL.replace(/\/$/, "") + "/twilio/voice";
 
   if (ringNumber) {
     console.log("Ring mode: AI number will call you.");
     console.log("  From (AI number):", aiNumber);
     console.log("  To (will ring):  ", ringNumber);
-    console.log("  Webhook:", voiceUrl.replace("/twilio/voice", ""));
+    voiceUrl = BASE_URL.replace(/\/$/, "") + "/twilio/voice?direction=outbound";
+    console.log("  Webhook:", voiceUrl.replace("/twilio/voice?direction=outbound", ""));
     const call = await twilioClient.calls.create({
       from: aiNumber,
       to: ringNumber,
@@ -46,6 +47,7 @@ async function placeCall() {
 
   console.log("716 → 402 mode.");
   console.log("  From:", caller716, "  To:", aiNumber);
+  voiceUrl = BASE_URL.replace(/\/$/, "") + "/twilio/voice?direction=inbound";
   const call = await twilioClient.calls.create({
     from: caller716,
     to: aiNumber,

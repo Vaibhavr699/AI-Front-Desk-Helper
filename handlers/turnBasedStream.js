@@ -9,66 +9,14 @@ const bookingsService = require("../services/bookings");
 const calendar = require("../calendar");
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const { getAIConfig } = require("../lib/orchestrator");
 
-const BOOK_APPOINTMENT_TOOL = {
-  type: "function",
-  function: {
-    name: "book_appointment",
-    description: "Finalize and save the booking. Call this when you have at least: contact name, contact phone, and address OR city. Include EVERY detail the caller gave: contact_name, contact_phone, address, city, scope (what are they looking for), preferred_date, notes (pets, access, etc.). Do not omit any field the caller provided—all fields are saved to the database and sent to CRM.",
-    parameters: {
-      type: "object",
-      properties: {
-        contact_name: { type: "string", description: "Full name" },
-        contact_phone: { type: "string", description: "Phone number" },
-        contact_email: { type: "string", description: "Email if given" },
-        address: { type: "string", description: "Street address" },
-        city: { type: "string", description: "City" },
-        state: { type: "string", description: "State (e.g. New York, NY, Florida, etc.)" },
-        scope: { type: "string", description: "What services or products they need, specific details about their request, etc." },
-        job_type: { type: "string", description: "Residential or commercial" },
-        preferred_date: { type: "string", description: "Preferred date if given" },
-        notes: { type: "string", description: "Any extra notes" },
-        estimated_value: { type: "number", description: "Estimated job value in dollars. ALWAYS ask for a budget or project size and provide a non-zero estimate ($500-$5000)." },
-      },
-      required: ["contact_phone", "estimated_value"],
-    },
-  },
-};
 
-const CHECK_AVAILABILITY_TOOL = {
-  type: "function",
-  function: {
-    name: "check_availability",
-    description: "Check if a specific date and time is available for an appointment. Use this BEFORE calling book_appointment if the human provides a specific date/time.",
-    parameters: {
-      type: "object",
-      properties: {
-        appointment_date: { type: "string", description: "The date (YYYY-MM-DD)" },
-        appointment_time: { type: "string", description: "The time (e.g. 10:30 AM)" },
-      },
-      required: ["appointment_date", "appointment_time"],
-    },
-  },
-};
-
-const HANG_UP_TOOL = {
-  type: "function",
-  function: {
-    name: "hang_up",
-    description: "End the call. Call this ONLY after you have confirmed the booking, summarized the details, and asked if there is anything else you can help with, and the user says no or the conversation is clearly finished.",
-    parameters: {
-      type: "object",
-      properties: {},
-    },
-  },
-};
-
-const VOICE_TOOLS = [BOOK_APPOINTMENT_TOOL, HANG_UP_TOOL, CHECK_AVAILABILITY_TOOL];
 const SILENCE_MS = 1500;   // Process after this many ms with no new audio
 const MIN_AUDIO_MS = 400;  // Ignore utterances shorter than this
 const SAMPLE_RATE = 8000;
 const BYTES_PER_MS = SAMPLE_RATE / 1000; // 8 bytes/ms for 8kHz mulaw
-const CHUNK_MS = 20;      // Twilio sends 20ms chunks; we send back in similar size
+const CHUNK_MS = 160;      // Larger chunks to reduce jitter
 const CHUNK_BYTES = Math.floor(BYTES_PER_MS * CHUNK_MS);
 
 const openai = OPENAI_API_KEY ? new OpenAI() : null;
@@ -76,13 +24,13 @@ const openai = OPENAI_API_KEY ? new OpenAI() : null;
 /**
  * Run the turn-based voice loop: buffer caller audio → Whisper → LLM → TTS → play back.
  * @param {import("ws").WebSocket} twilioSocket
- * @param {{ callSid?: string, from?: string, to?: string }} parsed
+ * @param {{ callSid?: string, from?: string, to?: string, isOutbound?: boolean }} parsed
  * @param {object} getTenantByPhone
  * @param {object} callsService
  * @param {object} recordingService
  */
 function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsService, recordingService) {
-  const { callSid, from, to } = parsed;
+  const { callSid, from, to, isOutbound } = parsed;
   let streamSid = null;
   let tenant = null;
   let callId = null;
@@ -143,22 +91,17 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
         return;
       }
 
-      const instructions = (tenant && tenant.instructions)
-        ? tenant.instructions
-        : "You are a professional receptionist. Be warm and helpful. Capture name, phone, address. Offer a free estimate. Keep responses concise and natural for phone.";
-      
-      const faqText = (tenant && Array.isArray(tenant.faqs) && tenant.faqs.length > 0)
-        ? "\n\nFrequently Asked Questions:\n" + tenant.faqs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n")
-        : "";
-
-      const welcome = (tenant && tenant.welcome_message)
-        ? tenant.welcome_message
-        : "Thanks for calling. What can we help you with today? Would you like to schedule a free estimate?";
+      // Use Orchestrator for Config
+      const aiConfig = getAIConfig({
+        tenant,
+        isOutbound,
+        format: "chat"
+      });
 
       if (conversationMessages.length === 0) {
         conversationMessages.push({
           role: "system",
-          content: `${instructions}${faqText}\n\nCollect: (1) full name, (2) phone number, (3) address or city, (4) scope, (5) budget estimate (MANDATORY). ALWAYS call 'check_availability' BEFORE 'book_appointment' if they give a time. If it returns 'available: false', suggest the 'suggested_alternatives' provided by the tool. Keep replies short.`,
+          content: aiConfig.instructions,
         });
       }
       conversationMessages.push({ role: "user", content: text });
@@ -166,7 +109,7 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
       const completion = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: conversationMessages,
-        tools: VOICE_TOOLS,
+        tools: aiConfig.tools,
         max_tokens: 300,
       });
       let assistantMessage = completion.choices && completion.choices[0] && completion.choices[0].message;
@@ -283,8 +226,8 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
       const ttsModel = process.env.OPENAI_TTS_MODEL || "tts-1-hd";
       const ttsVoice = process.env.OPENAI_TTS_VOICE || "nova";
       const speech = await openai.audio.speech.create({
-        model: ttsModel,
-        voice: ttsVoice,
+        model: aiConfig.voice === "ash" ? "tts-1-hd" : ttsModel, // Adjust based on voice if possible
+        voice: aiConfig.voice === "ash" ? "onyx" : ttsVoice,
         input: reply,
       });
       const mp3Buffer = Buffer.from(await speech.arrayBuffer());
@@ -330,15 +273,21 @@ function handleTurnBasedStream(twilioSocket, parsed, getTenantByPhone, callsServ
 
   async function playWelcome() {
     if (!openai || !tenant) return;
-    const welcome = (tenant.welcome_message && tenant.welcome_message.trim())
-      ? tenant.welcome_message.trim()
-      : "Thanks for calling. What can we help you with today? Would you like to schedule a free estimate?";
+
+    const aiConfig = getAIConfig({
+      tenant,
+      isOutbound
+    });
+
+    let welcome = isOutbound
+      ? (tenant.outbound_welcome_message || `Hi, this is ${tenant.outbound_agent_name || 'Alex'} from ${tenant.company_name}. I'm calling to follow up on your request.`)
+      : (tenant.welcome_message || `Hi, thanks for calling ${tenant.company_name}. How can I help you today?`);
     try {
       const ttsModel = process.env.OPENAI_TTS_MODEL || "tts-1-hd";
       const ttsVoice = process.env.OPENAI_TTS_VOICE || "nova";
       const speech = await openai.audio.speech.create({
-        model: ttsModel,
-        voice: ttsVoice,
+        model: aiConfig.voice === "ash" ? "tts-1-hd" : ttsModel,
+        voice: aiConfig.voice === "ash" ? "onyx" : ttsVoice,
         input: welcome,
       });
       const mp3Buffer = Buffer.from(await speech.arrayBuffer());

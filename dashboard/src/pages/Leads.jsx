@@ -90,6 +90,7 @@ export default function Leads({ tenantId }) {
                     <th className="px-6 py-4 text-left text-xs font-semibold text-stone-500 uppercase tracking-wider">Progress</th>
                     <th className="px-6 py-4 text-left text-xs font-semibold text-stone-500 uppercase tracking-wider">Status</th>
                     <th className="px-6 py-4 text-left text-xs font-semibold text-stone-500 uppercase tracking-wider">Project Type</th>
+                    <th className="px-6 py-4 text-left text-xs font-semibold text-stone-500 uppercase tracking-wider">Consent</th>
                     <th className="px-6 py-4 text-left text-xs font-semibold text-stone-500 uppercase tracking-wider">Source</th>
                     <th className="px-6 py-4 text-left text-xs font-semibold text-stone-500 uppercase tracking-wider">Created</th>
                     <th className="px-6 py-4 text-right text-xs font-semibold text-stone-500 uppercase tracking-wider">Actions</th>
@@ -107,9 +108,13 @@ export default function Leads({ tenantId }) {
                           <div className="h-10 w-10 flex-shrink-0 bg-stone-100 rounded-full flex items-center justify-center text-stone-500 font-bold border border-stone-200">
                             {(lead.name || lead.phone).charAt(0).toUpperCase()}
                           </div>
-                          <div className="ml-4">
-                            <div className="text-sm font-semibold text-stone-900">{lead.name || "Untitled Lead"}</div>
-                            <div className="text-xs text-stone-500 font-mono">{lead.phone}</div>
+                          <div className="flex flex-col ml-4">
+                            <div className="text-sm font-bold text-stone-900 group-hover:text-blue-600 transition-colors">
+                              {lead.name || (lead.phone.startsWith('fb-') ? 'Facebook Visitor' : lead.phone.startsWith('web-') ? 'Website Visitor' : lead.phone)}
+                            </div>
+                            <div className="text-[10px] font-mono text-stone-400">
+                              {(lead.phone.startsWith('fb-') || lead.phone.startsWith('web-')) ? 'Anonymous ID' : lead.phone}
+                            </div>
                           </div>
                         </div>
                       </td>
@@ -139,8 +144,24 @@ export default function Leads({ tenantId }) {
                         {lead.project_type || "---"}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="px-2 py-1 bg-stone-100 text-stone-500 text-[10px] font-black uppercase tracking-widest rounded-md border border-stone-200">
-                          {lead.lead_source || "Website"}
+                        {lead.has_sms_consent ? (
+                          <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-blue-50 text-blue-700 text-[10px] font-bold uppercase rounded-md border border-blue-100">
+                            <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                            Opted In
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-stone-400 font-bold uppercase">No Consent</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`px-2 py-1 ${
+                          lead.channel === 'facebook' ? 'bg-blue-50 text-blue-600' : 
+                          lead.channel === 'website' ? 'bg-stone-100 text-stone-600' : 
+                          'bg-stone-50 text-stone-500'
+                        } text-[10px] font-black uppercase tracking-widest rounded-md border border-stone-200`}>
+                          {lead.channel === 'facebook' ? 'Facebook' : lead.channel === 'website' ? 'Website' : (lead.lead_source || "SMS")}
                         </span>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-stone-500 font-mono">

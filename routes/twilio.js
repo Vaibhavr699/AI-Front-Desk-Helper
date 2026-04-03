@@ -47,12 +47,22 @@ router.post("/voice/:tenantId?", async (req, res) => {
       sendVoiceError(res, "We're sorry, this number is not configured. Goodbye.");
       return;
     }
-    const direction = tenantByFrom ? "outbound" : "inbound";
+    // Direction detection: explicit query param > Twilio header > FROM lookup
+    let direction = req.body?.Direction === "inbound" ? "inbound" : "outbound";
+    if (req.body?.Direction === "outbound-api") direction = "outbound";
+    if (req.query.direction === "inbound") direction = "inbound";
+    if (req.query.direction === "outbound") direction = "outbound";
+    
+    // Fallback: if no explicit signal, use tenant-from lookup
+    if (!req.query.direction && !req.body?.Direction) {
+        direction = tenantByFrom ? "outbound" : "inbound";
+    }
+
     await callsService.createCall(tenant.id, CallSid, fromNumber, toNumber, direction);
     console.log("[AI-Desk] Voice webhook call created CallSid=%s tenantId=%s direction=%s", CallSid, tenant.id, direction);
 
     const wsUrl = (BASE_URL || "").replace("https://", "wss://").replace("http://", "ws://") + "/twilio-media";
-    let streamUrl = `${wsUrl}/${tenant.id}/${CallSid}?From=${encodeURIComponent(fromNumber)}&To=${encodeURIComponent(toNumber)}`;
+    let streamUrl = `${wsUrl}/${tenant.id}/${CallSid}?From=${encodeURIComponent(fromNumber)}&To=${encodeURIComponent(toNumber)}&direction=${direction}`;
     const testCallFrom = (process.env.TEST_CALL_FROM || "").replace(/\s/g, "");
     if (testCallFrom && fromNumber && fromNumber.replace(/\D/g, "") === testCallFrom.replace(/\D/g, "")) {
       streamUrl += "&turnBased=1";

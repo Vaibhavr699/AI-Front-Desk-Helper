@@ -1966,8 +1966,53 @@ export default function Settings({ tenantId }) {
                     </div>
                     <div className="mt-4 space-y-2">
                       <p className="text-[10px] text-blue-600/70 font-bold uppercase tracking-wider">Required Header:</p>
-                      <div className="p-2 bg-white/50 border border-blue-100 rounded-lg font-mono text-[9px] text-blue-800">
-                        Authorization: Bearer [Your API Key]
+                      <div className="p-2 bg-white/50 border border-blue-100 rounded-lg font-mono text-[9px] text-blue-800 flex justify-between items-center">
+                        <span>Authorization: Bearer <span className="font-bold text-blue-900">{tenant?.api_key || "Loading..."}</span></span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if(tenant?.api_key) {
+                              navigator.clipboard.writeText(tenant.api_key);
+                              setMessage("API Key copied to clipboard!");
+                            }
+                          }}
+                          className="px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-[9px] font-bold transition-colors"
+                        >
+                          COPY KEY
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 p-6 bg-purple-50/50 border border-purple-100 rounded-2xl">
+                    <h3 className="text-sm font-bold text-purple-900 mb-2 flex items-center gap-2">
+                      <Bot className="w-4 h-4" />
+                      Estimate Sent Webhook (Sales Recovery)
+                    </h3>
+                    <p className="text-xs text-purple-700/80 mb-4 leading-relaxed">
+                      Use this URL in Zapier to notify our system when you send a proposal in your CRM (e.g. DripJobs). This automatically triggers the AI to chase the estimate.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 p-3 bg-white border border-purple-200 rounded-xl font-mono text-[10px] text-purple-900 break-all select-all">
+                        {`${import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}/webhooks/crm/estimate-sent`.replace(/\/+$/, "")}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const url = `${import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}/webhooks/crm/estimate-sent`.replace(/\/+$/, "");
+                          navigator.clipboard.writeText(url);
+                          setMessage("Estimate Webhook URL copied to clipboard!");
+                        }}
+                        className="p-3 bg-purple-600 text-white rounded-xl hover:bg-purple-700 transition-colors shadow-lg shadow-purple-600/20"
+                        title="Copy to clipboard"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="mt-4 space-y-2">
+                      <p className="text-[10px] text-purple-600/70 font-bold uppercase tracking-wider">Required JSON Payload Body Key:</p>
+                      <div className="p-2 bg-white/50 border border-purple-100 rounded-lg font-mono text-[9px] text-purple-800 flex justify-between items-center">
+                        <span>"api_key": "<span className="font-bold text-purple-900">{tenant?.api_key || "Loading..."}</span>"</span>
                       </div>
                     </div>
                   </div>

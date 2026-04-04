@@ -9,6 +9,7 @@ import {
   CheckCircle2, 
   XCircle, 
   AlertCircle, 
+  ChevronLeft,
   ChevronRight,
   DollarSign,
   History,
@@ -22,6 +23,9 @@ export default function FollowUps({ tenantId }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [processing, setProcessing] = useState(null);
+  const [filterSystem, setFilterSystem] = useState("all");
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(15);
 
   // Modal State
   const [modal, setModal] = useState({
@@ -36,6 +40,16 @@ export default function FollowUps({ tenantId }) {
   useEffect(() => {
     if (tenantId) loadData();
   }, [tenantId]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filterSystem]);
+
+  const filteredFollowups = followups.filter(f => filterSystem === "all" || f.system_type === filterSystem);
+  const total = filteredFollowups.length;
+  const totalPages = Math.ceil(total / limit);
+  const offset = (page - 1) * limit;
+  const paginatedFollowups = filteredFollowups.slice(offset, offset + limit);
 
   async function loadData() {
     try {
@@ -121,6 +135,17 @@ export default function FollowUps({ tenantId }) {
           <h1 className="text-3xl font-bold text-stone-900 tracking-tight">Follow-Up Pipeline</h1>
           <p className="text-stone-500 mt-1">Automate and manage your estimate conversion workflow.</p>
         </div>
+        <div className="flex gap-2">
+          <select 
+            value={filterSystem}
+            onChange={e => setFilterSystem(e.target.value)}
+            className="px-4 py-2 border border-stone-200 bg-white rounded-xl text-sm font-medium focus:ring-2 focus:ring-stone-400 outline-none"
+          >
+            <option value="all">All Systems</option>
+            <option value="recovery">Sales Recovery System</option>
+            <option value="nurturing">Nurturing & Reminders</option>
+          </select>
+        </div>
       </div>
 
       {error && (
@@ -144,14 +169,14 @@ export default function FollowUps({ tenantId }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-100 bg-white">
-              {followups.length === 0 ? (
+              {paginatedFollowups.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-stone-400 text-sm">
-                    No active follow-ups in the pipeline.
+                    No active follow-ups in the pipeline matching this filter.
                   </td>
                 </tr>
               ) : (
-                followups.map((f) => (
+                paginatedFollowups.map((f) => (
                   <tr key={f.id} className="group hover:bg-stone-50/50 transition-colors">
                     <td className="px-6 py-4">
                       <div className="flex flex-col">
@@ -183,47 +208,100 @@ export default function FollowUps({ tenantId }) {
                       {f.last_contact ? formatDistanceToNow(new Date(f.last_contact)) + " ago" : "Never"}
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-2 transition-all">
-                        <button
-                          onClick={() => handleSms(f.id)}
-                          disabled={processing === f.id}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors tooltip"
-                          title="Send SMS"
-                        >
-                          <Send className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleCall(f.id)}
-                          disabled={processing === f.id}
-                          className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                          title="Trigger AI Call"
-                        >
-                          <PhoneCall className="w-4 h-4" />
-                        </button>
-                        <div className="w-px h-4 bg-stone-200 mx-1" />
-                        <button
-                          onClick={() => handleStatus(f.id, 'booked')}
-                          disabled={processing === f.id}
-                          className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
-                          title="Mark Booked"
-                        >
-                          <CheckCircle2 className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleStatus(f.id, 'lost')}
-                          disabled={processing === f.id}
-                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Mark Lost"
-                        >
-                          <XCircle className="w-4 h-4" />
-                        </button>
-                      </div>
+                      {f.system_type === 'recovery' && (
+                        <div className="flex items-center justify-end gap-2 transition-all">
+                          <button
+                            onClick={() => handleSms(f.id)}
+                            disabled={processing === f.id}
+                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors tooltip"
+                            title="Send SMS"
+                          >
+                            <Send className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleCall(f.id)}
+                            disabled={processing === f.id}
+                            className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                            title="Trigger AI Call"
+                          >
+                            <PhoneCall className="w-4 h-4" />
+                          </button>
+                          <div className="w-px h-4 bg-stone-200 mx-1" />
+                          <button
+                            onClick={() => handleStatus(f.id, 'booked')}
+                            disabled={processing === f.id}
+                            className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                            title="Mark Booked"
+                          >
+                            <CheckCircle2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleStatus(f.id, 'lost')}
+                            disabled={processing === f.id}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Mark Lost"
+                          >
+                            <XCircle className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                      {f.system_type === 'nurturing' && (
+                        <div className="text-xs text-stone-400 italic">
+                          Automated Sequence
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="px-6 py-4 bg-stone-50/50 border-t border-stone-100 flex items-center justify-between">
+          <div className="text-xs font-medium text-stone-400 uppercase tracking-widest flex-1">
+            Showing {Math.min(total, offset + 1)}-{Math.min(total, offset + limit)} of {total}
+          </div>
+
+          <div className="flex items-center justify-center gap-2 flex-1">
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="p-2 rounded-lg border border-stone-200 bg-white text-stone-600 disabled:opacity-30 disabled:cursor-not-allowed hover:border-stone-400 transition-all shadow-sm"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center gap-1">
+              {[...Array(totalPages)].map((_, i) => {
+                const p = i + 1;
+                if (totalPages > 5 && Math.abs(p - page) > 1 && p !== 1 && p !== totalPages) return null;
+                if (totalPages > 5 && Math.abs(p - page) === 2) return <span key={p} className="text-stone-300">...</span>;
+                return (
+                  <button
+                    key={p}
+                    onClick={() => setPage(p)}
+                    className={`w-8 h-8 rounded-lg text-xs font-bold transition-all ${page === p
+                        ? "bg-stone-900 text-white shadow-md"
+                        : "text-stone-500 hover:bg-stone-100"
+                      }`}
+                  >
+                    {p}
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages || totalPages === 0}
+              className="p-2 rounded-lg border border-stone-200 bg-white text-stone-600 disabled:opacity-30 disabled:cursor-not-allowed hover:border-stone-400 transition-all shadow-sm"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex-1"></div>
         </div>
       </div>
 
@@ -242,6 +320,8 @@ export default function FollowUps({ tenantId }) {
 }
 
 function formatStage(step) {
+  if (!step) return "Unknown";
+  
   const map = {
     'estimate_sent': 'Estimate Sent',
     'sms_followup': 'SMS FollowUp',
@@ -249,9 +329,15 @@ function formatStage(step) {
     'second_reminder': 'Second Reminder',
     'final_attempt': 'Final Attempt',
     'inquiry_thanks': 'Inquiry Thanks',
-    'inquiry_call': 'Inquiry Call'
+    'inquiry_call': 'Inquiry Call',
+    // Nurturing steps
+    '24h': '24h Reminder',
+    'post_service': 'Post Service',
+    'referral': 'Referral Req',
+    'maintenance': 'Maintenance',
+    'reengagement': 'Re-engagement'
   };
-  return map[step] || step;
+  return map[step] || step.replace(/_/g, ' ');
 }
 
 function getStageStyle(step) {
@@ -263,6 +349,14 @@ function getStageStyle(step) {
     case 'final_attempt': return 'bg-red-50 text-red-700 border border-red-100';
     case 'inquiry_thanks': return 'bg-cyan-50 text-cyan-700 border border-cyan-100';
     case 'inquiry_call': return 'bg-orange-50 text-orange-700 border border-orange-100';
+    
+    // Nurturing specific colors
+    case '24h': return 'bg-emerald-50 text-emerald-700 border border-emerald-100';
+    case 'post_service': return 'bg-sky-50 text-sky-700 border border-sky-100';
+    case 'referral': return 'bg-fuchsia-50 text-fuchsia-700 border border-fuchsia-100';
+    case 'maintenance': return 'bg-amber-50 text-amber-700 border border-amber-100';
+    case 'reengagement': return 'bg-teal-50 text-teal-700 border border-teal-100';
+
     default: return 'bg-stone-50 text-stone-700 border border-stone-100';
   }
 }

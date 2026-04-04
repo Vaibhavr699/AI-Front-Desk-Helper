@@ -373,6 +373,7 @@ app.use("/api/team", authMiddleware, require("./routes/team"));
 app.use("/api", authMiddleware, dashboardRoutes);
 app.use("/auth/google/calendar", require("./routes/google-calendar"));
 app.use("/api/google-calendar", authMiddleware, require("./routes/google-calendar"));
+app.use("/webhooks", require("./routes/webhooks"));
 
 // Serve dashboard static assets early so JS/CSS/images load,
 // but do NOT register the wildcard catch-all here — it goes at the very end

@@ -41,7 +41,13 @@ router.get("/", requireTeamManager, async (req, res) => {
         FROM dashboard_users u
         JOIN tenants t ON u.tenant_id = t.id
         WHERE t.id = $1 AND (t.id = $2 OR t.parent_id = $2)
-        ORDER BY u.email ASC
+        ORDER BY 
+          CASE 
+            WHEN u.role IN ('owner', 'admin') THEN 1
+            WHEN u.role = 'manager' THEN 2
+            ELSE 3
+          END,
+          u.email ASC
       `;
       params = [targetTenantId, parentId];
     } else if (isParentAdmin) {
@@ -54,6 +60,11 @@ router.get("/", requireTeamManager, async (req, res) => {
         ORDER BY 
           CASE WHEN t.id = $1 THEN 0 ELSE 1 END,
           t.name ASC, 
+          CASE 
+            WHEN u.role IN ('owner', 'admin') THEN 1
+            WHEN u.role = 'manager' THEN 2
+            ELSE 3
+          END,
           u.email ASC
       `;
       params = [parentId];
@@ -64,7 +75,13 @@ router.get("/", requireTeamManager, async (req, res) => {
         FROM dashboard_users u
         JOIN tenants t ON u.tenant_id = t.id
         WHERE t.id = $1
-        ORDER BY u.email ASC
+        ORDER BY 
+          CASE 
+            WHEN u.role IN ('owner', 'admin') THEN 1
+            WHEN u.role = 'manager' THEN 2
+            ELSE 3
+          END,
+          u.email ASC
       `;
       params = [req.user.tenant_id];
     }

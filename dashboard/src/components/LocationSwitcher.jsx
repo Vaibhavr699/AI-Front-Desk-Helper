@@ -41,10 +41,10 @@ export default function LocationSwitcher({ tenantId, tenants, onTenantChange }) 
       >
         <div className="flex-1 min-w-0">
           <div className="text-[10px] font-bold text-stone-400 uppercase tracking-tighter leading-none mb-0.5">
-            {currentTenant?.business_type === 'parent' ? "HQ / Parent" : "Location"}
+            {isRollup ? "Portfolio" : (currentTenant?.business_type === 'parent' ? "HQ / Parent" : "Location")}
           </div>
           <div className="text-sm font-bold text-stone-900 truncate">
-             {currentTenant?.business_type === 'location' ? (currentTenant?.name || currentTenant?.company_name) : (currentTenant?.company_name || currentTenant?.name || "Select...")}
+             {isRollup ? "All Locations" : (currentTenant?.business_type === 'location' ? (currentTenant?.name || currentTenant?.company_name) : (currentTenant?.company_name || currentTenant?.name || "Select..."))}
           </div>
         </div>
         <svg
@@ -60,6 +60,29 @@ export default function LocationSwitcher({ tenantId, tenants, onTenantChange }) 
       {isOpen && (
         <div className="absolute left-[2]  top-full mt-2 w-56 border-2 rounded-xl bg-white border border-stone-200 shadow-2xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-200">
           <div className="p-1 space-y-1">
+            {/* Rollup / All Locations */}
+            {tenants.some(t => t.business_type === 'parent') && (
+              <button
+                onClick={() => {
+                  onTenantChange("all");
+                  setIsOpen(false);
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                  tenantId === "all" ? "bg-stone-900 text-white shadow-lg shadow-stone-900/20" : "text-stone-600 hover:bg-stone-100"
+                }`}
+              >
+                <div className={`w-8 h-8 rounded-md flex items-center justify-center overflow-hidden border border-stone-200 ${tenantId === "all" ? "bg-white/20" : "bg-stone-100"}`}>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                </div>
+                <div className="text-left">
+                  <div className="font-bold">All Locations</div>
+                  <div className={`text-[10px] ${tenantId === "all" ? "text-stone-300" : "text-stone-400"}`}>Combined reporting</div>
+                </div>
+              </button>
+            )}
+
             {/* Parent Location */}
             <button
               onClick={() => {
@@ -75,7 +98,7 @@ export default function LocationSwitcher({ tenantId, tenants, onTenantChange }) 
                   <img src={parent.logo_url} alt={parent.name} className="w-full h-full object-cover" />
                 ) : (
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2-2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                   </svg>
                 )}
               </div>

@@ -121,14 +121,18 @@ export default function DashboardLayout() {
   // When tenantId changes (e.g. user switches location), update the active tenant from existing list
   useEffect(() => {
     if (tenants.length > 0 && tenantId) {
-      const active = tenants.find(t => t.id === tenantId);
+      const isAll = tenantId === "all";
+      const active = isAll 
+        ? { id: "all", name: "All Locations", business_type: "rollup" } 
+        : tenants.find(t => t.id === tenantId);
+
       if (active) {
         setTenant(active);
-        setIsSuspended(active.is_suspended && !user?.is_super_admin && !impersonating);
+        setIsSuspended(!isAll && active.is_suspended && !user?.is_super_admin && !impersonating);
         const hasIdChanged = prevTenantIdRef.current && prevTenantIdRef.current !== tenantId;
         if (!isFirstRender.current && hasIdChanged) {
-          const locationName = tenantId === "all" ? "Reporting" : active.name;
-          success(`Switched to: ${locationName}`);
+          const locationName = isAll ? "Reporting" : active.name;
+          success("Switched to: " + locationName);
         }
         prevTenantIdRef.current = tenantId;
         fetchUsage(tenantId);

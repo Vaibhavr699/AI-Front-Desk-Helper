@@ -356,21 +356,44 @@ router.get("/followups", async (req, res) => {
     const tenantIds = await getTargetTenantIds(req);
     if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
 
-    // Join with leads to get estimated revenue and other CRM data
-    const result = await db.query(
-      `SELECT er.*, 
-              l.estimated_revenue_cents,
-              l.name as lead_name,
-              l.status as lead_status,
-              (SELECT MAX(created_at) FROM recovery_touches WHERE recovery_id = er.id) as last_contact
-       FROM estimate_recoveries er
-       LEFT JOIN leads l ON er.lead_id = l.id
-       WHERE er.tenant_id = ANY($1) AND er.status IN ('active', 'paused')
-       ORDER BY er.next_action_at ASC`,
-      [tenantIds]
-    );
+    const [recoveryRes, followupRes] = await Promise.all([
+      db.query(
+        `SELECT er.*, 
+                l.estimated_revenue_cents,
+                l.name as lead_name,
+                l.status as lead_status,
+                l.lead_source,
+                'recovery' as system_type,
+                (SELECT MAX(created_at) FROM recovery_touches WHERE recovery_id = er.id) as last_contact
+         FROM estimate_recoveries er
+         LEFT JOIN leads l ON er.lead_id = l.id
+         WHERE er.tenant_id = ANY($1) AND er.status IN ('active', 'paused')`,
+        [tenantIds]
+      ),
+      db.query(
+        `SELECT f.id, f.tenant_id, f.contact_name, f.status,
+                f.contact_name as lead_name,
+                f.due_at as next_action_at,
+                f.follow_up_type as current_step,
+                b.estimated_revenue_cents,
+                b.lead_source,
+                'nurturing' as system_type,
+                f.sent_at as last_contact
+         FROM follow_ups f
+         LEFT JOIN bookings b ON f.booking_id = b.id
+         WHERE f.tenant_id = ANY($1) AND f.status = 'pending'`,
+        [tenantIds]
+      )
+    ]);
 
-    res.json({ followups: result.rows });
+    const combined = [...recoveryRes.rows, ...followupRes.rows];
+    combined.sort((a, b) => {
+      const timeA = new Date(a.next_action_at || '9999-12-31').getTime();
+      const timeB = new Date(b.next_action_at || '9999-12-31').getTime();
+      return timeA - timeB;
+    });
+
+    res.json({ followups: combined });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error" });
@@ -459,20 +482,25 @@ router.get("/metrics", async (req, res) => {
 
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const sixtyDaysAgo = new Date();
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
 
     const isRollup = tenantIds.length > 1;
     console.log(`[Metrics] Fetching for tenants=[${tenantIds.join(",")}] rollup=${isRollup}`);
 
     const [
       salesStats,
+      salesStatsPrev,
       aiStats,
+      aiStatsPrev,
       sourceStats,
       trendStats,
       todayStats,
       pipelineStats,
-      nurturingStats
+      nurturingStats,
+      locationStats
     ] = await Promise.all([
-      // 1. Sales Metrics
+      // 1. Current Sales Metrics (last 30d)
       db.query(
         `SELECT 
           COUNT(DISTINCT l.id) as leads_generated,
@@ -485,18 +513,38 @@ router.get("/metrics", async (req, res) => {
          WHERE l.tenant_id = ANY($1) AND l.created_at > $2`,
         [tenantIds, thirtyDaysAgo]
       ),
-      // 2. AI Performance
+      // 1b. Previous Sales Metrics (30d-60d) for Trend calculation
+      db.query(
+        `SELECT 
+          COUNT(DISTINCT l.id) as leads_generated,
+          COUNT(DISTINCT er.id) as estimates_sent,
+          COUNT(DISTINCT b.id) as estimates_accepted,
+          COALESCE(SUM(b.estimated_revenue_cents), 0) as revenue_booked
+         FROM leads l
+         LEFT JOIN estimate_recoveries er ON er.lead_id = l.id AND er.created_at BETWEEN $2 AND $3
+         LEFT JOIN bookings b ON b.lead_id = l.id AND b.created_at BETWEEN $2 AND $3
+         WHERE l.tenant_id = ANY($1) AND l.created_at BETWEEN $2 AND $3`,
+        [tenantIds, sixtyDaysAgo, thirtyDaysAgo]
+      ),
+      // 2. AI Performance (last 30d)
       db.query(
         `SELECT 
           COUNT(*) as calls_handled,
-          COUNT(*) FILTER (WHERE transferred = true) as human_transferred,
-          (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND call_id IS NOT NULL AND created_at > $2) as appointments_booked,
-          (SELECT COUNT(*) FROM estimate_recoveries WHERE tenant_id = ANY($1) AND status = 'converted' AND updated_at > $2) as missed_calls_recovered
+          (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND call_id IS NOT NULL AND created_at > $2) as appointments_booked
          FROM calls 
          WHERE tenant_id = ANY($1) AND started_at > $2`,
         [tenantIds, thirtyDaysAgo]
       ),
-      // 3. Lead Sources (Distribution & Revenue)
+      // 2b. AI Performance (30d-60d)
+      db.query(
+        `SELECT 
+          COUNT(*) as calls_handled,
+          (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND call_id IS NOT NULL AND created_at BETWEEN $2 AND $3) as appointments_booked
+         FROM calls 
+         WHERE tenant_id = ANY($1) AND started_at BETWEEN $2 AND $3`,
+        [tenantIds, sixtyDaysAgo, thirtyDaysAgo]
+      ),
+      // Lead Sources
       db.query(
         `SELECT 
           source,
@@ -532,7 +580,7 @@ router.get("/metrics", async (req, res) => {
          ORDER BY leads DESC`,
         [tenantIds, thirtyDaysAgo]
       ),
-      // 4. Trend Data (Last 7 Days)
+      // Trends
       db.query(
         `SELECT 
           d.day::date as date,
@@ -545,7 +593,7 @@ router.get("/metrics", async (req, res) => {
          ORDER BY d.day ASC`,
         [tenantIds]
       ),
-      // 5. Today Stats
+      // Today
       db.query(
         `SELECT
           (SELECT COUNT(*) FROM calls WHERE tenant_id = ANY($1) AND started_at >= now() - interval '24 hours') as calls,
@@ -554,54 +602,114 @@ router.get("/metrics", async (req, res) => {
           (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND created_at >= now() - interval '24 hours') as booked`,
         [tenantIds]
       ),
-      // 6. Pipeline Stats
+      // Pipeline
       db.query(
         `SELECT
-          (SELECT COUNT(*) FROM leads WHERE tenant_id = ANY($1) AND status NOT IN ('Closed', 'Lost')) as open_estimates,
-          (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND status = 'scheduled') as jobs_scheduled,
-          (SELECT COALESCE(SUM(estimated_revenue_cents), 0) FROM bookings WHERE tenant_id = ANY($1) AND status = 'scheduled') as estimated_revenue`,
+          (SELECT COUNT(*) FROM leads WHERE tenant_id = ANY($1) AND status NOT IN ('Closed', 'Lost')) as open_leads,
+          (SELECT COUNT(*) FROM leads WHERE tenant_id = ANY($1) AND status = 'New') as leads_needing_followup,
+          (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND status = 'scheduled') as jobs_scheduled`,
         [tenantIds]
       ),
-      // 7. Nurturing metrics
+      // Nurturing
       db.query(
         `SELECT
-          (SELECT COUNT(*) FROM campaign_log WHERE tenant_id = ANY($1) AND sent_at > $2 AND (channel = 'email' OR channel = 'email+sms')) as emails_sent,
-          (SELECT COUNT(*) FROM campaign_log WHERE tenant_id = ANY($1) AND sent_at > $2 AND (channel = 'sms' OR channel = 'email+sms')) as sms_sent,
-          (SELECT COUNT(*) FROM campaign_log WHERE tenant_id = ANY($1) AND sent_at > $2 AND channel = 'voice') as ai_calls_made,
-          (SELECT COUNT(*) FROM messages WHERE tenant_id = ANY($1) AND direction = 'inbound' AND created_at > $2) as customer_replies,
-          (SELECT COUNT(*) FROM referral_leads WHERE tenant_id = ANY($1) AND created_at > $2) as referrals_generated,
-          (SELECT COUNT(*) FROM bookings b JOIN leads l ON l.id = b.lead_id AND l.tenant_id = ANY($1) AND l.lead_source = 'referral' WHERE b.tenant_id = ANY($1) AND b.created_at > $2) as appointments_booked,
-          (SELECT COALESCE(SUM(b.estimated_revenue_cents), 0) FROM bookings b JOIN leads l ON l.id = b.lead_id AND l.tenant_id = ANY($1) AND l.lead_source = 'referral' WHERE b.tenant_id = ANY($1) AND b.created_at > $2) as estimated_revenue`,
+          (SELECT COUNT(*) FROM campaign_log WHERE tenant_id = ANY($1) AND sent_at > $2) as emails_sent,
+          (SELECT COUNT(*) FROM referral_leads WHERE tenant_id = ANY($1) AND created_at > $2) as referrals_generated`,
         [tenantIds, thirtyDaysAgo]
-      )
+      ),
+      // 8. Location Breakdown (HQ Style)
+      isRollup ? db.query(
+        `SELECT 
+          t.id, t.name, t.city, t.state, t.business_type,
+          (SELECT COUNT(*) FROM calls c WHERE c.tenant_id = t.id AND c.started_at > $2) as total_calls,
+          (SELECT COUNT(*) FROM bookings b WHERE b.tenant_id = t.id AND b.created_at > $2) as total_bookings,
+          (SELECT COALESCE(SUM(b.estimated_revenue_cents), 0) FROM bookings b WHERE b.tenant_id = t.id AND b.created_at > $2) as total_revenue,
+          (SELECT COUNT(*) FROM leads l WHERE l.tenant_id = t.id AND l.status NOT IN ('Closed', 'Lost')) as open_leads
+         FROM tenants t
+         WHERE t.id = ANY($1)
+         ORDER BY t.name ASC`,
+        [tenantIds, thirtyDaysAgo]
+      ) : Promise.resolve({ rows: [] })
     ]);
 
-    const sales = salesStats.rows[0];
-    const ai = aiStats.rows[0];
-    
-    const closeRate = sales.leads_generated > 0 
-      ? Math.round((sales.estimates_accepted / sales.leads_generated) * 100) 
-      : 0;
+    const sales = salesStats.rows[0] || { leads_generated: 0, estimates_sent: 0, estimates_accepted: 0, revenue_booked: 0 };
+    const salesPrev = salesStatsPrev.rows[0] || { leads_generated: 0, estimates_sent: 0, estimates_accepted: 0, revenue_booked: 0 };
+    const ai = aiStats.rows[0] || { calls_handled: 0, appointments_booked: 0 };
+    const aiPrev = aiStatsPrev.rows[0] || { calls_handled: 0, appointments_booked: 0 };
+    const pipeline = pipelineStats.rows[0] || { open_leads: 0, leads_needing_followup: 0, jobs_scheduled: 0 };
+    const nurturingRow = nurturingStats.rows[0] || { emails_sent: 0, referrals_generated: 0 };
 
-    // For roll-up, check if any of the tenants have nurturing access
-    // For now, we'll check the primary tenant (first in list) or the parent
-    const primaryTenantId = req.user.tenant_id || tenantIds[0];
-    const tenantForGate = await db.query("SELECT id, plan, plan_overrides FROM tenants WHERE id = $1", [primaryTenantId]).then((r) => r.rows[0]);
-    const nurturingRow = nurturingStats?.rows?.[0];
-    const nurturing = (tenantForGate && hasNurturingReferralAccess(tenantForGate) && nurturingRow)
-      ? {
-          emails_sent: parseInt(nurturingRow.emails_sent || 0, 10),
-          sms_sent: parseInt(nurturingRow.sms_sent || 0, 10),
-          ai_calls_made: parseInt(nurturingRow.ai_calls_made || 0, 10),
-          customer_replies: parseInt(nurturingRow.customer_replies || 0, 10),
-          appointments_booked: parseInt(nurturingRow.appointments_booked || 0, 10),
-          referrals_generated: parseInt(nurturingRow.referrals_generated || 0, 10),
-          estimated_revenue: parseInt(nurturingRow.estimated_revenue || 0, 10)
+    const getTrend = (curr, prev) => {
+      if (!prev || prev == 0) return curr > 0 ? 100 : 0;
+      return Math.round(((curr - prev) / prev) * 100);
+    };
+
+    const location_breakdown = isRollup ? locationStats.rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      city: r.city || "Local",
+      state: r.state || "",
+      isHQ: r.business_type === 'parent',
+      calls: parseInt(r.total_calls, 10),
+      bookings: parseInt(r.total_bookings, 10),
+      revenue: parseInt(r.total_revenue, 10),
+      openLeads: parseInt(r.open_leads, 10),
+      rate: r.total_calls > 0 ? Math.round((r.total_bookings / r.total_calls) * 100) : 0
+    })) : [];
+
+    // Simple Insights Generation
+    const insights = [];
+    if (isRollup) {
+      location_breakdown.forEach(loc => {
+        if (loc.rate < 40 && loc.calls > 10) {
+          insights.push({
+            id: `low-rate-${loc.id}`,
+            text: `${loc.name} — booking rate below 40%`,
+            action: 'Review AI instructions',
+            link: `/settings/ai?tenantId=${loc.id}`
+          });
         }
-      : undefined;
+        if (loc.openLeads > 40) {
+          insights.push({
+            id: `high-leads-${loc.id}`,
+            text: `${loc.name} — ${loc.openLeads} open leads needing follow-up`,
+            action: 'Trigger follow-up',
+            link: `/pipeline?tenantId=${loc.id}`
+          });
+        }
+      });
+    }
 
     res.json({
       period: "30d",
+      isRollup,
+      // Consolidated for HQ
+      totals: {
+        calls: parseInt(ai.calls_handled, 10),
+        calls_trend: getTrend(parseInt(ai.calls_handled, 10), parseInt(aiPrev.calls_handled, 10)),
+        booking_rate: ai.calls_handled > 0 ? Math.round((parseInt(ai.appointments_booked, 10) / parseInt(ai.calls_handled, 10)) * 100) : 0,
+        booking_rate_trend: getTrend(
+          ai.calls_handled > 0 ? (parseInt(ai.appointments_booked, 10) / parseInt(ai.calls_handled, 10)) : 0,
+          aiPrev.calls_handled > 0 ? (parseInt(aiPrev.appointments_booked, 10) / parseInt(aiPrev.calls_handled, 10)) : 0
+        ),
+        revenue: parseInt(sales.revenue_booked, 10),
+        revenue_trend: getTrend(parseInt(sales.revenue_booked, 10), parseInt(salesPrev.revenue_booked, 10)),
+        open_leads: parseInt(pipeline.open_leads, 10),
+        leads_needing_followup: parseInt(pipeline.leads_needing_followup, 10)
+      },
+      // Backward compatibility for single-tenant view
+      sales: {
+        leads_generated: parseInt(sales.leads_generated, 10),
+        close_rate: sales.leads_generated > 0 ? Math.round((parseInt(sales.estimates_accepted, 10) / parseInt(sales.leads_generated, 10)) * 100) : 0,
+        estimates_accepted: parseInt(sales.estimates_accepted, 10),
+        revenue_booked: parseInt(sales.revenue_booked, 10)
+      },
+      ai: {
+        calls_handled: parseInt(ai.calls_handled, 10),
+        ai_success_rate: ai.calls_handled > 0 ? Math.round((parseInt(ai.appointments_booked, 10) / parseInt(ai.calls_handled, 10)) * 100) : 0,
+        appointments_booked: parseInt(ai.appointments_booked, 10),
+        missed_calls_recovered: parseInt(todayStats.rows[0].recovered || 0, 10) // Approx for individual view
+      },
       today: {
         calls: parseInt(todayStats.rows[0].calls || 0, 10),
         recovered: parseInt(todayStats.rows[0].recovered || 0, 10),
@@ -609,47 +717,32 @@ router.get("/metrics", async (req, res) => {
         booked: parseInt(todayStats.rows[0].booked || 0, 10)
       },
       pipeline: {
-        open_estimates: parseInt(pipelineStats.rows[0].open_estimates || 0, 10),
-        jobs_scheduled: parseInt(pipelineStats.rows[0].jobs_scheduled || 0, 10),
-        estimated_revenue: parseInt(pipelineStats.rows[0].estimated_revenue || 0, 10)
+        open_estimates: parseInt(pipeline.open_leads || 0, 10),
+        jobs_scheduled: parseInt(pipeline.jobs_scheduled || 0, 10)
       },
-      sales: {
-        leads_generated: parseInt(sales.leads_generated, 10),
-        estimates_sent: parseInt(sales.estimates_sent, 10),
-        estimates_accepted: parseInt(sales.estimates_accepted, 10),
-        revenue_booked: parseInt(sales.revenue_booked, 10),
-        close_rate: closeRate
-      },
-      ai: {
-        calls_handled: parseInt(ai.calls_handled, 10),
-        human_transferred: parseInt(ai.human_transferred, 10),
-        appointments_booked: parseInt(ai.appointments_booked, 10),
-        missed_calls_recovered: parseInt(ai.missed_calls_recovered, 10),
-        ai_success_rate: ai.calls_handled > 0 
-          ? Math.round(((ai.calls_handled - ai.human_transferred) / ai.calls_handled) * 100) 
-          : 0
-      },
+      location_breakdown,
+      insights,
       sources: sourceStats.rows.map(r => ({
         label: r.source,
         leads: parseInt(r.leads, 10),
         booked: parseInt(r.booked, 10),
-        revenue: parseInt(r.revenue, 10),
-        value: parseInt(r.leads, 10) // Fallback for existing chart logic
+        revenue: parseInt(r.revenue, 10)
       })),
       trends: trendStats.rows.map(r => ({
         date: r.date,
         leads: parseInt(r.leads, 10),
         bookings: parseInt(r.bookings, 10)
       })),
-      nurturing
+      nurturing: {
+        emails_sent: parseInt(nurturingRow.emails_sent, 10),
+        referrals_generated: parseInt(nurturingRow.referrals_generated, 10)
+      },
     });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error" });
   }
 });
-
-
 router.get("/activity-feed", async (req, res) => {
   try {
     const tenantIds = await getTargetTenantIds(req);
@@ -741,6 +834,7 @@ router.get("/tenants/:id", async (req, res) => {
       }
     }
 
+
     const r = await db.query(
       `SELECT ${TENANT_SELECT_BASE}, ${TENANT_SELECT_TWILIO},
        (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1`,
@@ -766,7 +860,7 @@ router.get("/tenants/:id", async (req, res) => {
     delete masked.twilio_account_sid;
     delete masked.twilio_auth_token;
     delete masked.facebook_page_access_token;
-    delete masked.api_key;
+    // delete masked.api_key; // Keep for settings display
 
     res.json(masked);
   } catch (e) {

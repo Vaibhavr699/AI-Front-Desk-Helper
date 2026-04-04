@@ -254,6 +254,46 @@ async function startRecovery(tenantId, bookingId, options = {}) {
 }
 
 /**
+ * Start an estimate recovery (ghost sequence) for a lead (no booking required, triggered via CRM webhook).
+ */
+async function startEstimateRecovery(tenantId, lead, options = {}) {
+    const phone = lead.phone || lead.contact_phone;
+    if (!phone) return null;
+
+    // Check if there is already an active recovery for this phone
+    const existing = await db.query(
+        "SELECT id FROM estimate_recoveries WHERE tenant_id = $1 AND contact_phone = $2 AND status = 'active'",
+        [tenantId, phone]
+    );
+    if (existing.rows.length > 0) return existing.rows[0];
+
+    const now = new Date();
+    const firstStep = GHOST_SEQUENCE[0];
+    const nextActionAt = addHours(now, firstStep.delayHours);
+
+    const res = await db.query(
+        `INSERT INTO estimate_recoveries (
+      tenant_id, lead_id, call_id, contact_name, contact_phone, contact_email,
+      status, current_step, next_action_at, lead_source
+    ) VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8, $9)
+    RETURNING *`,
+        [
+            tenantId,
+            lead.id || null,
+            options.call_id || null,
+            lead.name || lead.contact_name || "Guest",
+            phone,
+            lead.email || lead.contact_email || null,
+            firstStep.step,
+            nextActionAt.toISOString(),
+            options.lead_source || 'crm_webhook'
+        ]
+    );
+    console.log("[Recovery] Estimate recovery started id=%s tenant=%s phone=%s", res.rows[0].id, tenantId, phone);
+    return res.rows[0];
+}
+
+/**
  * Start an inquiry recovery for a lead (no booking required).
  */
 async function startInquiryRecovery(tenantId, lead, options = {}) {
@@ -637,6 +677,7 @@ module.exports = {
     // Core
     startRecovery,
     startInquiryRecovery,
+    startEstimateRecovery,
     processDueRecoveries,
     // Objection routing
     setObjection,

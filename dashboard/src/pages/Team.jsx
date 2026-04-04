@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getTeam, inviteTeamMember, removeTeamMember, getTenants } from "../api";
+import { getTeam, inviteTeamMember, removeTeamMember, getTenants, getUser } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import { Users, Crown, MapPin, Trash2, Mail, Plus, AlertCircle, Building2, Shield, User } from "lucide-react";
 

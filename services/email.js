@@ -17,16 +17,20 @@ if (!resend) {
 // Home page contact form and website chat notifications go here (sent via Resend).
 const CONTACT_EMAIL = process.env.CONTACT_EMAIL || "drew@aifrontdeskhelper.com";
 
-async function sendEmail({ to, subject, html, text }) {
+async function sendEmail({ to, subject, html, text, bcc, replyTo }) {
   if (!resend) {
     console.warn("[Email] Not sending – Resend not configured (check RESEND_API_KEY and EMAIL_FROM).");
     return { ok: false, error: "Email not configured" };
   }
   const toList = Array.isArray(to) ? to : [to];
-  console.log("[Email] Calling Resend API: to=", toList.join(", "), "subject=", subject);
+  const bccList = bcc ? (Array.isArray(bcc) ? bcc : [bcc]) : undefined;
+  
+  console.log("[Email] Calling Resend API: to=", toList.join(", "), "subject=", subject, "bcc=", bccList?.join(", "));
   const { data, error } = await resend.emails.send({
     from: fromEmail,
     to: toList,
+    bcc: bccList,
+    reply_to: replyTo,
     subject,
     html: html || undefined,
     text: text !== undefined ? text : undefined,
@@ -37,6 +41,22 @@ async function sendEmail({ to, subject, html, text }) {
   }
   console.log("[Email] Sent to", toList.join(", "), "id:", data?.id);
   return { ok: true, id: data?.id };
+}
+
+/** Get the business owner email for a tenant (calendar email or admin user). */
+async function getTenantOwnerEmail(tenant) {
+  if (tenant.google_calendar_email) return tenant.google_calendar_email;
+  
+  try {
+    const adminRes = await db.query(
+      "SELECT email FROM dashboard_users WHERE tenant_id = $1 ORDER BY (role = 'admin') DESC, created_at ASC LIMIT 1",
+      [tenant.id]
+    );
+    if (adminRes.rows.length > 0) return adminRes.rows[0].email;
+  } catch (err) {
+    console.error("[Email] Failed to fetch owner email for tenant %s:", tenant.id, err.message);
+  }
+  return null;
 }
 
 async function sendBookingConfirmationEmail(tenant, booking) {
@@ -81,8 +101,12 @@ async function sendBookingConfirmationEmail(tenant, booking) {
 
     <p>Thanks,<br/>${escapeHtml(tenant.company_name)}</p>
   `;
+  const ownerEmail = await getTenantOwnerEmail(tenant);
+
   return sendEmail({
     to: booking.contact_email,
+    bcc: ownerEmail || undefined,
+    replyTo: ownerEmail || undefined,
     subject: `Your estimate is scheduled – ${tenant.company_name}`,
     html,
   });

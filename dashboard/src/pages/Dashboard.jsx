@@ -13,6 +13,7 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [showGuide, setShowGuide] = useState(false);
 
   useEffect(() => {
     if (!tenantId) {
@@ -137,7 +138,7 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
           <div className="w-1 h-6 bg-emerald-500 rounded-full" />
           <h2 className="text-lg font-semibold text-stone-900">Pipeline Value</h2>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatWidget
             title="Open Estimates"
             value={metrics?.pipeline?.open_estimates}
@@ -151,14 +152,35 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
             color="bg-blue-50 text-blue-600"
           />
           <StatWidget
-            title="Estimated Revenue"
+            title="Pipeline Value (AI Estimated)"
             value={metrics?.pipeline?.estimated_revenue != null ? `$${(metrics.pipeline.estimated_revenue / 100).toLocaleString()}` : "—"}
             icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>}
             color="bg-emerald-50 text-emerald-600"
-            subtitle="Total value"
+          />
+          <StatWidget
+            title="Confirmed Revenue (DripJobs)"
+            value={
+              metrics?.pipeline?.actual_revenue != null && metrics.pipeline.actual_revenue > 0 ? (
+                `$${(metrics.pipeline.actual_revenue / 100).toLocaleString()}`
+              ) : (
+                <div className="flex flex-col">
+                  <span className="text-[14px] leading-tight font-black text-stone-900">$0</span>
+                  <button 
+                    onClick={() => setShowGuide(true)}
+                    className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded mt-1 hover:bg-emerald-100 transition-all uppercase tracking-widest w-fit"
+                  >
+                    Setup tracking →
+                  </button>
+                </div>
+              )
+            }
+            icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>}
+            color="bg-indigo-50 text-indigo-600"
           />
         </div>
       </section>
+
+      {showGuide && <ZapierGuideModal onClose={() => setShowGuide(false)} />}
 
       {/* FEED & SALES WINS */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -333,4 +355,111 @@ function getEventInitial(type) {
     case 'follow_up': return 'F';
     default: return 'E';
   }
+}
+
+function ZapierGuideModal({ onClose }) {
+  const [copied, setCopied] = useState(false);
+  const webhookUrl = "https://ai-front-desk-backend.onrender.com/api/webhooks/crm/estimate-sent";
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(webhookUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={onClose}></div>
+      <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+         <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-black text-gray-900 tracking-tight leading-none">Setup Revenue Tracking</h2>
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Connect DripJobs or your CRM via Zapier</p>
+            </div>
+            <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 hover:bg-gray-100 transition-colors">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+         </div>
+         
+         <div className="p-6 max-h-[70vh] overflow-y-auto space-y-6 text-left">
+            <section>
+               <h3 className="text-[10px] font-black text-gray-900 uppercase tracking-widest mb-3 flex items-center gap-2">
+                 <div className="w-4 h-4 bg-orange-500 rounded text-white flex items-center justify-center text-[9px]">1</div>
+                 Step 1: Create Your Zap
+               </h3>
+               <p className="text-[11px] text-gray-500 leading-relaxed mb-3 text-left">
+                 Use the <strong>"Webhooks by Zapier"</strong> app as your action. Set the event to <strong>POST</strong> and use this endpoint:
+               </p>
+               <div className="bg-gray-50 p-3 rounded-lg font-mono text-[10px] text-gray-600 border border-gray-100 flex items-center justify-between group">
+                  <span className="truncate">{webhookUrl}</span>
+                  <button 
+                    onClick={handleCopy}
+                    className="text-[9px] font-black text-blue-600 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity uppercase"
+                  >
+                    {copied ? "Copied!" : "Copy"}
+                  </button>
+               </div>
+            </section>
+
+            <section>
+               <h3 className="text-[10px] font-black text-gray-900 uppercase tracking-widest mb-3 flex items-center gap-2">
+                 <div className="w-4 h-4 bg-orange-500 rounded text-white flex items-center justify-center text-[9px]">2</div>
+                 Step 2: Map the Data
+               </h3>
+               <p className="text-[11px] text-gray-500 leading-relaxed mb-3 text-left">
+                 In the <strong>Data</strong> section, map your CRM fields to these values. We use the phone number to automatically match the revenue to the correct call.
+               </p>
+               <div className="bg-gray-900 rounded-lg p-5 text-emerald-400 font-mono text-[10px] leading-relaxed text-left">
+                  {`{\n`}
+                  {`  "api_key": "YOUR_API_KEY",\n`}
+                  {`  "contact_name": "Customer Name",\n`}
+                  {`  "contact_phone": "Customer Phone",\n`}
+                  {`  "estimated_revenue_cents": 150000,\n`}
+                  {`  "lead_source": "DripJobs Update"\n`}
+                  {`}`}
+               </div>
+            </section>
+
+            <section>
+               <h3 className="text-[10px] font-black text-gray-900 uppercase tracking-widest mb-3 flex items-center gap-2">
+                 <div className="w-4 h-4 bg-orange-500 rounded text-white flex items-center justify-center text-[9px]">3</div>
+                 Step 3: Add Authorization
+               </h3>
+               <p className="text-[11px] text-gray-500 leading-relaxed mb-3 text-left">
+                 Add your API key (found in <span className="font-bold text-gray-900">Settings → Integrations</span>) as a Header:
+               </p>
+               <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
+                  <div className="flex justify-between text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5">
+                     <span>Header Name</span>
+                     <span>Value</span>
+                  </div>
+                  <div className="flex justify-between font-mono text-[10px] text-gray-700">
+                     <span>Authorization</span>
+                     <span className="text-blue-600 font-bold">Bearer YOUR_API_KEY</span>
+                  </div>
+               </div>
+            </section>
+
+            <div className="bg-blue-50 border border-blue-50 rounded-xl p-4 flex gap-3 text-left">
+               <div className="w-5 h-5 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 shrink-0">
+                 <span className="text-[10px] font-black">!</span>
+               </div>
+               <div className="text-[10px] text-blue-800 leading-relaxed">
+                 <strong className="block mb-0.5">PRO-TIP: REVENUE IN CENTS</strong>
+                 Our system tracks revenue in cents to ensure precision. If your job total is $1,500.00, send <strong>150000</strong>. You can use Zapier Formatter to multiply the dollar total by 100.
+               </div>
+            </div>
+         </div>
+
+         <div className="p-6 bg-gray-50 border-t border-gray-100 flex justify-end">
+            <button 
+              onClick={onClose}
+              className="px-5 py-2.5 bg-gray-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:opacity-90 transition-opacity shadow-lg shadow-gray-200"
+            >
+              Done, Let's track some ROI
+            </button>
+         </div>
+      </div>
+    </div>
+  );
 }

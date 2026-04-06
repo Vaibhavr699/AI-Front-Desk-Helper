@@ -13,10 +13,53 @@ import {
   ChevronRight,
   DollarSign,
   History,
-  Send
+  Send,
+  CalendarCheck,
+  MapPin,
+  Briefcase
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { Link } from "react-router-dom";
+
+/** Color-coded day counter badge: green < 2d, orange 2–5d, red > 5d */
+function DaysBadge({ days, label }) {
+  if (days == null || isNaN(days)) return null;
+  const d = Math.max(0, Math.floor(days));
+  let bg, text, border;
+  if (d < 2) {
+    bg = "bg-emerald-50"; text = "text-emerald-700"; border = "border-emerald-200";
+  } else if (d <= 5) {
+    bg = "bg-amber-50"; text = "text-amber-700"; border = "border-amber-200";
+  } else {
+    bg = "bg-red-50"; text = "text-red-700"; border = "border-red-200";
+  }
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${bg} ${text} ${border}`}>
+      <Clock className="w-3 h-3" />
+      {d}d {label || ""}
+    </span>
+  );
+}
+
+/** Days-until badge for appointments (inverted colors: red=soon, green=far away) */
+function AppointmentCountdown({ days }) {
+  if (days == null || isNaN(days)) return null;
+  const d = Math.max(0, Math.ceil(days));
+  let bg, text, border;
+  if (d <= 1) {
+    bg = "bg-red-50"; text = "text-red-700"; border = "border-red-200";
+  } else if (d <= 3) {
+    bg = "bg-amber-50"; text = "text-amber-700"; border = "border-amber-200";
+  } else {
+    bg = "bg-emerald-50"; text = "text-emerald-700"; border = "border-emerald-200";
+  }
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${bg} ${text} ${border}`}>
+      <CalendarCheck className="w-3 h-3" />
+      {d === 0 ? "Today" : d === 1 ? "Tomorrow" : `In ${d}d`}
+    </span>
+  );
+}
 
 export default function FollowUps({ tenantId }) {
   const [followups, setFollowups] = useState([]);
@@ -50,6 +93,14 @@ export default function FollowUps({ tenantId }) {
   const totalPages = Math.ceil(total / limit);
   const offset = (page - 1) * limit;
   const paginatedFollowups = filteredFollowups.slice(offset, offset + limit);
+
+  // Count by type for filter badges
+  const counts = {
+    all: followups.length,
+    recovery: followups.filter(f => f.system_type === 'recovery').length,
+    nurturing: followups.filter(f => f.system_type === 'nurturing').length,
+    appointment: followups.filter(f => f.system_type === 'appointment').length,
+  };
 
   async function loadData() {
     try {
@@ -128,6 +179,13 @@ export default function FollowUps({ tenantId }) {
 
   if (loading) return <div className="flex items-center justify-center py-24"><LumaSpin /></div>;
 
+  const filterTabs = [
+    { key: "all", label: "All", icon: null },
+    { key: "recovery", label: "Estimate Recovery", icon: DollarSign },
+    { key: "appointment", label: "Appointments", icon: CalendarCheck },
+    { key: "nurturing", label: "Nurturing", icon: History },
+  ];
+
   return (
     <div className="max-w-full space-y-8 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
@@ -135,17 +193,35 @@ export default function FollowUps({ tenantId }) {
           <h1 className="text-3xl font-bold text-stone-900 tracking-tight">Follow-Up Pipeline</h1>
           <p className="text-stone-500 mt-1">Automate and manage your estimate conversion workflow.</p>
         </div>
-        <div className="flex gap-2">
-          <select 
-            value={filterSystem}
-            onChange={e => setFilterSystem(e.target.value)}
-            className="px-4 py-2 border border-stone-200 bg-white rounded-xl text-sm font-medium focus:ring-2 focus:ring-stone-400 outline-none"
-          >
-            <option value="all">All Systems</option>
-            <option value="recovery">Sales Recovery System</option>
-            <option value="nurturing">Nurturing & Reminders</option>
-          </select>
-        </div>
+      </div>
+
+      {/* Filter Tabs */}
+      <div className="flex gap-2 flex-wrap">
+        {filterTabs.map(tab => {
+          const isActive = filterSystem === tab.key;
+          const count = counts[tab.key] || 0;
+          return (
+            <button
+              key={tab.key}
+              onClick={() => setFilterSystem(tab.key)}
+              className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all border ${
+                isActive
+                  ? "bg-stone-900 text-white border-stone-900 shadow-md"
+                  : "bg-white text-stone-600 border-stone-200 hover:border-stone-400 hover:bg-stone-50"
+              }`}
+            >
+              {tab.icon && <tab.icon className="w-4 h-4" />}
+              {tab.label}
+              <span className={`ml-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold ${
+                isActive
+                  ? "bg-white/20 text-white"
+                  : "bg-stone-100 text-stone-500"
+              }`}>
+                {count}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {error && (
@@ -164,7 +240,7 @@ export default function FollowUps({ tenantId }) {
                 <th className="px-6 py-4 text-left text-xs font-bold text-stone-400 uppercase tracking-widest">Value</th>
                 <th className="px-6 py-4 text-left text-xs font-bold text-stone-400 uppercase tracking-widest">Stage</th>
                 <th className="px-6 py-4 text-left text-xs font-bold text-stone-400 uppercase tracking-widest">Next Action</th>
-                <th className="px-6 py-4 text-left text-xs font-bold text-stone-400 uppercase tracking-widest">Last Contact</th>
+                <th className="px-6 py-4 text-left text-xs font-bold text-stone-400 uppercase tracking-widest">Age</th>
                 <th className="px-6 py-4 text-right text-xs font-bold text-stone-400 uppercase tracking-widest">Actions</th>
               </tr>
             </thead>
@@ -177,14 +253,29 @@ export default function FollowUps({ tenantId }) {
                 </tr>
               ) : (
                 paginatedFollowups.map((f) => (
-                  <tr key={f.id} className="group hover:bg-stone-50/50 transition-colors">
+                  <tr key={`${f.system_type}-${f.id}`} className="group hover:bg-stone-50/50 transition-colors">
                     <td className="px-6 py-4">
                       <div className="flex flex-col">
                         <span className="text-sm font-semibold text-stone-900">{f.lead_name || f.contact_name || "Unknown"}</span>
                         <span className="text-xs text-stone-500 flex items-center gap-1.5 mt-0.5">
-                          <History className="w-3 h-3 text-stone-300" />
-                          Source: {f.lead_source || "Phone"}
+                          {f.system_type === 'appointment' ? (
+                            <>
+                              <CalendarCheck className="w-3 h-3 text-stone-300" />
+                              {f.job_type || f.scope || "Appointment"}
+                            </>
+                          ) : (
+                            <>
+                              <History className="w-3 h-3 text-stone-300" />
+                              Source: {formatSource(f.lead_source)}
+                            </>
+                          )}
                         </span>
+                        {f.system_type === 'appointment' && f.address && (
+                          <span className="text-[11px] text-stone-400 flex items-center gap-1 mt-0.5">
+                            <MapPin className="w-3 h-3" />
+                            {f.address}
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-6 py-4">
@@ -194,18 +285,29 @@ export default function FollowUps({ tenantId }) {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${getStageStyle(f.current_step)}`}>
-                        {formatStage(f.current_step)}
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${getStageStyle(f.current_step, f.system_type)}`}>
+                        {formatStage(f.current_step, f.system_type)}
                       </span>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="flex items-center gap-2 text-stone-600 text-xs">
-                        <Clock className="w-3.5 h-3.5 text-stone-300" />
-                        {f.next_action_at ? format(new Date(f.next_action_at), 'MMM d, h:mm a') : "Soon"}
-                      </div>
+                      {f.system_type === 'appointment' ? (
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-2 text-stone-600 text-xs">
+                            <CalendarCheck className="w-3.5 h-3.5 text-stone-300" />
+                            {f.next_action_at ? format(new Date(f.next_action_at), 'MMM d, yyyy') : "TBD"}
+                            {f.appointment_time ? ` @ ${f.appointment_time}` : ""}
+                          </div>
+                          <AppointmentCountdown days={f.days_until_appointment} />
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-stone-600 text-xs">
+                          <Clock className="w-3.5 h-3.5 text-stone-300" />
+                          {f.next_action_at ? format(new Date(f.next_action_at), 'MMM d, h:mm a') : "Soon"}
+                        </div>
+                      )}
                     </td>
-                    <td className="px-6 py-4 text-xs text-stone-500">
-                      {f.last_contact ? formatDistanceToNow(new Date(f.last_contact)) + " ago" : "Never"}
+                    <td className="px-6 py-4">
+                      <DaysBadge days={f.days_waiting} label="old" />
                     </td>
                     <td className="px-6 py-4 text-right">
                       {f.system_type === 'recovery' && (
@@ -243,6 +345,16 @@ export default function FollowUps({ tenantId }) {
                           >
                             <XCircle className="w-4 h-4" />
                           </button>
+                        </div>
+                      )}
+                      {f.system_type === 'appointment' && (
+                        <div className="flex items-center justify-end gap-2">
+                          <Link
+                            to={`/bookings`}
+                            className="px-3 py-1.5 text-xs font-medium text-stone-600 hover:text-stone-900 bg-stone-100 hover:bg-stone-200 rounded-lg transition-all"
+                          >
+                            View Booking
+                          </Link>
                         </div>
                       )}
                       {f.system_type === 'nurturing' && (
@@ -319,8 +431,30 @@ export default function FollowUps({ tenantId }) {
   );
 }
 
-function formatStage(step) {
+/** Format lead_source into user-friendly label */
+function formatSource(src) {
+  if (!src) return "Phone";
+  const map = {
+    'crm_webhook': 'CRM / DripJobs',
+    'CRM Webhook': 'CRM / DripJobs',
+    'zapier': 'Zapier',
+    'Zapier': 'Zapier',
+    'facebook': 'Facebook',
+    'phone': 'Phone',
+    'inquiry': 'Inquiry',
+    'sms': 'SMS',
+    'website': 'Website',
+    'chat': 'Chat Widget',
+  };
+  return map[src] || src;
+}
+
+function formatStage(step, systemType) {
   if (!step) return "Unknown";
+
+  if (systemType === 'appointment') {
+    return "Upcoming Appt";
+  }
   
   const map = {
     'estimate_sent': 'Estimate Sent',
@@ -335,12 +469,18 @@ function formatStage(step) {
     'post_service': 'Post Service',
     'referral': 'Referral Req',
     'maintenance': 'Maintenance',
-    'reengagement': 'Re-engagement'
+    'reengagement': 'Re-engagement',
+    // Appointment
+    'pre_appointment': 'Upcoming Appt',
   };
   return map[step] || step.replace(/_/g, ' ');
 }
 
-function getStageStyle(step) {
+function getStageStyle(step, systemType) {
+  if (systemType === 'appointment' || step === 'pre_appointment') {
+    return 'bg-violet-50 text-violet-700 border border-violet-100';
+  }
+
   switch (step) {
     case 'estimate_sent': return 'bg-blue-50 text-blue-700 border border-blue-100';
     case 'sms_followup': return 'bg-amber-50 text-amber-700 border border-amber-100';

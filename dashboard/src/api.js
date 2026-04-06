@@ -167,8 +167,8 @@ export function updateCall(id, body) {
   });
 }
 
-export function getMetrics(tenantId) {
-  const query = tenantId === 'all' ? 'tenant_id=all&rollup=true' : `tenant_id=${tenantId}`;
+export function getMetrics(tenantId, period = '30d') {
+  const query = tenantId === 'all' ? `tenant_id=all&rollup=true&period=${period}` : `tenant_id=${tenantId}&period=${period}`;
   return api(`/api/metrics?${query}`);
 }
 

@@ -356,7 +356,8 @@ router.get("/followups", async (req, res) => {
     const tenantIds = await getTargetTenantIds(req);
     if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
 
-    const [recoveryRes, followupRes] = await Promise.all([
+    const [recoveryRes, followupRes, appointmentRes] = await Promise.all([
+      // 1. Estimate Recoveries (Sales Recovery + CRM/DripJobs estimates)
       db.query(
         `SELECT er.*, 
                 l.estimated_revenue_cents,
@@ -364,12 +365,14 @@ router.get("/followups", async (req, res) => {
                 l.status as lead_status,
                 l.lead_source,
                 'recovery' as system_type,
-                (SELECT MAX(created_at) FROM recovery_touches WHERE recovery_id = er.id) as last_contact
+                (SELECT MAX(created_at) FROM recovery_touches WHERE recovery_id = er.id) as last_contact,
+                EXTRACT(EPOCH FROM (now() - er.created_at)) / 86400.0 as days_waiting
          FROM estimate_recoveries er
          LEFT JOIN leads l ON er.lead_id = l.id
          WHERE er.tenant_id = ANY($1) AND er.status IN ('active', 'paused')`,
         [tenantIds]
       ),
+      // 2. Nurturing Follow-ups (post-booking reminders)
       db.query(
         `SELECT f.id, f.tenant_id, f.contact_name, f.status,
                 f.contact_name as lead_name,
@@ -378,15 +381,44 @@ router.get("/followups", async (req, res) => {
                 b.estimated_revenue_cents,
                 b.lead_source,
                 'nurturing' as system_type,
-                f.sent_at as last_contact
+                f.sent_at as last_contact,
+                EXTRACT(EPOCH FROM (now() - f.created_at)) / 86400.0 as days_waiting
          FROM follow_ups f
          LEFT JOIN bookings b ON f.booking_id = b.id
          WHERE f.tenant_id = ANY($1) AND f.status = 'pending'`,
         [tenantIds]
+      ),
+      // 3. Pre-Appointment Reminders (upcoming bookings)
+      db.query(
+        `SELECT b.id, b.tenant_id, b.contact_name, b.contact_phone, b.status,
+                b.contact_name as lead_name,
+                b.preferred_date as next_action_at,
+                b.appointment_time,
+                b.estimated_revenue_cents,
+                b.lead_source,
+                b.scope, b.job_type, b.address,
+                'appointment' as system_type,
+                'pre_appointment' as current_step,
+                b.created_at as last_contact,
+                EXTRACT(EPOCH FROM (now() - b.created_at)) / 86400.0 as days_waiting,
+                EXTRACT(EPOCH FROM (b.preferred_date::timestamp - now())) / 86400.0 as days_until_appointment
+         FROM bookings b
+         WHERE b.tenant_id = ANY($1)
+           AND LOWER(b.status) IN ('booked', 'confirmed')
+           AND b.preferred_date >= CURRENT_DATE`,
+        [tenantIds]
       )
     ]);
 
-    const combined = [...recoveryRes.rows, ...followupRes.rows];
+    const combined = [
+      ...recoveryRes.rows.map(r => ({ ...r, days_waiting: parseFloat(r.days_waiting) || 0 })),
+      ...followupRes.rows.map(r => ({ ...r, days_waiting: parseFloat(r.days_waiting) || 0 })),
+      ...appointmentRes.rows.map(r => ({
+        ...r,
+        days_waiting: parseFloat(r.days_waiting) || 0,
+        days_until_appointment: parseFloat(r.days_until_appointment) || 0
+      }))
+    ];
     combined.sort((a, b) => {
       const timeA = new Date(a.next_action_at || '9999-12-31').getTime();
       const timeB = new Date(b.next_action_at || '9999-12-31').getTime();
@@ -480,10 +512,16 @@ router.get("/metrics", async (req, res) => {
     const tenantIds = await getTargetTenantIds(req);
     if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
 
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const sixtyDaysAgo = new Date();
-    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+    const period = req.query.period || '30d';
+    let days = 30;
+    if (period === '7d') days = 7;
+    else if (period === '90d') days = 90;
+    else if (period === 'today') days = 1;
+
+    const currentWindow = new Date();
+    currentWindow.setDate(currentWindow.getDate() - days);
+    const prevWindow = new Date();
+    prevWindow.setDate(prevWindow.getDate() - (days * 2));
 
     const isRollup = tenantIds.length > 1;
     console.log(`[Metrics] Fetching for tenants=[${tenantIds.join(",")}] rollup=${isRollup}`);
@@ -494,6 +532,8 @@ router.get("/metrics", async (req, res) => {
       aiStats,
       aiStatsPrev,
       sourceStats,
+      contactMethodStats,
+      opsStats,
       trendStats,
       todayStats,
       pipelineStats,
@@ -511,7 +551,7 @@ router.get("/metrics", async (req, res) => {
          LEFT JOIN estimate_recoveries er ON er.lead_id = l.id AND er.created_at > $2
          LEFT JOIN bookings b ON b.lead_id = l.id AND b.created_at > $2
          WHERE l.tenant_id = ANY($1) AND l.created_at > $2`,
-        [tenantIds, thirtyDaysAgo]
+        [tenantIds, currentWindow]
       ),
       // 1b. Previous Sales Metrics (30d-60d) for Trend calculation
       db.query(
@@ -524,61 +564,123 @@ router.get("/metrics", async (req, res) => {
          LEFT JOIN estimate_recoveries er ON er.lead_id = l.id AND er.created_at BETWEEN $2 AND $3
          LEFT JOIN bookings b ON b.lead_id = l.id AND b.created_at BETWEEN $2 AND $3
          WHERE l.tenant_id = ANY($1) AND l.created_at BETWEEN $2 AND $3`,
-        [tenantIds, sixtyDaysAgo, thirtyDaysAgo]
+        [tenantIds, prevWindow, currentWindow]
       ),
       // 2. AI Performance (last 30d)
       db.query(
         `SELECT 
           COUNT(*) as calls_handled,
-          (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND call_id IS NOT NULL AND created_at > $2) as appointments_booked
+          (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND call_id IS NOT NULL AND created_at > $2) as appointments_booked,
+          SUM(CASE WHEN disposition = 'booked' OR status ILIKE '%booked%' OR status = 'Estimate Scheduled' THEN 1 ELSE 0 END) as calls_booked,
+          SUM(CASE WHEN status = 'FollowUp Needed' OR disposition = 'follow_up' THEN 1 ELSE 0 END) as calls_followup,
+          SUM(CASE WHEN transfer_to IS NOT NULL OR disposition = 'transferred' THEN 1 ELSE 0 END) as calls_transferred,
+          SUM(CASE WHEN status = 'Spam' THEN 1 ELSE 0 END) as calls_spam,
+          SUM(CASE WHEN (disposition IS NULL OR disposition = 'completed') AND transfer_to IS NULL AND status NOT ILIKE '%booked%' AND status != 'Estimate Scheduled' AND status != 'FollowUp Needed' AND status != 'Spam' AND COALESCE(duration_minutes, 0) < 1.0 THEN 1 ELSE 0 END) as calls_hung_up,
+          SUM(CASE WHEN (disposition IS NULL OR disposition = 'completed') AND transfer_to IS NULL AND status NOT ILIKE '%booked%' AND status != 'Estimate Scheduled' AND status != 'FollowUp Needed' AND status != 'Spam' AND COALESCE(duration_minutes, 0) >= 1.0 THEN 1 ELSE 0 END) as calls_confused,
+          SUM(CASE WHEN (disposition IS NULL OR disposition = 'completed') AND transfer_to IS NULL AND status NOT ILIKE '%booked%' AND status != 'Estimate Scheduled' AND status != 'FollowUp Needed' AND status != 'Spam' AND COALESCE(duration_minutes, 0) < 0.16 THEN 1 ELSE 0 END) as hung_up_10s,
+          SUM(CASE WHEN (disposition IS NULL OR disposition = 'completed') AND transfer_to IS NULL AND status NOT ILIKE '%booked%' AND status != 'Estimate Scheduled' AND status != 'FollowUp Needed' AND status != 'Spam' AND COALESCE(duration_minutes, 0) >= 0.16 AND COALESCE(duration_minutes, 0) < 0.5 THEN 1 ELSE 0 END) as hung_up_30s,
+          SUM(CASE WHEN (disposition IS NULL OR disposition = 'completed') AND transfer_to IS NULL AND status NOT ILIKE '%booked%' AND status != 'Estimate Scheduled' AND status != 'FollowUp Needed' AND status != 'Spam' AND COALESCE(duration_minutes, 0) >= 0.5 AND COALESCE(duration_minutes, 0) < 1.0 THEN 1 ELSE 0 END) as hung_up_60s,
+          SUM(CASE WHEN transcript ILIKE '%can you repeat%' OR transcript ILIKE '%say that again%' THEN 1 ELSE 0 END) as confused_repeat,
+          SUM(CASE WHEN transcript ILIKE '%don''t understand%' OR transcript ILIKE '%do not understand%' THEN 1 ELSE 0 END) as confused_understand,
+          SUM(CASE WHEN transcript ILIKE '%what did you say%' THEN 1 ELSE 0 END) as confused_what_say,
+          SUM(CASE WHEN transcript ILIKE '%huh%' OR transcript ILIKE '%what?%' THEN 1 ELSE 0 END) as confused_huh
          FROM calls 
          WHERE tenant_id = ANY($1) AND started_at > $2`,
-        [tenantIds, thirtyDaysAgo]
+        [tenantIds, currentWindow]
       ),
       // 2b. AI Performance (30d-60d)
       db.query(
         `SELECT 
           COUNT(*) as calls_handled,
-          (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND call_id IS NOT NULL AND created_at BETWEEN $2 AND $3) as appointments_booked
+          (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND call_id IS NOT NULL AND created_at BETWEEN $2 AND $3) as appointments_booked,
+          SUM(CASE WHEN disposition = 'booked' OR status ILIKE '%booked%' OR status = 'Estimate Scheduled' THEN 1 ELSE 0 END) as calls_booked,
+          SUM(CASE WHEN status = 'FollowUp Needed' OR disposition = 'follow_up' THEN 1 ELSE 0 END) as calls_followup,
+          SUM(CASE WHEN transfer_to IS NOT NULL OR disposition = 'transferred' THEN 1 ELSE 0 END) as calls_transferred,
+          SUM(CASE WHEN status = 'Spam' THEN 1 ELSE 0 END) as calls_spam,
+          SUM(CASE WHEN (disposition IS NULL OR disposition = 'completed') AND transfer_to IS NULL AND status NOT ILIKE '%booked%' AND status != 'Estimate Scheduled' AND status != 'FollowUp Needed' AND status != 'Spam' AND COALESCE(duration_minutes, 0) < 1.0 THEN 1 ELSE 0 END) as calls_hung_up,
+          SUM(CASE WHEN (disposition IS NULL OR disposition = 'completed') AND transfer_to IS NULL AND status NOT ILIKE '%booked%' AND status != 'Estimate Scheduled' AND status != 'FollowUp Needed' AND status != 'Spam' AND COALESCE(duration_minutes, 0) >= 1.0 THEN 1 ELSE 0 END) as calls_confused,
+          SUM(CASE WHEN (disposition IS NULL OR disposition = 'completed') AND transfer_to IS NULL AND status NOT ILIKE '%booked%' AND status != 'Estimate Scheduled' AND status != 'FollowUp Needed' AND status != 'Spam' AND COALESCE(duration_minutes, 0) < 0.16 THEN 1 ELSE 0 END) as hung_up_10s,
+          SUM(CASE WHEN (disposition IS NULL OR disposition = 'completed') AND transfer_to IS NULL AND status NOT ILIKE '%booked%' AND status != 'Estimate Scheduled' AND status != 'FollowUp Needed' AND status != 'Spam' AND COALESCE(duration_minutes, 0) >= 0.16 AND COALESCE(duration_minutes, 0) < 0.5 THEN 1 ELSE 0 END) as hung_up_30s,
+          SUM(CASE WHEN (disposition IS NULL OR disposition = 'completed') AND transfer_to IS NULL AND status NOT ILIKE '%booked%' AND status != 'Estimate Scheduled' AND status != 'FollowUp Needed' AND status != 'Spam' AND COALESCE(duration_minutes, 0) >= 0.5 AND COALESCE(duration_minutes, 0) < 1.0 THEN 1 ELSE 0 END) as hung_up_60s,
+          SUM(CASE WHEN transcript ILIKE '%can you repeat%' OR transcript ILIKE '%say that again%' THEN 1 ELSE 0 END) as confused_repeat,
+          SUM(CASE WHEN transcript ILIKE '%don''t understand%' OR transcript ILIKE '%do not understand%' THEN 1 ELSE 0 END) as confused_understand,
+          SUM(CASE WHEN transcript ILIKE '%what did you say%' THEN 1 ELSE 0 END) as confused_what_say,
+          SUM(CASE WHEN transcript ILIKE '%huh%' OR transcript ILIKE '%what?%' THEN 1 ELSE 0 END) as confused_huh
          FROM calls 
          WHERE tenant_id = ANY($1) AND started_at BETWEEN $2 AND $3`,
-        [tenantIds, sixtyDaysAgo, thirtyDaysAgo]
+        [tenantIds, prevWindow, currentWindow]
       ),
-      // Lead Sources
+      // Lead Sources Analysis
       db.query(
         `SELECT 
           source,
-          SUM(leads) as leads,
-          SUM(booked) as booked,
-          SUM(revenue) as revenue
+          COUNT(*) as leads,
+          COUNT(DISTINCT b_id) as booked,
+          CASE WHEN COUNT(*) > 0 THEN ROUND((COUNT(DISTINCT b_id)::numeric / COUNT(*)::numeric) * 100) ELSE 0 END as rate,
+          COALESCE(SUM(actual_revenue), 0) as revenue
          FROM (
            SELECT 
              COALESCE(NULLIF(TRIM(lead_source), ''), 'Direct') as source,
-             COUNT(*) as leads,
-             COUNT(*) as booked,
-             COALESCE(SUM(estimated_revenue_cents), 0) as revenue
-           FROM bookings
-           WHERE tenant_id = ANY($1) AND created_at > $2
-           GROUP BY lead_source
+             b.id as b_id,
+             b.actual_revenue_cents as actual_revenue
+           FROM bookings b
+           WHERE b.tenant_id = ANY($1) AND b.created_at > $2
            UNION ALL
            SELECT 
              COALESCE(NULLIF(TRIM(lead_source), ''), 'Direct') as source,
-             COUNT(*) as leads,
-             0 as booked,
-             0 as revenue
-           FROM calls
-           WHERE tenant_id = ANY($1) AND started_at > $2 
-             AND twilio_call_sid NOT IN (
-               SELECT c.twilio_call_sid 
-               FROM calls c 
-               JOIN bookings b ON b.call_id = c.id 
-               WHERE c.tenant_id = ANY($1) AND c.twilio_call_sid IS NOT NULL
-             )
-           GROUP BY lead_source
+             NULL as b_id,
+             0 as actual_revenue
+           FROM calls c
+           WHERE c.tenant_id = ANY($1) AND c.started_at > $2 
+             AND c.id NOT IN (SELECT call_id FROM bookings WHERE call_id IS NOT NULL)
+           UNION ALL
+           SELECT 
+             COALESCE(NULLIF(TRIM(lead_source), ''), 'Direct') as source,
+             NULL as b_id,
+             0 as actual_revenue
+           FROM leads l
+           WHERE l.tenant_id = ANY($1) AND l.created_at > $2
+             AND l.id NOT IN (SELECT lead_id FROM bookings WHERE lead_id IS NOT NULL)
+             AND l.id NOT IN (SELECT lead_id FROM calls WHERE lead_id IS NOT NULL)
          ) t
          GROUP BY source
          ORDER BY leads DESC`,
-        [tenantIds, thirtyDaysAgo]
+        [tenantIds, currentWindow]
+      ),
+      // Contact Method Analysis
+      db.query(
+        `SELECT 
+          method,
+          COUNT(*) as actions,
+          COUNT(DISTINCT b_id) as booked,
+          CASE WHEN COUNT(*) > 0 THEN ROUND((COUNT(DISTINCT b_id)::numeric / COUNT(*)::numeric) * 100) ELSE 0 END as rate,
+          COALESCE(SUM(actual_revenue), 0) as revenue
+         FROM (
+           SELECT 'Phone call' as method, b.id as b_id, b.actual_revenue_cents as actual_revenue FROM bookings b JOIN calls c ON b.call_id = c.id WHERE b.tenant_id = ANY($1) AND b.created_at > $2
+           UNION ALL
+           SELECT 'Phone call' as method, NULL as b_id, 0 as actual_revenue FROM calls WHERE tenant_id = ANY($1) AND started_at > $2 AND id NOT IN (SELECT call_id FROM bookings WHERE call_id IS NOT NULL)
+           UNION ALL
+           SELECT 'SMS follow-up' as method, b.id as b_id, b.actual_revenue_cents as actual_revenue FROM bookings b JOIN leads l ON b.lead_id = l.id WHERE b.tenant_id = ANY($1) AND b.created_at > $2 AND b.call_id IS NULL AND l.id IN (SELECT lead_id FROM campaign_log WHERE channel = 'sms')
+           UNION ALL
+           SELECT 'Email' as method, b.id as b_id, b.actual_revenue_cents as actual_revenue FROM bookings b JOIN leads l ON b.lead_id = l.id WHERE b.tenant_id = ANY($1) AND b.created_at > $2 AND b.call_id IS NULL AND l.id IN (SELECT lead_id FROM campaign_log WHERE channel = 'email')
+           UNION ALL
+           SELECT 'Website chat' as method, b.id as b_id, b.actual_revenue_cents as actual_revenue FROM bookings b JOIN leads l ON b.lead_id = l.id WHERE b.tenant_id = ANY($1) AND b.created_at > $2 AND b.call_id IS NULL AND b.lead_source ILIKE '%chat%'
+         ) t
+         GROUP BY method
+         ORDER BY actions DESC`,
+        [tenantIds, currentWindow]
+      ),
+      // Operational Metrics
+      db.query(
+        `SELECT
+          COALESCE(AVG(actual_revenue_cents), 0) as avg_job_value,
+          COALESCE(AVG(EXTRACT(EPOCH FROM (b.created_at - l.created_at))/60), 0) as avg_time_to_book,
+          (SELECT COUNT(*) FROM estimate_recoveries WHERE tenant_id = ANY($1) AND status = 'converted' AND created_at > $2) as recovered_count,
+          (SELECT COUNT(*) FROM leads l JOIN estimate_recoveries er ON l.id = er.lead_id WHERE l.tenant_id = ANY($1) AND er.created_at > $2) as total_recoveries
+         FROM bookings b
+         JOIN leads l ON b.lead_id = l.id
+         WHERE b.tenant_id = ANY($1) AND b.created_at > $2`,
+        [tenantIds, currentWindow]
       ),
       // Trends
       db.query(
@@ -607,7 +709,17 @@ router.get("/metrics", async (req, res) => {
         `SELECT
           (SELECT COUNT(*) FROM leads WHERE tenant_id = ANY($1) AND status NOT IN ('Closed', 'Lost')) as open_leads,
           (SELECT COUNT(*) FROM leads WHERE tenant_id = ANY($1) AND status = 'New') as leads_needing_followup,
-          (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND status = 'scheduled') as jobs_scheduled`,
+          (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND LOWER(status) IN ('booked', 'confirmed', 'scheduled')) as jobs_scheduled,
+          (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND (LOWER(status) IN ('completed') OR actual_revenue_cents > 0)) as confirmed_jobs,
+          COALESCE(
+            (SELECT SUM(estimated_revenue_cents) FROM leads WHERE tenant_id = ANY($1) AND status NOT IN ('Closed', 'Lost') AND estimated_revenue_cents > 0),
+            0
+          ) + COALESCE(
+            (SELECT SUM(estimated_revenue_cents) FROM bookings WHERE tenant_id = ANY($1) AND LOWER(status) IN ('booked', 'confirmed', 'scheduled') AND lead_id IS NULL AND estimated_revenue_cents > 0),
+            0
+          ) as estimated_revenue,
+          (SELECT SUM(estimated_revenue_cents) FROM bookings WHERE tenant_id = ANY($1) AND LOWER(status) IN ('cancelled', 'lost', 'rejected', 'lost lead')) as lost_revenue,
+          (SELECT SUM(actual_revenue_cents) FROM bookings WHERE tenant_id = ANY($1)) as actual_revenue`,
         [tenantIds]
       ),
       // Nurturing
@@ -615,7 +727,7 @@ router.get("/metrics", async (req, res) => {
         `SELECT
           (SELECT COUNT(*) FROM campaign_log WHERE tenant_id = ANY($1) AND sent_at > $2) as emails_sent,
           (SELECT COUNT(*) FROM referral_leads WHERE tenant_id = ANY($1) AND created_at > $2) as referrals_generated`,
-        [tenantIds, thirtyDaysAgo]
+        [tenantIds, currentWindow]
       ),
       // 8. Location Breakdown (HQ Style)
       isRollup ? db.query(
@@ -623,12 +735,18 @@ router.get("/metrics", async (req, res) => {
           t.id, t.name, t.city, t.state, t.business_type,
           (SELECT COUNT(*) FROM calls c WHERE c.tenant_id = t.id AND c.started_at > $2) as total_calls,
           (SELECT COUNT(*) FROM bookings b WHERE b.tenant_id = t.id AND b.created_at > $2) as total_bookings,
-          (SELECT COALESCE(SUM(b.estimated_revenue_cents), 0) FROM bookings b WHERE b.tenant_id = t.id AND b.created_at > $2) as total_revenue,
+          COALESCE(
+            (SELECT SUM(l.estimated_revenue_cents) FROM leads l WHERE l.tenant_id = t.id AND l.status NOT IN ('Closed', 'Lost') AND l.estimated_revenue_cents > 0),
+            0
+          ) + COALESCE(
+            (SELECT SUM(b.estimated_revenue_cents) FROM bookings b WHERE b.tenant_id = t.id AND b.created_at > $2 AND b.lead_id IS NULL AND b.estimated_revenue_cents > 0),
+            0
+          ) as total_revenue,
           (SELECT COUNT(*) FROM leads l WHERE l.tenant_id = t.id AND l.status NOT IN ('Closed', 'Lost')) as open_leads
          FROM tenants t
          WHERE t.id = ANY($1)
          ORDER BY t.name ASC`,
-        [tenantIds, thirtyDaysAgo]
+        [tenantIds, currentWindow]
       ) : Promise.resolve({ rows: [] })
     ]);
 
@@ -708,7 +826,41 @@ router.get("/metrics", async (req, res) => {
         calls_handled: parseInt(ai.calls_handled, 10),
         ai_success_rate: ai.calls_handled > 0 ? Math.round((parseInt(ai.appointments_booked, 10) / parseInt(ai.calls_handled, 10)) * 100) : 0,
         appointments_booked: parseInt(ai.appointments_booked, 10),
-        missed_calls_recovered: parseInt(todayStats.rows[0].recovered || 0, 10) // Approx for individual view
+        missed_calls_recovered: parseInt(todayStats.rows[0].recovered || 0, 10), // Approx for individual view
+        
+        // Deep tracking
+        calls_booked: parseInt(ai.calls_booked || 0, 10),
+        calls_followup: parseInt(ai.calls_followup || 0, 10),
+        calls_transferred: parseInt(ai.calls_transferred || 0, 10),
+        calls_spam: parseInt(ai.calls_spam || 0, 10),
+        calls_hung_up: parseInt(ai.calls_hung_up || 0, 10),
+        calls_confused: parseInt(ai.calls_confused || 0, 10),
+        
+        // Deep analysis
+        hung_up_10s: parseInt(ai.hung_up_10s || 0, 10),
+        hung_up_30s: parseInt(ai.hung_up_30s || 0, 10),
+        hung_up_60s: parseInt(ai.hung_up_60s || 0, 10),
+        confused_repeat: parseInt(ai.confused_repeat || 0, 10),
+        confused_understand: parseInt(ai.confused_understand || 0, 10),
+        confused_what_say: parseInt(ai.confused_what_say || 0, 10),
+        confused_huh: parseInt(ai.confused_huh || 0, 10),
+      },
+      aiPrev: {
+        calls_handled: parseInt(aiPrev.calls_handled || 0, 10),
+        appointments_booked: parseInt(aiPrev.appointments_booked || 0, 10),
+        calls_booked: parseInt(aiPrev.calls_booked || 0, 10),
+        calls_followup: parseInt(aiPrev.calls_followup || 0, 10),
+        calls_transferred: parseInt(aiPrev.calls_transferred || 0, 10),
+        calls_spam: parseInt(aiPrev.calls_spam || 0, 10),
+        calls_hung_up: parseInt(aiPrev.calls_hung_up || 0, 10),
+        calls_confused: parseInt(aiPrev.calls_confused || 0, 10),
+        hung_up_10s: parseInt(aiPrev.hung_up_10s || 0, 10),
+        hung_up_30s: parseInt(aiPrev.hung_up_30s || 0, 10),
+        hung_up_60s: parseInt(aiPrev.hung_up_60s || 0, 10),
+        confused_repeat: parseInt(aiPrev.confused_repeat || 0, 10),
+        confused_understand: parseInt(aiPrev.confused_understand || 0, 10),
+        confused_what_say: parseInt(aiPrev.confused_what_say || 0, 10),
+        confused_huh: parseInt(aiPrev.confused_huh || 0, 10),
       },
       today: {
         calls: parseInt(todayStats.rows[0].calls || 0, 10),
@@ -718,7 +870,33 @@ router.get("/metrics", async (req, res) => {
       },
       pipeline: {
         open_estimates: parseInt(pipeline.open_leads || 0, 10),
-        jobs_scheduled: parseInt(pipeline.jobs_scheduled || 0, 10)
+        jobs_scheduled: parseInt(pipeline.jobs_scheduled || 0, 10),
+        confirmed_jobs: parseInt(pipeline.confirmed_jobs || 0, 10),
+        estimated_revenue: parseInt(pipeline.estimated_revenue || 0, 10),
+        lost_revenue: parseInt(pipeline.lost_revenue || 0, 10),
+        actual_revenue: pipeline.actual_revenue != null ? parseInt(pipeline.actual_revenue, 10) : null
+      },
+      metrics: {
+        sources: sourceStats.rows.map(r => ({
+          label: r.source,
+          leads: parseInt(r.leads, 10),
+          booked: parseInt(r.booked, 10),
+          rate: parseInt(r.rate, 10),
+          revenue: parseInt(r.revenue, 10)
+        })),
+        methods: contactMethodStats.rows.map(r => ({
+          label: r.label || r.method,
+          leads: parseInt(r.actions || r.leads, 10),
+          booked: parseInt(r.booked, 10),
+          rate: parseInt(r.rate, 10),
+          revenue: parseInt(r.revenue, 10)
+        })),
+        ops: {
+          avg_job_value: Math.round(parseInt(opsStats.rows[0]?.avg_job_value || 0, 10)),
+          avg_time_to_book: Math.round(parseInt(opsStats.rows[0]?.avg_time_to_book || 0, 10)),
+          recovered_count: parseInt(opsStats.rows[0]?.recovered_count || 0, 10),
+          followup_conv: (opsStats.rows[0]?.total_recoveries > 0) ? Math.round((parseInt(opsStats.rows[0].recovered_count, 10) / parseInt(opsStats.rows[0].total_recoveries, 10)) * 100) : 0
+        }
       },
       location_breakdown,
       insights,

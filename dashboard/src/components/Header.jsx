@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { getUser, logout } from "../api";
 import LocationSwitcher from "./LocationSwitcher";
+import NotificationBell from "./NotificationBell";
 
 /**
  * App header: logo, sidebar toggle (mobile), business selector, user menu.
@@ -68,6 +69,7 @@ export default function Header({ tenantId, tenants, onTenantChange, onMenuClick 
           <div className="flex items-center gap-2 sm:gap-3">
             {tenantId && (
               <>
+                <NotificationBell tenantId={tenantId} />
                 <div className="hidden sm:block h-6 w-px bg-stone-200" aria-hidden />
                 <LocationSwitcher 
                   tenantId={tenantId}

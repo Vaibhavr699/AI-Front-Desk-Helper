@@ -423,3 +423,20 @@ export function disconnectGoogleCalendar(tenantId) {
     method: "POST",
   });
 }
+
+/** Notifications */
+export function getNotifications(tenantId, limit = 20) {
+  return api(`/api/notifications?tenant_id=${tenantId}&limit=${limit}`);
+}
+
+export function markNotificationRead(id, tenantId) {
+  return api(`/api/notifications/${id}/read?tenant_id=${tenantId}`, {
+    method: "POST",
+  });
+}
+
+export function markAllNotificationsRead(tenantId) {
+  return api(`/api/notifications/mark-all-read?tenant_id=${tenantId}`, {
+    method: "POST",
+  });
+}

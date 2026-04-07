@@ -60,6 +60,7 @@ const billingRoutes = require("./routes/billing");
 const outboundRoutes = require("./routes/outbound");
 const { startOutboundEngine } = require("./services/outboundEngine");
 const { authMiddleware, requireSuperAdmin } = require("./lib/auth");
+const notificationsService = require("./services/notifications");
 
 const WEBSITE_CONTEXT_URL = process.env.WEBSITE_CONTEXT_URL || "https://www.gladiatorspainting.com";
 const WEBSITE_CONTEXT_MAX_CHARS = 10000;
@@ -617,6 +618,22 @@ async function safeUpdateCallSummary(callId, options = {}) {
     const metadata = (options.metadata && typeof options.metadata === "object") ? options.metadata : null;
     const leadId = options.leadId || undefined;
     const markEnded = Boolean(options.markEnded);
+
+    // Notification for spam detection
+    if (status === "Spam") {
+      try {
+        const callRes = await pool.query("SELECT tenant_id, from_number FROM calls WHERE id = $1", [callId]);
+        const call = callRes.rows[0];
+        if (call && call.tenant_id) {
+          await pool.query(
+            "INSERT INTO notifications (tenant_id, type, title, body, data, created_at) VALUES ($1, $2, $3, $4, $5, now())",
+            [call.tenant_id, 'spam_detected', 'Spam Call Detected', `Call from ${call.from_number || 'Unknown'} flagged as spam.`, JSON.stringify({ callId })]
+          );
+        }
+      } catch (e) {
+        console.error("Notification error:", e);
+      }
+    }
 
     async function runUpdate(includeTranscriptColumn) {
       const setParts = [];
@@ -2175,6 +2192,14 @@ app.post("/twilio-missed-call", async (req, res) => {
   }
 
   const tenant = to ? await getTenantByPhone(to) : null;
+  if (tenant) {
+    notificationsService.createNotification(tenant.id, {
+      type: 'missed_call',
+      title: 'Missed Call Detected',
+      body: `A call from ${from} was missed. AI sent an automated follow-up SMS.`,
+      data: { from, callStatus }
+    }).catch(e => console.error("Notification error:", e));
+  }
   const thread = getOrCreateSmsThread(from);
   const companyName = tenant?.company_name || "our team";
   const autoText = `Sorry we missed your call — this is ${companyName}. I can help with a fast quote and get your appointment booked. What kind of project are you planning?`;
@@ -2934,6 +2959,15 @@ sendToOpenAI(sessionUpdate);
                   notes: args.notes || args.details || args.scope
                 }).catch(e => console.error("[AI-Desk] Lead update failed:", e.message));
               }
+              
+              // Notification for lead capture
+              notificationsService.createNotification(tenant.id, {
+                type: 'lead_captured',
+                title: 'New Lead Info Captured',
+                body: `Captured details for ${args.contact_name || 'a new lead'} (${args.contact_phone || 'unknown phone'}).`,
+                data: { leadId, ...args }
+              }).catch(e => console.error("Notification error:", e));
+
               output = JSON.stringify({ success: true, message: "Lead info captured. Continue the conversation." });
             } else if (name === "book_appointment" && tenant && callId) {
               console.log("[AI-Desk] Realtime book_appointment callSid=%s tenantId=%s callId=%s recovery=%s", callSid, tenant.id, callId, isRecovery);
@@ -2942,6 +2976,14 @@ sendToOpenAI(sessionUpdate);
               // 1. Create local booking
               const { booking, crmSynced } = await bookingsService.createBooking(tenant.id, callId, args, leadId, leadSource);
               console.log("[AI-Desk] Realtime booking done id=%s crmSynced=%s", booking.id, crmSynced);
+              
+              // Notification for new booking
+              notificationsService.createNotification(tenant.id, {
+                type: 'booking_created',
+                title: 'New Booking Created',
+                body: `${args.contact_name || 'A customer'} booked an appointment for ${args.preferred_date || 'a future date'}.`,
+                data: { bookingId: booking.id, callId }
+              }).catch(e => console.error("Notification error:", e));
               
               // 2. Sync to Google Calendar
               calendar.syncToGoogleCalendar(booking, tenant).catch(e => console.error("[Calendar] Auto-sync failed:", e.message));
@@ -3014,6 +3056,15 @@ sendToOpenAI(sessionUpdate);
                     location: args.location
                   }
                 );
+
+                // Notification for transfer request
+                notificationsService.createNotification(tenant.id, {
+                  type: 'transfer_requested',
+                  title: 'Human Transfer Requested',
+                  body: `Caller ${args.caller_name || ''} (${args.caller_phone || ''}) requested to speak with a human. Reason: ${args.reason || 'Not specified'}.`,
+                  data: { ...args, callSid }
+                }).catch(e => console.error("Notification error:", e));
+
                 output = JSON.stringify(result);
               }
             } else if (name === "hang_up" && callSid) {
@@ -3723,6 +3774,17 @@ cron.schedule("0 9 * * *", () => {
   nurturingService.processMaintenanceReminders().catch((e) => console.error("Nurturing maintenance:", e));
   nurturingService.processReengagement().catch((e) => console.error("Nurturing reengagement:", e));
   nurturingService.processSeasonalCampaigns().catch((e) => console.error("Nurturing seasonal:", e));
+  notificationsService.sendDailySummary().catch((e) => console.error("Daily summary notification failed:", e));
+});
+
+// Check hung-up rate every hour
+cron.schedule("0 * * * *", () => {
+  notificationsService.checkHungUpRates().catch((e) => console.error("Hung-up rate notification failed:", e));
+});
+
+// Check usage alerts every 4 hours
+cron.schedule("0 */4 * * *", () => {
+  notificationsService.checkUsageAlerts().catch((e) => console.error("Usage alert notification failed:", e));
 });
 
 // -------------------- Listen --------------------

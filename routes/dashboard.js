@@ -12,6 +12,7 @@ const router = express.Router();
 const estimateRecovery = require("../services/estimateRecovery");
 const emailService = require("../services/email");
 const nurturingService = require("../services/nurturing");
+const notificationsService = require("../services/notifications");
 const { getTenantIdFromQuery, getTargetTenantIds, requireRole, ROLES } = auth;
 
 /** Normalize a US phone to E.164 (+1XXXXXXXXXX). Returns null if invalid. */
@@ -492,6 +493,12 @@ router.patch("/followups/:id/status", async (req, res) => {
       if (rec.lead_id) {
         await db.query("UPDATE leads SET status = 'Booked' WHERE id = $1", [rec.lead_id]);
       }
+      notificationsService.createNotification(rec.tenant_id, {
+        type: 'follow_up_converted',
+        title: 'Follow-up Converted',
+        body: `Follow-up for ${rec.contact_name} has been successfully converted to a booking.`,
+        data: { recoveryId, leadId: rec.lead_id }
+      }).catch(e => console.error("Notification error:", e));
     } else if (status === 'lost') {
       await estimateRecovery.markCancelled(recoveryId);
       const rec = await estimateRecovery.getRecoveryById(recoveryId);
@@ -1771,6 +1778,52 @@ router.post("/tenants/:id/reset-api-key", async (req, res) => {
     );
     if (result.rows.length === 0) return res.status(404).json({ error: "Not found" });
     res.json({ api_key: result.rows[0].api_key });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// --- Notifications ---
+router.get("/notifications", async (req, res) => {
+  try {
+    const tenantIds = await getTargetTenantIds(req);
+    if (tenantIds.length === 0) return res.status(400).json({ error: "tenant_id required" });
+    const limit = parseInt(req.query.limit, 10) || 20;
+
+    // Use a custom query here instead of notificationsService.getUnreadNotifications 
+    // to support multiple tenant IDs easily
+    const q = `
+      SELECT * FROM notifications 
+      WHERE tenant_id = ANY($1) AND read = FALSE 
+      ORDER BY created_at DESC 
+      LIMIT $2
+    `;
+    const result = await db.query(q, [tenantIds, limit]);
+    res.json({ notifications: result.rows });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.post("/notifications/:id/read", async (req, res) => {
+  try {
+    const tenantId = getTenantIdFromQuery(req);
+    const notification = await notificationsService.markAsRead(req.params.id, tenantId);
+    if (!notification) return res.status(404).json({ error: "Not found or unauthorized" });
+    res.json({ success: true, notification });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.post("/notifications/mark-all-read", async (req, res) => {
+  try {
+    const tenantId = getTenantIdFromQuery(req);
+    const result = await notificationsService.markAllAsRead(tenantId);
+    res.json({ success: true, count: result.count });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error" });

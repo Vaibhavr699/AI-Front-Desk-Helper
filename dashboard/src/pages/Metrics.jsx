@@ -14,13 +14,16 @@ import {
   Globe,
   TrendingUp,
   CreditCard,
-  Target
+  Target,
+  PhoneOff,
+  HelpCircle
 } from "lucide-react";
 
 import { MetricHero } from "../components/metrics/MetricHero";
 import { ModernKpiCard } from "../components/metrics/ModernKpiCard";
 import { OutcomeBar } from "../components/metrics/OutcomeBar";
 import { InsightBar } from "../components/metrics/InsightBar";
+import { AnalysisCard } from "../components/metrics/AnalysisCard";
 
 // Global Helpers
 const formatPrice = (c) => `$${Math.round(c/100).toLocaleString()}`;
@@ -196,9 +199,37 @@ export default function Metrics({ tenantId }) {
                 <OutcomeBar dotColor="bg-orange-500" color="bg-orange-500" label="Follow-up needed" count={followup} pct={Math.round((followup/Math.max(callsHandled,1))*100)} trend="0%" />
                 <OutcomeBar dotColor="bg-blue-500" color="bg-blue-500" label="Transferred" count={transferred} pct={Math.round((transferred/Math.max(callsHandled,1))*100)} trend="0%" />
              </div>
-          </div>
         </div>
-      </section>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pt-6">
+          <AnalysisCard 
+            title="Hung-up call analysis"
+            question="When in the call did they hang up?"
+            icon={PhoneOff}
+            headers={["Timing window", "Calls", "% Weight"]}
+            rows={[
+              ["Under 10 seconds", ai.hung_up_10s || 0, `${Math.round(((ai.hung_up_10s || 0) / Math.max(hungup, 1)) * 100)}%`],
+              ["10–30 seconds", ai.hung_up_30s || 0, `${Math.round(((ai.hung_up_30s || 0) / Math.max(hungup, 1)) * 100)}%`],
+              ["30+ seconds", Math.max(0, hungup - (ai.hung_up_10s || 0) - (ai.hung_up_30s || 0)), `${Math.round((Math.max(0, hungup - (ai.hung_up_10s || 0) - (ai.hung_up_30s || 0)) / Math.max(hungup, 1)) * 100)}%`]
+            ]}
+            insightText={`${Math.round((( (ai.hung_up_10s||0) + (ai.hung_up_30s||0) ) / Math.max(hungup, 1)) * 100)}% of hung-up calls ended in the first 30 seconds. This points to the ${ ( (ai.hung_up_10s||0) + (ai.hung_up_30s||0) ) / Math.max(hungup, 1) > 0.6 ? "greeting or AI voice as the issue — not the conversation itself. Try updating the welcome message in Settings." : "conversation flow. Review the AI instructions." }`}
+          />
+          <AnalysisCard 
+            title="Confused call triggers"
+            question="What phrases caused confusion — last 30 days"
+            icon={HelpCircle}
+            headers={["Trigger phrase detected", "Count", "Resolved?"]}
+            rows={[
+              ["\"Can you repeat that?\"", ai.confused_repeat || 0, { text: "Yes", color: "bg-emerald-50 text-emerald-600 border border-emerald-100" }],
+              ["\"I don't understand\"", ai.confused_understand || 0, { text: "Partial", color: "bg-orange-50 text-orange-600 border border-orange-100" }],
+              ["\"What did you say?\"", ai.confused_what_say || 0, { text: "Yes", color: "bg-emerald-50 text-emerald-600 border border-emerald-100" }],
+              ["\"Huh?\" / \"What?\"", ai.confused_huh || 0, { text: "No", color: "bg-rose-50 text-rose-600 border border-rose-100" }]
+            ]}
+            insightText={`AI is handling confusion well overall — ${Math.round((confused / Math.max(callsHandled, 1)) * 100)}% rate is ${ (confused / Math.max(callsHandled, 1)) < 0.05 ? "excellent" : "within target range" }. Most confusion signals are resolved during the call.`}
+          />
+        </div>
+      </div>
+    </section>
 
       {/* Tables Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pb-12">

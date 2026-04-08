@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../lib/db");
-const { getTenantIdFromQuery, requireRole, ROLES } = require("../lib/auth");
+const { getGuaranteedTenantId, requireRole, ROLES } = require("../lib/auth");
 
 // Only Owners and Admins can access billing
 router.use(requireRole([ROLES.OWNER, ROLES.ADMIN]));
@@ -20,7 +20,7 @@ const OVERAGE_RATES = {
 
 router.get("/usage", async (req, res) => {
   try {
-    const tenantId = getTenantIdFromQuery(req);
+    const tenantId = getGuaranteedTenantId(req);
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
 
     // Get current month range
@@ -114,7 +114,7 @@ router.get("/usage", async (req, res) => {
 
 router.post("/alerts", async (req, res) => {
   try {
-    const tenantId = getTenantIdFromQuery(req);
+    const tenantId = getGuaranteedTenantId(req);
     const { thresholds, enabled } = req.body;
     if (!thresholds && enabled === undefined) return res.status(400).json({ error: "No changes provided" });
 

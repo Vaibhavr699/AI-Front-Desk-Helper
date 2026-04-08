@@ -2,7 +2,7 @@
 
 const express = require("express");
 const { createCheckoutSession, createPortalSession, handleWebhookEvent, stripe } = require("../lib/stripe");
-const { getTenantIdFromQuery, requireRole, ROLES } = require("../lib/auth");
+const { getGuaranteedTenantId, requireRole, ROLES } = require("../lib/auth");
 
 const router = express.Router();
 
@@ -16,7 +16,7 @@ router.use(requireRole([ROLES.OWNER, ROLES.ADMIN]));
  */
 router.post("/checkout", async (req, res) => {
     try {
-        const tenant_id = getTenantIdFromQuery(req);
+        const tenant_id = getGuaranteedTenantId(req);
         const { plan_id, return_url } = req.body || {};
         if (!tenant_id) return res.status(400).json({ error: "tenant_id required" });
         if (!plan_id) return res.status(400).json({ error: "plan_id required" });
@@ -36,7 +36,7 @@ router.post("/checkout", async (req, res) => {
  */
 router.post("/checkout-bundle", async (req, res) => {
     try {
-        const tenant_id = getTenantIdFromQuery(req);
+        const tenant_id = getGuaranteedTenantId(req);
         const { minutes, price_id, return_url } = req.body || {};
         if (!tenant_id) return res.status(400).json({ error: "tenant_id required" });
         if (!minutes) return res.status(400).json({ error: "minutes required" });
@@ -58,7 +58,7 @@ router.post("/checkout-bundle", async (req, res) => {
  */
 router.post("/checkout-addon-number", async (req, res) => {
     try {
-        const tenant_id = getTenantIdFromQuery(req);
+        const tenant_id = getGuaranteedTenantId(req);
         const { return_url } = req.body || {};
         if (!tenant_id) return res.status(400).json({ error: "tenant_id required" });
 
@@ -78,7 +78,7 @@ router.post("/checkout-addon-number", async (req, res) => {
  */
 router.post("/portal", async (req, res) => {
     try {
-        const tenant_id = getTenantIdFromQuery(req);
+        const tenant_id = getGuaranteedTenantId(req);
         const { return_url } = req.body || {};
         if (!tenant_id) return res.status(400).json({ error: "tenant_id required" });
 
@@ -96,7 +96,7 @@ router.post("/portal", async (req, res) => {
  */
 router.get("/status", async (req, res) => {
     try {
-        const tenantId = getTenantIdFromQuery(req);
+        const tenantId = getGuaranteedTenantId(req);
         if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
 
         const db = require("../lib/db");

@@ -516,10 +516,21 @@ router.patch("/followups/:id/status", async (req, res) => {
 
 router.get("/metrics", async (req, res) => {
   try {
-    const tenantIds = await getTargetTenantIds(req);
-    if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
+    let tenantIds = await getTargetTenantIds(req);
+    
+    // Defensive safety: filter out non-UUID strings like 'all' if they leaked through
+    tenantIds = tenantIds.filter(id => /^[0-9a-f-]{36}$/i.test(id));
+    
+    if (!tenantIds.length) {
+      console.warn(`[Metrics] No valid tenant UUIDs resolved for request. User=${req.user?.sub}`);
+      return res.status(400).json({ error: "No valid business location selected" });
+    }
 
-    const period = req.query.period || '30d';
+    const period = req.query.period || req.query.range || "30d";
+    let isRollup = tenantIds.length > 1 || req.query.rollup === 'true';
+    
+    console.log(`[Metrics] Request: user=${req.user?.email} targets=[${tenantIds.join(",")}] rollup=${isRollup} period=${period}`);
+
     let days = 30;
     if (period === '7d') days = 7;
     else if (period === '90d') days = 90;
@@ -529,9 +540,6 @@ router.get("/metrics", async (req, res) => {
     currentWindow.setDate(currentWindow.getDate() - days);
     const prevWindow = new Date();
     prevWindow.setDate(prevWindow.getDate() - (days * 2));
-
-    const isRollup = tenantIds.length > 1;
-    console.log(`[Metrics] Fetching for tenants=[${tenantIds.join(",")}] rollup=${isRollup}`);
 
     const [
       salesStats,

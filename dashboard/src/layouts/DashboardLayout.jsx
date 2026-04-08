@@ -102,11 +102,17 @@ export default function DashboardLayout() {
         
         // Correct active tenant if it's not in the list (e.g. session carry-over)
         const inList = list.find(t => t.id === tenantId);
-        if (!inList) {
+        const isHQUser = user?.tenant_business_type === 'parent' || list.some(t => t.business_type === 'parent');
+        const isValidAll = tenantId === "all" && isHQUser;
+
+        if (!inList && !isValidAll) {
           const resetId = list[0]?.id || "";
           console.warn("[DashboardLayout] Current tenantId %s not in list, resetting to %s", tenantId, resetId);
           setTenantId(resetId);
           setTenant(list[0]);
+        } else if (isValidAll) {
+          setTenant({ id: "all", name: "All Locations", business_type: "rollup" });
+          setIsSuspended(false);
         } else {
           setTenant(inList);
           setIsSuspended(inList.is_suspended && !user?.is_super_admin && !impersonating);
@@ -260,7 +266,7 @@ export default function DashboardLayout() {
         </main>
       </div>
 
-      <ChatWidget tenantId={tenantId} />
+      {tenantId !== "all" && <ChatWidget tenantId={tenantId} />}
 
       <CookieConsent
         location="bottom"

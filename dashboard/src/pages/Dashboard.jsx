@@ -407,16 +407,38 @@ function ZapierGuideModal({ onClose }) {
                  Step 2: Map the Data
                </h3>
                <p className="text-[11px] text-gray-500 leading-relaxed mb-3 text-left">
-                 In the <strong>Data</strong> section, map your CRM fields to these values. We use the phone number to automatically match the revenue to the correct call.
+                 In the <strong>Action → Data</strong> section, enter these keys on the left and select the matching fields from your CRM on the right. 
                </p>
-               <div className="bg-gray-900 rounded-lg p-5 text-emerald-400 font-mono text-[10px] leading-relaxed text-left">
-                  {`{\n`}
-                  {`  "api_key": "YOUR_API_KEY",\n`}
-                  {`  "contact_name": "Customer Name",\n`}
-                  {`  "contact_phone": "Customer Phone",\n`}
-                  {`  "estimated_revenue_cents": 150000,\n`}
-                  {`  "lead_source": "DripJobs Update"\n`}
-                  {`}`}
+               <div className="bg-gray-900 rounded-lg p-5 text-emerald-400 font-mono text-[10px] leading-relaxed text-left border-l-4 border-emerald-500 shadow-xl">
+                  <div className="flex justify-between border-b border-gray-800 pb-2 mb-2 text-gray-500 uppercase font-bold text-[9px] tracking-widest">
+                    <span>Key (Type this in)</span>
+                    <span>Value (Select from CRM)</span>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span className="text-gray-300">api_key</span>
+                    <span>YOUR_API_KEY</span>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span className="text-gray-300">contact_name</span>
+                    <span className="text-emerald-500 italic">"First Name" + "Last Name"</span>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span className="text-gray-300">contact_phone</span>
+                    <span className="text-emerald-500 italic">"Phone Number"</span>
+                  </div>
+                  <div className="flex justify-between py-1">
+                    <span className="text-gray-300">estimated_revenue_cents</span>
+                    <span className="text-emerald-500 italic">"Total Price"</span>
+                  </div>
+               </div>
+               
+               <div className="mt-3 p-3 bg-rose-50 border border-rose-100 rounded-xl">
+                 <p className="text-[10px] font-black text-rose-700 uppercase tracking-widest mb-1 flex items-center gap-1">
+                   <AlertCircle size={10} /> Common Mapping Error
+                 </p>
+                 <p className="text-[10px] text-rose-600 leading-relaxed">
+                   <strong>Do not</strong> map more than one field into the revenue box. Zapier will combine them (e.g. "$1200NewStage") which the system cannot process. Select only the numeric total.
+                 </p>
                </div>
             </section>
 

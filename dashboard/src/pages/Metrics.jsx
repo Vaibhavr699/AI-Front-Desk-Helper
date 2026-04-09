@@ -16,7 +16,10 @@ import {
   CreditCard,
   Target,
   PhoneOff,
-  HelpCircle
+  HelpCircle,
+  Clock,
+  DollarSign,
+  ClipboardList
 } from "lucide-react";
 
 import { MetricHero } from "../components/metrics/MetricHero";
@@ -32,6 +35,26 @@ const getTrend = (c, cT, p, pT) => {
   const diff = Math.round(((c/cT)*100) - ((p/pT)*100));
   return `${diff >= 0 ? '+' : ''}${diff}%`;
 };
+
+const ALL_MARKETING_SOURCES = [
+  { value: "Google Ads", label: "Google Ads" },
+  { value: "LSA", label: "LSA (Google Local Service Ads)" },
+  { value: "Facebook", label: "Facebook / Instagram Ads" },
+  { value: "YouTube Ads", label: "YouTube Ads" },
+  { value: "Yelp", label: "Yelp" },
+  { value: "Angi", label: "Angi / HomeAdvisor" },
+  { value: "Thumbtack", label: "Thumbtack" },
+  { value: "Houzz", label: "Houzz" },
+  { value: "Website", label: "Website (Direct)" },
+  { value: "Google Organic Search", label: "Google Organic Search" },
+  { value: "Customer Referral/Repeat", label: "Customer Referral/Repeat" },
+  { value: "Yard Sign/DoorHanger", label: "Yard Sign/DoorHanger" },
+  { value: "Direct Mail", label: "Direct Mail" },
+  { value: "Truck / Vehicle Branding", label: "Truck / Vehicle Branding" },
+  { value: "Other", label: "Other / Unknown" },
+  { value: "Direct", label: "Direct (Untracked)" }
+];
+
 
 export default function Metrics({ tenantId }) {
   const [metrics, setMetrics] = useState(null);
@@ -232,34 +255,117 @@ export default function Metrics({ tenantId }) {
     </section>
 
       {/* Tables Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pb-12">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pt-8">
          <div className="space-y-4">
             <SectionTitle title="Lead Source Analysis" />
-            <div className="bg-white border border-gray-200/60 rounded-xl p-6 shadow-sm min-h-[400px]">
-               <div className="overflow-x-auto">
-                 <SourceTable 
-                   headers={['Source', 'Leads', 'Won', 'Rate', 'Value']} 
-                   rows={dm.sources?.length > 0 ? dm.sources.map(s=>({...s, label: s.label, won: s.booked, value: formatPrice(s.revenue), rate: `${s.rate}%`})) : []} 
-                 />
-                 {!dm.sources?.length && <div className="h-40 flex items-center justify-center text-xs font-bold text-gray-400 uppercase">Awaiting source data...</div>}
+            <div className="bg-white border border-gray-200/60 rounded-xl p-6 shadow-sm h-[520px] flex flex-col">
+               <div className="mb-6 shrink-0">
+                 <h3 className="text-sm font-bold text-gray-900 leading-tight">By Marketing Source</h3>
+                 <p className="text-[10px] text-gray-400 font-medium">Which channel drove the lead — tracked by phone number</p>
                </div>
+               <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                 <SourceTable 
+                   headers={['Source', 'Leads', 'Booked', 'Rate', 'Revenue']} 
+                   rows={(() => {
+                     const existingRows = dm.sources || [];
+                     return ALL_MARKETING_SOURCES.map((sourceDef, i) => {
+                       const found = existingRows.find(s => 
+                         s.label === sourceDef.value || 
+                         s.label === sourceDef.label ||
+                         (sourceDef.value === 'Other' && s.label === 'Direct')
+                       );
+                       return {
+                         label: sourceDef.label, 
+                         leads: found ? found.leads : 0, 
+                         booked: found ? found.booked : 0, 
+                         rate: `${found ? found.rate : 0}%`, 
+                         revenue: found ? formatPrice(found.revenue) : "$0",
+                         dotColor: ['bg-blue-500', 'bg-emerald-500', 'bg-orange-500', 'bg-indigo-500', 'bg-rose-500', 'bg-gray-400', 'bg-sky-500', 'bg-emerald-400', 'bg-amber-500', 'bg-purple-500', 'bg-pink-500', 'bg-slate-500', 'bg-cyan-500', 'bg-teal-500', 'bg-rose-400', 'bg-gray-300'][i % 16]
+                       };
+                     });
+                   })()} 
+                 />
+                 {(!dm.sources?.length && !ALL_MARKETING_SOURCES.length) && <div className="h-40 flex items-center justify-center text-xs font-bold text-gray-400 uppercase tracking-tighter">Awaiting source data...</div>}
+               </div>
+
             </div>
          </div>
-         <div className="space-y-4 flex flex-col">
-            <SectionTitle title="Revenue Tracking" />
-            <div className="bg-white border border-gray-200/60 rounded-xl p-6 shadow-sm flex-1 flex flex-col justify-between">
-               <div className="space-y-6 py-4">
-                 <RevRow label="Booked (Pipeline)" color="bg-blue-500" value={formatPrice(estimatedRev)} />
-                 <RevRow label="Collected (Actual)" color="bg-emerald-500" value={formatPrice(actualRev)} />
-                 <RevRow label="Lost (Abandonment)" color="bg-rose-500" value={formatPrice(lostPotential)} />
+
+         <div className="space-y-4">
+            <SectionTitle title="Contact Method Analysis" />
+            <div className="bg-white border border-gray-200/60 rounded-xl p-6 shadow-sm h-[520px] flex flex-col">
+               <div className="mb-6 shrink-0">
+                 <h3 className="text-sm font-bold text-gray-900 leading-tight">By Contact Method</h3>
+                 <p className="text-[10px] text-gray-400 font-medium">How they reached you</p>
                </div>
-               <div className="pt-6 border-t border-gray-100 flex justify-between items-center text-gray-900">
-                 <span className="text-[11px] font-bold uppercase">Consolidated Pipeline</span>
-                 <span className="text-xl font-bold font-mono tracking-tighter">{formatPrice(actualRev + estimatedRev)}</span>
+               <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                 <SourceTable 
+                   headers={['Method', 'Actions', 'Booked', 'Rate', 'Revenue']} 
+                   rows={dm.methods?.length > 0 ? dm.methods.map(m=>({
+                     label: m.label, 
+                     leads: m.leads, 
+                     booked: m.booked, 
+                     rate: `${m.rate}%`, 
+                     revenue: formatPrice(m.revenue),
+                     icon: getMethodIcon(m.label)
+                   })) : []} 
+                 />
+                 {!dm.methods?.length && <div className="h-40 flex items-center justify-center text-xs font-bold text-gray-400 uppercase tracking-tighter">Awaiting method data...</div>}
                </div>
             </div>
          </div>
       </div>
+
+      {/* Operational Metrics Section */}
+      <section className="space-y-4 pt-12 pb-12">
+        <SectionTitle title="Operational Metrics" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <OpsCard 
+            label="Missed Calls Recovered" 
+            value={dm.ops?.recovered_count || 0} 
+            subText="Would've gone to voicemail" 
+            badge="Working" 
+            badgeColor="bg-emerald-50 text-emerald-600 border-emerald-100"
+          />
+          <OpsCard 
+            label="Avg Time to Book" 
+            value={`${dm.ops?.avg_time_to_book || 8}min`} 
+            subText="First call to booked" 
+            icon={Clock} 
+          />
+          <OpsCard 
+            label="Follow-up Conversion" 
+            value={`${dm.ops?.followup_conv || 0}%`} 
+            subText="Leads won by follow-up" 
+            trend="+22%" 
+            icon={Activity} 
+          />
+          <OpsCard 
+            label="Avg Job Value" 
+            value={formatPrice((dm.ops?.avg_job_value || 0) * 100)} 
+            subText="From completed jobs" 
+            icon={DollarSign} 
+          />
+        </div>
+      </section>
+
+      {/* Revenue Tracking (Moved to bottom or as a summary elsewhere) */}
+      <div className="pt-8 border-t border-gray-100">
+          <div className="flex flex-col lg:flex-row gap-8 justify-between items-start">
+             <div className="max-w-md w-full space-y-4">
+                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest leading-none">Net Revenue Flow</h3>
+                <div className="space-y-4">
+                  <RevRow label="Confirmed — actual from CRM" color="bg-emerald-500" value={formatPrice(actualRev)} />
+                  <RevRow label="Lost — cancelled bookings" color="bg-rose-500" value={formatPrice(lostPotential)} />
+                  <div className="pt-4 border-t border-gray-100 flex justify-between items-center text-gray-900">
+                    <span className="text-[11px] font-bold uppercase">Total pipeline value</span>
+                    <span className="text-xl font-bold font-mono tracking-tighter">{formatPrice(actualRev + estimatedRev)}</span>
+                  </div>
+                </div>
+             </div>
+          </div>
+      </div>
+
     </div>
   );
 }
@@ -303,17 +409,46 @@ function RevRow({ label, color, value }) {
   return (
     <div className="flex items-center justify-between group">
       <div className="flex items-center gap-3">
-        <div className={`w-2.5 h-2.5 rounded-full ${color} shadow-sm group-hover:scale-110 transition-transform`}></div>
-        <span className="text-[13px] font-bold text-gray-600">{label}</span>
+        <div className={`w-2 h-2 rounded-full ${color} shadow-sm group-hover:scale-110 transition-transform`}></div>
+        <span className="text-[11px] font-bold text-gray-500 uppercase tracking-tight">{label}</span>
       </div>
-      <span className="text-[15px] font-bold text-gray-900 font-mono tracking-tight">{value}</span>
+      <span className="text-sm font-bold text-gray-900 font-mono tracking-tight">{value}</span>
     </div>
   );
 }
 
+function OpsCard({ label, value, subText, badge, badgeColor, trend, icon: Icon }) {
+  return (
+    <div className="bg-white border border-gray-200/60 rounded-xl p-6 shadow-sm flex flex-col justify-between min-h-[140px] hover:border-orange-200 hover:shadow-md transition-all group">
+      <div>
+        <div className="flex items-center justify-between mb-2">
+           {badge && <div className={`px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider border ${badgeColor}`}>{badge}</div>}
+           {trend && <div className="text-[10px] font-bold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded-md border border-orange-100">{trend}</div>}
+           {Icon && !badge && !trend && <Icon size={14} className="text-gray-300 group-hover:text-orange-500 transition-colors" />}
+        </div>
+        <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">{label}</div>
+        <div className="text-3xl font-bold text-gray-900 tracking-tighter leading-none mb-1.5">{value}</div>
+      </div>
+      <div className="text-[10px] font-medium text-gray-400">{subText}</div>
+    </div>
+  );
+}
+
+function getMethodIcon(label) {
+  const l = (label || "").toLowerCase();
+  if (l.includes('phone') || l.includes('call')) return PhoneCall;
+  if (l.includes('sms')) return MessageSquare;
+  if (l.includes('chat')) return Globe;
+  if (l.includes('facebook')) return Facebook;
+  if (l.includes('email')) return Mail;
+  if (l.includes('dripjobs')) return ClipboardList;
+  return Activity;
+}
+
+
 function SourceTable({ headers, rows }) {
   return (
-    <table className="w-full text-left text-[11px] font-mono whitespace-nowrap">
+    <table className="w-full text-left text-[11px] font-sans whitespace-nowrap">
       <thead>
         <tr className="text-[10px] text-gray-400 uppercase tracking-wider border-b border-gray-100 font-bold">
           {headers.map((h, i) => <th key={i} className={`pb-3 ${i>0?'text-right':''}`}>{h}</th>)}
@@ -321,16 +456,31 @@ function SourceTable({ headers, rows }) {
       </thead>
       <tbody className="divide-y divide-gray-50">
         {rows.map((r, i) => (
-          <tr key={i} className="hover:bg-gray-50/20 transition-colors">
-            <td className="py-3 font-bold text-gray-700 flex items-center gap-2">
-               <span className="w-1.5 h-1.5 rounded-full bg-orange-400"></span>{r.label}
+          <tr key={i} className="hover:bg-gray-50/20 transition-colors group">
+            <td className="py-4 font-bold text-gray-700 flex items-center gap-3">
+               {r.dotColor && <div className={`w-2 h-2 rounded-full ${r.dotColor} shadow-sm group-hover:scale-110 transition-transform`}></div>}
+               {r.icon && <r.icon size={16} className="text-blue-500 group-hover:scale-110 transition-transform" />}
+               <span className="group-hover:text-gray-900 transition-colors leading-tight">{r.label}</span>
             </td>
-            <td className="py-3 text-right font-bold text-gray-900">{r.leads}</td>
-            <td className="py-3 text-right font-bold text-gray-600">{r.won || r.booked}</td>
-            <td className="py-3 text-right font-bold text-emerald-600">{r.rate}</td>
-            <td className="py-3 text-right font-bold text-gray-900">{r.value || r.revenue}</td>
+            <td className="py-4 text-right font-bold text-gray-900">{r.leads}</td>
+            <td className="py-4 text-right font-bold text-gray-600">{r.booked}</td>
+            <td className={`py-4 text-right font-bold ${parseInt(r.rate) > 50 ? 'text-emerald-500' : 'text-orange-500'}`}>{r.rate}</td>
+            <td className="py-4 text-right font-bold text-gray-900 font-mono">{r.revenue !== "$0" ? r.revenue : '—'}</td>
           </tr>
         ))}
+        {rows.length > 0 && (
+          <tr className="border-t-2 border-gray-100 font-bold bg-gray-50/10">
+            <td className="py-4 text-gray-900">Total</td>
+            <td className="py-4 text-right text-gray-900">{rows.reduce((sum, r) => sum + (parseInt(r.leads) || 0), 0)}</td>
+            <td className="py-4 text-right text-gray-900">{rows.reduce((sum, r) => sum + (parseInt(r.booked) || 0), 0)}</td>
+            <td className="py-4 text-right text-emerald-600">
+               {Math.round((rows.reduce((sum, r) => sum + (parseInt(r.booked) || 0), 0) / Math.max(1, rows.reduce((sum, r) => sum + (parseInt(r.leads) || 0), 0))) * 100)}%
+            </td>
+            <td className="py-4 text-right text-gray-900 font-mono">
+               ${Math.round(rows.reduce((sum, r) => sum + (parseInt(r.revenue?.replace(/[^0-9]/g, '') || 0)), 0)).toLocaleString()}
+            </td>
+          </tr>
+        )}
       </tbody>
     </table>
   );

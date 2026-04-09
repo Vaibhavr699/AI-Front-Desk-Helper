@@ -17,65 +17,89 @@ function normalizePhoneInput(raw) {
   return null;
 }
 
+/** Recursive helper to find a value based on keyword matches in keys */
+function findFuzzyValue(obj, keywords) {
+  if (!obj || typeof obj !== "object") return null;
+  const keys = Object.keys(obj);
+  // 1. Check immediate keys for exact or partial matches
+  for (const key of keys) {
+    const k = key.toLowerCase();
+    if (keywords.some(kw => k === kw || k.includes(kw))) {
+      const val = obj[key];
+      if (val !== null && val !== undefined && val !== "" && typeof val !== "object") return val;
+    }
+  }
+  // 2. Recurse into nested objects (DripJobs often nests under Project, Job, etc.)
+  for (const key of keys) {
+    if (obj[key] && typeof obj[key] === "object" && !Array.isArray(obj[key])) {
+      const found = findFuzzyValue(obj[key], keywords);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 /**
  * POST /webhooks/crm/estimate-sent
  * Intended for Zapier or DripJobs when a proposal gets sent.
- * Expects JSON body with:
- * {
- *   "api_key": "TENANT_API_KEY",
- *   "contact_name": "John Doe",
- *   "contact_phone": "1234567890",
- *   "contact_email": "john@doe.com",
- *   "estimated_revenue_cents": 150000,
- *   "lead_source": "Zapier"
- * }
  */
 router.post("/crm/estimate-sent", async (req, res) => {
   try {
-    const { 
-      api_key, 
-      contact_name, 
-      contact_phone, 
-      contact_email,
-      estimated_revenue_cents,
-      lead_source 
-    } = req.body;
+    const body = req.body;
+    const { contact_email, lead_source } = body;
 
-    // We can also support api_key in headers if they prefer
-    const apiKey = api_key || req.headers['x-api-key'] || req.headers['authorization'];
+    const apiKey = body.api_key || req.headers['x-api-key'] || req.headers['authorization'];
+    if (!apiKey) return res.status(401).json({ error: "Missing api_key" });
 
-    if (!apiKey) {
-      return res.status(401).json({ error: "Missing api_key" });
+    // 1. Smart Name Detection
+    let name = body.contact_name || findFuzzyValue(body, ["customer_name", "contact_name", "client_name", "name"]);
+    if (!name && body.first_name) name = `${body.first_name} ${body.last_name || ""}`.trim();
+
+    // 2. Smart Phone Detection
+    let rawPhone = body.contact_phone || findFuzzyValue(body, ["phone", "mobile", "tel", "cell"]);
+    let phone = normalizePhoneInput(rawPhone);
+
+    if (!phone) {
+      console.warn("[Webhooks] /crm/estimate-sent: Could not find valid phone number in payload:", JSON.stringify(body));
+      return res.status(400).json({ 
+        error: "Valid contact_phone is required. Smart detection could not find a 'phone' field in your payload.",
+        received_body: body 
+      });
     }
 
-    const phone = normalizePhoneInput(contact_phone);
-    if (!phone) {
-      return res.status(400).json({ error: "Valid contact_phone is required" });
+    // 3. Smart Revenue Detection
+    let rawRev = body.estimated_revenue_cents;
+    if (rawRev === undefined || rawRev === null || rawRev === 0 || rawRev === "") {
+        rawRev = findFuzzyValue(body, ["total", "amount", "price", "value", "revenue", "grand_total"]);
     }
 
     // Lookup tenant
     const rTenant = await db.query("SELECT id FROM tenants WHERE api_key = $1", [apiKey.replace("Bearer ", "")]);
-    if (rTenant.rows.length === 0) {
-      return res.status(401).json({ error: "Invalid API key" });
-    }
+    if (rTenant.rows.length === 0) return res.status(401).json({ error: "Invalid API key" });
     const tenantId = rTenant.rows[0].id;
 
     // Get or Create Lead
     const source = lead_source || "CRM Webhook";
-    let lead = await getOrCreateLead(tenantId, phone, contact_name, source);
+    let lead = await getOrCreateLead(tenantId, phone, name || "CRM Lead", source);
     
     // Update additional properties
     let updates = {};
     if (contact_email && !lead.email) updates.email = contact_email;
-    if (estimated_revenue_cents) updates.estimated_revenue_cents = parseInt(estimated_revenue_cents, 10);
+
+    // Validate and parse revenue
+    if (rawRev !== undefined && rawRev !== null && rawRev !== "") {
+      const parsedRev = parseInt(String(rawRev).replace(/[^0-9.-]/g, ""), 10);
+      if (!isNaN(parsedRev)) {
+        updates.estimated_revenue_cents = parsedRev;
+      }
+    }
     
     if (Object.keys(updates).length > 0) {
         await updateLeadInfo(lead.id, updates);
-        // Refresh lead with updates for downstream
         lead = { ...lead, ...updates };
     }
 
-    // Fire the Sales Recovery system (falls into the Ghost Sequence)
+    // Fire the Sales Recovery system
     const recoveryProcess = await estimateRecoveryService.startEstimateRecovery(tenantId, lead, {
         lead_source: source
     });
@@ -83,7 +107,8 @@ router.post("/crm/estimate-sent", async (req, res) => {
     res.json({ 
       success: true, 
       message: "Lead received and recovery sequence initiated.",
-      recovery_id: recoveryProcess ? recoveryProcess.id : null 
+      recovery_id: recoveryProcess ? recoveryProcess.id : null,
+      mapped_data: { name, phone, revenue_cents: updates.estimated_revenue_cents }
     });
 
   } catch (e) {

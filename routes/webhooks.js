@@ -88,9 +88,19 @@ router.post("/crm/estimate-sent", async (req, res) => {
 
     // Validate and parse revenue
     if (rawRev !== undefined && rawRev !== null && rawRev !== "") {
-      const parsedRev = parseInt(String(rawRev).replace(/[^0-9.-]/g, ""), 10);
-      if (!isNaN(parsedRev)) {
-        updates.estimated_revenue_cents = parsedRev;
+      const rawString = String(rawRev).replace(/[^0-9.-]/g, "");
+      if (rawString.includes(".")) {
+        // It's a decimal (e.g. 4783.38), convert dollars to cents
+        const parsedFloat = parseFloat(rawString);
+        if (!isNaN(parsedFloat)) {
+          updates.estimated_revenue_cents = Math.round(parsedFloat * 100);
+        }
+      } else {
+        // It's already in cents (e.g. 478338)
+        const parsedInt = parseInt(rawString, 10);
+        if (!isNaN(parsedInt)) {
+          updates.estimated_revenue_cents = parsedInt;
+        }
       }
     }
     

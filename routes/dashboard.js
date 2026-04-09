@@ -690,7 +690,7 @@ router.get("/metrics", async (req, res) => {
       // Operational Metrics
       db.query(
         `SELECT
-          COALESCE(AVG(actual_revenue_cents), 0) as avg_job_value,
+          COALESCE(AVG(b.actual_revenue_cents), 0) as avg_job_value,
           COALESCE(AVG(EXTRACT(EPOCH FROM (b.created_at - l.created_at))/60), 0) as avg_time_to_book,
           (SELECT COUNT(*) FROM estimate_recoveries WHERE tenant_id = ANY($1) AND status = 'converted' AND created_at > $2) as recovered_count,
           (SELECT COUNT(*) FROM leads l JOIN estimate_recoveries er ON l.id = er.lead_id WHERE l.tenant_id = ANY($1) AND er.created_at > $2) as total_recoveries

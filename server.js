@@ -364,6 +364,7 @@ app.get("/api/public-tenant/:id", async (req, res) => {
 });
 app.use("/api/public", require("./routes/public"));
 app.use("/twilio", twilioRoutes);
+app.use("/api/webhooks", require("./routes/webhooks"));
 app.use("/api/auth", authRoutes);
 app.use("/api/billing", authMiddleware, billingRoutes);
 app.use("/api/outbound", authMiddleware, outboundRoutes);

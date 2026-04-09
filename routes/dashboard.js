@@ -734,7 +734,13 @@ router.get("/metrics", async (req, res) => {
             0
           ) as estimated_revenue,
           (SELECT SUM(estimated_revenue_cents) FROM bookings WHERE tenant_id = ANY($1) AND LOWER(status) IN ('cancelled', 'lost', 'rejected', 'lost lead')) as lost_revenue,
-          (SELECT SUM(actual_revenue_cents) FROM bookings WHERE tenant_id = ANY($1)) as actual_revenue`,
+          COALESCE(
+            (SELECT SUM(actual_revenue_cents) FROM bookings WHERE tenant_id = ANY($1)),
+            0
+          ) + COALESCE(
+            (SELECT SUM(actual_revenue_cents) FROM leads WHERE tenant_id = ANY($1)),
+            0
+          ) as actual_revenue`,
         [tenantIds]
       ),
       // Nurturing

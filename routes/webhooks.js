@@ -127,4 +127,66 @@ router.post("/crm/estimate-sent", async (req, res) => {
   }
 });
 
+/**
+ * POST /webhooks/crm/job-won
+ * Intended for Zapier when a job is marked as "Won" or "Completed".
+ */
+router.post("/crm/job-won", async (req, res) => {
+  try {
+    const body = req.body;
+    const { contact_email, lead_source } = body;
+
+    const apiKey = body.api_key || req.headers['x-api-key'] || req.headers['authorization'];
+    if (!apiKey) return res.status(401).json({ error: "Missing api_key" });
+
+    // Reuse smart detection for Name and Phone
+    let name = body.contact_name || findFuzzyValue(body, ["customer_name", "contact_name", "client_name", "name"]);
+    if (!name && body.first_name) name = `${body.first_name} ${body.last_name || ""}`.trim();
+
+    let rawPhone = body.contact_phone || findFuzzyValue(body, ["phone", "mobile", "tel", "cell"]);
+    let phone = normalizePhoneInput(rawPhone);
+
+    if (!phone) {
+      return res.status(400).json({ error: "Valid contact_phone is required for attribution." });
+    }
+
+    // Smart Revenue Detection for Actual Revenue
+    let rawRev = body.actual_revenue_cents || findFuzzyValue(body, ["total", "amount", "price", "revenue", "grand_total"]);
+
+    const rTenant = await db.query("SELECT id FROM tenants WHERE api_key = $1", [apiKey.replace("Bearer ", "")]);
+    if (rTenant.rows.length === 0) return res.status(401).json({ error: "Invalid API key" });
+    const tenantId = rTenant.rows[0].id;
+
+    const source = lead_source || "CRM Webhook";
+    let lead = await getOrCreateLead(tenantId, phone, name || "CRM Lead", source);
+    
+    let updates = { status: 'Won' };
+    if (contact_email && !lead.email) updates.email = contact_email;
+
+    // Validate and parse ACTUAL revenue
+    if (rawRev !== undefined && rawRev !== null && rawRev !== "") {
+      const rawString = String(rawRev).replace(/[^0-9.-]/g, "");
+      if (rawString.includes(".")) {
+        const parsedFloat = parseFloat(rawString);
+        if (!isNaN(parsedFloat)) updates.actual_revenue_cents = Math.round(parsedFloat * 100);
+      } else {
+        const parsedInt = parseInt(rawString, 10);
+        if (!isNaN(parsedInt)) updates.actual_revenue_cents = parsedInt;
+      }
+    }
+    
+    await updateLeadInfo(lead.id, updates);
+
+    res.json({ 
+      success: true, 
+      message: "Lead marked as Won and confirmed revenue updated.",
+      mapped_data: { name, phone, confirmed_cents: updates.actual_revenue_cents }
+    });
+
+  } catch (e) {
+    console.error("[Webhooks] /crm/job-won error:", e);
+    res.status(500).json({ error: "Server error handling won job" });
+  }
+});
+
 module.exports = router;

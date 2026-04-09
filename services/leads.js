@@ -77,7 +77,7 @@ async function updateLeadInfo(id, data) {
   
   const allowed = [
     'name', 'email', 'address', 'project_type', 'notes', 'status', 
-    'estimated_revenue_cents', 'lead_source', 'has_sms_consent', 'last_consent_at', 
+    'estimated_revenue_cents', 'actual_revenue_cents', 'lead_source', 'has_sms_consent', 'last_consent_at', 
     'last_consent_id', 'phone', 'facebook_id', 'web_id'
   ];
   for (const key of allowed) {

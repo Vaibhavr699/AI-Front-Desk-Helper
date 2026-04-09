@@ -442,10 +442,26 @@ function ZapierGuideModal({ onClose }) {
                </div>
             </section>
 
+            <section className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100">
+               <h3 className="text-[10px] font-black text-emerald-900 uppercase tracking-widest mb-3 flex items-center gap-2">
+                 <div className="w-4 h-4 bg-emerald-500 rounded text-white flex items-center justify-center text-[9px]">3</div>
+                 Final Step: Tracking "Confirmed Revenue"
+               </h3>
+               <p className="text-[11px] text-emerald-800 leading-relaxed mb-3">
+                 To see money show up in your <strong>"Confirmed Revenue"</strong> card, create a <strong>second Zap</strong> that triggers when a job is marked as "Won" or "Completed" in your CRM. Use this endpoint:
+               </p>
+               <div className="bg-white p-3 rounded-lg font-mono text-[10px] text-emerald-700 border border-emerald-100 mb-3 select-all">
+                  https://ai-front-desk-backend.onrender.com/api/webhooks/crm/job-won
+               </div>
+               <p className="text-[11px] text-emerald-800 leading-relaxed">
+                 Map the same fields (Phone and Total) as you did in Step 2. This will move the lead from "Pipeline" to "Confirmed".
+               </p>
+            </section>
+
             <section>
                <h3 className="text-[10px] font-black text-gray-900 uppercase tracking-widest mb-3 flex items-center gap-2">
-                 <div className="w-4 h-4 bg-orange-500 rounded text-white flex items-center justify-center text-[9px]">3</div>
-                 Step 3: Add Authorization
+                 <div className="w-4 h-4 bg-orange-500 rounded text-white flex items-center justify-center text-[9px]">4</div>
+                 Step 4: Add Authorization
                </h3>
                <p className="text-[11px] text-gray-500 leading-relaxed mb-3 text-left">
                  Add your API key (found in <span className="font-bold text-gray-900">Settings → Integrations</span>) as a Header:

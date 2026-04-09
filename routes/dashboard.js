@@ -541,20 +541,7 @@ router.get("/metrics", async (req, res) => {
     const prevWindow = new Date();
     prevWindow.setDate(prevWindow.getDate() - (days * 2));
 
-    const [
-      salesStats,
-      salesStatsPrev,
-      aiStats,
-      aiStatsPrev,
-      sourceStats,
-      contactMethodStats,
-      opsStats,
-      trendStats,
-      todayStats,
-      pipelineStats,
-      nurturingStats,
-      locationStats
-    ] = await Promise.all([
+    const results = await Promise.all([
       // 1. Current Sales Metrics (last 30d)
       db.query(
         `SELECT 
@@ -770,6 +757,19 @@ router.get("/metrics", async (req, res) => {
         [tenantIds, currentWindow]
       ) : Promise.resolve({ rows: [] })
     ]);
+
+    const salesStats = results[0];
+    const salesStatsPrev = results[1];
+    const aiStats = results[2];
+    const aiStatsPrev = results[3];
+    const sourceStats = results[4];
+    const contactMethodStats = results[5];
+    const opsStats = results[6];
+    const trendStats = results[7];
+    const todayStats = results[8];
+    const pipelineStats = results[9];
+    const nurturingStats = results[10];
+    const locationStats = results[11];
 
     const sales = salesStats.rows[0] || { leads_generated: 0, estimates_sent: 0, estimates_accepted: 0, revenue_booked: 0 };
     const salesPrev = salesStatsPrev.rows[0] || { leads_generated: 0, estimates_sent: 0, estimates_accepted: 0, revenue_booked: 0 };

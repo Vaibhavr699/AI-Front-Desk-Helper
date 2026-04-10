@@ -54,7 +54,6 @@ async function safeLogAction(payload) {
 
 /**
  * GET /api/team
- * List all users for the current parent tenant and all its child locations.
  */
 router.get("/", requireTeamManager, async (req, res) => {
   try {
@@ -68,69 +67,41 @@ router.get("/", requireTeamManager, async (req, res) => {
     if (targetTenantId && targetTenantId !== "all") {
       query = `
         SELECT
-          u.id,
-          u.email,
-          u.role,
-          u.tenant_id,
-          t.name AS tenant_name,
-          t.business_type,
-          u.created_at
+          u.id, u.email, u.role, u.tenant_id,
+          t.name AS tenant_name, t.business_type, u.created_at
         FROM dashboard_users u
         JOIN tenants t ON u.tenant_id = t.id
-        WHERE t.id = $1
-          AND (t.id = $2 OR t.parent_id = $2)
+        WHERE t.id = $1 AND (t.id = $2 OR t.parent_id = $2)
         ORDER BY
-          CASE
-            WHEN u.role IN ('owner', 'admin') THEN 1
-            WHEN u.role = 'manager' THEN 2
-            ELSE 3
-          END,
+          CASE WHEN u.role IN ('owner','admin') THEN 1 WHEN u.role='manager' THEN 2 ELSE 3 END,
           u.email ASC
       `;
       params = [targetTenantId, parentId];
     } else if (isParentAdmin) {
       query = `
         SELECT
-          u.id,
-          u.email,
-          u.role,
-          u.tenant_id,
-          t.name AS tenant_name,
-          t.business_type,
-          u.created_at
+          u.id, u.email, u.role, u.tenant_id,
+          t.name AS tenant_name, t.business_type, u.created_at
         FROM dashboard_users u
         JOIN tenants t ON u.tenant_id = t.id
         WHERE t.id = $1 OR t.parent_id = $1
         ORDER BY
           CASE WHEN t.id = $1 THEN 0 ELSE 1 END,
           t.name ASC,
-          CASE
-            WHEN u.role IN ('owner', 'admin') THEN 1
-            WHEN u.role = 'manager' THEN 2
-            ELSE 3
-          END,
+          CASE WHEN u.role IN ('owner','admin') THEN 1 WHEN u.role='manager' THEN 2 ELSE 3 END,
           u.email ASC
       `;
       params = [parentId];
     } else {
       query = `
         SELECT
-          u.id,
-          u.email,
-          u.role,
-          u.tenant_id,
-          t.name AS tenant_name,
-          t.business_type,
-          u.created_at
+          u.id, u.email, u.role, u.tenant_id,
+          t.name AS tenant_name, t.business_type, u.created_at
         FROM dashboard_users u
         JOIN tenants t ON u.tenant_id = t.id
         WHERE t.id = $1
         ORDER BY
-          CASE
-            WHEN u.role IN ('owner', 'admin') THEN 1
-            WHEN u.role = 'manager' THEN 2
-            ELSE 3
-          END,
+          CASE WHEN u.role IN ('owner','admin') THEN 1 WHEN u.role='manager' THEN 2 ELSE 3 END,
           u.email ASC
       `;
       params = [req.user.tenant_id];
@@ -140,18 +111,17 @@ router.get("/", requireTeamManager, async (req, res) => {
 
     await safeLogAction({
       organization_id: String(req.user.tenant_id),
+      user_id: String(req.user.id),
       action: "team_viewed",
       entity_type: "team",
-      entity_id:
-        targetTenantId && targetTenantId !== "all"
-          ? String(targetTenantId)
-          : String(req.user.tenant_id),
+      entity_id: targetTenantId && targetTenantId !== "all"
+        ? String(targetTenantId)
+        : String(req.user.tenant_id),
       new_value: {
         viewed_tenant_id: String(targetTenantId || req.user.tenant_id),
-        viewed_scope:
-          targetTenantId && targetTenantId !== "all"
-            ? "single_location"
-            : "organization",
+        viewed_scope: targetTenantId && targetTenantId !== "all"
+          ? "single_location"
+          : "organization",
         result_count: r.rows.length,
       },
       ip_address: getRequestIp(req),
@@ -167,23 +137,18 @@ router.get("/", requireTeamManager, async (req, res) => {
 
 /**
  * POST /api/team/invite
- * Invite a new user to a specific location or to the HQ.
  */
 router.post("/invite", requireTeamManager, async (req, res) => {
   try {
     const { email, role, location_id } = req.body;
 
     if (!email || !role || !location_id) {
-      return res.status(400).json({
-        error: "Email, role, and location_id are required",
-      });
+      return res.status(400).json({ error: "Email, role, and location_id are required" });
     }
 
     const allowedRoles = ["owner", "admin", "manager", "staff"];
     if (!allowedRoles.includes(role)) {
-      return res.status(400).json({
-        error: "Invalid role",
-      });
+      return res.status(400).json({ error: "Invalid role" });
     }
 
     const normalizedEmail = email.trim().toLowerCase();
@@ -196,12 +161,7 @@ router.post("/invite", requireTeamManager, async (req, res) => {
     }
 
     const rCheck = await db.query(
-      `
-      SELECT id, name
-      FROM tenants
-      WHERE (id = $1 OR parent_id = $1)
-        AND id = $2
-      `,
+      `SELECT id, name FROM tenants WHERE (id = $1 OR parent_id = $1) AND id = $2`,
       [parentId, authorizedLocationId]
     );
 
@@ -215,16 +175,10 @@ router.post("/invite", requireTeamManager, async (req, res) => {
 
     const existing = await auth.findUserByEmail(normalizedEmail);
     if (existing) {
-      return res.status(409).json({
-        error: "A user with this email already exists.",
-      });
+      return res.status(409).json({ error: "A user with this email already exists." });
     }
 
-    const rPlan = await db.query(
-      "SELECT plan FROM tenants WHERE id = $1",
-      [parentId]
-    );
-
+    const rPlan = await db.query("SELECT plan FROM tenants WHERE id = $1", [parentId]);
     const plan = (rPlan.rows[0]?.plan || "basic").toLowerCase();
 
     let seatLimit = 2;
@@ -232,17 +186,13 @@ router.post("/invite", requireTeamManager, async (req, res) => {
     if (plan === "elite" || plan === "growth") seatLimit = 10;
 
     const rCount = await db.query(
-      `
-      SELECT count(*) AS count
-      FROM dashboard_users u
-      JOIN tenants t ON u.tenant_id = t.id
-      WHERE t.id = $1 OR t.parent_id = $1
-      `,
+      `SELECT count(*) AS count FROM dashboard_users u
+       JOIN tenants t ON u.tenant_id = t.id
+       WHERE t.id = $1 OR t.parent_id = $1`,
       [parentId]
     );
 
     const currentUserCount = parseInt(rCount.rows[0].count, 10);
-
     if (currentUserCount >= seatLimit) {
       return res.status(403).json({
         error: `Your current ${plan.charAt(0).toUpperCase() + plan.slice(1)} plan limits you to ${seatLimit} team members. Please upgrade your plan to invite more users.`,
@@ -253,11 +203,9 @@ router.post("/invite", requireTeamManager, async (req, res) => {
     const hash = await auth.hashPassword(tempPassword);
 
     const rInsert = await db.query(
-      `
-      INSERT INTO dashboard_users (email, password_hash, tenant_id, role)
-      VALUES ($1, $2, $3, $4)
-      RETURNING id, email, tenant_id, role
-      `,
+      `INSERT INTO dashboard_users (email, password_hash, tenant_id, role)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, email, tenant_id, role`,
       [normalizedEmail, hash, authorizedLocationId, role]
     );
 
@@ -265,28 +213,21 @@ router.post("/invite", requireTeamManager, async (req, res) => {
 
     const resetToken = auth.generateResetToken();
     const expires = new Date(Date.now() + 7 * 24 * 3600 * 1000);
-
     await auth.saveResetToken(newUser.email, resetToken, expires);
 
     const base = (process.env.DASHBOARD_URL || process.env.BASE_URL || "").replace(/\/$/, "");
-    const setPasswordLink = base
-      ? `${base}/reset-password?token=${resetToken}`
-      : "";
+    const setPasswordLink = base ? `${base}/reset-password?token=${resetToken}` : "";
 
     if (setPasswordLink) {
       const roleName = getRoleDisplayName(role);
-      await emailService.sendTeamInviteEmail(
-        newUser.email,
-        setPasswordLink,
-        locationName,
-        roleName
-      );
+      await emailService.sendTeamInviteEmail(newUser.email, setPasswordLink, locationName, roleName);
     } else {
       console.warn("[Team] Not sending invite email because BASE_URL/DASHBOARD_URL is unset.");
     }
 
     await safeLogAction({
       organization_id: String(req.user.tenant_id),
+      user_id: String(req.user.id),
       action: "user_invited",
       entity_type: "user",
       entity_id: String(newUser.id),
@@ -318,7 +259,6 @@ router.post("/invite", requireTeamManager, async (req, res) => {
 
 /**
  * DELETE /api/team/:id
- * Remove a user
  */
 router.delete("/:id", requireTeamManager, async (req, res) => {
   try {
@@ -327,52 +267,36 @@ router.delete("/:id", requireTeamManager, async (req, res) => {
     const isParentAdmin = req.user?.tenant_business_type === "parent";
 
     if (String(targetUserId) === String(req.user.id)) {
-      return res.status(400).json({
-        error: "You cannot remove your own account.",
-      });
+      return res.status(400).json({ error: "You cannot remove your own account." });
     }
 
     const rCheck = await db.query(
-      `
-      SELECT
-        u.id,
-        u.email,
-        u.role,
-        u.tenant_id,
-        t.name AS tenant_name
-      FROM dashboard_users u
-      JOIN tenants t ON u.tenant_id = t.id
-      WHERE u.id = $1
-        AND (t.id = $2 OR t.parent_id = $2)
-      `,
+      `SELECT u.id, u.email, u.role, u.tenant_id, t.name AS tenant_name
+       FROM dashboard_users u
+       JOIN tenants t ON u.tenant_id = t.id
+       WHERE u.id = $1 AND (t.id = $2 OR t.parent_id = $2)`,
       [targetUserId, parentId]
     );
 
     if (rCheck.rows.length === 0) {
-      return res.status(403).json({
-        error: "User not found in your organization.",
-      });
+      return res.status(403).json({ error: "User not found in your organization." });
     }
 
     const targetUser = rCheck.rows[0];
-    const targetUserTenantId = targetUser.tenant_id;
 
-    if (!isParentAdmin && String(targetUserTenantId) !== String(parentId)) {
-      return res.status(403).json({
-        error: "You can only remove members from your own branch.",
-      });
+    if (!isParentAdmin && String(targetUser.tenant_id) !== String(parentId)) {
+      return res.status(403).json({ error: "You can only remove members from your own branch." });
     }
 
     if (targetUser.role === "owner") {
-      return res.status(403).json({
-        error: "Owner accounts cannot be removed from this route.",
-      });
+      return res.status(403).json({ error: "Owner accounts cannot be removed from this route." });
     }
 
     await db.query("DELETE FROM dashboard_users WHERE id = $1", [targetUserId]);
 
     await safeLogAction({
       organization_id: String(req.user.tenant_id),
+      user_id: String(req.user.id),
       action: "user_removed",
       entity_type: "user",
       entity_id: String(targetUser.id),

@@ -231,6 +231,11 @@ export function SiteFooter() {
                     Terms of Service
                   </Link>
                 </li>
+                 <li>
+                 <Link to="/sms-terms" className="hover:text-white transition-colors">
+                   SMS Terms & Conditions
+                  </Link>
+                </li>
                 <li>
                   <Link to="/cookie-policy" className="hover:text-white transition-colors">
                     Cookie Policy

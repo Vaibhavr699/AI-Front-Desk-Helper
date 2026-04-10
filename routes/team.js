@@ -9,8 +9,6 @@ const { logAction } = require("../lib/auditLogger");
 
 const router = express.Router();
 
-// Middleware: Only allow access if the user is an admin of a parent tenant
-// OR a manager/admin/owner of a specific branch
 function requireTeamManager(req, res, next) {
   const isParentAdmin =
     req.user?.tenant_business_type === "parent" &&
@@ -82,7 +80,7 @@ router.get("/", requireTeamManager, async (req, res) => {
         WHERE t.id = $1 OR t.parent_id = $1
         ORDER BY 
           CASE WHEN t.id = $1 THEN 0 ELSE 1 END,
-          t.name ASC, 
+          t.name ASC,
           CASE 
             WHEN u.role IN ('owner', 'admin') THEN 1
             WHEN u.role = 'manager' THEN 2
@@ -115,10 +113,16 @@ router.get("/", requireTeamManager, async (req, res) => {
       user_id: req.user.id,
       action: "team_viewed",
       entity_type: "team",
-      entity_id: targetTenantId && targetTenantId !== "all" ? String(targetTenantId) : String(req.user.tenant_id),
+      entity_id:
+        targetTenantId && targetTenantId !== "all"
+          ? String(targetTenantId)
+          : String(req.user.tenant_id),
       new_value: {
         viewed_tenant_id: targetTenantId || req.user.tenant_id,
-        viewed_scope: targetTenantId && targetTenantId !== "all" ? "single_location" : "organization",
+        viewed_scope:
+          targetTenantId && targetTenantId !== "all"
+            ? "single_location"
+            : "organization",
         result_count: r.rows.length,
       },
       ip_address: req.ip,
@@ -146,12 +150,18 @@ router.post("/invite", requireTeamManager, async (req, res) => {
       });
     }
 
+    const allowedRoles = ["owner", "admin", "manager", "staff"];
+    if (!allowedRoles.includes(role)) {
+      return res.status(400).json({
+        error: "Invalid role",
+      });
+    }
+
     const normalizedEmail = email.trim().toLowerCase();
     const parentId = req.user.tenant_id;
     const isParentAdmin = req.user?.tenant_business_type === "parent";
 
     let authorizedLocationId = location_id;
-
     if (!isParentAdmin) {
       authorizedLocationId = parentId;
     }
@@ -176,7 +186,10 @@ router.post("/invite", requireTeamManager, async (req, res) => {
       });
     }
 
-    const rPlan = await db.query("SELECT plan FROM tenants WHERE id = $1", [parentId]);
+    const rPlan = await db.query(
+      "SELECT plan FROM tenants WHERE id = $1",
+      [parentId]
+    );
     const plan = (rPlan.rows[0]?.plan || "basic").toLowerCase();
 
     let seatLimit = 2;
@@ -213,10 +226,13 @@ router.post("/invite", requireTeamManager, async (req, res) => {
 
     const resetToken = auth.generateResetToken();
     const expires = new Date(Date.now() + 7 * 24 * 3600 * 1000);
+
     await auth.saveResetToken(newUser.email, resetToken, expires);
 
     const base = (process.env.DASHBOARD_URL || process.env.BASE_URL || "").replace(/\/$/, "");
-    const setPasswordLink = base ? `${base}/reset-password?token=${resetToken}` : "";
+    const setPasswordLink = base
+      ? `${base}/reset-password?token=${resetToken}`
+      : "";
 
     if (setPasswordLink) {
       const roleName = getRoleDisplayName(role);
@@ -272,6 +288,12 @@ router.delete("/:id", requireTeamManager, async (req, res) => {
     const parentId = req.user.tenant_id;
     const isParentAdmin = req.user?.tenant_business_type === "parent";
 
+    if (String(targetUserId) === String(req.user.id)) {
+      return res.status(400).json({
+        error: "You cannot remove your own account.",
+      });
+    }
+
     const rCheck = await db.query(
       `
       SELECT u.id, u.email, u.role, u.tenant_id, t.name as tenant_name
@@ -294,6 +316,12 @@ router.delete("/:id", requireTeamManager, async (req, res) => {
     if (!isParentAdmin && targetUserTenantId !== parentId) {
       return res.status(403).json({
         error: "You can only remove members from your own branch.",
+      });
+    }
+
+    if (targetUser.role === "owner") {
+      return res.status(403).json({
+        error: "Owner accounts cannot be removed from this route.",
       });
     }
 

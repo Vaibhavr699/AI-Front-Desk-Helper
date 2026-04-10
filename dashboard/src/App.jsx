@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useOutletContext, useLocation } from "react-router-dom";
 import { getUser } from "./api";
 import { DashboardLayout } from "./layouts";
+import SmsTerms from "./pages/SmsTerms";
 import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, Outbound, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy, AddLocation, Team } from "./pages";
 import { ToastProvider } from "./components/ui/Toast";
 import "./App.css";
@@ -82,6 +83,7 @@ export default function App() {
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+          <Route path="/sms-terms" element={<SmsTerms />} />
           <Route path="/terms" element={<TermsOfService />} />
           <Route path="/cookies" element={<CookiePolicy />} />
           {/* Authenticated dashboard routes */}

@@ -85,27 +85,27 @@ function SmsConsentModal({ isOpen, onClose, onAccept }) {
           </p>
         </div>
 
-{/* Consent text box */}
-<div className="bg-stone-50 rounded-xl p-4 border border-stone-200 text-xs text-stone-600 leading-relaxed">
-  <p>
-    By submitting this form, you agree to receive SMS text messages from{" "}
-    <span className="font-semibold text-stone-800">AI Front Desk Helper</span>{" "}
-    related to your inquiry, including appointment scheduling, follow-ups, and
-    service notifications. Message frequency may vary. Message and data rates
-    may apply. Reply <strong>STOP</strong> to opt out or{" "}
-    <strong>HELP</strong> for assistance. Consent is not required as a
-    condition of purchasing services.{" "}
-    
-      href="/privacy-policy"
-      target="_blank"
-      rel="noopener noreferrer"
-      className="text-orange-500 hover:text-orange-600 underline underline-offset-2 font-medium"
-    >
-      Privacy Policy
-    </a>
-    .
-  </p>
-</div>
+        {/* Consent text box — FIXED */}
+        <div className="bg-stone-50 rounded-xl p-4 border border-stone-200 text-xs text-stone-600 leading-relaxed">
+          <p>
+            By submitting this form, you agree to receive SMS text messages from{" "}
+            <span className="font-semibold text-stone-800">AI Front Desk Helper</span>{" "}
+            related to your inquiry, including appointment scheduling, follow-ups, and
+            service notifications. Message frequency may vary. Message and data rates
+            may apply. Reply <strong>STOP</strong> to opt out or{" "}
+            <strong>HELP</strong> for assistance. Consent is not required as a
+            condition of purchasing services.{" "}
+            <a
+              href="/privacy-policy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-orange-500 hover:text-orange-600 underline underline-offset-2 font-medium"
+            >
+              Privacy Policy
+            </a>
+            .
+          </p>
+        </div>
 
         {/* Checkbox */}
         <label className="flex items-start gap-3 cursor-pointer group">
@@ -612,7 +612,7 @@ export default function Home() {
         </section>
 
         {/* ════════════════════════════════════════════════
-            CASE STUDY — NEW SECTION
+            CASE STUDY
         ════════════════════════════════════════════════ */}
         <section className="py-20 sm:py-24 bg-stone-900">
           <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">

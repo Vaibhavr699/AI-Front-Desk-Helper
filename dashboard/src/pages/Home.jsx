@@ -95,14 +95,7 @@ function SmsConsentModal({ isOpen, onClose, onAccept }) {
             may apply. Reply <strong>STOP</strong> to opt out or{" "}
             <strong>HELP</strong> for assistance. Consent is not required as a
             condition of purchasing services.{" "}
-            <a
-              href="/privacy-policy"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-orange-500 hover:text-orange-600 underline underline-offset-2 font-medium"
-            >
-              Privacy Policy
-            </a>
+           <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:text-orange-600 underline underline-offset-2 font-medium">Privacy Policy</a>
             .
           </p>
         </div>

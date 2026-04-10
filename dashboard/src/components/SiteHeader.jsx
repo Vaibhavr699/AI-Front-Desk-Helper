@@ -88,7 +88,7 @@ function SmsConsentModal({ isOpen, onClose, onAccept }) {
           </p>
         </div>
 
-       {/* Consent text box */}
+        {/* Consent text box — FIXED */}
         <div className="bg-stone-50 rounded-xl p-4 border border-stone-200 text-xs text-stone-600 leading-relaxed">
           <p>
             By submitting this form, you agree to receive SMS text messages from{" "}

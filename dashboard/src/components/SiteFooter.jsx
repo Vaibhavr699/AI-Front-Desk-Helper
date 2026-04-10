@@ -87,32 +87,18 @@ function SmsConsentModal({ isOpen, onClose, onAccept }) {
           </p>
         </div>
 
-        {/* Consent text box */}
-        <div className="bg-stone-50 rounded-xl p-4 border border-stone-200 text-xs text-stone-600 leading-relaxed space-y-3">
+           {/* Consent text box */}
+        <div className="bg-stone-50 rounded-xl p-4 border border-stone-200 text-xs text-stone-600 leading-relaxed">
           <p>
-            By submitting this form, you agree to receive text messages from{" "}
+            By submitting this form, you agree to receive SMS text messages from{" "}
             <span className="font-semibold text-stone-800">AI Front Desk Helper</span>{" "}
-            related to your inquiry, including appointment updates, follow-ups, and
-            service notifications. Message frequency varies. Message &amp; data rates
-            may apply. Reply <strong>STOP</strong> to opt out.
-          </p>
-          <p>
-            I agree to receive SMS text messages from{" "}
-            <span className="font-semibold text-stone-800">AI Front Desk Helper</span>{" "}
-            regarding my estimate request, appointment scheduling, and project updates.
-            Message &amp; data rates may apply. Reply <strong>STOP</strong> to opt out.{" "}
-            <a
-              href="/privacy-policy"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-orange-500 hover:text-orange-600 underline underline-offset-2 font-medium"
-            >
-              View Privacy Policy
-            </a>
+            related to your inquiry, including appointment scheduling, follow-ups, and
+            service notifications. Message frequency may vary. Message and data rates
+            may apply. Reply <strong>STOP</strong> to opt out or{" "}
+            <strong>HELP</strong> for assistance. Consent is not required as a
+            condition of purchasing services.{" "}
+            <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:text-orange-600 underline underline-offset-2 font-medium">Privacy Policy</a>
             .
-          </p>
-          <p className="text-[11px] text-stone-400">
-            Consent is not required as a condition of purchasing services.
           </p>
         </div>
 

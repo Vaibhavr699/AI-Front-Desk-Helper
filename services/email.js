@@ -429,8 +429,10 @@ async function sendTechnicianAssignmentEmail(tenant, technician, booking) {
   </table>
 </body>
 </html>`;
+  const ownerEmail = await getTenantOwnerEmail(tenant);
   return sendEmail({
     to,
+    replyTo: ownerEmail || undefined,
     subject: `Job assigned – ${company} – ${booking.contact_name || "Customer"} – ${dateStr}`,
     html,
     text: "",
@@ -438,7 +440,7 @@ async function sendTechnicianAssignmentEmail(tenant, technician, booking) {
 }
 
 /** Nurturing: post-service follow-up (1 day after Completed). */
-async function sendPostServiceFollowUpEmail(companyName, customerName, to) {
+async function sendPostServiceFollowUpEmail(companyName, customerName, to, replyTo) {
   const name = (customerName || "there").trim() || "there";
   const company = (companyName || "We").trim() || "We";
   const html = `
@@ -449,6 +451,7 @@ async function sendPostServiceFollowUpEmail(companyName, customerName, to) {
   const body = `Quick follow-up from ${company} — we hope you're happy with the work we did.`;
   const result = await sendEmail({
     to,
+    replyTo: replyTo || undefined,
     subject: `Quick follow-up – ${company}`,
     html,
   });
@@ -456,7 +459,7 @@ async function sendPostServiceFollowUpEmail(companyName, customerName, to) {
 }
 
 /** Nurturing: referral request (e.g. 5 days after service). */
-async function sendReferralRequestEmail(companyName, customerName, to) {
+async function sendReferralRequestEmail(companyName, customerName, to, replyTo) {
   const name = (customerName || "there").trim() || "there";
   const company = (companyName || "We").trim() || "We";
   const html = `
@@ -467,6 +470,7 @@ async function sendReferralRequestEmail(companyName, customerName, to) {
   const body = `Quick favor — know anyone who could use our help? Reply with their name and number.`;
   const result = await sendEmail({
     to,
+    replyTo: replyTo || undefined,
     subject: `Quick favor – ${company}`,
     html,
   });
@@ -474,7 +478,7 @@ async function sendReferralRequestEmail(companyName, customerName, to) {
 }
 
 /** Nurturing: maintenance reminder (e.g. 6 months after service). */
-async function sendMaintenanceReminderEmail(companyName, customerName, to) {
+async function sendMaintenanceReminderEmail(companyName, customerName, to, replyTo) {
   const name = (customerName || "there").trim() || "there";
   const company = (companyName || "We").trim() || "We";
   const html = `
@@ -485,6 +489,7 @@ async function sendMaintenanceReminderEmail(companyName, customerName, to) {
   const body = "Maintenance reminder — we're here when you're ready for your next project.";
   const result = await sendEmail({
     to,
+    replyTo: replyTo || undefined,
     subject: `We're here when you're ready – ${company}`,
     html,
   });
@@ -492,7 +497,7 @@ async function sendMaintenanceReminderEmail(companyName, customerName, to) {
 }
 
 /** Nurturing: re-engagement / dormant (e.g. 12 months after service). */
-async function sendReengagementEmail(companyName, customerName, to) {
+async function sendReengagementEmail(companyName, customerName, to, replyTo) {
   const name = (customerName || "there").trim() || "there";
   const company = (companyName || "We").trim() || "We";
   const html = `
@@ -503,6 +508,7 @@ async function sendReengagementEmail(companyName, customerName, to) {
   const body = "Quick check-in — we'd love to hear how things are going.";
   const result = await sendEmail({
     to,
+    replyTo: replyTo || undefined,
     subject: `Quick check-in – ${company}`,
     html,
   });
@@ -510,7 +516,7 @@ async function sendReengagementEmail(companyName, customerName, to) {
 }
 
 /** Nurturing: seasonal campaign (month-based). */
-async function sendSeasonalCampaignEmail(companyName, customerName, subjectLine, bodyHtml, to) {
+async function sendSeasonalCampaignEmail(companyName, customerName, subjectLine, bodyHtml, to, replyTo) {
   const name = (customerName || "there").trim() || "there";
   const company = (companyName || "We").trim() || "We";
   const html = `
@@ -520,6 +526,7 @@ async function sendSeasonalCampaignEmail(companyName, customerName, subjectLine,
   `;
   const result = await sendEmail({
     to,
+    replyTo: replyTo || undefined,
     subject: subjectLine || `News from ${company}`,
     html,
   });

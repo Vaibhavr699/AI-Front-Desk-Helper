@@ -90,6 +90,26 @@ async function processOneNurturing(row) {
   const toEmail = lead_email || null;
   const toPhone = lead_phone || null;
 
+  // Resolve owner email so customer replies go to the business owner
+  let ownerReplyTo = null;
+  try {
+    const tenantRes = await db.query(
+      "SELECT id, google_calendar_email FROM tenants WHERE id = $1", [tenant_id]
+    );
+    const t = tenantRes.rows[0];
+    if (t && t.google_calendar_email) {
+      ownerReplyTo = t.google_calendar_email;
+    } else {
+      const adminRes = await db.query(
+        "SELECT email FROM dashboard_users WHERE tenant_id = $1 ORDER BY (role = 'admin') DESC, created_at ASC LIMIT 1",
+        [tenant_id]
+      );
+      if (adminRes.rows.length > 0) ownerReplyTo = adminRes.rows[0].email;
+    }
+  } catch (err) {
+    console.error("[Nurturing] Failed to resolve owner email for tenant %s:", tenant_id, err.message);
+  }
+
   let logId = null;
   let emailSent = false;
   let smsSent = false;
@@ -97,7 +117,7 @@ async function processOneNurturing(row) {
 
   if (campaign_type === "post_service_followup") {
     if (toEmail) {
-      const r = await emailService.sendPostServiceFollowUpEmail(company_name, lead_name, toEmail);
+      const r = await emailService.sendPostServiceFollowUpEmail(company_name, lead_name, toEmail, ownerReplyTo);
       emailSent = r.ok;
       body = r.body || "Quick follow-up after your recent service.";
     }
@@ -109,7 +129,7 @@ async function processOneNurturing(row) {
     }
   } else if (campaign_type === "referral_request") {
     if (toEmail) {
-      const r = await emailService.sendReferralRequestEmail(company_name, lead_name, toEmail);
+      const r = await emailService.sendReferralRequestEmail(company_name, lead_name, toEmail, ownerReplyTo);
       emailSent = r.ok;
       body = r.body || "Quick favor — know someone who could use our help?";
     }
@@ -122,7 +142,7 @@ async function processOneNurturing(row) {
   } else if (campaign_type === "maintenance_reminder") {
     const touchpointHeader = (row.schedule_metadata && row.schedule_metadata.header) || "";
     if (toEmail) {
-      const r = await emailService.sendMaintenanceReminderEmail(company_name, lead_name, toEmail);
+      const r = await emailService.sendMaintenanceReminderEmail(company_name, lead_name, toEmail, ownerReplyTo);
       emailSent = r.ok;
       body = r.body || "Maintenance reminder.";
     }
@@ -137,7 +157,7 @@ async function processOneNurturing(row) {
   } else if (campaign_type === "reengagement") {
     const touchpointHeader = (row.schedule_metadata && row.schedule_metadata.header) || "";
     if (toEmail) {
-      const r = await emailService.sendReengagementEmail(company_name, lead_name, toEmail);
+      const r = await emailService.sendReengagementEmail(company_name, lead_name, toEmail, ownerReplyTo);
       emailSent = r.ok;
       body = r.body || "Quick check-in.";
     }
@@ -475,6 +495,17 @@ async function processSeasonalCampaigns() {
     const subject = getDefaultSeasonalSubject(month);
     const bodyHtml = getDefaultSeasonalBody(month);
     const smsBody = getDefaultSeasonalSms(month, t.company_name);
+
+    // Resolve owner email for reply-to
+    let ownerReplyTo = null;
+    try {
+      const ownerRes = await db.query(
+        "SELECT email FROM dashboard_users WHERE tenant_id = $1 ORDER BY (role = 'admin') DESC, created_at ASC LIMIT 1",
+        [t.id]
+      );
+      if (ownerRes.rows.length > 0) ownerReplyTo = ownerRes.rows[0].email;
+    } catch (_) {}
+
     const leads = await db.query(
       `SELECT l.id, l.phone, l.email, l.name FROM leads l
        WHERE l.tenant_id = $1 AND l.last_service_date IS NOT NULL
@@ -488,7 +519,7 @@ async function processSeasonalCampaigns() {
     );
     for (const row of leads.rows) {
       if (row.email) {
-        await emailService.sendSeasonalCampaignEmail(t.company_name, row.name, subject, bodyHtml, row.email).catch(() => {});
+        await emailService.sendSeasonalCampaignEmail(t.company_name, row.name, subject, bodyHtml, row.email, ownerReplyTo).catch(() => {});
       }
       if (row.phone) {
         await sendNurturingSms(t.id, row.phone, smsBody).catch(() => {});

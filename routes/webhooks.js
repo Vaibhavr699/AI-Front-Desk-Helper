@@ -4,6 +4,7 @@ const express = require("express");
 const db = require("../lib/db");
 const { getOrCreateLead, updateLeadInfo } = require("../services/leads");
 const estimateRecoveryService = require("../services/estimateRecovery");
+const { schedulePostServiceCampaigns } = require("../services/nurturing");
 
 const router = express.Router();
 
@@ -176,7 +177,9 @@ router.post("/crm/job-won", async (req, res) => {
     }
     
     await updateLeadInfo(lead.id, updates);
-
+    await schedulePostServiceCampaigns(tenantId, { lead_id: lead.id, preferred_date: new Date().toISOString() });
+    await db.query("UPDATE leads SET last_service_date = CURRENT_DATE WHERE id = $1", [lead.id]);
+   
     res.json({ 
       success: true, 
       message: "Lead marked as Won and confirmed revenue updated.",

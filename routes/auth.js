@@ -2,6 +2,7 @@
 
 const express = require("express");
 const auth = require("../lib/auth");
+const { logAction } = require("../lib/auditLogger");
 const db = require("../lib/db");
 
 const router = express.Router();
@@ -28,6 +29,16 @@ router.post("/login", async (req, res) => {
       tenant_id: user.tenant_id,
       role: user.role,
       is_super_admin: user.is_super_admin === true,
+    });
+    await logAction({
+      organization_id: String(user.tenant_id),
+      user_id: String(user.id),
+      action: "user_login",
+      entity_type: "user",
+      entity_id: String(user.id),
+      new_value: { email: user.email, role: user.role },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
     });
     res.json({
       token,
@@ -155,6 +166,15 @@ router.post("/reset-password", async (req, res) => {
     }
     const hash = await auth.hashPassword(password);
     await auth.updatePassword(user.id, hash);
+     await logAction({
+      organization_id: String(user.tenant_id),
+      user_id: String(user.id),
+      action: "password_reset",
+      entity_type: "user",
+      entity_id: String(user.id),
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    });
     res.json({ message: "Password updated successfully" });
   } catch (e) {
     console.error("Reset password error:", e);

@@ -240,9 +240,9 @@ export default function Outbound({ tenantId }) {
             </div>
 
             <div className="space-y-3">
-              <BundleCard minutes={500} price={99} tenantId={tenantId} priceId={import.meta.env.VITE_STRIPE_BUNDLE_500 || "price_1THKUPG4V3F53niEHhA2bVXn"} />
-              <BundleCard minutes={1500} price={249} tenantId={tenantId} priceId={import.meta.env.VITE_STRIPE_BUNDLE_1500 || "price_1THKUgG4V3F53niEYscU5jY8"} isPopular />
-              <BundleCard minutes={3000} price={499} tenantId={tenantId} priceId={import.meta.env.VITE_STRIPE_BUNDLE_3000 || "price_1THKV0G4V3F53niETnjtOmf4"} />
+              <BundleCard minutes={500} price={99} tenantId={tenantId} priceId={import.meta.env.VITE_STRIPE_BUNDLE_500} />
+              <BundleCard minutes={1500} price={249} tenantId={tenantId} priceId={import.meta.env.VITE_STRIPE_BUNDLE_1500} isPopular />
+              <BundleCard minutes={3000} price={499} tenantId={tenantId} priceId={import.meta.env.VITE_STRIPE_BUNDLE_3000} />
             </div>
 
             <div className="p-4 bg-blue-50/50 rounded-xl border border-blue-100 flex items-start gap-3">

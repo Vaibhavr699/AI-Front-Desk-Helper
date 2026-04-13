@@ -10,6 +10,18 @@ const router = express.Router();
 router.use(requireRole([ROLES.OWNER, ROLES.ADMIN]));
 
 /**
+ * GET /api/stripe/config
+ * Expose non-secret Stripe configuration (Price IDs) to the frontend.
+ */
+router.get("/config", async (req, res) => {
+    res.json({
+        bundle_500: process.env.VITE_STRIPE_BUNDLE_500,
+        bundle_1500: process.env.VITE_STRIPE_BUNDLE_1500,
+        bundle_3000: process.env.VITE_STRIPE_BUNDLE_3000,
+    });
+});
+
+/**
  * POST /api/stripe/checkout
  * Create a Stripe Checkout session for a plan subscription.
  * Body: { tenant_id, plan_id, return_url? }

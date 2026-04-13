@@ -18,11 +18,23 @@ export default function Outbound({ tenantId }) {
   const [activeCampaign, setActiveCampaign] = useState(null);
   const [showCreator, setShowCreator] = useState(false);
   const [usage, setUsage] = useState(null);
+  const [stripeConfig, setStripeConfig] = useState(null);
 
   useEffect(() => {
     fetchCampaigns();
     fetchBalance();
+    fetchStripeConfig();
   }, [tenantId]);
+
+  async function fetchStripeConfig() {
+    try {
+      const res = await get("/api/stripe/config");
+      setStripeConfig(res);
+      console.log("[Stripe] Dynamic config loaded:", res);
+    } catch (e) {
+      console.error("[Stripe] Failed to load config:", e);
+    }
+  }
 
   async function fetchBalance() {
     try {
@@ -240,9 +252,9 @@ export default function Outbound({ tenantId }) {
             </div>
 
             <div className="space-y-3">
-              <BundleCard minutes={500} price={99} tenantId={tenantId} priceId={import.meta.env.VITE_STRIPE_BUNDLE_500} />
-              <BundleCard minutes={1500} price={249} tenantId={tenantId} priceId={import.meta.env.VITE_STRIPE_BUNDLE_1500} isPopular />
-              <BundleCard minutes={3000} price={499} tenantId={tenantId} priceId={import.meta.env.VITE_STRIPE_BUNDLE_3000} />
+              <BundleCard minutes={500} price={99} tenantId={tenantId} priceId={stripeConfig?.bundle_500} />
+              <BundleCard minutes={1500} price={249} tenantId={tenantId} priceId={stripeConfig?.bundle_1500} isPopular />
+              <BundleCard minutes={3000} price={499} tenantId={tenantId} priceId={stripeConfig?.bundle_3000} />
             </div>
 
             <div className="p-4 bg-blue-50/50 rounded-xl border border-blue-100 flex items-start gap-3">
@@ -274,9 +286,13 @@ function BundleCard({ minutes, price, tenantId, priceId, isPopular }) {
   const [loading, setLoading] = useState(false);
   const { error } = useToast();
 
-  async function handleBuy() {
+    async function handleBuy() {
     setLoading(true);
+    console.log("[Stripe] Attempting checkout for minutes:", minutes, "with Price ID:", priceId);
     try {
+      if (!priceId) {
+        throw new Error("Stripe Price ID is missing. Check environment variables.");
+      }
       const res = await post("/api/stripe/checkout-bundle", { 
         minutes, 
         price_id: priceId, 

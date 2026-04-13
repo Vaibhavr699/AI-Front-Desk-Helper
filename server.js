@@ -61,6 +61,7 @@ const outboundRoutes = require("./routes/outbound");
 const { startOutboundEngine } = require("./services/outboundEngine");
 const { authMiddleware, requireSuperAdmin } = require("./lib/auth");
 const notificationsService = require("./services/notifications");
+const auditLogsRouter = require("./routes/auditLogs");
 
 const WEBSITE_CONTEXT_URL = process.env.WEBSITE_CONTEXT_URL || "https://www.gladiatorspainting.com";
 const WEBSITE_CONTEXT_MAX_CHARS = 10000;
@@ -372,6 +373,7 @@ app.use("/api/leads", leadRoutes);
 app.use("/api/stripe", authMiddleware, require("./routes/stripe"));
 app.use("/api/admin", authMiddleware, requireSuperAdmin, require("./routes/admin"));
 app.use("/api/team", authMiddleware, require("./routes/team"));
+app.use("/api/audit-logs", authMiddleware, auditLogsRouter);
 app.use("/api", authMiddleware, dashboardRoutes);
 app.use("/auth/google/calendar", require("./routes/google-calendar"));
 app.use("/api/google-calendar", authMiddleware, require("./routes/google-calendar"));

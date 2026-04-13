@@ -93,7 +93,10 @@ export async function signup(email, password) {
   return data;
 }
 
-export function logout() {
+export async function logout() {
+  try {
+    await api("/api/auth/logout", { method: "POST" });
+  } catch (_) {}
   localStorage.removeItem("token");
   localStorage.removeItem("user");
   localStorage.removeItem("tenantId");

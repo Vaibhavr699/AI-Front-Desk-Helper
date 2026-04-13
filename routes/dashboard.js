@@ -13,6 +13,7 @@ const estimateRecovery = require("../services/estimateRecovery");
 const emailService = require("../services/email");
 const nurturingService = require("../services/nurturing");
 const notificationsService = require("../services/notifications");
+const { logAction } = require("../lib/auditLogger");
 const { getTenantIdFromQuery, getTargetTenantIds, requireRole, ROLES } = auth;
 
 /** Normalize a US phone to E.164 (+1XXXXXXXXXX). Returns null if invalid. */
@@ -63,7 +64,6 @@ router.get("/bookings", async (req, res) => {
       i++;
     }
 
-    // Sort column validation
     const allowedSort = ["contact_name", "preferred_date", "estimated_revenue_cents", "status", "created_at"];
     const activeSort = allowedSort.includes(sortBy) ? sortBy : "preferred_date";
 
@@ -87,11 +87,7 @@ router.get("/bookings", async (req, res) => {
 
     res.json({ 
       bookings: result.rows,
-      pagination: {
-        total,
-        limit,
-        offset
-      }
+      pagination: { total, limit, offset }
     });
   } catch (e) {
     console.error(e);
@@ -123,6 +119,18 @@ router.patch("/bookings/:id", async (req, res) => {
 
     if (result.rows.length === 0) return res.status(404).json({ error: "Not found" });
     const booking = result.rows[0];
+
+    // ── Audit log: booking updated ──────────────────────────────────────
+    await logAction({
+      organization_id: String(booking.tenant_id),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "booking_updated",
+      entity_type: "booking",
+      entity_id: String(booking.id),
+      new_value: { status: booking.status, technician_id: booking.technician_id },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
 
     if (technician_id != null && technician_id !== "") {
       const tenantId = booking.tenant_id;
@@ -266,6 +274,18 @@ router.get("/recordings/:id/audio", async (req, res) => {
     const rec = r.rows[0];
     if (!rec || !rec.recording_url) return res.status(404).json({ error: "Not found" });
 
+    // ── Audit log: recording played ─────────────────────────────────────
+    await logAction({
+      organization_id: String(rec.tenant_id),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "recording_played",
+      entity_type: "recording",
+      entity_id: String(rec.id),
+      new_value: { recording_id: rec.id },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
+
     const tenant = await getTenantById(rec.tenant_id);
     const twilioAuth = require("../lib/twilio").getAuthForTenant(tenant);
     if (!twilioAuth) return res.status(502).json({ error: "Recording service not configured" });
@@ -273,7 +293,6 @@ router.get("/recordings/:id/audio", async (req, res) => {
     const url = rec.recording_url.replace(".json", ".mp3");
     const auth = Buffer.from(`${twilioAuth.accountSid}:${twilioAuth.authToken}`).toString("base64");
 
-    // Some older recording URLs might not include api.twilio.com if stored incorrectly, handle it cleanly
     const fullUrl = url.startsWith("http") ? url : `https://api.twilio.com${url}`;
 
     const resp = await fetch(fullUrl, { headers: { Authorization: `Basic ${auth}` } });
@@ -290,8 +309,6 @@ router.get("/recordings/:id/audio", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-
-// (Moving this section up)
 
 // -------------------- Technicians --------------------
 
@@ -358,7 +375,6 @@ router.get("/followups", async (req, res) => {
     if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
 
     const [recoveryRes, followupRes, appointmentRes] = await Promise.all([
-      // 1. Estimate Recoveries (Sales Recovery + CRM/DripJobs estimates)
       db.query(
         `SELECT er.*, 
                 l.estimated_revenue_cents,
@@ -373,7 +389,6 @@ router.get("/followups", async (req, res) => {
          WHERE er.tenant_id = ANY($1) AND er.status IN ('active', 'paused')`,
         [tenantIds]
       ),
-      // 2. Nurturing Follow-ups (post-booking reminders)
       db.query(
         `SELECT f.id, f.tenant_id, f.contact_name, f.status,
                 f.contact_name as lead_name,
@@ -389,7 +404,6 @@ router.get("/followups", async (req, res) => {
          WHERE f.tenant_id = ANY($1) AND f.status = 'pending'`,
         [tenantIds]
       ),
-      // 3. Pre-Appointment Reminders (upcoming bookings)
       db.query(
         `SELECT b.id, b.tenant_id, b.contact_name, b.contact_phone, b.status,
                 b.contact_name as lead_name,
@@ -483,12 +497,11 @@ router.post("/followups/:id/call", async (req, res) => {
 
 router.patch("/followups/:id/status", async (req, res) => {
   try {
-    const { status } = req.body; // 'booked' or 'lost'
+    const { status } = req.body;
     const recoveryId = req.params.id;
 
     if (status === 'booked') {
       await estimateRecovery.markConverted(recoveryId);
-      // Also update the lead status if linked
       const rec = await estimateRecovery.getRecoveryById(recoveryId);
       if (rec.lead_id) {
         await db.query("UPDATE leads SET status = 'Booked' WHERE id = $1", [rec.lead_id]);
@@ -517,10 +530,7 @@ router.patch("/followups/:id/status", async (req, res) => {
 router.get("/metrics", async (req, res) => {
   try {
     let tenantIds = await getTargetTenantIds(req);
-    
-    // Defensive safety: filter out non-UUID strings like 'all' if they leaked through
     tenantIds = tenantIds.filter(id => /^[0-9a-f-]{36}$/i.test(id));
-    
     if (!tenantIds.length) {
       console.warn(`[Metrics] No valid tenant UUIDs resolved for request. User=${req.user?.sub}`);
       return res.status(400).json({ error: "No valid business location selected" });
@@ -528,7 +538,6 @@ router.get("/metrics", async (req, res) => {
 
     const period = req.query.period || req.query.range || "30d";
     let isRollup = tenantIds.length > 1 || req.query.rollup === 'true';
-    
     console.log(`[Metrics] Request: user=${req.user?.email} targets=[${tenantIds.join(",")}] rollup=${isRollup} period=${period}`);
 
     let days = 30;
@@ -542,7 +551,6 @@ router.get("/metrics", async (req, res) => {
     prevWindow.setDate(prevWindow.getDate() - (days * 2));
 
     const results = await Promise.all([
-      // 1. Current Sales Metrics (last 30d)
       db.query(
         `SELECT 
           COUNT(DISTINCT l.id) as leads_generated,
@@ -555,7 +563,6 @@ router.get("/metrics", async (req, res) => {
          WHERE l.tenant_id = ANY($1) AND l.created_at > $2`,
         [tenantIds, currentWindow]
       ),
-      // 1b. Previous Sales Metrics (30d-60d) for Trend calculation
       db.query(
         `SELECT 
           COUNT(DISTINCT l.id) as leads_generated,
@@ -568,7 +575,6 @@ router.get("/metrics", async (req, res) => {
          WHERE l.tenant_id = ANY($1) AND l.created_at BETWEEN $2 AND $3`,
         [tenantIds, prevWindow, currentWindow]
       ),
-      // 2. AI Performance (last 30d)
       db.query(
         `SELECT 
           COUNT(*) as calls_handled,
@@ -590,7 +596,6 @@ router.get("/metrics", async (req, res) => {
          WHERE tenant_id = ANY($1) AND started_at > $2`,
         [tenantIds, currentWindow]
       ),
-      // 2b. AI Performance (30d-60d)
       db.query(
         `SELECT 
           COUNT(*) as calls_handled,
@@ -612,7 +617,6 @@ router.get("/metrics", async (req, res) => {
          WHERE tenant_id = ANY($1) AND started_at BETWEEN $2 AND $3`,
         [tenantIds, prevWindow, currentWindow]
       ),
-      // Lead Sources Analysis
       db.query(
         `SELECT 
           source,
@@ -649,7 +653,6 @@ router.get("/metrics", async (req, res) => {
          ORDER BY leads DESC`,
         [tenantIds, currentWindow]
       ),
-      // Contact Method Analysis
       db.query(
         `SELECT 
           method,
@@ -672,7 +675,6 @@ router.get("/metrics", async (req, res) => {
          ORDER BY actions DESC`,
         [tenantIds, currentWindow]
       ),
-      // Operational Metrics
       db.query(
         `SELECT
           COALESCE(AVG(b.actual_revenue_cents), 0) as avg_job_value,
@@ -684,7 +686,6 @@ router.get("/metrics", async (req, res) => {
          WHERE b.tenant_id = ANY($1) AND b.created_at > $2`,
         [tenantIds, currentWindow]
       ),
-      // Trends
       db.query(
         `SELECT 
           d.day::date as date,
@@ -697,7 +698,6 @@ router.get("/metrics", async (req, res) => {
          ORDER BY d.day ASC`,
         [tenantIds]
       ),
-      // Today
       db.query(
         `SELECT
           (SELECT COUNT(*) FROM calls WHERE tenant_id = ANY($1) AND started_at >= now() - interval '24 hours') as calls,
@@ -706,7 +706,6 @@ router.get("/metrics", async (req, res) => {
           (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND created_at >= now() - interval '24 hours') as booked`,
         [tenantIds]
       ),
-      // Pipeline
       db.query(
         `SELECT
           (SELECT COUNT(*) FROM leads WHERE tenant_id = ANY($1) AND status NOT IN ('Closed', 'Lost')) as open_leads,
@@ -730,14 +729,12 @@ router.get("/metrics", async (req, res) => {
           ) as actual_revenue`,
         [tenantIds]
       ),
-      // Nurturing
       db.query(
         `SELECT
           (SELECT COUNT(*) FROM campaign_log WHERE tenant_id = ANY($1) AND sent_at > $2) as emails_sent,
           (SELECT COUNT(*) FROM referral_leads WHERE tenant_id = ANY($1) AND created_at > $2) as referrals_generated`,
         [tenantIds, currentWindow]
       ),
-      // 8. Location Breakdown (HQ Style)
       isRollup ? db.query(
         `SELECT 
           t.id, t.name, t.city, t.state, t.business_type,
@@ -796,7 +793,6 @@ router.get("/metrics", async (req, res) => {
       rate: r.total_calls > 0 ? Math.round((r.total_bookings / r.total_calls) * 100) : 0
     })) : [];
 
-    // Simple Insights Generation
     const insights = [];
     if (isRollup) {
       location_breakdown.forEach(loc => {
@@ -822,7 +818,6 @@ router.get("/metrics", async (req, res) => {
     res.json({
       period: "30d",
       isRollup,
-      // Consolidated for HQ
       totals: {
         calls: parseInt(ai.calls_handled, 10),
         calls_trend: getTrend(parseInt(ai.calls_handled, 10), parseInt(aiPrev.calls_handled, 10)),
@@ -836,7 +831,6 @@ router.get("/metrics", async (req, res) => {
         open_leads: parseInt(pipeline.open_leads, 10),
         leads_needing_followup: parseInt(pipeline.leads_needing_followup, 10)
       },
-      // Backward compatibility for single-tenant view
       sales: {
         leads_generated: parseInt(sales.leads_generated, 10),
         close_rate: sales.leads_generated > 0 ? Math.round((parseInt(sales.estimates_accepted, 10) / parseInt(sales.leads_generated, 10)) * 100) : 0,
@@ -847,17 +841,13 @@ router.get("/metrics", async (req, res) => {
         calls_handled: parseInt(ai.calls_handled, 10),
         ai_success_rate: ai.calls_handled > 0 ? Math.round((parseInt(ai.appointments_booked, 10) / parseInt(ai.calls_handled, 10)) * 100) : 0,
         appointments_booked: parseInt(ai.appointments_booked, 10),
-        missed_calls_recovered: parseInt(todayStats.rows[0].recovered || 0, 10), // Approx for individual view
-        
-        // Deep tracking
+        missed_calls_recovered: parseInt(todayStats.rows[0].recovered || 0, 10),
         calls_booked: parseInt(ai.calls_booked || 0, 10),
         calls_followup: parseInt(ai.calls_followup || 0, 10),
         calls_transferred: parseInt(ai.calls_transferred || 0, 10),
         calls_spam: parseInt(ai.calls_spam || 0, 10),
         calls_hung_up: parseInt(ai.calls_hung_up || 0, 10),
         calls_confused: parseInt(ai.calls_confused || 0, 10),
-        
-        // Deep analysis
         hung_up_10s: parseInt(ai.hung_up_10s || 0, 10),
         hung_up_30s: parseInt(ai.hung_up_30s || 0, 10),
         hung_up_60s: parseInt(ai.hung_up_60s || 0, 10),
@@ -942,6 +932,7 @@ router.get("/metrics", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
 router.get("/activity-feed", async (req, res) => {
   try {
     const tenantIds = await getTargetTenantIds(req);
@@ -969,33 +960,24 @@ router.get("/activity-feed", async (req, res) => {
     const isRollup = tenantIds.length > 1;
     const events = [
       ...calls.rows.map(r => ({
-        id: r.id,
-        at: r.at,
-        type: "call",
+        id: r.id, at: r.at, type: "call",
         text: (r.transferred ? "AI transferred call to human" : (r.disposition === 'booked' ? "AI booked appointment on call" : "AI answered call")) + (isRollup ? ` (${r.business_name})` : "")
       })),
       ...bookings.rows.map(r => ({
-        id: r.id,
-        at: r.at,
-        type: "booking",
+        id: r.id, at: r.at, type: "booking",
         text: (r.status === 'scheduled' ? `Appointment booked: ${r.contact_name || 'Lead'}` : `Lead captured: ${r.contact_name || 'Lead'}`) + (isRollup ? ` (${r.business_name})` : "")
       })),
       ...recoveries.rows.map(r => ({
-        id: r.id,
-        at: r.at,
-        type: "recovery",
+        id: r.id, at: r.at, type: "recovery",
         text: (r.status === 'converted' ? `Missed call recovered: ${r.contact_name || 'Lead'}` : `Recovery sequence active: ${r.contact_name || 'Lead'}`) + (isRollup ? ` (${r.business_name})` : "")
       })),
       ...followUps.rows.map(r => ({
-        id: r.id,
-        at: r.at,
-        type: "follow_up",
+        id: r.id, at: r.at, type: "follow_up",
         text: `SMS followup sent: ${r.follow_up_type}` + (isRollup ? ` (${r.business_name})` : "")
       }))
     ];
 
     events.sort((a, b) => new Date(b.at) - new Date(a.at));
-
     res.json({ feed: events.slice(0, 25) });
   } catch (e) {
     console.error(e);
@@ -1003,7 +985,6 @@ router.get("/activity-feed", async (req, res) => {
   }
 });
 
-// More specific route first so /tenants/:id is matched before /tenants
 function maskTwilioSid(sid) {
   if (!sid || typeof sid !== "string") return null;
   if (sid.length <= 8) return "***";
@@ -1023,8 +1004,6 @@ const TENANT_SELECT_BASE_LEGACY = `t.id, t.name, t.slug, t.company_name, t.welco
 router.get("/tenants/:id", async (req, res) => {
   try {
     let id = req.params.id;
-    
-    // Handle 'all' rollup request
     if (id === "all") {
       if (req.user?.tenant_id) {
         id = req.user.tenant_id;
@@ -1032,7 +1011,6 @@ router.get("/tenants/:id", async (req, res) => {
         return res.status(400).json({ error: "Target ID required for details" });
       }
     }
-
 
     const r = await db.query(
       `SELECT ${TENANT_SELECT_BASE}, ${TENANT_SELECT_TWILIO},
@@ -1042,7 +1020,6 @@ router.get("/tenants/:id", async (req, res) => {
     const tenant = r.rows[0];
     if (!tenant) return res.status(404).json({ error: "Not found" });
 
-    // Authorization: Must be super admin, the tenant itself, or its parent.
     if (req.user?.tenant_id && req.user.tenant_id !== tenant.id && !req.user.is_super_admin) {
       if (req.user.tenant_business_type !== 'parent' || tenant.parent_id !== req.user.tenant_id) {
         return res.status(403).json({ error: "Forbidden — insufficient permissions to access this location" });
@@ -1055,11 +1032,9 @@ router.get("/tenants/:id", async (req, res) => {
     masked.api_key_masked = tenant.api_key ? tenant.api_key.substring(0, 4) + "..." + tenant.api_key.slice(-4) : null;
     masked.has_twilio_credentials = !!(tenant.twilio_account_sid && tenant.twilio_auth_token);
     masked.has_nurturing_referral = hasNurturingReferralAccess(tenant);
-    
     delete masked.twilio_account_sid;
     delete masked.twilio_auth_token;
     delete masked.facebook_page_access_token;
-    // delete masked.api_key; // Keep for settings display
 
     res.json(masked);
   } catch (e) {
@@ -1070,7 +1045,6 @@ router.get("/tenants/:id", async (req, res) => {
 
 router.get("/tenants", async (req, res) => {
   try {
-    // If regular user, only show their business
     const userTenantId = req.user?.tenant_id;
     let query = `SELECT ${TENANT_SELECT_BASE}, (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t ORDER BY t.name`;
     let params = [];
@@ -1078,7 +1052,6 @@ router.get("/tenants", async (req, res) => {
     if (userTenantId) {
       console.log(`[GET /tenants] user tenant_id=${userTenantId}, business_type=${req.user.tenant_business_type}, parent_id=${req.user.tenant_parent_id}`);
       if (req.user.tenant_business_type === 'parent') {
-        // If parent, return the parent and all children
         query = `SELECT ${TENANT_SELECT_BASE}, (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1 OR t.parent_id = $1 ORDER BY (CASE WHEN t.id = $1 THEN 0 ELSE 1 END), t.name`;
       } else {
         query = `SELECT ${TENANT_SELECT_BASE}, (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1`;
@@ -1093,7 +1066,6 @@ router.get("/tenants", async (req, res) => {
       masked.api_key_masked = t.api_key ? t.api_key.substring(0, 4) + "..." + t.api_key.slice(-4) : null;
       masked.has_twilio_credentials = !!(t.twilio_account_sid && t.twilio_auth_token);
       masked.has_nurturing_referral = hasNurturingReferralAccess(t);
-      
       delete masked.twilio_account_sid;
       delete masked.twilio_auth_token;
       delete masked.facebook_page_access_token;
@@ -1118,11 +1090,9 @@ router.post("/tenants", async (req, res) => {
 
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     
-    // Check if user is allowed to create another business
     if (userTenantId) {
-      // If they have a business, they can only create another if they are a parent AND creating a child
       if (req.user.tenant_business_type === 'parent' && parentId === userTenantId) {
-        // Allowed: adding a location to their parent account
+        // Allowed
       } else {
         return res.status(400).json({ error: "You already have a business. Use Settings or the Businesses page to manage it." });
       }
@@ -1136,7 +1106,6 @@ router.post("/tenants", async (req, res) => {
       return res.status(400).json({ error: "Business name or company name is required" });
     }
 
-    // BYOT: if tenant provides their own Twilio credentials + phone, use manual flow
     const byotSid = (body.twilio_account_sid || "").trim();
     const byotToken = (body.twilio_auth_token || "").trim();
     const manualPhone = body.phone || body.phone_number || "";
@@ -1146,22 +1115,18 @@ router.post("/tenants", async (req, res) => {
     let isByot = !!(byotSid && byotToken);
 
     if (isByot && manualPhone) {
-      // BYOT flow: tenant provides their own number
       phone = normalizePhoneInput(manualPhone);
       if (!phone) {
         return res.status(400).json({ error: "A valid phone number is required for BYOT (e.g. +18076055898 or 8076055898)" });
       }
     } else if (body.assigned_number || body.phone || body.phone_number) {
-      // Platform flow: dynamically purchase a number - only if specifically requested
       try {
         let numberToBuy = body.assigned_number;
         if (!numberToBuy) {
-          // Fallback if they bypassed the UI selection
           const available = await fetchAvailableNumbers();
           if (!available || available.length === 0) throw new Error("No numbers available");
           numberToBuy = available[0].phoneNumber;
         }
-
         const purchased = await purchaseNewNumber(numberToBuy);
         phone = purchased.phone;
         twilioSid = purchased.twilioSid;
@@ -1171,7 +1136,6 @@ router.post("/tenants", async (req, res) => {
       }
     }
 
-    // Check if this phone number is already assigned to another tenant
     if (phone) {
       const phoneExists = await db.query("SELECT id FROM phone_numbers WHERE phone = $1", [phone]);
       if (phoneExists.rows.length > 0) {
@@ -1181,10 +1145,7 @@ router.post("/tenants", async (req, res) => {
 
     const finalName = displayName || companyName;
     const finalCompany = companyName || displayName;
-    const slug = (slugInput || finalName)
-      .toLowerCase()
-      .replace(/\s+/g, "-")
-      .replace(/[^a-z0-9-]/g, "");
+    const slug = (slugInput || finalName).toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
     if (!slug) return res.status(400).json({ error: "Could not generate a valid slug from the business name" });
     const existing = await db.query("SELECT id FROM tenants WHERE slug = $1", [slug]);
     if (existing.rows.length > 0) {
@@ -1196,7 +1157,6 @@ router.post("/tenants", async (req, res) => {
     );
     const tenant = insert.rows[0];
 
-    // If BYOT credentials provided, save them on the tenant
     if (isByot) {
       await db.query(
         "UPDATE tenants SET twilio_account_sid = $1, twilio_auth_token = $2, updated_at = now() WHERE id = $3",
@@ -1204,18 +1164,14 @@ router.post("/tenants", async (req, res) => {
       );
     }
 
-    // Insert the phone number linked to this tenant
     if (phone) {
       const phoneRow = await db.query(
         "INSERT INTO phone_numbers (tenant_id, phone, is_primary, twilio_sid) VALUES ($1, $2, false, $3) RETURNING id",
         [tenant.id, phone, twilioSid]
       );
-
-      // Auto-configure Twilio webhook on this number - NON-FATAL
       const tenantForTwilio = await getTenantById(tenant.id);
       const webhookResult = await configurePhoneWebhook(phone, tenant.id, tenantForTwilio);
       if (webhookResult.success) {
-        // Update Twilio SID if we didn't already have it (BYOT case)
         if (webhookResult.twilioSid && !twilioSid) {
           await db.query("UPDATE phone_numbers SET twilio_sid = $1, updated_at = now() WHERE id = $2", [webhookResult.twilioSid, phoneRow.rows[0].id]);
         }
@@ -1223,14 +1179,14 @@ router.post("/tenants", async (req, res) => {
         console.warn("[Onboarding] Could not configure webhook for %s: %s", phone, webhookResult.error);
       }
     }
-    // Only link the user to the new tenant if they don't already have one (first business)
+
     if (!userTenantId) {
       await db.query(
         "UPDATE dashboard_users SET tenant_id = $1, role = $2, updated_at = now() WHERE id = $3",
         [tenant.id, "admin", userId]
       );
     }
-    // When creating a child location, keep the user linked to the parent tenant
+
     const effectiveTenantId = userTenantId || tenant.id;
     const newToken = auth.signToken({
       sub: userId,
@@ -1272,16 +1228,15 @@ function normalizeTransferNumbers(value) {
   }
   return [];
 }
+
 router.patch("/tenants/:id", async (req, res) => {
   try {
     const id = req.params.id;
 
-    // Fetch the tenant first to check ownership/parentage
     const checkResult = await db.query("SELECT parent_id FROM tenants WHERE id = $1", [id]);
     const targetTenant = checkResult.rows[0];
     if (!targetTenant) return res.status(404).json({ error: "Tenant not found" });
 
-    // Authorization check
     if (req.user?.tenant_id && req.user.tenant_id !== id && !req.user.is_super_admin) {
       if (req.user.tenant_business_type !== 'parent' || targetTenant.parent_id !== req.user.tenant_id) {
         return res.status(403).json({ error: "Forbidden — insufficient permissions to modify this location" });
@@ -1380,6 +1335,19 @@ router.patch("/tenants/:id", async (req, res) => {
     out.has_twilio_credentials = row.has_twilio_credentials === true;
     if (out.plan == null) out.plan = "basic";
     out.has_nurturing_referral = hasNurturingReferralAccess(out);
+
+    // ── Audit log: settings updated ─────────────────────────────────────
+    await logAction({
+      organization_id: String(id),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "settings_updated",
+      entity_type: "settings",
+      entity_id: String(id),
+      new_value: updates,
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
+
     res.json(out);
   } catch (e) {
     console.error(e);
@@ -1393,19 +1361,12 @@ router.get("/twilio/available-numbers", async (req, res) => {
   try {
     const areaCode = req.query.area_code || null;
     const limit = parseInt(req.query.limit, 10) || 10;
-    
-    // 1. Fetch numbers already in the global Twilio account (unassigned)
     const owned = await getOwnedUnassignedNumbers(db, areaCode);
-    
-    // 2. Fetch new numbers available to buy from Twilio
     const available = await fetchAvailableNumbers(areaCode, limit);
-    
-    // Combine: Owned first, then available
     const combined = [
       ...owned,
       ...available.filter(n => !owned.some(o => o.phoneNumber === n.phoneNumber))
     ].slice(0, limit + owned.length);
-
     res.json({ numbers: combined });
   } catch (e) {
     console.error(e);
@@ -1435,7 +1396,6 @@ router.post("/phone-numbers", async (req, res) => {
     const tenantId = getTenantIdFromQuery(req);
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
 
-    // Enforce Plan Limits: Standard Plan Limit + Purchased Extras ($12/mo)
     const tenant = await db.query(
       "SELECT plan, extra_numbers_count FROM tenants WHERE id = $1",
       [tenantId]
@@ -1463,13 +1423,12 @@ router.post("/phone-numbers", async (req, res) => {
     const phone = normalizePhoneInput(req.body?.phone);
     const lead_source = req.body?.lead_source || req.body?.label || null;
     const setPrimary = !!req.body?.is_primary;
-    const isOwned = !!req.body?.is_owned; // Flag from frontend if picked from 'Owned' search or manual
+    const isOwned = !!req.body?.is_owned;
 
     if (!phone) {
       return res.status(400).json({ error: "A valid phone number is required (e.g. +14025551234)" });
     }
 
-    // Check if already assigned
     const existing = await db.query("SELECT id, tenant_id FROM phone_numbers WHERE phone = $1", [phone]);
     if (existing.rows.length > 0) {
       const owner = existing.rows[0].tenant_id;
@@ -1479,12 +1438,7 @@ router.post("/phone-numbers", async (req, res) => {
       return res.status(409).json({ error: "This phone number is already assigned to another business." });
     }
 
-    // If not owned and not manual (manual is assumed owned/external), we buy it
-    // But how do we know if it was picked from 'search' vs 'manual'?
-    // Let's assume if it's NOT owned, we attempt to purchase it IF it came from the Search results.
-    // To simplify: if 'is_purchasable' flag is passed, we buy it.
     const isPurchasable = !!req.body?.is_purchasable;
-
     if (isPurchasable && !isOwned) {
       try {
         await purchaseNewNumber(phone);
@@ -1494,18 +1448,15 @@ router.post("/phone-numbers", async (req, res) => {
     }
 
     if (setPrimary) {
-      // Set all other numbers for this tenant to not primary
       await db.query(
         "UPDATE phone_numbers SET is_primary = false, updated_at = now() WHERE tenant_id = $1",
         [tenantId]
       );
     }
 
-    // Auto-configure Twilio webhook on this number - NON-FATAL
     const tenantForTwilio = await getTenantById(tenantId);
     const webhookResult = await configurePhoneWebhook(phone, tenantId, tenantForTwilio);
     
-    // Save the record regardless of Twilio success
     const result = await db.query(
       "INSERT INTO phone_numbers (tenant_id, phone, is_primary, twilio_sid, lead_source) VALUES ($1, $2, $3, $4, $5) RETURNING id, tenant_id, phone, is_primary, twilio_sid, lead_source, created_at",
       [tenantId, phone, setPrimary, webhookResult.success ? (webhookResult.twilioSid || null) : null, lead_source]
@@ -1527,7 +1478,6 @@ router.delete("/phone-numbers/:id", async (req, res) => {
     const tenantId = getTenantIdFromQuery(req);
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
     const phoneId = req.params.id;
-    // Verify ownership
     const existing = await db.query(
       "SELECT id, is_primary FROM phone_numbers WHERE id = $1 AND tenant_id = $2",
       [phoneId, tenantId]
@@ -1551,7 +1501,6 @@ router.patch("/phone-numbers/:id", async (req, res) => {
     const finalSource = lead_source || label;
     const phoneId = req.params.id;
 
-    // Verify ownership
     const existing = await db.query(
       "SELECT id FROM phone_numbers WHERE id = $1 AND tenant_id = $2",
       [phoneId, tenantId]
@@ -1561,12 +1510,10 @@ router.patch("/phone-numbers/:id", async (req, res) => {
     }
 
     if (is_primary) {
-      // Set all other numbers for this tenant to not primary
       await db.query(
         "UPDATE phone_numbers SET is_primary = false, updated_at = now() WHERE tenant_id = $1",
         [tenantId]
       );
-      // Set this one to primary
       await db.query(
         "UPDATE phone_numbers SET is_primary = true, updated_at = now() WHERE id = $1",
         [phoneId]
@@ -1594,7 +1541,6 @@ router.patch("/phone-numbers/:id", async (req, res) => {
 
 // -------------------- Estimate Recoveries --------------------
 
-// List sales wins (converted recoveries)
 router.get("/sales-wins", async (req, res) => {
   try {
     const tenantIds = await getTargetTenantIds(req);
@@ -1611,7 +1557,6 @@ router.get("/sales-wins", async (req, res) => {
   }
 });
 
-// Recovery stats
 router.get("/recoveries/stats", async (req, res) => {
   try {
     const tenantIds = await getTargetTenantIds(req);
@@ -1624,7 +1569,6 @@ router.get("/recoveries/stats", async (req, res) => {
   }
 });
 
-// Start a recovery for a booking
 router.post("/recoveries", async (req, res) => {
   try {
     const tenantId = getTenantIdFromQuery(req);
@@ -1642,7 +1586,6 @@ router.post("/recoveries", async (req, res) => {
   }
 });
 
-// Get single recovery with touch history
 router.get("/recoveries/:id", async (req, res) => {
   try {
     const recovery = await estimateRecovery.getRecoveryById(req.params.id);
@@ -1655,7 +1598,6 @@ router.get("/recoveries/:id", async (req, res) => {
   }
 });
 
-// Set objection type on a recovery
 router.patch("/recoveries/:id/objection", async (req, res) => {
   try {
     const { objection_type } = req.body || {};
@@ -1671,7 +1613,6 @@ router.patch("/recoveries/:id/objection", async (req, res) => {
   }
 });
 
-// Mark recovered (converted)
 router.post("/recoveries/:id/convert", async (req, res) => {
   try {
     await estimateRecovery.markConverted(req.params.id);
@@ -1682,7 +1623,6 @@ router.post("/recoveries/:id/convert", async (req, res) => {
   }
 });
 
-// Pause / resume / cancel
 router.post("/recoveries/:id/pause", async (req, res) => {
   try {
     await estimateRecovery.markPaused(req.params.id);
@@ -1768,17 +1708,14 @@ router.get("/conversations/:id/timeline", async (req, res) => {
   }
 });
 
-
 router.post("/tenants/:id/reset-api-key", async (req, res) => {
   try {
     const id = req.params.id;
 
-    // Fetch the tenant first to check ownership/parentage
     const checkResult = await db.query("SELECT parent_id FROM tenants WHERE id = $1", [id]);
     const targetTenant = checkResult.rows[0];
     if (!targetTenant) return res.status(404).json({ error: "Tenant not found" });
 
-    // Authorization check
     if (req.user?.tenant_id && req.user.tenant_id !== id && !req.user.is_super_admin) {
       if (req.user.tenant_business_type !== 'parent' || targetTenant.parent_id !== req.user.tenant_id) {
         return res.status(403).json({ error: "Forbidden — insufficient permissions to reset this location's API key" });
@@ -1804,9 +1741,6 @@ router.get("/notifications", async (req, res) => {
     const tenantIds = await getTargetTenantIds(req);
     if (tenantIds.length === 0) return res.status(400).json({ error: "tenant_id required" });
     const limit = parseInt(req.query.limit, 10) || 20;
-
-    // Use a custom query here instead of notificationsService.getUnreadNotifications 
-    // to support multiple tenant IDs easily
     const q = `
       SELECT * FROM notifications 
       WHERE tenant_id = ANY($1) AND read = FALSE 
@@ -1845,4 +1779,3 @@ router.post("/notifications/mark-all-read", async (req, res) => {
 });
 
 module.exports = router;
-

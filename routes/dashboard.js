@@ -171,7 +171,7 @@ router.patch("/bookings/:id", async (req, res) => {
 });
 
 // Everything below this requires at least Staff-level access
-router.use(requireRole([ROLES.OWNER, ROLES.ADMIN, ROLES.MANAGER, ROLES.STAFF]));
+router.use(requireRole(['owner', 'admin', 'manager', 'staff']));
 
 router.get("/calls", async (req, res) => {
   try {

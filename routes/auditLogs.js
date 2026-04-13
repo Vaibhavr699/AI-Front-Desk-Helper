@@ -2,7 +2,6 @@
 
 const express = require("express");
 const db = require("../lib/db");
-const auth = require("../lib/auth");
 
 const router = express.Router();
 
@@ -12,7 +11,7 @@ const router = express.Router();
  * HQ/admin users see all locations under their org.
  * Location users see only their own tenant.
  */
-router.get("/", auth.requireAuth, async (req, res) => {
+router.get("/", async (req, res) => {
   try {
     const { user_id, action, from, to, page = 1, limit = 50 } = req.query;
 

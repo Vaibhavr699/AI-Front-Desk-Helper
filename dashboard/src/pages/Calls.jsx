@@ -65,10 +65,14 @@ function CallCard({ call, onUpdate }) {
 
   const [isUpdating, setIsUpdating] = useState(false);
 
-  const handleAction = async (action) => {
+const handleAction = async (action) => {
     setIsUpdating(true);
     try {
-      await updateCall(call.id, { status: action });
+      const isSpam = action === 'Spam';
+      await updateCall(call.id, {
+        status: action,
+        ...(isSpam && { disposition: 'spam' }),
+      });
       success(`Lead state updated: ${action}`);
       onUpdate();
     } catch (e) {

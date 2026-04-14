@@ -111,7 +111,7 @@ router.get("/", requireTeamManager, async (req, res) => {
 
     await safeLogAction({
       organization_id: String(req.user.tenant_id),
-      user_id: String(req.user.id),
+      user_id: String(req.user.sub),        // ✅ FIXED: was req.user.id
       action: "team_viewed",
       entity_type: "team",
       entity_id: targetTenantId && targetTenantId !== "all"
@@ -227,7 +227,7 @@ router.post("/invite", requireTeamManager, async (req, res) => {
 
     await safeLogAction({
       organization_id: String(req.user.tenant_id),
-      user_id: String(req.user.id),
+      user_id: String(req.user.sub),        // ✅ FIXED: was req.user.id
       action: "user_invited",
       entity_type: "user",
       entity_id: String(newUser.id),
@@ -266,7 +266,7 @@ router.delete("/:id", requireTeamManager, async (req, res) => {
     const parentId = req.user.tenant_id;
     const isParentAdmin = req.user?.tenant_business_type === "parent";
 
-    if (String(targetUserId) === String(req.user.id)) {
+    if (String(targetUserId) === String(req.user.sub)) {  // ✅ FIXED: was req.user.id
       return res.status(400).json({ error: "You cannot remove your own account." });
     }
 
@@ -296,7 +296,7 @@ router.delete("/:id", requireTeamManager, async (req, res) => {
 
     await safeLogAction({
       organization_id: String(req.user.tenant_id),
-      user_id: String(req.user.id),
+      user_id: String(req.user.sub),        // ✅ FIXED: was req.user.id
       action: "user_removed",
       entity_type: "user",
       entity_id: String(targetUser.id),

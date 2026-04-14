@@ -4,6 +4,7 @@ import { getUser } from "./api";
 import { DashboardLayout } from "./layouts";
 import SmsTerms from "./pages/SmsTerms";
 import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, Outbound, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy, AddLocation, Team } from "./pages";
+import MetricsPage from "./pages/MetricsPage";
 import { ToastProvider } from "./components/ui/Toast";
 import "./App.css";
 
@@ -142,7 +143,7 @@ function FollowUpsWithContext() {
 
 function MetricsWithContext() {
   const { tenantId } = useOutletContext();
-  return <Metrics tenantId={tenantId} />;
+  return <MetricsPage tenantId={tenantId} />;
 }
 
 function SettingsWithContext() {

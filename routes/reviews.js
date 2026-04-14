@@ -465,3 +465,72 @@ async function pollAllTenants() {
 
 module.exports = router;
 module.exports.pollAllTenants = pollAllTenants;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BILLING ROUTES — add these to the existing reviews router
+// ─────────────────────────────────────────────────────────────────────────────
+
+// POST /api/reviews/subscribe?tenant_id=xxx
+router.post("/subscribe", authMiddleware, async (req, res) => {
+  try {
+    const tenantId = getTenantIdFromQuery(req);
+    const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+    const FRONTEND_URL = process.env.FRONTEND_URL || "https://aifrontdeskhelper.com";
+
+    const result = await db.query(
+      "SELECT stripe_customer_id, plan FROM tenants WHERE id = $1",
+      [tenantId]
+    );
+    const tenant = result.rows[0];
+    if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+
+    if (tenant.plan === "elite") {
+      return res.status(400).json({ error: "Reviews included in Elite plan" });
+    }
+
+    const sessionParams = {
+      mode: "subscription",
+      line_items: [{ price: process.env.STRIPE_REVIEWS_PRICE_ID, quantity: 1 }],
+      success_url: `${FRONTEND_URL}/reviews?subscribed=true`,
+      cancel_url: `${FRONTEND_URL}/reviews?cancelled=true`,
+      metadata: { tenant_id: tenantId, addon: "reviews" },
+    };
+
+    if (tenant.stripe_customer_id) {
+      sessionParams.customer = tenant.stripe_customer_id;
+    }
+
+    const session = await stripe.checkout.sessions.create(sessionParams);
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("POST /api/reviews/subscribe error:", err);
+    res.status(500).json({ error: "Failed to create checkout session" });
+  }
+});
+
+// POST /api/reviews/unsubscribe?tenant_id=xxx
+router.post("/unsubscribe", authMiddleware, async (req, res) => {
+  try {
+    const tenantId = getTenantIdFromQuery(req);
+    const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+
+    const result = await db.query(
+      "SELECT reviews_subscription_id FROM tenants WHERE id = $1",
+      [tenantId]
+    );
+    const tenant = result.rows[0];
+
+    if (!tenant?.reviews_subscription_id) {
+      return res.status(400).json({ error: "No active Reviews subscription" });
+    }
+
+    await stripe.subscriptions.update(tenant.reviews_subscription_id, {
+      cancel_at_period_end: true,
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("POST /api/reviews/unsubscribe error:", err);
+    res.status(500).json({ error: "Failed to cancel subscription" });
+  }
+});

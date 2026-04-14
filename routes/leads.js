@@ -10,7 +10,12 @@ const db = require("../lib/db");
 
 // All routes require authentication and at least Manager-level access
 router.use(authMiddleware);
-router.use(requireRole([ROLES.OWNER, ROLES.ADMIN, ROLES.MANAGER]));
+router.use((req, res, next) => {
+  if (!req.user || !['owner', 'admin', 'manager'].includes(req.user.role)) {
+    return res.status(403).json({ error: "Forbidden — insufficient permissions", code: "INSUFFICIENT_PERMISSIONS" });
+  }
+  next();
+});
 
 /** GET /api/leads - List all leads for a tenant */
 router.get("/", async (req, res) => {

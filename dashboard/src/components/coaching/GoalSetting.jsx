@@ -5,7 +5,7 @@ const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov
 const MFULL = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const NOW_M = new Date().getMonth();
 const NOW_Y = new Date().getFullYear();
-const SEA = [0.05,0.05,0.07,0.09,0.10,0.10,0.10,0.10,0.09,0.09,0.08,0.08];
+const SEA = [0.04,0.05,0.08,0.11,0.12,0.12,0.11,0.11,0.10,0.08,0.05,0.03];
 
 const fmt = n => Math.round(n).toLocaleString();
 const fmtC = n => "$" + Math.round(n).toLocaleString();

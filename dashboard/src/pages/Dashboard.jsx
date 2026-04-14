@@ -11,7 +11,6 @@ const NOW_YEAR = new Date().getFullYear();
 
 export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
   const [calls, setCalls] = useState([]);
-  const [salesWins, setSalesWins] = useState([]);
   const [metrics, setMetrics] = useState(null);
   const [tenant, setTenant] = useState(null);
   const [feed, setFeed] = useState([]);
@@ -22,8 +21,8 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
   const [showGuide, setShowGuide] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(new Date());
 
-  const token = localStorage.getItem("token");
-  const API_BASE = import.meta.env.VITE_API_URL || "";
+  const token = typeof localStorage !== "undefined" ? localStorage.getItem("token") : "";
+  const API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
 
   useEffect(() => {
     if (!tenantId) { setLoading(false); return; }
@@ -33,18 +32,16 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
       getMetrics(tenantId),
       getTenant(tenantId),
       getActivityFeed(tenantId),
-      getSalesWins(tenantId),
       fetch(`${API_BASE}/api/coaching/annual?year=${NOW_YEAR}&tenant_id=${tenantId}`, {
         headers: { Authorization: `Bearer ${token}` }
       }).then(r => r.json()).catch(() => null),
     ])
-      .then(([callsRes, bookingsRes, metricsRes, tenantData, feedRes, winsRes, goalsRes]) => {
+      .then(([callsRes, bookingsRes, metricsRes, tenantData, feedRes, goalsRes]) => {
         setCalls(callsRes.calls || []);
         setBookings(bookingsRes.bookings || []);
         setMetrics(metricsRes);
         setTenant(tenantData);
         setFeed(feedRes.feed || []);
-        setSalesWins(winsRes.sales_wins || []);
         setGoals(goalsRes);
         setLastUpdated(new Date());
       })
@@ -90,13 +87,8 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
     );
   }
 
-  if (loading) return (
-    <div className="flex items-center justify-center py-20"><LumaSpin /></div>
-  );
-
-  if (error) return (
-    <div className="px-0"><p className="text-red-600 text-sm">{error}</p></div>
-  );
+  if (loading) return <div className="flex items-center justify-center py-20"><LumaSpin /></div>;
+  if (error) return <div className="px-0"><p className="text-red-600 text-sm">{error}</p></div>;
 
   const openLeads = metrics?.pipeline?.open_estimates || 0;
   const estimatedRevenue = metrics?.pipeline?.estimated_revenue || 0;
@@ -129,6 +121,22 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
     va: { fontSize: 10, color: "#E8600A", fontWeight: 600, textDecoration: "none" },
   };
 
+  const ZAPIER_NAMES = ["Zapier", "zapier", "webhook", "Webhook", "WEBHOOK"];
+
+  function getApptName(b) {
+    if (!b.contact_name || ZAPIER_NAMES.includes(b.contact_name.trim())) {
+      return b.contact_phone ? `#${b.contact_phone.slice(-4)}` : "Lead";
+    }
+    return b.contact_name.split(" ")[0];
+  }
+
+  function getApptDate(b) {
+    const raw = b.preferred_date || b.appointment_date || b.scheduled_date;
+    if (!raw || raw === "null") return null;
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
   return (
     <div style={{ background: "#F5F4F0", minHeight: "100vh", fontFamily: "'DM Sans', sans-serif", padding: "0 0 48px" }}>
 
@@ -154,19 +162,20 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
             <div style={s.secBar} /><div style={s.secTitle}>Revenue Recovered by AI</div>
             <div style={s.secSub}>This month</div>
           </div>
-          <div style={{ background: "#2d3748", borderRadius: 16, padding: 20, position: "relative", overflow: "hidden" }}>
-            <div style={{ position: "absolute", top: -40, right: -40, width: 200, height: 200, borderRadius: "50%", background: "rgba(232,96,10,0.12)", pointerEvents: "none" }} />
+          {/* ✅ FIX: changed from #1a1a1a to #1A2744 (dark navy — much easier to read) */}
+          <div style={{ background: "#1A2744", borderRadius: 16, padding: 20, position: "relative", overflow: "hidden" }}>
+            <div style={{ position: "absolute", top: -40, right: -40, width: 200, height: 200, borderRadius: "50%", background: "rgba(232,96,10,0.15)", pointerEvents: "none" }} />
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
               <div>
-                <div style={{ fontSize: 9, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>{MONTH} {NOW_YEAR} · AI recovered</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>Revenue Recovered by AI</div>
+                <div style={{ fontSize: 9, color: "#8899bb", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>{MONTH} {NOW_YEAR} · AI recovered</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#e8edf5" }}>Revenue Recovered by AI</div>
                 <div style={{ fontSize: 40, fontWeight: 800, color: "#E8600A", lineHeight: 1, margin: "4px 0 3px" }}>${totalRecovered.toLocaleString()}</div>
-                <div style={{ fontSize: 10, color: "#555" }}>Would have been <span style={{ color: "#4ade80", fontWeight: 600 }}>$0 without AI</span></div>
+                <div style={{ fontSize: 10, color: "#8899bb" }}>Would have been <span style={{ color: "#4ade80", fontWeight: 600 }}>$0 without AI</span></div>
               </div>
-              <div style={{ background: "#252525", borderRadius: 10, padding: "10px 14px", textAlign: "right" }}>
-                <div style={{ fontSize: 8, color: "#555", textTransform: "uppercase", letterSpacing: "0.06em" }}>ROI</div>
+              <div style={{ background: "#243358", borderRadius: 10, padding: "10px 14px", textAlign: "right" }}>
+                <div style={{ fontSize: 8, color: "#8899bb", textTransform: "uppercase", letterSpacing: "0.06em" }}>ROI</div>
                 <div style={{ fontSize: 28, fontWeight: 800, color: "#4ade80", lineHeight: 1 }}>{roi}x</div>
-                <div style={{ fontSize: 9, color: "#555", marginTop: 2 }}>$497/mo cost</div>
+                <div style={{ fontSize: 9, color: "#8899bb", marginTop: 2 }}>$497/mo cost</div>
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 8 }}>
@@ -177,9 +186,9 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
                 { icon: "🔄", label: "Re-engagement campaigns", amt: reengageRev, color: "#c084fc", barColor: "#7c3aed", pct: 30 },
               ].map((r, i) => (
                 <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <div style={{ width: 24, height: 24, borderRadius: 6, background: "#252525", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>{r.icon}</div>
-                  <div style={{ fontSize: 10, color: "#666", flex: 1 }}>{r.label}</div>
-                  <div style={{ width: 50, height: 3, background: "#2a2a2a", borderRadius: 2, overflow: "hidden", flexShrink: 0 }}>
+                  <div style={{ width: 24, height: 24, borderRadius: 6, background: "#243358", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>{r.icon}</div>
+                  <div style={{ fontSize: 10, color: "#aab8cc", flex: 1 }}>{r.label}</div>
+                  <div style={{ width: 50, height: 3, background: "#2d3f60", borderRadius: 2, overflow: "hidden", flexShrink: 0 }}>
                     <div style={{ width: `${r.pct}%`, height: "100%", background: r.barColor, borderRadius: 2 }} />
                   </div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: r.color, flexShrink: 0, width: 52, textAlign: "right" }}>${r.amt.toLocaleString()}</div>
@@ -189,7 +198,7 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
           </div>
         </div>
 
-        {/* ── COACH ALERTS (replaces KPI grid) ── */}
+        {/* ── COACH ALERTS ── */}
         <div>
           <div style={s.secLabel}>
             <div style={s.secBar} /><div style={s.secTitle}>Coach's Alerts</div>
@@ -308,7 +317,8 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
                 <Link to="/calls" style={s.va}>View all →</Link>
               </div>
               {calls.slice(0, 5).map((call, i) => {
-                const initials = (call.contact_name || call.from_number || "?").slice(0, 2).toUpperCase();
+                const name = call.contact_name || call.from_number || "Unknown";
+                const initials = name.slice(0, 2).toUpperCase();
                 const colors = ["#fff7ed","#f0fdf4","#eff6ff","#fdf4ff","#fff1f2"];
                 const tColors = ["#c2410c","#166534","#1d4ed8","#7c3aed","#be123c"];
                 const booked = call.disposition === "booked" || call.status?.toLowerCase().includes("booked");
@@ -317,7 +327,7 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
                   <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderBottom: i < 4 ? "1px solid #f8f8f8" : "none" }}>
                     <div style={{ width: 30, height: 30, borderRadius: "50%", background: colors[i%5], color: tColors[i%5], display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, flexShrink: 0 }}>{initials}</div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 11, fontWeight: 600 }}>{call.contact_name || call.from_number || "Unknown"}</div>
+                      <div style={{ fontSize: 11, fontWeight: 600 }}>{name}</div>
                       <div style={{ fontSize: 10, color: "#888" }}>{call.contact_phone || call.from_number || ""}</div>
                     </div>
                     <div style={{ fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 8, background: booked?"#dcfce7":transferred?"#eff6ff":"#f5f4f0", color: booked?"#166534":transferred?"#1d4ed8":"#888" }}>
@@ -345,15 +355,21 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
               </div>
               <div style={{ display: "flex", overflowX: "auto" }}>
                 {bookings.slice(0, 5).map((b, i) => {
-                  const d = b.preferred_date && b.preferred_date !== "null" ? new Date(b.preferred_date) : (b.created_at ? new Date(b.created_at) : null);
+                  // ✅ FIX: handle null/invalid dates and Zapier-created bookings
+                  const d = getApptDate(b);
+                  const displayName = getApptName(b);
                   const isToday = d && d.toDateString() === new Date().toDateString();
                   return (
                     <div key={i} style={{ minWidth: 110, padding: "12px", borderRight: i < 4 ? "1px solid #f5f5f5" : "none", flexShrink: 0 }}>
                       <div style={{ width: 36, height: 36, background: isToday?"#fff7ed":"#f5f4f0", border: isToday?"1px solid #fed7aa":"1px solid #e5e5e5", borderRadius: 8, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", marginBottom: 8 }}>
-                        <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1, color: isToday?"#E8600A":"#1a1a1a" }}>{d ? d.getDate() : "?"}</div>
-                        <div style={{ fontSize: 8, color: "#888", textTransform: "uppercase" }}>{d ? d.toLocaleString("default",{month:"short"}) : ""}</div>
+                        <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1, color: isToday?"#E8600A":"#1a1a1a" }}>
+                          {d ? d.getDate() : "—"}
+                        </div>
+                        <div style={{ fontSize: 8, color: "#888", textTransform: "uppercase" }}>
+                          {d ? d.toLocaleString("default",{month:"short"}) : ""}
+                        </div>
                       </div>
-                      <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 2 }}>{b.contact_name && b.contact_name !== "Zapier" ? b.contact_name.split(" ")[0] : b.contact_phone?.slice(-4) || "Lead"}</div>
+                      <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 2 }}>{displayName}</div>
                       <div style={{ fontSize: 9, color: "#888", marginBottom: 2 }}>{b.job_type||b.scope?.slice(0,12)||"Estimate"}</div>
                       <div style={{ fontSize: 9, color: "#888" }}>{b.appointment_time||"TBD"}</div>
                       <div style={{ fontSize: 11, fontWeight: 700, color: "#16a34a", marginTop: 4 }}>
@@ -368,7 +384,7 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
           </div>
         </div>
 
-        {/* ── CARD 7: QUICK ACTIONS + AI HEALTH ── */}
+        {/* ── QUICK ACTIONS + AI HEALTH ── */}
         <div style={s.card}>
           <div style={s.cardHdr}><div style={s.cardTitle}>Quick Actions</div></div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, padding: "12px 16px" }}>

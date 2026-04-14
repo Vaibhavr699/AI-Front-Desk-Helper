@@ -1,11 +1,3 @@
-// routes/coaching.js
-// Backend route for AI coaching chat
-// Uses OpenAI to generate coaching responses with full business context injected
-// 
-// Add to server.js:
-//   const coachingRouter = require("./routes/coaching");
-//   app.use("/api/coaching", authMiddleware, coachingRouter);
-
 "use strict";
 
 const express = require("express");
@@ -24,7 +16,6 @@ const supabase =
     : null;
 
 // ── GET /api/coaching/context ──────────────────────────────────────────────
-// Returns all the context data the frontend needs to display in the context bar
 router.get("/context", async (req, res) => {
   try {
     const tenantId = getTenantIdFromQuery(req);
@@ -35,11 +26,9 @@ router.get("/context", async (req, res) => {
     const currentYear = now.getFullYear();
 
     const [activityData, goalsData] = await Promise.all([
-      // Pull user_activity_summary from Supabase
       supabase
         ? supabase.from("user_activity_summary").select("*").eq("organization_id", tenantId)
         : Promise.resolve({ data: [] }),
-      // Pull goals from PostgreSQL
       db.query(
         "SELECT * FROM revenue_goals WHERE tenant_id = $1 AND year = $2",
         [tenantId, currentYear]
@@ -59,7 +48,6 @@ router.get("/context", async (req, res) => {
 });
 
 // ── POST /api/coaching/chat ────────────────────────────────────────────────
-// Pulls full business context, builds system prompt, calls OpenAI
 router.post("/chat", async (req, res) => {
   try {
     const { message, conversation_history = [] } = req.body || {};
@@ -81,12 +69,11 @@ router.post("/chat", async (req, res) => {
       pipelineResult,
       activityResult,
       leadsResult,
+      sourceResult,
     ] = await Promise.all([
-      // Tenant info
       db.query("SELECT name, company_name, plan FROM tenants WHERE id = $1", [tenantId])
         .catch(() => ({ rows: [] })),
 
-      // 30-day metrics
       db.query(
         `SELECT 
           COUNT(DISTINCT l.id) as leads,
@@ -100,13 +87,11 @@ router.post("/chat", async (req, res) => {
         [tenantId]
       ).catch(() => ({ rows: [{}] })),
 
-      // Current year goals + actuals
       db.query(
         "SELECT * FROM revenue_goals WHERE tenant_id = $1 AND year = $2 ORDER BY month ASC",
         [tenantId, currentYear]
       ).catch(() => ({ rows: [] })),
 
-      // Pipeline
       db.query(
         `SELECT
           COUNT(*) FILTER (WHERE status NOT IN ('Closed','Lost')) as open_leads,
@@ -116,12 +101,10 @@ router.post("/chat", async (req, res) => {
         [tenantId]
       ).catch(() => ({ rows: [{}] })),
 
-      // User activity from Supabase
       supabase
         ? supabase.from("user_activity_summary").select("*").eq("organization_id", tenantId)
         : Promise.resolve({ data: [] }),
 
-      // Open estimates needing follow-up
       db.query(
         `SELECT COUNT(*) as stale_estimates,
           COALESCE(SUM(estimated_revenue_cents), 0) as stale_value
@@ -131,6 +114,19 @@ router.post("/chat", async (req, res) => {
            AND created_at < now() - interval '5 days'`,
         [tenantId]
       ).catch(() => ({ rows: [{}] })),
+
+      db.query(
+        `SELECT 
+          COALESCE(NULLIF(TRIM(lead_source), ''), 'Direct') as source,
+          COUNT(*) as leads,
+          COUNT(DISTINCT b.id) as booked,
+          CASE WHEN COUNT(*) > 0 THEN ROUND((COUNT(DISTINCT b.id)::numeric / COUNT(*)::numeric) * 100) ELSE 0 END as close_rate
+         FROM leads l
+         LEFT JOIN bookings b ON b.lead_id = l.id
+         WHERE l.tenant_id = $1 AND l.created_at > now() - interval '30 days'
+         GROUP BY source ORDER BY leads DESC LIMIT 5`,
+        [tenantId]
+      ).catch(() => ({ rows: [] })),
     ]);
 
     const tenant = tenantResult.rows[0] || {};
@@ -139,6 +135,7 @@ router.post("/chat", async (req, res) => {
     const pipeline = pipelineResult.rows[0] || {};
     const activity = activityResult?.data || [];
     const leads = leadsResult.rows[0] || {};
+    const sources = sourceResult.rows || [];
 
     // ── Build goal context ────────────────────────────────────────────────
     const currentMonthGoal = goals.find(g => g.month === currentMonth);
@@ -147,6 +144,11 @@ router.post("/chat", async (req, res) => {
     const ytdActual = goals.filter(g => g.month <= currentMonth).reduce((a, g) => a + (g.actual_revenue || 0), 0);
     const avgJobValue = currentMonthGoal?.avg_job_value || 0;
     const closeRate = currentMonthGoal?.close_rate || 0;
+
+    // ── Build lead source context ─────────────────────────────────────────
+    const sourceContext = sources.length > 0
+      ? sources.map(s => `${s.source}: ${s.leads} leads, ${s.booked} booked, ${s.close_rate}% close rate`).join("\n")
+      : "No lead source data available.";
 
     // ── Build activity context ────────────────────────────────────────────
     const activitySummary = activity.length > 0
@@ -162,14 +164,14 @@ router.post("/chat", async (req, res) => {
     const systemPrompt = `You are Alex — a no-nonsense revenue coach for ${tenant.company_name || tenant.name || "this painting business"}. You think like a sales-obsessed business owner, not a consultant. You've scaled home service businesses from $500k to $3M+ and you know exactly what moves the needle.
 
 YOUR PERSONALITY:
-- Direct and blunt. No fluff, no "consider this", no "you might want to". You tell them exactly what to do.
-- You lead with the dollar amount at stake, always. "$6,400 sitting in 8 stale estimates" not "you have some open estimates".
-- You're energetic and confident — like a coach who genuinely wants them to win, not a chatbot being helpful.
-- You ask ONE sharp follow-up question at the end to keep them accountable.
-- You never give more than 3 points per response. Focused beats comprehensive.
-- You use short punchy sentences. No 4-line paragraphs.
-- When the data shows a problem, you name it directly: "Your close rate dropped 8 points. That's a follow-up problem, not a lead problem."
-- When they're winning, you celebrate it briefly then push for more: "Good — $78k in April. Now let's make May your best month ever."
+- Direct and blunt. No fluff, no "consider this", no "you might want to". Tell them exactly what to do.
+- Lead with the dollar amount at stake, always. "$6,400 sitting in 8 stale estimates" not "you have some open estimates".
+- Energetic and confident — like a coach who genuinely wants them to win, not a chatbot being helpful.
+- Ask ONE sharp follow-up question at the end to keep them accountable.
+- Never give more than 3 points per response. Focused beats comprehensive.
+- Use short punchy sentences. No 4-line paragraphs.
+- When the data shows a problem, name it directly: "Your close rate dropped 8 points. That's a follow-up problem, not a lead problem."
+- When they're winning, celebrate briefly then push for more: "Good — $78k in April. Now let's make May your best month ever."
 
 COACHING PHILOSOPHY:
 - Speed to lead is the #1 lever in home services. Every hour of response delay costs money.
@@ -178,6 +180,30 @@ COACHING PHILOSOPHY:
 - Lead source data tells you where to double down on ad spend.
 - Team accountability without data is just nagging. Data makes it coaching.
 - Franchise owners who track these numbers location-by-location outperform those who don't by 40%+.
+
+SPECIFIC TACTICS ALEX RECOMMENDS (always tie to their actual data):
+- Stale estimates: "Trigger the 5-day follow-up sequence on those X estimates right now. At your close rate that's $X recovered."
+- Slow response time: "Set a 5-minute response rule. Text every new lead within 5 minutes. Response time under 5 min doubles close rate."
+- Low booking rate on calls: "Pull the last 10 call recordings. Listen for where callers drop off. 9 times out of 10 it's the price objection."
+- No referral system: "Text your last 20 completed customers today: 'We're taking on new clients — know anyone who needs painting?' Free leads."
+- Low close rate: "Role-play the estimate presentation with your team this week. Practice the 3 most common objections: price, timing, spouse needs to see it."
+- Behind on monthly goal: "Run a flash promotion — 10% off jobs booked this week only. Send to all open estimates. Creates urgency."
+- Team not reviewing recordings: "Block 15 min every Monday morning for your team to review the previous week's call recordings together."
+- Slow season (Jan-Mar): "Use slow months to lock in spring bookings. Offer a spring scheduling discount — pay deposit now, work starts April."
+- Pipeline sitting idle: "Every open lead over 7 days old needs a personal call today — not a text, a call. Mention you have a spot opening up."
+- No reviews coming in: "After every completed job, text the customer: 'Mind leaving us a Google review? Here's the link.' Do it same day."
+- Outbound reactivation: "Call your top 20 past customers for a repaint check-in. 'It's been 3 years — how's the paint holding up?' Books jobs."
+- Ad spend question: "Your cost per booked job tells you where to double spend. If Google Organic closes at 40% and LSA closes at 20% — shift the budget."
+- Estimate follow-up sequence: "Day 1: thank you text. Day 3: check-in call. Day 5: limited availability text. Day 7: final follow-up with small incentive."
+- Team performance gap: "The revenue gap between your top and bottom performer is your coaching opportunity. Show them the recordings side by side."
+- Booking rate below 30%: "Your AI is answering calls but not converting. Pull 5 recent recordings and find the drop-off point. Fix the script there."
+- Google reviews below 50: "Reviews are your close rate multiplier. Run a review blitz this week — call every customer from the last 6 months."
+
+WHEN DATA IS MISSING, ASK FOR IT SPECIFICALLY:
+- No goals set: "Stop everything and set your monthly goal right now. Go to Goals & Actuals tab. You can't coach what you don't measure."
+- No actuals entered: "Enter your actual revenue in the Goals tab — I need real numbers to tell you if you're on track."
+- No team activity: "I don't have team activity data yet. Tell me: who on your team handles follow-ups and how often are they calling leads back?"
+- No lead sources: "I need your lead source breakdown. Which channels are you running — Google LSA, PPC, organic, referral, door knocking?"
 
 TODAY: ${now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
 CURRENT MONTH: ${monthName} ${currentYear}
@@ -198,6 +224,9 @@ Bookings: ${metrics.bookings || 0}
 Calls handled by AI: ${metrics.calls || 0}
 Revenue booked: ${metrics.revenue ? "$" + Math.round(metrics.revenue / 100).toLocaleString() : "$0"}
 
+=== LEAD SOURCES (30 days) ===
+${sourceContext}
+
 === PIPELINE ===
 Open leads: ${pipeline.open_leads || 0}
 Jobs scheduled: ${pipeline.jobs_scheduled || 0}
@@ -212,9 +241,10 @@ ${activitySummary}
 2. Never say "consider", "might want to", "could potentially", or "it's important to"
 3. Never give generic advice — if you don't have the data to be specific, say "I need your [X] data to answer that precisely"
 4. Always end with ONE sharp action or ONE accountability question — never both
-5. Max 3 points per response. If you have more than 3, pick the 3 that make the most money
+5. Max 3 points per response. Pick the 3 that make the most money
 6. When behind on goal: calculate exactly how many leads/jobs needed to recover, name the fastest path
-7. When team data shows someone underperforming: name them, show the revenue gap, offer a specific fix`;
+7. When team data shows someone underperforming: name them, show the revenue gap, offer a specific fix
+8. Always recommend a specific tactic from the playbook above — not a concept, a named action with a timeline`;
 
     // ── Build message history ─────────────────────────────────────────────
     const messages = [
@@ -243,12 +273,7 @@ ${activitySummary}
   }
 });
 
-module.exports = router;
-
-
-// ── Add these to routes/coaching.js (or a separate routes/goals.js) ───────
-
-// GET /api/goals/annual?year=YYYY
+// ── GET /api/coaching/annual ───────────────────────────────────────────────
 router.get("/annual", async (req, res) => {
   try {
     const tenantId = getTenantIdFromQuery(req);
@@ -262,12 +287,12 @@ router.get("/annual", async (req, res) => {
     const closeRate = rows.find(r => r.close_rate)?.close_rate || null;
     res.json({ months: rows, avg_job_value: avgJobValue, close_rate: closeRate, year });
   } catch (err) {
-    console.error("GET /api/goals/annual error:", err);
+    console.error("GET /api/coaching/annual error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// POST /api/goals/annual
+// ── POST /api/coaching/annual ──────────────────────────────────────────────
 router.post("/annual", async (req, res) => {
   try {
     const tenantId = getTenantIdFromQuery(req);
@@ -290,7 +315,9 @@ router.post("/annual", async (req, res) => {
     }
     res.json({ success: true });
   } catch (err) {
-    console.error("POST /api/goals/annual error:", err);
+    console.error("POST /api/coaching/annual error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
+module.exports = router;

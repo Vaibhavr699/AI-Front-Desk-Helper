@@ -154,7 +154,7 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
             <div style={s.secBar} /><div style={s.secTitle}>Revenue Recovered by AI</div>
             <div style={s.secSub}>This month</div>
           </div>
-          <div style={{ background: "#1a1a1a", borderRadius: 16, padding: 20, position: "relative", overflow: "hidden" }}>
+          <div style={{ background: "#2d3748", borderRadius: 16, padding: 20, position: "relative", overflow: "hidden" }}>
             <div style={{ position: "absolute", top: -40, right: -40, width: 200, height: 200, borderRadius: "50%", background: "rgba(232,96,10,0.12)", pointerEvents: "none" }} />
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
               <div>
@@ -345,7 +345,7 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
               </div>
               <div style={{ display: "flex", overflowX: "auto" }}>
                 {bookings.slice(0, 5).map((b, i) => {
-                  const d = b.preferred_date ? new Date(b.preferred_date) : null;
+                  const d = b.preferred_date && b.preferred_date !== "null" ? new Date(b.preferred_date) : (b.created_at ? new Date(b.created_at) : null);
                   const isToday = d && d.toDateString() === new Date().toDateString();
                   return (
                     <div key={i} style={{ minWidth: 110, padding: "12px", borderRight: i < 4 ? "1px solid #f5f5f5" : "none", flexShrink: 0 }}>
@@ -353,7 +353,7 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
                         <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1, color: isToday?"#E8600A":"#1a1a1a" }}>{d ? d.getDate() : "?"}</div>
                         <div style={{ fontSize: 8, color: "#888", textTransform: "uppercase" }}>{d ? d.toLocaleString("default",{month:"short"}) : ""}</div>
                       </div>
-                      <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 2 }}>{(b.contact_name||"Lead").split(" ")[0]}</div>
+                      <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 2 }}>{b.contact_name && b.contact_name !== "Zapier" ? b.contact_name.split(" ")[0] : b.contact_phone?.slice(-4) || "Lead"}</div>
                       <div style={{ fontSize: 9, color: "#888", marginBottom: 2 }}>{b.job_type||b.scope?.slice(0,12)||"Estimate"}</div>
                       <div style={{ fontSize: 9, color: "#888" }}>{b.appointment_time||"TBD"}</div>
                       <div style={{ fontSize: 11, fontWeight: 700, color: "#16a34a", marginTop: 4 }}>

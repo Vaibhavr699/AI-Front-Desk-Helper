@@ -48,6 +48,7 @@ const messagesService = require("./services/messages");
 const emailService = require("./services/email");
 const { getAIConfig, REALTIME_TOOLS, RECOVERY_TOOLS } = require("./lib/orchestrator");
 const { isWithinBusinessHours } = require("./lib/timeUtils");
+const crmWebhookPayload = require("./lib/crmWebhookPayload");
 
 const _resetBase = (process.env.DASHBOARD_URL || process.env.BASE_URL || "").replace(/\/$/, "");
 console.log("[Startup] Password reset: Resend=" + (process.env.RESEND_API_KEY && process.env.EMAIL_FROM ? "yes" : "no") + ", ResetLinkBase=" + (_resetBase || "NOT SET – set DASHBOARD_URL or BASE_URL"));
@@ -702,6 +703,101 @@ async function safeUpdateCallSummary(callId, options = {}) {
   }
 }
 
+function normalizeCrmPreferredDate(value) {
+  if (value == null || value === "") return "";
+  const s = String(value).trim();
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : s.slice(0, 10);
+}
+
+/** True when handleLeadBooking persisted a new appointment (not cancel/reschedule copy). */
+function isNewBookingConfirmation(bookingResult) {
+  return Boolean(bookingResult && /You are booked for/i.test(String(bookingResult)));
+}
+
+/** Ensures Zapier/DripJobs-friendly keys exist on any CRM lead webhook body. */
+function finalizeCrmLeadPayload(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  const projectType = String(obj.project_type ?? obj.job_type ?? "").trim();
+  const projectDetails = String(obj.project_details ?? "").trim();
+  const rawAppt = String(obj.appointment_details ?? "").trim();
+  const appointment_details =
+    crmWebhookPayload.stripLiteralFieldLeak(rawAppt) ||
+    crmWebhookPayload.stripLiteralFieldLeak(projectDetails) ||
+    rawAppt ||
+    projectDetails;
+  const preferred = normalizeCrmPreferredDate(obj.preferred_date ?? obj.appointment_date ?? "");
+  const phoneNorm = crmWebhookPayload.normalizePhoneForCrm(obj.phone || obj.contact_phone || "");
+  const strippedFull = crmWebhookPayload.stripLiteralFieldLeak(String(obj.full_name ?? "").trim());
+  const primaryName = String(strippedFull || String(obj.contact_name ?? "").trim() || "").trim();
+  const nameParts = crmWebhookPayload.splitDisplayName(primaryName);
+  const first_name = String(obj.first_name ?? "").trim() || nameParts.first_name;
+  const last_name = String(obj.last_name ?? "").trim() || nameParts.last_name;
+  const full_name = nameParts.full_name || primaryName || String(obj.full_name ?? "").trim();
+
+  return {
+    ...obj,
+    full_name,
+    first_name,
+    last_name,
+    phone: phoneNorm || String(obj.phone ?? "").trim(),
+    contact_phone: phoneNorm || String(obj.contact_phone ?? obj.phone ?? "").trim(),
+    job_type: String(obj.job_type ?? projectType).trim(),
+    appointment_details,
+    preferred_date: preferred,
+  };
+}
+
+function buildThreadCrmLeadPayload(thread, ai, tenant, bookingResult) {
+  const bookedOk = isNewBookingConfirmation(bookingResult);
+  const scope = String(thread.leadCapture?.project_type ?? "").trim();
+  const details = String(thread.leadCapture?.project_details ?? "").trim();
+  const preferredRaw =
+    bookedOk && ai?.appointment_date
+      ? ai.appointment_date
+      : (thread.leadCapture?.appointment_date || ai?.lead_capture?.appointment_date || "");
+  const timeRaw =
+    bookedOk && ai?.appointment_time
+      ? ai.appointment_time
+      : (thread.leadCapture?.appointment_time || ai?.lead_capture?.appointment_time || "");
+
+  const rawName = String(thread.leadCapture?.full_name ?? "").trim();
+  const nameParts = crmWebhookPayload.splitDisplayName(rawName);
+  const displayName = nameParts.full_name || (crmWebhookPayload.stripLiteralFieldLeak(rawName) ? rawName : "");
+  const phoneRaw = thread.leadCapture?.phone || thread.phone || "";
+  const phone = crmWebhookPayload.normalizePhoneForCrm(phoneRaw) || String(phoneRaw).trim();
+  const appointment_details = crmWebhookPayload.buildLeadThreadAppointmentDetails({
+    jobType: scope,
+    scope,
+    details,
+    timeRaw: timeRaw || "",
+  });
+
+  return finalizeCrmLeadPayload({
+    event_type: "lead_capture",
+    source: thread.channel || "unknown",
+    full_name: displayName,
+    first_name: nameParts.first_name,
+    last_name: nameParts.last_name,
+    contact_name: displayName,
+    phone,
+    contact_phone: phone,
+    email: String(thread.leadCapture?.email ?? "").trim(),
+    address: String(thread.leadCapture?.address ?? "").trim(),
+    job_type: scope,
+    appointment_details,
+    appointment_time: timeRaw || "",
+    preferred_date: normalizeCrmPreferredDate(preferredRaw),
+    project_type: scope,
+    project_details: details,
+    lead_type: bookedOk ? "BOOKED" : "INQUIRY",
+    timestamp: new Date().toISOString(),
+    tenant_id: tenant?.id ?? null,
+    tenant_name: tenant?.name ?? null,
+    company_name: tenant?.company_name ?? null,
+  });
+}
+
 async function sendToCRM(leadCapture, tenantId = null) {
   let webhookUrls = [];
   
@@ -744,12 +840,14 @@ async function sendToCRM(leadCapture, tenantId = null) {
     return;
   }
 
+  const payload = finalizeCrmLeadPayload(leadCapture);
+
   for (const url of webhookUrls) {
     try {
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(leadCapture)
+        body: JSON.stringify(payload)
       });
 
       if (!response.ok) {
@@ -1192,7 +1290,7 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
             address: thread.leadCapture.address || "",
             city: "",
             scope: thread.leadCapture.project_type || "",
-            job_type: "Residential",
+            job_type: (thread.leadCapture.project_type && String(thread.leadCapture.project_type).trim()) || "Residential",
             preferred_date: ai.appointment_date,
             appointment_time: ai.appointment_time,
             notes: thread.leadCapture.project_details || "",
@@ -1286,22 +1384,6 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
     leadsService.updateLeadInfo(thread.leadId, updateData).catch(e => console.error("[Sync] Lead info update failed:", e.message));
   }
 
-  if (thread.leadCapture?.full_name || thread.phone) {
-    await sendToCRM({
-      source: thread.channel || "unknown",
-      full_name: thread.leadCapture?.full_name || "",
-      phone: thread.leadCapture?.phone || thread.phone || "",
-      email: thread.leadCapture?.email || "",
-      address: thread.leadCapture?.address || "",
-      project_type: thread.leadCapture?.project_type || "",
-      project_details: thread.leadCapture?.project_details || "",
-      lead_type: ai.should_book ? "BOOKED" : "INQUIRY",
-      timestamp: new Date().toISOString(),
-      tenant_id: tenant?.id || null,
-      tenant_name: tenant?.name || null,
-      company_name: tenant?.company_name || null
-    }, tenant?.id);
-  }
   if (!thread.leadCapture.phone && !thread.phone.startsWith("fb-") && !thread.phone.startsWith("web-")) {
     thread.leadCapture.phone = thread.phone;
   }
@@ -1315,6 +1397,12 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
     // If not booking, default to a 2-hour delay for the primary follow-up unless the AI specified
     const followUpMinutes = Number(ai.follow_up_minutes) || 120;
     thread.needsFollowUpAt = Date.now() + followUpMinutes * 60 * 1000;
+  }
+
+  if (thread.leadCapture?.full_name || thread.phone) {
+    if (!isNewBookingConfirmation(bookingResult)) {
+      await sendToCRM(buildThreadCrmLeadPayload(thread, ai, tenant, bookingResult), tenant?.id);
+    }
   }
 
   // Reset follow up count because they just replied
@@ -1332,7 +1420,7 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
   return {
     reply: replyText,
     lead_capture: ai.lead_capture,
-    booking_confirmed: (ai.should_book && bookingResult && bookingResult.includes("✅")) ? {
+    booking_confirmed: (ai.should_book && isNewBookingConfirmation(bookingResult)) ? {
       date: ai.appointment_date,
       time: ai.appointment_time
     } : null
@@ -1408,23 +1496,6 @@ async function processFacebookConversation(senderId, messageText, tenant = null,
   // We check that thread.phone exists and isn't just the fb- string if we are relying on that
   const hasPhoneToSend = thread.leadCapture?.phone || (thread.phone && !thread.phone.startsWith("fb-") && !thread.phone.startsWith("web-"));
 
-  if (thread.leadCapture?.full_name || hasPhoneToSend) {
-    await sendToCRM({
-      source: thread.channel || "facebook",
-      full_name: thread.leadCapture?.full_name || "",
-      phone: thread.leadCapture?.phone || thread.phone || "",
-      email: thread.leadCapture?.email || "",
-      address: thread.leadCapture?.address || "",
-      project_type: thread.leadCapture?.project_type || "",
-      project_details: thread.leadCapture?.project_details || "",
-      lead_type: ai.should_book ? "BOOKED" : "INQUIRY",
-      timestamp: new Date().toISOString(),
-      tenant_id: tenant?.id || null,
-      tenant_name: tenant?.name || null,
-      company_name: tenant?.company_name || null
-    }, tenant?.id);
-  }
-
   // Ensure the phone field is hydrated in the lead capture object for future reference
   if (!thread.leadCapture.phone && hasPhoneToSend) {
     thread.leadCapture.phone = thread.phone;
@@ -1439,6 +1510,12 @@ async function processFacebookConversation(senderId, messageText, tenant = null,
     // Default follow up for inquiry
     const followUpMinutes = Number(ai.follow_up_minutes) || 120;
     thread.needsFollowUpAt = Date.now() + followUpMinutes * 60 * 1000;
+  }
+
+  if (thread.leadCapture?.full_name || hasPhoneToSend) {
+    if (!isNewBookingConfirmation(bookingResult)) {
+      await sendToCRM(buildThreadCrmLeadPayload(thread, ai, tenant, bookingResult), tenant?.id);
+    }
   }
 
   // Reset follow up count because they just replied
@@ -1456,7 +1533,7 @@ async function processFacebookConversation(senderId, messageText, tenant = null,
   return {
     reply: replyText,
     lead_capture: ai.lead_capture,
-    booking_confirmed: (ai.should_book && bookingResult && bookingResult.includes("✅")) ? {
+    booking_confirmed: (ai.should_book && isNewBookingConfirmation(bookingResult)) ? {
       date: ai.appointment_date,
       time: ai.appointment_time
     } : null

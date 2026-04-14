@@ -2,6 +2,7 @@
 
 const db = require("../lib/db");
 const twilio = require("../lib/twilio");
+const crmWebhookPayload = require("../lib/crmWebhookPayload");
 
 const ZAPIER_WEBHOOK_URL = process.env.ZAPIER_WEBHOOK_URL || null;
 
@@ -35,10 +36,12 @@ async function syncBookingToCrm(tenantId, booking) {
     return { synced: false };
   }
 
-  const name = booking.contact_name && booking.contact_name.trim();
-  const nameParts = name ? name.split(/\s+/).filter(Boolean) : [];
-  const firstName = nameParts[0] ?? null;
-  const lastName = nameParts.length > 1 ? nameParts.slice(1).join(" ") : null;
+  const nameParts = crmWebhookPayload.splitDisplayName(booking.contact_name);
+  const firstName = nameParts.first_name || "";
+  const lastName = nameParts.last_name || "";
+  const displayName = nameParts.full_name || String(booking.contact_name || "").trim();
+  const phone = crmWebhookPayload.normalizePhoneForCrm(booking.contact_phone) || String(booking.contact_phone || "").trim();
+  const appointmentDetails = crmWebhookPayload.buildBookingAppointmentDetails(booking);
 
   const payload = {
     event_type: "booking",
@@ -46,10 +49,10 @@ async function syncBookingToCrm(tenantId, booking) {
     tenant_id: tenantId,
     tenant_name: tenant?.name ?? null,
     company_name: tenant?.company_name ?? null,
-    contact_name: booking.contact_name,
+    contact_name: displayName,
     first_name: firstName,
     last_name: lastName,
-    contact_phone: booking.contact_phone,
+    contact_phone: phone,
     contact_email: booking.contact_email,
     address: booking.address,
     city: booking.city,
@@ -57,8 +60,14 @@ async function syncBookingToCrm(tenantId, booking) {
     scope: booking.scope,
     job_type: booking.job_type,
     preferred_date: booking.preferred_date,
+    appointment_time: booking.appointment_time ?? null,
     notes: booking.notes,
     booking_id: booking.id,
+    // Aliases for Zapier / DripJobs mappings (same values as contact_* fields)
+    full_name: displayName,
+    phone,
+    email: booking.contact_email,
+    appointment_details: appointmentDetails,
   };
 
   const headers = { "Content-Type": "application/json" };

@@ -171,7 +171,12 @@ router.patch("/bookings/:id", async (req, res) => {
 });
 
 // Everything below this requires at least Staff-level access
-router.use(requireRole(['owner', 'admin', 'manager', 'staff']));
+router.use((req, res, next) => {
+  if (!req.user || !['owner', 'admin', 'manager', 'staff'].includes(req.user.role)) {
+    return res.status(403).json({ error: "Forbidden — insufficient permissions", code: "INSUFFICIENT_PERMISSIONS" });
+  }
+  next();
+});
 
 router.get("/calls", async (req, res) => {
   try {

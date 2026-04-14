@@ -36,8 +36,8 @@ export default function GoalSetting({ tenantId }) {
           const a = Array(12).fill(null);
           data.months.forEach(m => {
             if (m.month >= 0 && m.month < 12) {
-              g[m.month] = m.revenue_goal || 0;
-              if (m.actual_revenue != null) a[m.month] = m.actual_revenue;
+             g[m.month] = Math.round((m.revenue_goal || 0) / 100);
+if (m.actual_revenue != null) a[m.month] = Math.round(m.actual_revenue / 100);
             }
           });
           const total = g.reduce((x,y)=>x+y,0);
@@ -107,7 +107,7 @@ export default function GoalSetting({ tenantId }) {
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify({
           year: curYear, avg_job_value: parseMoney(avgJob), close_rate: parseFloat(closeRate)||0,
-          months: goals.map((g,i) => ({ month: i, revenue_goal: g, actual_revenue: actuals[i] })),
+        months: goals.map((g,i) => ({ month: i, revenue_goal: g * 100, actual_revenue: actuals[i] ? actuals[i] * 100 : null })),
         }),
       });
       setSaved(true); setTimeout(()=>setSaved(false),3000);

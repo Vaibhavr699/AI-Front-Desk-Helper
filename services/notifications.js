@@ -97,19 +97,21 @@ async function checkHungUpRates() {
   try {
     const tenants = await db.query("SELECT id FROM tenants");
     for (const t of tenants.rows) {
-      const stats = await db.query(`
-        SELECT 
-          COUNT(*) as total,
-          SUM(CASE WHEN (disposition IS NULL OR disposition = 'completed') 
-               AND transfer_to IS NULL 
-               AND status NOT ILIKE '%booked%' 
-               AND status != 'Estimate Scheduled' 
-               AND status != 'FollowUp Needed' 
-               AND status != 'Spam' 
-               AND COALESCE(duration_minutes, 0) < 1.0 THEN 1 ELSE 0 END) as hung_up
-        FROM calls 
-        WHERE tenant_id = $1 AND started_at > now() - interval '24 hours'
-      `, [t.id]);
+    const stats = await db.query(`
+  SELECT 
+    COUNT(*) as total,
+    SUM(CASE WHEN (disposition IS NULL OR disposition = 'completed') 
+         AND transfer_to IS NULL 
+         AND status NOT ILIKE '%booked%' 
+         AND status != 'Estimate Scheduled' 
+         AND status != 'FollowUp Needed' 
+         AND COALESCE(duration_minutes, 0) < 1.0 THEN 1 ELSE 0 END) as hung_up
+  FROM calls 
+  WHERE tenant_id = $1 
+  AND started_at > now() - interval '24 hours'
+  AND status != 'Spam'
+  AND (disposition IS NULL OR disposition != 'spam')
+`, [t.id]); 
 
       const total = parseInt(stats.rows[0].total, 10);
       const hung_up = parseInt(stats.rows[0].hung_up, 10);

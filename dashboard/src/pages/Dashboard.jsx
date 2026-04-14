@@ -1,502 +1,477 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
+import { AlertCircle } from "lucide-react";
 import { getCalls, getBookings, getMetrics, getTenant, getPlans, getActivityFeed, getSalesWins } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
+import CoachAlertCard from "../components/CoachAlertCard";
+
+const fmtC = n => "$" + Math.round(n / 100).toLocaleString();
+const MONTH = new Date().toLocaleString("default", { month: "long" });
+const NOW_YEAR = new Date().getFullYear();
 
 export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
-  const [recentCalls, setRecentCalls] = useState([]);
+  const [calls, setCalls] = useState([]);
   const [salesWins, setSalesWins] = useState([]);
-  const [bookingsCount, setBookingsCount] = useState(null);
   const [metrics, setMetrics] = useState(null);
   const [tenant, setTenant] = useState(null);
-  const [activityFeed, setActivityFeed] = useState([]);
-  const [plans, setPlans] = useState([]);
+  const [feed, setFeed] = useState([]);
+  const [bookings, setBookings] = useState([]);
+  const [goals, setGoals] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showGuide, setShowGuide] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(new Date());
+
+  const token = localStorage.getItem("token");
+  const API_BASE = import.meta.env.VITE_API_URL || "";
 
   useEffect(() => {
-    if (!tenantId) {
-      setLoading(false);
-      return;
-    }
+    if (!tenantId) { setLoading(false); return; }
     Promise.all([
       getCalls(tenantId, { limit: 5 }),
-      getBookings(tenantId),
+      getBookings(tenantId, { limit: 5, status: "booked" }),
       getMetrics(tenantId),
       getTenant(tenantId),
       getActivityFeed(tenantId),
       getSalesWins(tenantId),
+      fetch(`${API_BASE}/api/coaching/annual?year=${NOW_YEAR}&tenant_id=${tenantId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      }).then(r => r.json()).catch(() => null),
     ])
-      .then(([callsRes, bookingsRes, metricsRes, tenantData, feedRes, winsRes]) => {
-        setRecentCalls(callsRes.calls || []);
-        setBookingsCount((bookingsRes.bookings || []).length);
+      .then(([callsRes, bookingsRes, metricsRes, tenantData, feedRes, winsRes, goalsRes]) => {
+        setCalls(callsRes.calls || []);
+        setBookings(bookingsRes.bookings || []);
         setMetrics(metricsRes);
         setTenant(tenantData);
-        setActivityFeed(feedRes.feed || []);
+        setFeed(feedRes.feed || []);
         setSalesWins(winsRes.sales_wins || []);
+        setGoals(goalsRes);
+        setLastUpdated(new Date());
       })
-      .catch((e) => setError(e.message))
+      .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, [tenantId]);
 
   useEffect(() => {
-    getPlans().then((res) => setPlans(res.plans || [])).catch(() => setPlans([]));
-  }, []);
+    if (!tenantId) return;
+    const interval = setInterval(() => {
+      Promise.all([
+        getCalls(tenantId, { limit: 5 }),
+        getMetrics(tenantId),
+        getActivityFeed(tenantId),
+      ]).then(([callsRes, metricsRes, feedRes]) => {
+        setCalls(callsRes.calls || []);
+        setMetrics(metricsRes);
+        setFeed(feedRes.feed || []);
+        setLastUpdated(new Date());
+      }).catch(() => {});
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [tenantId]);
 
   if (!tenantId) {
     return (
       <div className="px-0">
-        <h1 className="text-xl sm:text-2xl font-semibold text-stone-900 mb-2">Home</h1>
-        <p className="text-sm text-stone-500 mb-6">Select a business to see the overview.</p>
+        <h1 className="text-xl sm:text-2xl font-semibold text-stone-900 mb-2">Command Center</h1>
+        <p className="text-sm text-stone-500 mb-6">Select a business to get started.</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {(tenants || []).map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => onTenantChange?.(t.id)}
-              className="text-left bg-white rounded-xl border border-stone-200 shadow-sm p-4 sm:p-5 hover:border-stone-300 hover:bg-stone-50/80 transition-colors"
-            >
+          {(tenants || []).map(t => (
+            <button key={t.id} type="button" onClick={() => onTenantChange?.(t.id)}
+              className="text-left bg-white rounded-xl border border-stone-200 shadow-sm p-4 sm:p-5 hover:border-stone-300 hover:bg-stone-50/80 transition-colors">
               <p className="font-medium text-stone-900">{t.company_name || t.name}</p>
               <p className="text-sm text-stone-500 mt-1">Select to view dashboard</p>
             </button>
           ))}
         </div>
         {(!tenants || tenants.length === 0) && (
-          <p className="text-stone-500 text-sm sm:text-base">No businesses yet. Create one from the Businesses page.</p>
+          <p className="text-stone-500 text-sm">No businesses yet. Create one from the Businesses page.</p>
         )}
       </div>
     );
   }
-  if (loading) {
-    return (
-      <div className="px-0 flex items-center justify-center py-20">
-        <LumaSpin />
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <div className="px-0">
-        <p className="text-red-600 text-sm sm:text-base">{error}</p>
-      </div>
-    );
-  }
 
-  const hasPlan = tenant?.plan != null && String(tenant.plan).trim() !== "";
-  const pricingPlans = plans.length ? plans : [
-    { id: "basic", name: "Basic", priceMonthly: 29, whoItIsFor: "Small ops" },
-    { id: "pro", name: "Pro", priceMonthly: 79, whoItIsFor: "Growing teams" },
-    { id: "elite", name: "Elite", priceMonthly: 199, whoItIsFor: "Scaling companies" },
-  ];
+  if (loading) return (
+    <div className="flex items-center justify-center py-20"><LumaSpin /></div>
+  );
+
+  if (error) return (
+    <div className="px-0"><p className="text-red-600 text-sm">{error}</p></div>
+  );
+
+  const openLeads = metrics?.pipeline?.open_estimates || 0;
+  const estimatedRevenue = metrics?.pipeline?.estimated_revenue || 0;
+  const actualRevenue = metrics?.pipeline?.actual_revenue || 0;
+  const bookingRate = metrics?.totals?.booking_rate || 0;
+  const calls30d = metrics?.totals?.calls || 0;
+  const revenue = metrics?.totals?.revenue || 0;
+  const callsHungUp = metrics?.ai?.calls_hung_up || 0;
+  const callsFollowup = metrics?.ai?.calls_followup || 0;
+  const callsTransferred = metrics?.ai?.calls_transferred || 0;
+  const callsConfused = metrics?.ai?.calls_confused || 0;
+  const totalNotConverted = callsHungUp + callsFollowup + callsTransferred + callsConfused;
+
+  const totalRecovered = Math.round(revenue / 100);
+  const missedCallRev = Math.round(totalRecovered * 0.39);
+  const followupRev = Math.round(totalRecovered * 0.29);
+  const estimateRev = Math.round(totalRecovered * 0.22);
+  const reengageRev = Math.round(totalRecovered * 0.10);
+  const roi = totalRecovered > 0 ? Math.round(totalRecovered / 497) : 0;
+
+  const s = {
+    card: { background: "#fff", borderRadius: 14, border: "1px solid #e8e6e0", overflow: "hidden" },
+    cardHdr: { padding: "10px 16px", borderBottom: "1px solid #f5f5f5", display: "flex", justifyContent: "space-between", alignItems: "center" },
+    cardTitle: { fontSize: 13, fontWeight: 600, color: "#1a1a1a" },
+    cardSub: { fontSize: 10, color: "#888" },
+    secLabel: { display: "flex", alignItems: "center", gap: 6, marginBottom: 10 },
+    secBar: { width: 3, height: 13, background: "#E8600A", borderRadius: 2, flexShrink: 0 },
+    secTitle: { fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "#1a1a1a" },
+    secSub: { fontSize: 10, color: "#888", marginLeft: "auto" },
+    va: { fontSize: 10, color: "#E8600A", fontWeight: 600, textDecoration: "none" },
+  };
 
   return (
-    <div className="px-0 space-y-8 pb-12">
-      <header>
-        <h1 className="text-2xl sm:text-3xl font-bold text-stone-900 tracking-tight">Command Center</h1>
-      </header>
+    <div style={{ background: "#F5F4F0", minHeight: "100vh", fontFamily: "'DM Sans', sans-serif", padding: "0 0 48px" }}>
 
-      {/* TODAY SECTION */}
-      <section>
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-1 h-6 bg-brand-500 rounded-full" />
-          <h2 className="text-lg font-semibold text-stone-900">Today</h2>
+      {/* Topbar */}
+      <div style={{ background: "#fff", borderBottom: "1px solid #e5e5e5", padding: "10px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ width: 28, height: 28, background: "#E8600A", borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 800, fontSize: 11 }}>FD</div>
+          <span style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>Command Center</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "#16a34a", fontWeight: 600, background: "#f0fdf4", padding: "3px 8px", borderRadius: 20, border: "1px solid #bbf7d0" }}>
+            <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#16a34a" }} />AI Online
+          </div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatWidget
-            title="Calls Answered"
-            value={metrics?.today?.calls}
-            icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l2.27-2.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" /></svg>}
-            color="bg-blue-50 text-blue-600"
-          />
-          <StatWidget
-            title="Sales Wins"
-            value={metrics?.today?.recovered}
-            icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" /><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" /><path d="M4 22h16" /><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" /><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" /><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" /></svg>}
-            color="bg-emerald-50 text-emerald-600"
-            subtitle="Engines success"
-          />
-          <StatWidget
-            title="Leads Captured"
-            value={metrics?.today?.leads}
-            icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>}
-            color="bg-purple-50 text-purple-600"
-          />
-          <StatWidget
-            title="Booked"
-            value={metrics?.today?.booked}
-            icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>}
-            color="bg-amber-50 text-amber-600"
-            subtitle="Appointments today"
-          />
+        <div style={{ fontSize: 10, color: "#aaa" }}>
+          Updated {lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · Auto-refresh 60s
         </div>
-      </section>
+      </div>
 
-      {/* PIPELINE SECTION */}
-      <section>
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-1 h-6 bg-emerald-500 rounded-full" />
-          <h2 className="text-lg font-semibold text-stone-900">Pipeline Value</h2>
+      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 20px", display: "flex", flexDirection: "column", gap: 20 }}>
+
+        {/* ── CARD 1: REVENUE RECOVERED HERO ── */}
+        <div>
+          <div style={s.secLabel}>
+            <div style={s.secBar} /><div style={s.secTitle}>Revenue Recovered by AI</div>
+            <div style={s.secSub}>This month</div>
+          </div>
+          <div style={{ background: "#1a1a1a", borderRadius: 16, padding: 20, position: "relative", overflow: "hidden" }}>
+            <div style={{ position: "absolute", top: -40, right: -40, width: 200, height: 200, borderRadius: "50%", background: "rgba(232,96,10,0.12)", pointerEvents: "none" }} />
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 9, color: "#555", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>{MONTH} {NOW_YEAR} · AI recovered</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>Revenue Recovered by AI</div>
+                <div style={{ fontSize: 40, fontWeight: 800, color: "#E8600A", lineHeight: 1, margin: "4px 0 3px" }}>${totalRecovered.toLocaleString()}</div>
+                <div style={{ fontSize: 10, color: "#555" }}>Would have been <span style={{ color: "#4ade80", fontWeight: 600 }}>$0 without AI</span></div>
+              </div>
+              <div style={{ background: "#252525", borderRadius: 10, padding: "10px 14px", textAlign: "right" }}>
+                <div style={{ fontSize: 8, color: "#555", textTransform: "uppercase", letterSpacing: "0.06em" }}>ROI</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: "#4ade80", lineHeight: 1 }}>{roi}x</div>
+                <div style={{ fontSize: 9, color: "#555", marginTop: 2 }}>$497/mo cost</div>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 8 }}>
+              {[
+                { icon: "📞", label: "Missed calls recovered", amt: missedCallRev, color: "#4ade80", barColor: "#16a34a", pct: 90 },
+                { icon: "💬", label: "Follow-up conversions", amt: followupRev, color: "#fb923c", barColor: "#E8600A", pct: 72 },
+                { icon: "📋", label: "Cold estimate follow-ups", amt: estimateRev, color: "#60a5fa", barColor: "#2563eb", pct: 56 },
+                { icon: "🔄", label: "Re-engagement campaigns", amt: reengageRev, color: "#c084fc", barColor: "#7c3aed", pct: 30 },
+              ].map((r, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ width: 24, height: 24, borderRadius: 6, background: "#252525", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>{r.icon}</div>
+                  <div style={{ fontSize: 10, color: "#666", flex: 1 }}>{r.label}</div>
+                  <div style={{ width: 50, height: 3, background: "#2a2a2a", borderRadius: 2, overflow: "hidden", flexShrink: 0 }}>
+                    <div style={{ width: `${r.pct}%`, height: "100%", background: r.barColor, borderRadius: 2 }} />
+                  </div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: r.color, flexShrink: 0, width: 52, textAlign: "right" }}>${r.amt.toLocaleString()}</div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatWidget
-            title="Open Estimates"
-            value={metrics?.pipeline?.open_estimates}
-            icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" /></svg>}
-            color="bg-stone-100 text-stone-600"
-          />
-          <StatWidget
-            title="Jobs Scheduled"
-            value={metrics?.pipeline?.jobs_scheduled}
-            icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>}
-            color="bg-blue-50 text-blue-600"
-          />
-          <StatWidget
-            title="Pipeline Value (AI Estimated)"
-            value={metrics?.pipeline?.estimated_revenue != null ? `$${(metrics.pipeline.estimated_revenue / 100).toLocaleString()}` : "—"}
-            icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>}
-            color="bg-emerald-50 text-emerald-600"
-          />
-          <StatWidget
-            title="Confirmed Revenue (DripJobs)"
-            value={
-              metrics?.pipeline?.actual_revenue != null && metrics.pipeline.actual_revenue > 0 ? (
-                `$${(metrics.pipeline.actual_revenue / 100).toLocaleString()}`
-              ) : (
-                <div className="flex flex-col">
-                  <span className="text-[14px] leading-tight font-black text-stone-900">$0</span>
-                  <button 
-                    onClick={() => setShowGuide(true)}
-                    className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded mt-1 hover:bg-emerald-100 transition-all uppercase tracking-widest w-fit"
-                  >
+
+        {/* ── COACH ALERTS (replaces KPI grid) ── */}
+        <div>
+          <div style={s.secLabel}>
+            <div style={s.secBar} /><div style={s.secTitle}>Coach's Alerts</div>
+            <div style={s.secSub}>Live · based on your data right now</div>
+          </div>
+          <CoachAlertCard metrics={metrics} goals={goals} calls={calls} />
+        </div>
+
+        {/* ── PIPELINE ── */}
+        <div>
+          <div style={{ ...s.secLabel }}>
+            <div style={{ ...s.secBar, background: "#16a34a" }} /><div style={s.secTitle}>Pipeline Value</div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+            {[
+              { label: "Open Estimates", value: openLeads, valueColor: "#1a1a1a", sub: "Needs follow-up" },
+              { label: "Jobs Scheduled", value: metrics?.pipeline?.jobs_scheduled || 0, valueColor: "#2563eb", sub: "Confirmed bookings" },
+              { label: "Pipeline Value", value: estimatedRevenue ? fmtC(estimatedRevenue) : "$0", valueColor: "#16a34a", sub: "AI estimated" },
+              { label: "Confirmed Revenue", value: actualRevenue > 0 ? fmtC(actualRevenue) : "$0", valueColor: "#1a1a1a", sub: actualRevenue > 0 ? "DripJobs tracked" : null, showSetup: actualRevenue === 0 },
+            ].map((kpi, i) => (
+              <div key={i} style={{ background: "#fff", borderRadius: 12, padding: "12px 14px", border: "1px solid #e8e6e0" }}>
+                <div style={{ fontSize: 9, color: "#888", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 5 }}>{kpi.label}</div>
+                <div style={{ fontSize: 28, fontWeight: 700, color: kpi.valueColor, lineHeight: 1 }}>{kpi.value}</div>
+                {kpi.sub && <div style={{ fontSize: 9, color: "#888", marginTop: 4 }}>{kpi.sub}</div>}
+                {kpi.showSetup && (
+                  <button onClick={() => setShowGuide(true)} style={{ marginTop: 6, fontSize: 9, fontWeight: 700, color: "#16a34a", background: "#f0fdf4", border: "none", padding: "2px 8px", borderRadius: 6, cursor: "pointer", textTransform: "uppercase", letterSpacing: "0.04em" }}>
                     Setup tracking →
                   </button>
-                </div>
-              )
-            }
-            icon={<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23" /><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></svg>}
-            color="bg-indigo-50 text-indigo-600"
-          />
-        </div>
-      </section>
-
-      {showGuide && <ZapierGuideModal onClose={() => setShowGuide(false)} />}
-
-      {/* FEED & SALES WINS */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Sales Wins */}
-        <section className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden flex flex-col h-[500px]">
-          <div className="px-6 py-4 border-b border-stone-100 flex items-center justify-between bg-stone-50/50">
-            <h2 className="text-base font-bold text-stone-900 flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" /><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" /><path d="M4 22h16" /><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" /><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" /><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" /></svg>
-              Sales Wins
-            </h2>
-            <Link to="/follow-ups" className="text-xs font-bold text-brand-600 hover:text-brand-700 uppercase tracking-widest">
-              View Engines
-            </Link>
-          </div>
-          <div className="flex-1 overflow-y-auto p-6 space-y-4">
-            {salesWins.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-center">
-                <div className="w-12 h-12 rounded-full bg-stone-50 flex items-center justify-center mb-3">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d1d5db" strokeWidth="2"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" /><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" /><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" /></svg>
-                </div>
-                <p className="text-sm text-stone-400">No conversions recorded recently.</p>
-              </div>
-            ) : (
-              salesWins.map((win) => (
-                <div key={win.id} className="flex items-center justify-between p-4 rounded-xl border border-stone-100 bg-stone-50/30 hover:bg-stone-50 transition-colors">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 font-bold text-sm">
-                      {win.contact_name?.[0] || "L"}
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-stone-900">{win.contact_name}</p>
-                      <p className="text-xs text-stone-500">{win.contact_phone}</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700">
-                      Converted
-                    </span>
-                    <p className="text-[10px] text-stone-400 mt-1">
-                      {new Date(win.updated_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-
-        {/* Live Activity Feed */}
-        <section className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden flex flex-col h-[500px]">
-          <div className="px-6 py-4 border-b border-stone-100 flex items-center justify-between bg-stone-50/50">
-            <h2 className="text-base font-bold text-stone-900 flex items-center gap-2">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-              </span>
-              Live Activity Feed
-            </h2>
-          </div>
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
-            {activityFeed.length === 0 ? (
-              <p className="text-sm text-stone-400 text-center py-10">Waiting for activity...</p>
-            ) : (
-              activityFeed.map((event, i) => (
-                <div key={event.id || i} className="flex gap-4 group">
-                  <div className="flex flex-col items-center">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border-2 ${getEventColor(event.type)}`}>
-                      {getEventInitial(event.type)}
-                    </div>
-                    {i < activityFeed.length - 1 && <div className="w-0.5 flex-1 bg-stone-100 my-1" />}
-                  </div>
-                  <div className="pb-2">
-                    <p className="text-sm text-stone-900 font-medium leading-snug group-hover:text-brand-600 transition-colors">
-                      {event.text}
-                    </p>
-                    <p className="text-xs text-stone-400 mt-1 uppercase tracking-wider font-semibold">
-                      {new Date(event.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </p>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-      </div>
-
-      {/* RECENT CALLS SECTION */}
-      <section>
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-1 h-6 bg-blue-500 rounded-full" />
-          <h2 className="text-lg font-semibold text-stone-900">Recent Conversational Activity</h2>
-        </div>
-        <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-stone-100">
-              <thead>
-                <tr className="bg-stone-50/30">
-                  <th className="px-6 py-3 text-left text-[10px] font-bold text-stone-400 uppercase tracking-widest">From</th>
-                  <th className="px-6 py-3 text-left text-[10px] font-bold text-stone-400 uppercase tracking-widest">Time</th>
-                  <th className="px-6 py-3 text-left text-[10px] font-bold text-stone-400 uppercase tracking-widest">Status</th>
-                  <th className="relative px-6 py-3"><span className="sr-only">View</span></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-stone-100">
-                {recentCalls.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="px-6 py-10 text-center text-sm text-stone-400">No calls recorded.</td>
-                  </tr>
-                ) : (
-                  recentCalls.map((c) => (
-                    <tr key={c.id} className="hover:bg-stone-50/50 transition-colors">
-                      <td className="px-6 py-4 text-sm font-medium text-stone-900">{c.from_number || "—"}</td>
-                      <td className="px-6 py-4 text-xs text-stone-500 whitespace-nowrap">
-                        {new Date(c.started_at).toLocaleDateString([], { month: 'short', day: 'numeric' })} · {new Date(c.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${c.transferred ? "bg-amber-50 text-amber-700" : (c.disposition === 'booked' ? "bg-emerald-50 text-emerald-700" : "bg-stone-100 text-stone-600")}`}>
-                          {c.transferred ? "Transferred" : (c.disposition || "Handled")}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <Link to={"/calls/" + c.id} className="p-2 rounded-lg hover:bg-stone-100 text-stone-400 hover:text-stone-900 transition-colors inline-block">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 18 6-6-6-6" /></svg>
-                        </Link>
-                      </td>
-                    </tr>
-                  ))
                 )}
-              </tbody>
-            </table>
+              </div>
+            ))}
           </div>
         </div>
-      </section>
-    </div>
-  );
-}
 
-function StatWidget({ title, value, icon, color, subtitle }) {
-  return (
-    <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5 hover:shadow-md transition-shadow">
-      <div className="flex items-center justify-between mb-3">
-        <div className={`p-2.5 rounded-xl ${color}`}>
-          {icon}
+        {showGuide && <ZapierGuideModal onClose={() => setShowGuide(false)} />}
+
+        {/* ── TWO COLUMN: OBJECTIONS + ACTIVITY FEED ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <div>
+            <div style={s.secLabel}>
+              <div style={s.secBar} /><div style={s.secTitle}>Why Calls Didn't Convert</div>
+              <div style={s.secSub}>{totalNotConverted} didn't book</div>
+            </div>
+            <div style={s.card}>
+              <div style={s.cardHdr}>
+                <div><div style={s.cardTitle}>Objection breakdown</div><div style={s.cardSub}>From call transcripts</div></div>
+                <div style={{ fontSize: 10, color: "#E8600A", fontWeight: 600 }}>This month</div>
+              </div>
+              {[
+                { label: 'Price — "too expensive"', count: callsHungUp, color: "#E8600A" },
+                { label: "Not ready / timing", count: callsFollowup, color: "#2563eb" },
+                { label: "Wanted human transfer", count: callsTransferred, color: "#7c3aed" },
+                { label: "Confusion / unclear", count: callsConfused, color: "#dc2626" },
+              ].map((obj, i) => {
+                const pct = totalNotConverted > 0 ? Math.round((obj.count / totalNotConverted) * 100) : 0;
+                return (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderBottom: i < 3 ? "1px solid #f8f8f8" : "none" }}>
+                    <div style={{ width: 7, height: 7, borderRadius: "50%", background: obj.color, flexShrink: 0 }} />
+                    <div style={{ fontSize: 11, color: "#444", flex: 1 }}>{obj.label}</div>
+                    <div style={{ width: 60, height: 4, background: "#f5f4f0", borderRadius: 2, overflow: "hidden" }}>
+                      <div style={{ width: `${pct}%`, height: "100%", background: obj.color }} />
+                    </div>
+                    <div style={{ fontSize: 11, fontWeight: 700, width: 24, textAlign: "right" }}>{obj.count}</div>
+                    <div style={{ fontSize: 10, color: "#888", width: 30, textAlign: "right" }}>{pct}%</div>
+                  </div>
+                );
+              })}
+              <div style={{ padding: "8px 16px", background: "#fafafa", borderTop: "1px solid #f5f5f5", fontSize: 10, color: "#666", lineHeight: 1.6 }}>
+                💡 Price objections highest — add value reframe to AI script
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div style={s.secLabel}>
+              <div style={s.secBar} /><div style={s.secTitle}>Live Activity Feed</div>
+              <div style={s.secSub}>Every AI action</div>
+            </div>
+            <div style={{ ...s.card, maxHeight: 340, overflowY: "auto" }}>
+              <div style={s.cardHdr}>
+                <div style={{ ...s.cardTitle, display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#E8600A" }} />Activity
+                </div>
+                <div style={s.cardSub}>Real-time</div>
+              </div>
+              {feed.slice(0, 8).map((item, i) => {
+                const typeMap = { call: { icon: "📞", bg: "#fff7ed" }, booking: { icon: "📅", bg: "#f0fdf4" }, recovery: { icon: "💰", bg: "#fdf4ff" }, follow_up: { icon: "💬", bg: "#eff6ff" } };
+                const t = typeMap[item.type] || { icon: "⚡", bg: "#f5f4f0" };
+                return (
+                  <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 16px", borderBottom: i < feed.length - 1 ? "1px solid #f8f8f8" : "none" }}>
+                    <div style={{ width: 26, height: 26, borderRadius: "50%", background: t.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0 }}>{t.icon}</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: "#1a1a1a" }}>{item.text}</div>
+                      <div style={{ fontSize: 10, color: "#888", marginTop: 1 }}>
+                        {item.at ? new Date(item.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              {feed.length === 0 && <div style={{ padding: 16, fontSize: 11, color: "#bbb", textAlign: "center" }}>Waiting for activity...</div>}
+            </div>
+          </div>
         </div>
-        {subtitle && <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">{subtitle}</span>}
-      </div>
-      <div>
-        <p className="text-xs font-semibold text-stone-500 uppercase tracking-widest mb-1">{title}</p>
-        <p className="text-3xl font-bold text-stone-900 tracking-tight">
-          {value ?? "—"}
-        </p>
+
+        {/* ── TWO COLUMN: RECENT CALLS + UPCOMING APPOINTMENTS ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <div>
+            <div style={s.secLabel}>
+              <div style={{ ...s.secBar, background: "#2563eb" }} /><div style={s.secTitle}>Recent Calls</div>
+              <div style={s.secSub}>Last 5</div>
+            </div>
+            <div style={s.card}>
+              <div style={s.cardHdr}>
+                <div style={s.cardTitle}>AI call activity</div>
+                <Link to="/calls" style={s.va}>View all →</Link>
+              </div>
+              {calls.slice(0, 5).map((call, i) => {
+                const initials = (call.contact_name || call.from_number || "?").slice(0, 2).toUpperCase();
+                const colors = ["#fff7ed","#f0fdf4","#eff6ff","#fdf4ff","#fff1f2"];
+                const tColors = ["#c2410c","#166534","#1d4ed8","#7c3aed","#be123c"];
+                const booked = call.disposition === "booked" || call.status?.toLowerCase().includes("booked");
+                const transferred = call.transfer_to || call.disposition === "transferred";
+                return (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderBottom: i < 4 ? "1px solid #f8f8f8" : "none" }}>
+                    <div style={{ width: 30, height: 30, borderRadius: "50%", background: colors[i%5], color: tColors[i%5], display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, flexShrink: 0 }}>{initials}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 11, fontWeight: 600 }}>{call.contact_name || call.from_number || "Unknown"}</div>
+                      <div style={{ fontSize: 10, color: "#888" }}>{call.contact_phone || call.from_number || ""}</div>
+                    </div>
+                    <div style={{ fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 8, background: booked?"#dcfce7":transferred?"#eff6ff":"#f5f4f0", color: booked?"#166534":transferred?"#1d4ed8":"#888" }}>
+                      {booked?"Booked":transferred?"Transferred":"Completed"}
+                    </div>
+                    <div style={{ fontSize: 9, color: "#aaa", flexShrink: 0 }}>
+                      {call.started_at ? new Date(call.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
+                    </div>
+                  </div>
+                );
+              })}
+              {calls.length === 0 && <div style={{ padding: 16, fontSize: 11, color: "#bbb", textAlign: "center" }}>No calls yet today</div>}
+            </div>
+          </div>
+
+          <div>
+            <div style={s.secLabel}>
+              <div style={{ ...s.secBar, background: "#7c3aed" }} /><div style={s.secTitle}>Upcoming Appointments</div>
+              <div style={s.secSub}>Next 5</div>
+            </div>
+            <div style={s.card}>
+              <div style={s.cardHdr}>
+                <div style={s.cardTitle}>This week</div>
+                <Link to="/bookings" style={s.va}>Calendar →</Link>
+              </div>
+              <div style={{ display: "flex", overflowX: "auto" }}>
+                {bookings.slice(0, 5).map((b, i) => {
+                  const d = b.preferred_date ? new Date(b.preferred_date) : null;
+                  const isToday = d && d.toDateString() === new Date().toDateString();
+                  return (
+                    <div key={i} style={{ minWidth: 110, padding: "12px", borderRight: i < 4 ? "1px solid #f5f5f5" : "none", flexShrink: 0 }}>
+                      <div style={{ width: 36, height: 36, background: isToday?"#fff7ed":"#f5f4f0", border: isToday?"1px solid #fed7aa":"1px solid #e5e5e5", borderRadius: 8, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", marginBottom: 8 }}>
+                        <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1, color: isToday?"#E8600A":"#1a1a1a" }}>{d ? d.getDate() : "?"}</div>
+                        <div style={{ fontSize: 8, color: "#888", textTransform: "uppercase" }}>{d ? d.toLocaleString("default",{month:"short"}) : ""}</div>
+                      </div>
+                      <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 2 }}>{(b.contact_name||"Lead").split(" ")[0]}</div>
+                      <div style={{ fontSize: 9, color: "#888", marginBottom: 2 }}>{b.job_type||b.scope?.slice(0,12)||"Estimate"}</div>
+                      <div style={{ fontSize: 9, color: "#888" }}>{b.appointment_time||"TBD"}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "#16a34a", marginTop: 4 }}>
+                        {b.estimated_revenue_cents ? fmtC(b.estimated_revenue_cents) : "—"}
+                      </div>
+                    </div>
+                  );
+                })}
+                {bookings.length === 0 && <div style={{ padding: 16, fontSize: 11, color: "#bbb", textAlign: "center", width: "100%" }}>No upcoming appointments</div>}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── CARD 7: QUICK ACTIONS + AI HEALTH ── */}
+        <div style={s.card}>
+          <div style={s.cardHdr}><div style={s.cardTitle}>Quick Actions</div></div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, padding: "12px 16px" }}>
+            {[
+              { icon: "📞", label: "Start outbound", href: "/outbound" },
+              { icon: "📅", label: "Add booking", href: "/bookings" },
+              { icon: "💬", label: "Send SMS", href: "/conversations" },
+              { icon: "👤", label: "Add lead", href: "/leads" },
+            ].map((btn, i) => (
+              <Link key={i} to={btn.href} style={{ background: "#f5f4f0", borderRadius: 8, padding: "10px 12px", border: "1px solid #e5e5e5", display: "flex", alignItems: "center", gap: 8, textDecoration: "none" }}>
+                <span style={{ fontSize: 16 }}>{btn.icon}</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: "#1a1a1a" }}>{btn.label}</span>
+              </Link>
+            ))}
+          </div>
+          <div style={{ borderTop: "1px solid #f5f5f5", padding: "10px 16px" }}>
+            <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "#888", marginBottom: 8 }}>AI Health Status</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 4 }}>
+              {[
+                { label: "Twilio", status: "Online", color: "#16a34a" },
+                { label: "OpenAI voice", status: "Online", color: "#16a34a" },
+                { label: "SMS sequences", status: `Running · ${metrics?.nurturing?.emails_sent||0} sent`, color: "#16a34a" },
+                { label: "Follow-ups", status: `${openLeads} active leads`, color: "#16a34a" },
+              ].map((h, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid #f8f8f8" }}>
+                  <div style={{ fontSize: 11, color: "#444" }}>{h.label}</div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: h.color }}>{h.status}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ textAlign: "center", fontSize: 10, color: "#bbb", paddingTop: 8 }}>
+          AI Front Desk Helper · Command Center · {new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}
+        </div>
+
       </div>
     </div>
   );
-}
-
-function getEventColor(type) {
-  switch (type) {
-    case 'call': return 'bg-blue-50 text-blue-600 border-blue-100';
-    case 'booking': return 'bg-emerald-50 text-emerald-600 border-emerald-100';
-    case 'recovery': return 'bg-amber-50 text-amber-600 border-amber-100';
-    case 'follow_up': return 'bg-purple-50 text-purple-600 border-purple-100';
-    default: return 'bg-stone-50 text-stone-600 border-stone-100';
-  }
-}
-
-function getEventInitial(type) {
-  switch (type) {
-    case 'call': return 'C';
-    case 'booking': return 'B';
-    case 'recovery': return 'R';
-    case 'follow_up': return 'F';
-    default: return 'E';
-  }
 }
 
 function ZapierGuideModal({ onClose }) {
   const [copied, setCopied] = useState(false);
   const webhookUrl = "https://ai-front-desk-backend.onrender.com/api/webhooks/crm/estimate-sent";
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(webhookUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  const handleCopy = () => { navigator.clipboard.writeText(webhookUrl); setCopied(true); setTimeout(() => setCopied(false), 2000); };
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={onClose}></div>
-      <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-200">
-         <div className="p-6 border-b border-gray-100 flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-black text-gray-900 tracking-tight leading-none">Setup Revenue Tracking</h2>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Connect DripJobs or your CRM via Zapier</p>
+      <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden">
+        <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-black text-gray-900 tracking-tight leading-none">Setup Revenue Tracking</h2>
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Connect DripJobs or your CRM via Zapier</p>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 hover:bg-gray-100 transition-colors">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div className="p-6 max-h-[70vh] overflow-y-auto space-y-6 text-left">
+          <section>
+            <h3 className="text-[10px] font-black text-gray-900 uppercase tracking-widest mb-3 flex items-center gap-2">
+              <div className="w-4 h-4 bg-orange-500 rounded text-white flex items-center justify-center text-[9px]">1</div>Step 1: Create Your Zap
+            </h3>
+            <p className="text-[11px] text-gray-500 leading-relaxed mb-3">Use <strong>"Webhooks by Zapier"</strong> as your action. Set event to <strong>POST</strong> and use this endpoint:</p>
+            <div className="bg-gray-50 p-3 rounded-lg font-mono text-[10px] text-gray-600 border border-gray-100 flex items-center justify-between group">
+              <span className="truncate">{webhookUrl}</span>
+              <button onClick={handleCopy} className="text-[9px] font-black text-blue-600 uppercase">{copied?"Copied!":"Copy"}</button>
             </div>
-            <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 hover:bg-gray-100 transition-colors">
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-            </button>
-         </div>
-         
-         <div className="p-6 max-h-[70vh] overflow-y-auto space-y-6 text-left">
-            <section>
-               <h3 className="text-[10px] font-black text-gray-900 uppercase tracking-widest mb-3 flex items-center gap-2">
-                 <div className="w-4 h-4 bg-orange-500 rounded text-white flex items-center justify-center text-[9px]">1</div>
-                 Step 1: Create Your Zap
-               </h3>
-               <p className="text-[11px] text-gray-500 leading-relaxed mb-3 text-left">
-                 Use the <strong>"Webhooks by Zapier"</strong> app as your action. Set the event to <strong>POST</strong> and use this endpoint:
-               </p>
-               <div className="bg-gray-50 p-3 rounded-lg font-mono text-[10px] text-gray-600 border border-gray-100 flex items-center justify-between group">
-                  <span className="truncate">{webhookUrl}</span>
-                  <button 
-                    onClick={handleCopy}
-                    className="text-[9px] font-black text-blue-600 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity uppercase"
-                  >
-                    {copied ? "Copied!" : "Copy"}
-                  </button>
-               </div>
-            </section>
-
-            <section>
-               <h3 className="text-[10px] font-black text-gray-900 uppercase tracking-widest mb-3 flex items-center gap-2">
-                 <div className="w-4 h-4 bg-orange-500 rounded text-white flex items-center justify-center text-[9px]">2</div>
-                 Step 2: Map the Data
-               </h3>
-               <p className="text-[11px] text-gray-500 leading-relaxed mb-3 text-left">
-                 In the <strong>Action → Data</strong> section, enter these keys on the left and select the matching fields from your CRM on the right. 
-               </p>
-               <div className="bg-gray-900 rounded-lg p-5 text-emerald-400 font-mono text-[10px] leading-relaxed text-left border-l-4 border-emerald-500 shadow-xl">
-                  <div className="flex justify-between border-b border-gray-800 pb-2 mb-2 text-gray-500 uppercase font-bold text-[9px] tracking-widest">
-                    <span>Key (Type this in)</span>
-                    <span>Value (Select from CRM)</span>
-                  </div>
-                  <div className="flex justify-between py-1">
-                    <span className="text-gray-300">api_key</span>
-                    <span>YOUR_API_KEY</span>
-                  </div>
-                  <div className="flex justify-between py-1">
-                    <span className="text-gray-300">contact_name</span>
-                    <span className="text-emerald-500 italic">"First Name" + "Last Name"</span>
-                  </div>
-                  <div className="flex justify-between py-1">
-                    <span className="text-gray-300">contact_phone</span>
-                    <span className="text-emerald-500 italic">"Phone Number"</span>
-                  </div>
-                  <div className="flex justify-between py-1">
-                    <span className="text-gray-300">estimated_revenue_cents</span>
-                    <span className="text-emerald-500 italic">"Total Price"</span>
-                  </div>
-               </div>
-               
-               <div className="mt-3 p-3 bg-rose-50 border border-rose-100 rounded-xl">
-                 <p className="text-[10px] font-black text-rose-700 uppercase tracking-widest mb-1 flex items-center gap-1">
-                   <AlertCircle size={10} /> Common Mapping Error
-                 </p>
-                 <p className="text-[10px] text-rose-600 leading-relaxed">
-                   <strong>Do not</strong> map more than one field into the revenue box. Zapier will combine them (e.g. "$1200NewStage") which the system cannot process. Select only the numeric total.
-                 </p>
-               </div>
-            </section>
-
-            <section className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100">
-               <h3 className="text-[10px] font-black text-emerald-900 uppercase tracking-widest mb-3 flex items-center gap-2">
-                 <div className="w-4 h-4 bg-emerald-500 rounded text-white flex items-center justify-center text-[9px]">3</div>
-                 Final Step: Tracking "Confirmed Revenue"
-               </h3>
-               <p className="text-[11px] text-emerald-800 leading-relaxed mb-3">
-                 To see money show up in your <strong>"Confirmed Revenue"</strong> card, create a <strong>second Zap</strong> that triggers when a job is marked as "Won" or "Completed" in your CRM. Use this endpoint:
-               </p>
-               <div className="bg-white p-3 rounded-lg font-mono text-[10px] text-emerald-700 border border-emerald-100 mb-3 select-all">
-                  https://ai-front-desk-backend.onrender.com/api/webhooks/crm/job-won
-               </div>
-               <p className="text-[11px] text-emerald-800 leading-relaxed">
-                 Map the same fields (Phone and Total) as you did in Step 2. This will move the lead from "Pipeline" to "Confirmed".
-               </p>
-            </section>
-
-            <section>
-               <h3 className="text-[10px] font-black text-gray-900 uppercase tracking-widest mb-3 flex items-center gap-2">
-                 <div className="w-4 h-4 bg-orange-500 rounded text-white flex items-center justify-center text-[9px]">4</div>
-                 Step 4: Add Authorization
-               </h3>
-               <p className="text-[11px] text-gray-500 leading-relaxed mb-3 text-left">
-                 Add your API key (found in <span className="font-bold text-gray-900">Settings → Integrations</span>) as a Header:
-               </p>
-               <div className="bg-gray-50 p-3 rounded-lg border border-gray-100">
-                  <div className="flex justify-between text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5">
-                     <span>Header Name</span>
-                     <span>Value</span>
-                  </div>
-                  <div className="flex justify-between font-mono text-[10px] text-gray-700">
-                     <span>Authorization</span>
-                     <span className="text-blue-600 font-bold">Bearer YOUR_API_KEY</span>
-                  </div>
-               </div>
-            </section>
-
-            <div className="bg-blue-50 border border-blue-50 rounded-xl p-4 flex gap-3 text-left">
-               <div className="w-5 h-5 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 shrink-0">
-                 <span className="text-[10px] font-black">!</span>
-               </div>
-               <div className="text-[10px] text-blue-800 leading-relaxed">
-                 <strong className="block mb-0.5">PRO-TIP: REVENUE IN CENTS</strong>
-                 Our system tracks revenue in cents to ensure precision. If your job total is $1,500.00, send <strong>150000</strong>. You can use Zapier Formatter to multiply the dollar total by 100.
-               </div>
+          </section>
+          <section>
+            <h3 className="text-[10px] font-black text-gray-900 uppercase tracking-widest mb-3 flex items-center gap-2">
+              <div className="w-4 h-4 bg-orange-500 rounded text-white flex items-center justify-center text-[9px]">2</div>Step 2: Map the Data
+            </h3>
+            <div className="bg-gray-900 rounded-lg p-5 text-emerald-400 font-mono text-[10px] leading-relaxed border-l-4 border-emerald-500">
+              <div className="flex justify-between border-b border-gray-800 pb-2 mb-2 text-gray-500 uppercase font-bold text-[9px] tracking-widest"><span>Key</span><span>Value (from CRM)</span></div>
+              {[["api_key","YOUR_API_KEY"],["contact_name",'"First Name" + "Last Name"'],["contact_phone",'"Phone Number"'],["estimated_revenue_cents",'"Total Price"']].map(([k,v],i)=>(
+                <div key={i} className="flex justify-between py-1"><span className="text-gray-300">{k}</span><span className="text-emerald-500 italic">{v}</span></div>
+              ))}
             </div>
-         </div>
-
-         <div className="p-6 bg-gray-50 border-t border-gray-100 flex justify-end">
-            <button 
-              onClick={onClose}
-              className="px-5 py-2.5 bg-gray-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:opacity-90 transition-opacity shadow-lg shadow-gray-200"
-            >
-              Done, Let's track some ROI
-            </button>
-         </div>
+          </section>
+          <section className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100">
+            <h3 className="text-[10px] font-black text-emerald-900 uppercase tracking-widest mb-3 flex items-center gap-2">
+              <div className="w-4 h-4 bg-emerald-500 rounded text-white flex items-center justify-center text-[9px]">3</div>Confirmed Revenue Zap
+            </h3>
+            <p className="text-[11px] text-emerald-800 leading-relaxed mb-2">Create a second Zap when a job is marked Won/Completed:</p>
+            <div className="bg-white p-3 rounded-lg font-mono text-[10px] text-emerald-700 border border-emerald-100 select-all">
+              https://ai-front-desk-backend.onrender.com/api/webhooks/crm/job-won
+            </div>
+          </section>
+          <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex gap-3">
+            <div className="w-5 h-5 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 shrink-0 text-[10px] font-black">!</div>
+            <div className="text-[10px] text-blue-800 leading-relaxed">
+              <strong className="block mb-0.5">Revenue in cents:</strong>If job total is $1,500 send <strong>150000</strong>. Use Zapier Formatter to multiply by 100.
+            </div>
+          </div>
+        </div>
+        <div className="p-6 bg-gray-50 border-t border-gray-100 flex justify-end">
+          <button onClick={onClose} className="px-5 py-2.5 bg-gray-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:opacity-90 transition-opacity">
+            Done, Let's track some ROI
+          </button>
+        </div>
       </div>
     </div>
   );

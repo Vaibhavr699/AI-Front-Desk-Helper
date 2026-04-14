@@ -7,6 +7,7 @@ import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, 
 import MetricsPage from "./pages/MetricsPage";
 import { ToastProvider } from "./components/ui/Toast";
 import "./App.css";
+import Reviews from "./pages/Reviews";
 
 /** Scroll window to top on every route change so new pages (e.g. policy, login) are not shown at previous scroll position. */
 function ScrollToTop() {
@@ -109,6 +110,7 @@ export default function App() {
             <Route path="/admin/admins" element={<AdminWithContext view="admins" />} />
             <Route path="/add-location" element={<AddLocation />} />
             <Route path="/team" element={<Team />} />
+            <Route path="/reviews" element={<ReviewsWithContext />} />
           </Route>
         </Routes>
       </ToastProvider>
@@ -180,4 +182,9 @@ function AdminWithContext({ view }) {
   const user = getUser();
   if (!user?.is_super_admin) return <Navigate to="/" replace />;
   return <Admin view={view} />;
+}
+
+function ReviewsWithContext() {
+  const { tenantId } = useOutletContext();
+  return <Reviews tenantId={tenantId} />;
 }

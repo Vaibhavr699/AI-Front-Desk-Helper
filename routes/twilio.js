@@ -125,8 +125,13 @@ router.post("/status", (req, res) => {
 
   const CallSid = req.body && req.body.CallSid;
   const CallStatus = req.body && req.body.CallStatus;
-  if (CallSid && (CallStatus === "completed" || CallStatus === "busy" || CallStatus === "failed" || CallStatus === "no-answer")) {
-    updateCallByTwilioSid(CallSid, { status: CallStatus, ended_at: new Date().toISOString() }).catch(() => {});
+if (CallSid && (CallStatus === "completed" || CallStatus === "busy" || CallStatus === "failed" || CallStatus === "no-answer")) {
+    const endedAt = new Date().toISOString();
+    updateCallByTwilioSid(CallSid, {
+      status: CallStatus,
+      ended_at: endedAt,
+      duration_minutes: req.body?.CallDuration ? parseFloat(req.body.CallDuration) / 60 : null,
+    }).catch(() => {});
   }
 });
 

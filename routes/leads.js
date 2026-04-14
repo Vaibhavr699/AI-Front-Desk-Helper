@@ -5,29 +5,21 @@ const router = express.Router();
 const leadsService = require("../services/leads");
 const messagesService = require("../services/messages");
 const callsService = require("../services/calls");
-const auth = require("../lib/auth");
-const { getTenantIdFromQuery, getTargetTenantIds } = auth;
+const authLib = require("../lib/auth");
+const { logAction } = require("../lib/auditLogger");
 const db = require("../lib/db");
 
 // All routes require authentication and at least Manager-level access
-router.use(auth.authMiddleware);
-router.use((req, res, next) => {
-  if (!req.user || !['owner', 'admin', 'manager'].includes(req.user.role)) {
-    return res.status(403).json({ error: "Forbidden — insufficient permissions", code: "INSUFFICIENT_PERMISSIONS" });
-  }
-  next();
-});
+router.use(function(req, res, next) { return authLib.authMiddleware(req, res, next); });
+router.use(function(req, res, next) { return authLib.requireRole([authLib.ROLES.OWNER, authLib.ROLES.ADMIN, authLib.ROLES.MANAGER])(req, res, next); });
 
 /** GET /api/leads - List all leads for a tenant */
 router.get("/", async (req, res) => {
   try {
-    const tenantIds = await getTargetTenantIds(req);
+    const tenantIds = await authLib.getTargetTenantIds(req);
     if (!tenantIds.length) return res.status(400).json({ error: "Missing tenantId" });
-    
     const limit = parseInt(req.query.limit) || 50;
     const offset = parseInt(req.query.offset) || 0;
-    
-    // For single tenant, pass one. For roll-up, pass the array.
     const leads = await leadsService.getLeadsByTenant(tenantIds, limit, offset);
     res.json(leads);
   } catch (err) {
@@ -42,7 +34,6 @@ router.get("/:id", async (req, res) => {
     const lead = await leadsService.getLeadById(req.params.id);
     if (!lead) return res.status(404).json({ error: "Lead not found" });
 
-    // Authorization check – owner, parent of owner, or super admin
     const isOwner = lead.tenant_id === req.user?.tenant_id;
     let isParentOfOwner = false;
     if (!isOwner && req.user?.tenant_business_type === 'parent') {
@@ -52,6 +43,18 @@ router.get("/:id", async (req, res) => {
     if (!isOwner && !isParentOfOwner && !req.user?.is_super_admin) {
       return res.status(403).json({ error: "Forbidden" });
     }
+
+    // Audit log: lead viewed
+    await logAction({
+      organization_id: String(lead.tenant_id),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "lead_viewed",
+      entity_type: "lead",
+      entity_id: String(lead.id),
+      new_value: { lead_name: lead.name, lead_source: lead.lead_source, lead_status: lead.status },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
 
     res.json(lead);
   } catch (err) {
@@ -66,7 +69,6 @@ router.patch("/:id", async (req, res) => {
     const lead = await leadsService.getLeadById(req.params.id);
     if (!lead) return res.status(404).json({ error: "Lead not found" });
 
-    // Authorization check – owner, parent of owner, or super admin
     const isOwner = lead.tenant_id === req.user?.tenant_id;
     let isParentOfOwner = false;
     if (!isOwner && req.user?.tenant_business_type === 'parent') {
@@ -85,35 +87,24 @@ router.patch("/:id", async (req, res) => {
   }
 });
 
-/** GET /api/leads/:id/history - Get aggregated conversation history (Messages + Calls) */
+/** GET /api/leads/:id/history - Get aggregated conversation history */
 router.get("/:id/history", async (req, res) => {
   try {
     const leadId = req.params.id;
-    
-    // Fetch Messages
     const messages = await messagesService.getLeadMessages(leadId, 100);
-    
-    // Fetch Calls
     const callsRes = await db.query(
       "SELECT id, started_at, transcript, disposition, status, metadata FROM calls WHERE lead_id = $1 ORDER BY started_at DESC LIMIT 50",
       [leadId]
     );
-    const calls = callsRes.rows;
-    
-    // Also fetch Bookings
     const bookingsRes = await db.query(
       "SELECT id, created_at, contact_name, status, preferred_date, estimated_revenue_cents, scope FROM bookings WHERE lead_id = $1 ORDER BY created_at DESC",
       [leadId]
     );
-    const bookings = bookingsRes.rows;
-    
-    // Combine and sort
     const history = [
       ...messages.map(m => ({ ...m, type: 'message' })),
-      ...calls.map(c => ({ ...c, created_at: c.started_at, type: 'call' })),
-      ...bookings.map(b => ({ ...b, type: 'booking' }))
+      ...callsRes.rows.map(c => ({ ...c, created_at: c.started_at, type: 'call' })),
+      ...bookingsRes.rows.map(b => ({ ...b, type: 'booking' }))
     ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    
     res.json(history);
   } catch (err) {
     console.error("[Leads API] History failed:", err.message);

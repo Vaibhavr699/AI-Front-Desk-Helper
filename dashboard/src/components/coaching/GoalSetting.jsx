@@ -65,12 +65,13 @@ export default function GoalSetting({ tenantId }) {
   }, []);
 
   const handleAnnual = val => {
-    const num = parseMoney(val);
-    setAnnualTotal(num);
-    setAnnualDisplay(num > 0 ? num.toLocaleString() : "");
-    if (distMode !== "manual" && num > 0) distribute(num, distMode);
-    setSaved(false);
-  };
+  const raw = val.replace(/[^0-9]/g, "");
+  const num = parseInt(raw) || 0;
+  setAnnualTotal(num);
+  setAnnualDisplay(raw);
+  if (distMode !== "manual" && num > 0) distribute(num, distMode);
+  setSaved(false);
+};
 
   const handleGoalEdit = (idx, val) => {
     if (!annualTotal) return;
@@ -191,8 +192,8 @@ export default function GoalSetting({ tenantId }) {
               <span style={c.pre}>$</span>
               <input style={c.bigInput} type="text" inputMode="numeric" placeholder="900,000"
                 value={annualDisplay}
-                onChange={e=>handleAnnual(e.target.value)}
-                onBlur={e=>{const n=parseMoney(e.target.value);setAnnualDisplay(n>0?n.toLocaleString():"");}} />
+               onChange={e=>{const raw=e.target.value.replace(/[^0-9]/g,"");setAnnualDisplay(raw);setAnnualTotal(parseInt(raw)||0);if(distMode!=="manual"&&parseInt(raw)>0)distribute(parseInt(raw),distMode);setSaved(false);}}
+onBlur={e=>{const n=parseMoney(e.target.value);setAnnualTotal(n);setAnnualDisplay(n>0?n.toLocaleString():"");}}
             </div>
           </div>
           <div style={c.twoCol}>

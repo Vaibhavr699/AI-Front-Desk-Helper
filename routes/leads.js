@@ -5,11 +5,12 @@ const router = express.Router();
 const leadsService = require("../services/leads");
 const messagesService = require("../services/messages");
 const callsService = require("../services/calls");
-const { authMiddleware, getTenantIdFromQuery, getTargetTenantIds, requireRole, ROLES } = require("../lib/auth");
+const auth = require("../lib/auth");
+const { getTenantIdFromQuery, getTargetTenantIds } = auth;
 const db = require("../lib/db");
 
 // All routes require authentication and at least Manager-level access
-router.use(authMiddleware);
+router.use(auth.authMiddleware);
 router.use((req, res, next) => {
   if (!req.user || !['owner', 'admin', 'manager'].includes(req.user.role)) {
     return res.status(403).json({ error: "Forbidden — insufficient permissions", code: "INSUFFICIENT_PERMISSIONS" });

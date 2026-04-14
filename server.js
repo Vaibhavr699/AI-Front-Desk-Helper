@@ -380,6 +380,7 @@ app.use("/auth/google/calendar", require("./routes/google-calendar"));
 app.use("/api/google-calendar", authMiddleware, require("./routes/google-calendar"));
 app.use("/webhooks", require("./routes/webhooks"));
 app.use("/api/coaching", authMiddleware, require("./routes/coaching"));
+app.use("/api/reviews", require("./routes/reviews"));
 
 // Serve dashboard static assets early so JS/CSS/images load,
 // but do NOT register the wildcard catch-all here — it goes at the very end
@@ -3866,6 +3867,12 @@ cron.schedule("0 * * * *", () => {
 // Check usage alerts every 4 hours
 cron.schedule("0 */4 * * *", () => {
   notificationsService.checkUsageAlerts().catch((e) => console.error("Usage alert notification failed:", e));
+});
+
+// Poll Google reviews every 4 hours
+cron.schedule("0 */4 * * *", () => {
+  const { pollAllTenants } = require("./routes/reviews");
+  pollAllTenants().catch((e) => console.error("Reviews cron:", e));
 });
 
 // -------------------- Listen --------------------

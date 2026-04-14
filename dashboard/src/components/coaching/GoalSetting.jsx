@@ -28,7 +28,7 @@ export default function GoalSetting({ tenantId }) {
   const headers = { Authorization: `Bearer ${token}` };
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/goals/annual?year=${curYear}`, { headers })
+   fetch(`${API_BASE}/api/coaching/annual?year=${curYear}`, { headers })
       .then(r => r.json()).catch(() => null)
       .then(data => {
         if (data?.months?.length) {
@@ -101,7 +101,7 @@ export default function GoalSetting({ tenantId }) {
     if (!annualTotal) return;
     setSaving(true);
     try {
-      await fetch(`${API_BASE}/api/goals/annual`, {
+      await fetch(`${API_BASE}/api/coaching/annual`, {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify({

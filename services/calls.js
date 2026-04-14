@@ -31,7 +31,7 @@ async function getCallById(id) {
 }
 
 async function updateCall(id, updates) {
-  const allowed = ["status", "disposition", "transferred", "transfer_to", "recording_sid", "ended_at", "metadata"];
+  const allowed = ["status", "disposition", "transferred", "transfer_to", "recording_sid", "ended_at", "metadata", "duration_minutes"];
   const set = [];
   const values = [];
   let i = 1;

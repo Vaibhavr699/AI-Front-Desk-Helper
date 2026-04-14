@@ -53,7 +53,8 @@ function centsToMRR(cents) {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
-export default function Admin({ view = "tenants" }) {
+export default function Admin({ view: initialView = "tenants" }) {
+  const [activeView, setActiveView] = useState(initialView);
   const [stats, setStats] = useState(null);
   const [tenants, setTenants] = useState([]);
   const [admins, setAdmins] = useState([]);
@@ -105,7 +106,7 @@ export default function Admin({ view = "tenants" }) {
       setStats(s);
       setTenants(t.tenants || []);
       setAdmins(a.admins || []);
-      
+
       if (!t.tenants || t.tenants.length === 0) {
         console.warn("Tenant list is empty from server.");
       }
@@ -165,11 +166,9 @@ export default function Admin({ view = "tenants" }) {
 
   function openOverrideDrawer(tenant) {
     setSelectedTenant(tenant);
-    
-    // Parse existing JSON overrides or fallback
+
     const existingOverrides = tenant.plan_overrides || {};
-    const defaultPlanState = { monthly: "", setup: "", waive_setup: false };
-    
+
     const buildPlanForm = (planId) => {
       const dbPlan = existingOverrides[planId] || {};
       return {
@@ -204,11 +203,11 @@ export default function Admin({ view = "tenants" }) {
     setSaveMessage("");
     try {
       const formattedOverrides = {};
-      
+
       for (const [planId, formValues] of Object.entries(overrideForm.plan_overrides)) {
         const hasMonthly = formValues.monthly !== "";
         const hasSetup = formValues.setup !== "" || formValues.waive_setup;
-        
+
         if (hasMonthly || hasSetup) {
           formattedOverrides[planId] = {};
           if (hasMonthly) {
@@ -226,7 +225,7 @@ export default function Admin({ view = "tenants" }) {
           Object.entries(overrideForm.addons).map(([k, v]) => [k, !!v])
         );
       }
-      
+
       const payload = {
         plan: overrideForm.plan,
         plan_overrides: formattedOverrides,
@@ -269,18 +268,10 @@ export default function Admin({ view = "tenants" }) {
     }
   }
 
-  async function handleToggleSuspension() {
-    if (!selectedTenant) return;
-    setSuspensionConfirm({
-      tenant: selectedTenant,
-      action: selectedTenant.is_suspended ? "unsuspend" : "suspend"
-    });
-  }
-
   async function confirmSuspension(reason = null) {
     if (!suspensionConfirm) return;
     const { tenant, action } = suspensionConfirm;
-    
+
     setSaveLoading(true);
     try {
       await api.suspendTenant(tenant.id, action === "suspend", reason);
@@ -319,7 +310,6 @@ export default function Admin({ view = "tenants" }) {
   const safePage = Math.min(currentPage, totalPages);
   const paginatedTenants = filteredTenants.slice((safePage - 1) * ROWS_PER_PAGE, safePage * ROWS_PER_PAGE);
 
-  // Reset to page 1 when filters change
   useEffect(() => { setCurrentPage(1); }, [searchQuery, filterPlan]);
 
   if (loading) {
@@ -335,10 +325,29 @@ export default function Admin({ view = "tenants" }) {
 
   return (
     <div className="min-h-screen bg-slate-50/30">
-
       <div className="max-w-7xl mx-auto px-6 py-10">
-        {/* Dynamic Content Area */}
         <main className="flex-1">
+
+          {/* ─── Admin Nav Tabs ─────────────────────────────────── */}
+          <div className="flex gap-1 mb-8 border-b border-slate-200">
+            {[
+              { key: "tenants", label: "Tenants", icon: <Building2 size={15} /> },
+              { key: "admins", label: "Platform Admins", icon: <Shield size={15} /> },
+            ].map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveView(tab.key)}
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-bold rounded-t-lg border-b-2 transition-colors ${
+                  activeView === tab.key
+                    ? "border-slate-900 text-slate-900"
+                    : "border-transparent text-slate-400 hover:text-slate-700"
+                }`}
+              >
+                {tab.icon} {tab.label}
+              </button>
+            ))}
+          </div>
+
           {error && (
             <div className="mb-6 p-4 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-3 text-red-600">
               <AlertCircle size={20} />
@@ -346,9 +355,9 @@ export default function Admin({ view = "tenants" }) {
             </div>
           )}
 
-          {view === 'tenants' ? (
+          {activeView === "tenants" ? (
             <div className="space-y-6 max-w-6xl">
-              {/* Stats Section */}
+              {/* Stats */}
               {stats && (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
@@ -395,7 +404,6 @@ export default function Admin({ view = "tenants" }) {
                   <h2 className="text-2xl font-black text-slate-900 tracking-tight">Tenants</h2>
                   <p className="text-xs text-slate-500 font-medium">Manage business accounts and pricing</p>
                 </div>
-                
                 <div className="flex items-center gap-3 w-full md:w-auto">
                   <div className="relative flex-1 md:w-72">
                     <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
@@ -407,7 +415,7 @@ export default function Admin({ view = "tenants" }) {
                       onChange={(e) => setSearchQuery(e.target.value)}
                     />
                   </div>
-                  <select 
+                  <select
                     value={filterPlan}
                     onChange={(e) => setFilterPlan(e.target.value)}
                     className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:ring-2 focus:ring-slate-900 focus:border-transparent outline-none transition-all"
@@ -510,7 +518,6 @@ export default function Admin({ view = "tenants" }) {
                   </table>
                 </div>
 
-                {/* Empty State */}
                 {filteredTenants.length === 0 && (
                   <div className="py-20 text-center">
                     <Building2 size={32} className="mx-auto text-slate-200 mb-3" />
@@ -518,7 +525,6 @@ export default function Admin({ view = "tenants" }) {
                   </div>
                 )}
 
-                {/* Pagination */}
                 {filteredTenants.length > ROWS_PER_PAGE && (
                   <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between">
                     <p className="text-xs text-slate-400 font-medium">
@@ -551,7 +557,7 @@ export default function Admin({ view = "tenants" }) {
                   <h2 className="text-2xl font-black text-slate-900 tracking-tight">Platform Admins</h2>
                   <p className="text-xs text-slate-500 font-medium">Manage people with access to this platform console</p>
                 </div>
-                <button 
+                <button
                   onClick={() => setIsInviteModalOpen(true)}
                   className="flex items-center justify-center gap-2 px-6 py-3 bg-slate-900 border border-slate-900 text-white rounded-2xl text-[11px] font-black uppercase tracking-wider hover:bg-black transition-all shadow-xl shadow-slate-900/10"
                 >
@@ -634,7 +640,6 @@ export default function Admin({ view = "tenants" }) {
               transition={{ type: "spring", damping: 30, stiffness: 300 }}
               className="relative w-full max-w-md bg-white shadow-2xl flex flex-col"
             >
-              {/* Drawer Header */}
               <div className="p-6 border-b border-gray-100 bg-gradient-to-r from-gray-900 to-gray-800 text-white">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3">
@@ -650,8 +655,6 @@ export default function Admin({ view = "tenants" }) {
                     <X size={20} className="text-gray-400" />
                   </button>
                 </div>
-
-                {/* Default Pricing Reference */}
                 <div className="flex gap-4">
                   <div className="flex-1 bg-white/5 rounded-xl p-3 border border-white/10">
                     <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Default Monthly</div>
@@ -664,7 +667,6 @@ export default function Admin({ view = "tenants" }) {
                 </div>
               </div>
 
-              {/* Form */}
               <div className="flex-1 overflow-y-auto p-6">
                 <form id="override-form" onSubmit={handleSaveOverride} className="space-y-5">
                   <div className="space-y-4">
@@ -681,14 +683,11 @@ export default function Admin({ view = "tenants" }) {
                     </FormGroup>
                   </div>
 
-                  {/* Plan Price Overrides */}
                   <div className="space-y-4">
                     <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 mt-4">Plan Price Overrides</div>
-                    
                     {["basic", "pro", "elite"].map((planId) => {
                       const capitalized = planId.charAt(0).toUpperCase() + planId.slice(1);
                       const currentForm = overrideForm.plan_overrides[planId];
-                      
                       const setPlanForm = (updates) => {
                         setOverrideForm({
                           ...overrideForm,
@@ -698,12 +697,9 @@ export default function Admin({ view = "tenants" }) {
                           }
                         });
                       };
-
                       return (
                         <div key={planId} className="border border-gray-200 rounded-xl overflow-hidden bg-gray-50/50 p-4 space-y-4">
                           <h3 className="font-bold text-gray-800 border-b border-gray-200 pb-2">{capitalized} Plan</h3>
-                          
-                          {/* Monthly */}
                           <FormGroup label="Monthly Override" compact hint="Leave empty for default">
                             <div className="relative">
                               <DollarSign size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -711,15 +707,13 @@ export default function Admin({ view = "tenants" }) {
                                 type="number"
                                 step="0.01"
                                 min="0"
-                                placeholder={`e.g. ${planId === 'basic' ? '297' : planId === 'pro' ? '497' : '997'}`}
+                                placeholder={`e.g. ${planId === "basic" ? "297" : planId === "pro" ? "497" : "997"}`}
                                 className="w-full pl-8 pr-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-gray-900 transition-all"
                                 value={currentForm.monthly}
                                 onChange={(e) => setPlanForm({ monthly: e.target.value })}
                               />
                             </div>
                           </FormGroup>
-
-                          {/* Setup */}
                           <FormGroup label="Setup Fee Override" compact>
                             <label className="flex items-center gap-2 cursor-pointer mb-2">
                               <input
@@ -730,7 +724,6 @@ export default function Admin({ view = "tenants" }) {
                               />
                               <span className="text-xs font-bold text-emerald-700">Waive setup fee ($0)</span>
                             </label>
-                            
                             {!currentForm.waive_setup && (
                               <div className="relative">
                                 <DollarSign size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -738,7 +731,7 @@ export default function Admin({ view = "tenants" }) {
                                   type="number"
                                   step="0.01"
                                   min="0"
-                                  placeholder={`e.g. ${planId === 'basic' ? '400' : planId === 'pro' ? '600' : '900'}`}
+                                  placeholder={`e.g. ${planId === "basic" ? "400" : planId === "pro" ? "600" : "900"}`}
                                   className="w-full pl-8 pr-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-gray-900 transition-all"
                                   value={currentForm.setup}
                                   onChange={(e) => setPlanForm({ setup: e.target.value })}
@@ -770,7 +763,6 @@ export default function Admin({ view = "tenants" }) {
 
                   <div className="border-t border-gray-100 pt-5 mt-5">
                     <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Promotion Details</div>
-
                     <div className="space-y-4">
                       <FormGroup label="Promo Label" compact>
                         <input
@@ -781,7 +773,6 @@ export default function Admin({ view = "tenants" }) {
                           onChange={(e) => setOverrideForm({ ...overrideForm, promo_label: e.target.value })}
                         />
                       </FormGroup>
-
                       <FormGroup label="Expiry Date" compact hint="Leave empty for permanent override">
                         <input
                           type="date"
@@ -790,7 +781,6 @@ export default function Admin({ view = "tenants" }) {
                           onChange={(e) => setOverrideForm({ ...overrideForm, promo_expires_at: e.target.value })}
                         />
                       </FormGroup>
-
                       <FormGroup label="Internal Notes" compact>
                         <textarea
                           rows={2}
@@ -820,8 +810,8 @@ export default function Admin({ view = "tenants" }) {
                         type="button"
                         onClick={() => setSuspensionConfirm({ tenant: selectedTenant, action: selectedTenant.is_suspended ? "unsuspend" : "suspend" })}
                         className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all ${
-                          selectedTenant.is_suspended 
-                            ? "bg-red-600 text-white hover:bg-red-700 shadow-sm" 
+                          selectedTenant.is_suspended
+                            ? "bg-red-600 text-white hover:bg-red-700 shadow-sm"
                             : "bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
                         }`}
                       >
@@ -843,7 +833,6 @@ export default function Admin({ view = "tenants" }) {
                 )}
               </div>
 
-              {/* Footer */}
               <div className="p-5 border-t border-gray-100 bg-gray-50/50 space-y-3">
                 {saveMessage && (
                   <motion.div
@@ -878,15 +867,15 @@ export default function Admin({ view = "tenants" }) {
         )}
       </AnimatePresence>
 
-       <ConfirmModal
-         isOpen={!!impersonateConfirm}
-         onClose={() => setImpersonateConfirm(null)}
-         onConfirm={confirmImpersonate}
-         title="Switch Perspective"
-         message={`Switch to viewing ${impersonateConfirm?.company_name || impersonateConfirm?.name} perspective?`}
-         confirmText="View Dashboard"
-         icon={<Users size={32} />}
-       />
+      <ConfirmModal
+        isOpen={!!impersonateConfirm}
+        onClose={() => setImpersonateConfirm(null)}
+        onConfirm={confirmImpersonate}
+        title="Switch Perspective"
+        message={`Switch to viewing ${impersonateConfirm?.company_name || impersonateConfirm?.name} perspective?`}
+        confirmText="View Dashboard"
+        icon={<Users size={32} />}
+      />
 
       <ConfirmModal
         isOpen={!!adminToDelete}
@@ -932,7 +921,7 @@ export default function Admin({ view = "tenants" }) {
         isAlert
       />
 
-       {/* Invite Admin Modal */}
+      {/* Invite Admin Modal */}
       <AnimatePresence>
         {isInviteModalOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-md">
@@ -950,7 +939,6 @@ export default function Admin({ view = "tenants" }) {
                 <p className="text-sm text-slate-500 text-center font-medium leading-relaxed mb-6">
                   Enter an email address to send an invitation to join the platform console.
                 </p>
-                
                 <div className="space-y-4 mb-8">
                   <div className="relative">
                     <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -965,7 +953,6 @@ export default function Admin({ view = "tenants" }) {
                     />
                   </div>
                 </div>
-
                 <div className="flex flex-col gap-3">
                   <button
                     type="submit"
@@ -977,10 +964,7 @@ export default function Admin({ view = "tenants" }) {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setIsInviteModalOpen(false);
-                      setInviteEmail("");
-                    }}
+                    onClick={() => { setIsInviteModalOpen(false); setInviteEmail(""); }}
                     className="w-full bg-white text-slate-400 hover:text-slate-600 font-bold text-xs py-2 transition-all uppercase tracking-wide"
                   >
                     Cancel
@@ -1019,7 +1003,7 @@ function StatusBadge({ status }) {
 function ConfirmModal({ isOpen, onClose, onConfirm, title, message, confirmText, variant = "primary", icon, isAlert }) {
   const isDanger = variant === "danger";
   const isWarning = variant === "warning";
-  
+
   const getColors = () => {
     if (isDanger) return "bg-red-50 text-red-500 border-red-100/50";
     if (isWarning) return "bg-amber-50 text-amber-500 border-amber-100/50";
@@ -1031,7 +1015,7 @@ function ConfirmModal({ isOpen, onClose, onConfirm, title, message, confirmText,
     if (isWarning) return "bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/10";
     return "bg-slate-900 hover:bg-black text-white shadow-slate-900/10";
   };
-  
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -1047,9 +1031,7 @@ function ConfirmModal({ isOpen, onClose, onConfirm, title, message, confirmText,
                 {icon || <Users size={32} />}
               </div>
               <h3 className="text-xl font-black text-slate-900 mb-2">{title}</h3>
-              <p className="text-sm text-slate-500 font-medium leading-relaxed mb-8">
-                {message}
-              </p>
+              <p className="text-sm text-slate-500 font-medium leading-relaxed mb-8">{message}</p>
               <div className="flex flex-col gap-3">
                 <button
                   onClick={onConfirm}
@@ -1099,7 +1081,6 @@ function SuspensionModal({ isOpen, onClose, onConfirm, tenantName, action }) {
                 Are you sure you want to {action} <strong>{tenantName}</strong>?
                 {isSuspended && " Access to their dashboard will be restricted."}
               </p>
-
               {isSuspended && (
                 <div className="mb-8">
                   <FormGroup label="Reason (Optional)" compact>
@@ -1112,7 +1093,6 @@ function SuspensionModal({ isOpen, onClose, onConfirm, tenantName, action }) {
                   </FormGroup>
                 </div>
               )}
-
               <div className="flex flex-col gap-3">
                 <button
                   onClick={() => onConfirm(reason)}

@@ -14,7 +14,7 @@ const emailService = require("../services/email");
 const nurturingService = require("../services/nurturing");
 const notificationsService = require("../services/notifications");
 const { logAction } = require("../lib/auditLogger");
-const { getTenantIdFromQuery, getTargetTenantIds, requireRole, ROLES } = auth;
+const { getTenantIdFromQuery, getTargetTenantIds, requireRole, ROLES } = require("../lib/auth");
 
 /** Normalize a US phone to E.164 (+1XXXXXXXXXX). Returns null if invalid. */
 function normalizePhoneInput(raw) {

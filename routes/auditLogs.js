@@ -1,9 +1,13 @@
 "use strict";
 
 const express = require("express");
-const db = require("../lib/db");
-
+const { createClient } = require("@supabase/supabase-js");
 const router = express.Router();
+
+const supabase =
+  process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+    : null;
 
 /**
  * GET /api/audit-logs
@@ -13,98 +17,82 @@ const router = express.Router();
  */
 router.get("/", async (req, res) => {
   try {
-    const { user_id, action, from, to, page = 1, limit = 50 } = req.query;
+    if (!supabase) {
+      return res.status(500).json({ error: "Supabase not configured" });
+    }
 
+    const { user_id, action, from, to, page = 1, limit = 25 } = req.query;
     const tenantId = req.user.tenant_id;
     const isParentAdmin =
       req.user?.tenant_business_type === "parent" &&
       (req.user?.role === "admin" || req.user?.role === "owner");
 
-    const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+    const offset = (pageNum - 1) * limitNum;
 
-    let conditions = [];
-    let params = [];
-    let idx = 1;
+    // Build org_id list to filter by
+    let orgIds = [String(tenantId)];
 
-    // Scope by tenant — HQ sees all child locations, others see only their own
     if (isParentAdmin) {
-      conditions.push(`(al.organization_id = $${idx} OR al.organization_id IN (
-        SELECT id::text FROM tenants WHERE parent_id = $${idx}
-      ))`);
-      params.push(tenantId);
-      idx++;
-    } else {
-      conditions.push(`al.organization_id = $${idx}`);
-      params.push(tenantId);
-      idx++;
+      // Fetch child tenant IDs from Supabase
+      const { data: childTenants, error: tenantErr } = await supabase
+        .from("tenants")
+        .select("id")
+        .eq("parent_id", tenantId);
+
+      if (tenantErr) {
+        console.error("GET /api/audit-logs tenant fetch error:", tenantErr);
+      } else if (childTenants?.length) {
+        orgIds = [...orgIds, ...childTenants.map((t) => String(t.id))];
+      }
     }
 
-    // Filter by user
-    if (user_id) {
-      conditions.push(`al.user_id = $${idx}`);
-      params.push(user_id);
-      idx++;
-    }
+    // Build Supabase query
+    let query = supabase
+      .from("audit_logs")
+      .select(
+        `
+        id,
+        action,
+        organization_id,
+        entity_type,
+        entity_id,
+        old_value,
+        new_value,
+        ip_address,
+        user_agent,
+        created_at,
+        user_id
+      `,
+        { count: "exact" }
+      )
+      .in("organization_id", orgIds)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limitNum - 1);
 
-    // Filter by action type
-    if (action) {
-      conditions.push(`al.action = $${idx}`);
-      params.push(action);
-      idx++;
-    }
-
-    // Filter by date range
-    if (from) {
-      conditions.push(`al.created_at >= $${idx}::date`);
-      params.push(from);
-      idx++;
-    }
+    if (user_id) query = query.eq("user_id", String(user_id));
+    if (action) query = query.eq("action", action);
+    if (from) query = query.gte("created_at", from);
     if (to) {
-      conditions.push(`al.created_at < ($${idx}::date + interval '1 day')`);
-      params.push(to);
-      idx++;
+      // Include the full "to" day
+      const toDate = new Date(to);
+      toDate.setDate(toDate.getDate() + 1);
+      query = query.lt("created_at", toDate.toISOString().split("T")[0]);
     }
 
-    const where = conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
+    const { data: logs, error, count } = await query;
 
-    // Get total count
-    const countRes = await db.query(
-      `SELECT COUNT(*) as total FROM audit_logs al ${where}`,
-      params
-    );
-    const total = parseInt(countRes.rows[0].total, 10);
-
-    // Get paginated rows with user email joined
-    const rows = await db.query(
-      `SELECT 
-        al.id,
-        al.action,
-        al.organization_id,
-        al.entity_type,
-        al.entity_id,
-        al.old_value,
-        al.new_value,
-        al.ip_address,
-        al.user_agent,
-        al.created_at,
-        al.user_id,
-        du.email as user_email,
-        du.role as user_role,
-        t.name as location_name
-       FROM audit_logs al
-       LEFT JOIN dashboard_users du ON du.id::text = al.user_id
-       LEFT JOIN tenants t ON t.id::text = al.organization_id
-       ${where}
-       ORDER BY al.created_at DESC
-       LIMIT $${idx} OFFSET $${idx + 1}`,
-      [...params, parseInt(limit, 10), offset]
-    );
+    if (error) {
+      console.error("GET /api/audit-logs supabase error:", error);
+      return res.status(500).json({ error: "Server error" });
+    }
 
     res.json({
-      logs: rows.rows,
-      total,
-      page: parseInt(page, 10),
-      pages: Math.ceil(total / parseInt(limit, 10)),
+      logs: logs || [],
+      total: count || 0,
+      page: pageNum,
+      pages: Math.ceil((count || 0) / limitNum),
     });
   } catch (err) {
     console.error("GET /api/audit-logs error:", err);

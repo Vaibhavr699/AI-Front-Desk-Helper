@@ -359,7 +359,7 @@ export default function AICoachWidget({ tenantId }) {
     if (!tenantId || tenantId === "all" || mode !== "coaching") return;
     setActivityLoading(true);
     Promise.all([
-      api(`/api/goals/annual?year=${YEAR}&tenant_id=${tenantId}`).catch(() => null),
+      api(`/api/coaching/annual?year=${YEAR}&tenant_id=${tenantId}`).catch(() => null),
       getMetrics(tenantId, "30d").catch(() => null),
       getCalls(tenantId, { limit: 20 }).catch(() => null),
       getLeadsByTenant(tenantId, 20, 0).catch(() => null),

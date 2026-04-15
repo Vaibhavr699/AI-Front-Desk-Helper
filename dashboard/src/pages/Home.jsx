@@ -1,21 +1,5 @@
-import { Link, useNavigate } from "react-router-dom";
-import { ContainerScroll } from "../components/ui/container-scroll-animation";
-import { NavBar } from "../components/ui/tubelight-navbar";
-import { SiteHeader } from "../components/SiteHeader";
-import { SiteFooter } from "../components/SiteFooter";
-import { BundleBanner } from "../components/BundleBanner";
-import { ContactModal } from "../components/ContactModal";
-import { ShimmerButton } from "../components/ui/shimmer-button";
-import { motion, AnimatePresence } from "framer-motion";
-import { useState, useEffect, useRef, useMemo } from "react";
-import {
-  PhoneCall, CalendarCheck, MessageSquare, Bot, User, CheckCircle2,
-  Home as HomeIcon, Layers, DollarSign, ShieldCheck, Headphones,
-  CalendarDays, Link2, Smartphone, Phone, Settings, Zap, Users,
-  BarChart2, MoveRight, Sparkles, Star,
-} from "lucide-react";
+import { useState, useEffect, useRef } from "react";
 
-// ── Constants ──────────────────────────────────────────────────────────────────
 const ORANGE = "#E8702A";
 const DARK = "#111010";
 const CARD_DARK = "#1A1918";
@@ -23,813 +7,1461 @@ const CARD_MID = "#242120";
 const OFF_WHITE = "#F5F0EB";
 const MUTED = "#8A8480";
 
-const NAV_ITEMS = [
-  { name: "Features",     url: "#features",     icon: Layers      },
-  { name: "How it works", url: "#how-it-works", icon: HomeIcon    },
-  { name: "Pricing",      url: "#pricing",      icon: DollarSign  },
-  { name: "Why us",       url: "#why-us",       icon: ShieldCheck },
-];
+const style = `
+  @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,400&display=swap');
 
-// ── SMS Consent Modal ──────────────────────────────────────────────────────────
-function SmsConsentModal({ isOpen, onClose, onAccept }) {
-  const [checked, setChecked] = useState(false);
-  if (!isOpen) return null;
+  * { box-sizing: border-box; margin: 0; padding: 0; }
 
-  function handleAccept() {
-    if (!checked) return;
-    onAccept();
-    setChecked(false);
-  }
-  function handleClose() {
-    setChecked(false);
-    onClose();
+  body {
+    background: ${DARK};
+    color: ${OFF_WHITE};
+    font-family: 'DM Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
 
-  return (
-    <div
-      className="fixed inset-0 z-[600] flex items-end justify-center"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="sms-consent-title"
-    >
-      <div className="absolute inset-0 bg-black/65 backdrop-blur-sm" onClick={handleClose} />
-      <motion.div
-        initial={{ y: "100%", opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: "100%", opacity: 0 }}
-        transition={{ type: "spring", damping: 28, stiffness: 300 }}
-        className="relative z-10 w-full max-w-[480px] bg-white rounded-t-3xl p-7 pb-10 max-h-[92vh] overflow-y-auto"
-      >
-        <div className="flex justify-between items-start mb-5">
-          <div>
-            <div className="w-12 h-12 bg-orange-50 rounded-xl flex items-center justify-center text-2xl mb-4">💬</div>
-            <h2 id="sms-consent-title" className="text-2xl font-bold text-stone-900">Before you get started</h2>
-            <p className="mt-1 text-sm text-stone-500">Please review and agree to our messaging policy.</p>
-          </div>
-          <button onClick={handleClose} className="text-stone-300 hover:text-stone-500 p-1 text-xl leading-none mt-1">✕</button>
-        </div>
+  .syne { font-family: 'Syne', sans-serif; }
 
-        <div className="bg-stone-50 border border-stone-200 rounded-xl p-4 text-xs text-stone-600 leading-relaxed mb-5">
-          By submitting this form, you agree to receive SMS text messages from{" "}
-          <strong className="text-stone-800">AI Front Desk Helper</strong> related to your inquiry,
-          including appointment scheduling, follow-ups, and service notifications.
-          Message frequency may vary. Message and data rates may apply.
-          Reply <strong>STOP</strong> to opt out or <strong>HELP</strong> for assistance.
-          Consent is not required as a condition of purchasing services.{" "}
-          <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="text-orange-500 underline font-medium">Privacy Policy</a>.
-        </div>
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(28px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-20px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
+  }
+  @keyframes ticker {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+  }
+  @keyframes glow {
+    0%, 100% { box-shadow: 0 0 24px rgba(232,112,42,0.25); }
+    50%       { box-shadow: 0 0 48px rgba(232,112,42,0.5); }
+  }
 
-        <div className="flex items-start gap-3 mb-6 cursor-pointer" onClick={() => setChecked(!checked)}>
-          <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-all ${checked ? "bg-orange-500 border-orange-500" : "border-stone-300"}`}>
-            {checked && <span className="text-white text-xs font-bold leading-none">✓</span>}
-          </div>
-          <span className="text-sm text-stone-700 leading-snug">I have read and agree to the SMS messaging terms above.</span>
-        </div>
+  .fade-up   { animation: fadeUp 0.65s ease both; }
+  .d1 { animation-delay: 0.05s; }
+  .d2 { animation-delay: 0.15s; }
+  .d3 { animation-delay: 0.25s; }
+  .d4 { animation-delay: 0.35s; }
+  .d5 { animation-delay: 0.45s; }
 
-        <div className="flex gap-3">
-          <button onClick={handleClose} className="flex-1 py-3.5 rounded-xl border border-stone-200 text-sm font-semibold text-stone-600 hover:border-stone-300 transition-colors">
-            Cancel
-          </button>
-          <button
-            onClick={handleAccept}
-            disabled={!checked}
-            className={`flex-[1.4] py-3.5 rounded-xl text-sm font-bold text-white transition-all font-['Syne'] ${checked ? "bg-orange-500 hover:bg-orange-600 cursor-pointer" : "bg-stone-200 text-stone-400 cursor-not-allowed"}`}
-          >
-            Continue to sign up →
-          </button>
-        </div>
-      </motion.div>
-    </div>
-  );
-}
+  .btn-primary {
+    background: ${ORANGE};
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 14px 28px;
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 15px;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.15s;
+    letter-spacing: 0.01em;
+  }
+  .btn-primary:hover { background: #d15f20; transform: translateY(-1px); }
 
-// ── Ticker ─────────────────────────────────────────────────────────────────────
-function Ticker() {
+  .btn-ghost {
+    background: transparent;
+    color: ${OFF_WHITE};
+    border: 1.5px solid rgba(245,240,235,0.25);
+    border-radius: 6px;
+    padding: 13px 26px;
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 500;
+    font-size: 15px;
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+  }
+  .btn-ghost:hover { border-color: ${OFF_WHITE}; }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(232,112,42,0.12);
+    border: 1px solid rgba(232,112,42,0.3);
+    color: ${ORANGE};
+    border-radius: 100px;
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .section { padding: 88px 24px; max-width: 480px; margin: 0 auto; }
+
+  .divider {
+    width: 100%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(245,240,235,0.1), transparent);
+    margin: 0 24px;
+  }
+
+  .feature-card {
+    background: ${CARD_DARK};
+    border: 1px solid rgba(245,240,235,0.07);
+    border-radius: 14px;
+    padding: 28px 24px;
+    transition: border-color 0.25s, transform 0.2s;
+  }
+  .feature-card:hover {
+    border-color: rgba(232,112,42,0.3);
+    transform: translateY(-2px);
+  }
+
+  .stat-card {
+    background: ${CARD_MID};
+    border-radius: 14px;
+    padding: 24px;
+    border: 1px solid rgba(245,240,235,0.06);
+  }
+
+  .pipeline-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 20px 0;
+    border-bottom: 1px solid rgba(245,240,235,0.07);
+  }
+  .pipeline-step:last-child { border-bottom: none; }
+
+  .step-num {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1.5px solid ${ORANGE};
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+    color: ${ORANGE};
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .pill-badge {
+    display: inline-block;
+    background: rgba(232,112,42,0.15);
+    color: ${ORANGE};
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .ticker-wrap {
+    overflow: hidden;
+    width: 100%;
+    padding: 14px 0;
+    background: rgba(232,112,42,0.08);
+    border-top: 1px solid rgba(232,112,42,0.15);
+    border-bottom: 1px solid rgba(232,112,42,0.15);
+  }
+  .ticker-inner {
+    display: flex;
+    gap: 0;
+    animation: ticker 22s linear infinite;
+    white-space: nowrap;
+  }
+  .ticker-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 28px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: ${ORANGE};
+    opacity: 0.85;
+  }
+
+  .price-card {
+    background: ${CARD_DARK};
+    border: 1px solid rgba(245,240,235,0.08);
+    border-radius: 16px;
+    padding: 28px 24px;
+    margin-bottom: 16px;
+  }
+  .price-card.featured {
+    border-color: ${ORANGE};
+    position: relative;
+    animation: glow 3s ease-in-out infinite;
+  }
+
+  .check-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 10px;
+    font-size: 14px;
+    color: rgba(245,240,235,0.8);
+    list-style: none;
+  }
+  .check-list li::before {
+    content: '✓';
+    color: ${ORANGE};
+    font-weight: 700;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  .not-a-bot-box {
+    background: linear-gradient(135deg, rgba(232,112,42,0.08), rgba(232,112,42,0.03));
+    border: 1px solid rgba(232,112,42,0.2);
+    border-radius: 14px;
+    padding: 28px 24px;
+  }
+
+  .vs-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin-bottom: 12px;
+  }
+  .vs-cell {
+    flex: 1;
+    font-size: 13px;
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(245,240,235,0.07);
+  }
+  .vs-cell.bad { color: #888; text-decoration: line-through; }
+  .vs-cell.good { color: ${OFF_WHITE}; font-weight: 500; }
+  .vs-cell.label { color: ${MUTED}; font-size: 12px; }
+
+  .live-dot {
+    width: 8px; height: 8px;
+    background: #4ade80;
+    border-radius: 50%;
+    display: inline-block;
+    animation: pulse 2s ease-in-out infinite;
+    margin-right: 6px;
+  }
+
+  /* MOBILE */
+  @media (max-width: 600px) {
+    .nav-bar { padding: 12px 16px; }
+    .logo-name { font-size: 13px; }
+    .btn-ghost { padding: 7px 12px !important; font-size: 12px !important; }
+    .btn-primary { padding: 7px 14px !important; font-size: 12px !important; }
+    .section { padding: 56px 18px; }
+    .feature-card { padding: 20px 18px; }
+    .price-card { padding: 22px 18px; }
+    .mockup-sidebar { display: none !important; }
+    .mockup-stats { flex-direction: column !important; }
+  }
+
+  .gradient-text {
+    background: linear-gradient(135deg, ${OFF_WHITE} 40%, ${ORANGE});
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .section-eyebrow {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: ${ORANGE};
+    margin-bottom: 14px;
+  }
+
+  .big-quote {
+    font-size: 22px;
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    line-height: 1.4;
+    color: ${OFF_WHITE};
+  }
+  .big-quote em {
+    font-style: normal;
+    color: ${ORANGE};
+  }
+
+  .nav-bar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(17,16,16,0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(245,240,235,0.06);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+  }
+
+  .logo-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .logo-icon {
+    width: 36px; height: 36px;
+    background: ${OFF_WHITE};
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 13px;
+    color: #222;
+  }
+  .logo-name {
+    font-family: 'Syne', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .coaching-card {
+    background: linear-gradient(145deg, ${CARD_MID}, ${CARD_DARK});
+    border: 1px solid rgba(245,240,235,0.08);
+    border-radius: 14px;
+    padding: 22px 20px;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .icon-box {
+    width: 40px; height: 40px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+
+  .review-mockup {
+    background: #fff;
+    border-radius: 12px;
+    padding: 16px;
+    color: #111;
+    margin-top: 20px;
+  }
+  .star-row { color: #FBBC04; font-size: 16px; letter-spacing: 2px; }
+
+  /* MODAL */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.65);
+    backdrop-filter: blur(4px);
+    z-index: 999;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 0;
+  }
+  .modal-sheet {
+    background: #fff;
+    border-radius: 24px 24px 0 0;
+    padding: 28px 24px 40px;
+    width: 100%;
+    max-width: 480px;
+    animation: slideUp 0.3s ease both;
+  }
+  @keyframes slideUp {
+    from { transform: translateY(100%); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+  }
+  .modal-icon-wrap {
+    width: 48px; height: 48px;
+    background: #FFF0E6;
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+    margin-bottom: 16px;
+  }
+  .modal-policy-box {
+    background: #F7F7F7;
+    border-radius: 10px;
+    padding: 16px;
+    font-size: 14px;
+    color: #333;
+    line-height: 1.65;
+    margin: 20px 0;
+  }
+  .modal-checkbox-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 24px;
+    cursor: pointer;
+  }
+  .modal-checkbox {
+    width: 20px; height: 20px;
+    border: 2px solid #ccc;
+    border-radius: 4px;
+    flex-shrink: 0;
+    margin-top: 1px;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.15s, background 0.15s;
+    cursor: pointer;
+  }
+  .modal-checkbox.checked {
+    background: ${ORANGE};
+    border-color: ${ORANGE};
+  }
+  .modal-btn-row {
+    display: flex;
+    gap: 12px;
+  }
+  .modal-cancel {
+    flex: 1;
+    background: #fff;
+    border: 1.5px solid #ddd;
+    border-radius: 10px;
+    padding: 14px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #333;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .modal-cancel:hover { border-color: #aaa; }
+  .modal-continue {
+    flex: 1.4;
+    background: ${ORANGE};
+    border: none;
+    border-radius: 10px;
+    padding: 14px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+    font-family: 'Syne', sans-serif;
+  }
+  .modal-continue:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+  }
+  .modal-continue:not(:disabled):hover { background: #d15f20; }
+`;
+
+
+const Ticker = () => {
   const items = [
-    "Revenue Recovered by AI",
-    "Zero Missed Calls",
-    "Estimates Auto-Followed Up",
-    "Win-Backs on Autopilot",
-    "Close Rate Coaching",
-    "Review SEO on Every Star",
-    "Lead Source ROI Tracked",
-    "Leads Never Lost Again",
+    "Inbound AI Receptionist",
+    "Outbound Script Retiring",
+    "Follow-Up Automation",
+    "AI Revenue Coaching",
+    "Review Response Writer (SEO)",
+    "Objection Detection",
+    "Lead Source Tracking",
+    "Estimate Recovery",
   ];
   const doubled = [...items, ...items];
   return (
-    <div className="overflow-hidden w-full py-3.5 border-y" style={{ background: "rgba(232,112,42,0.08)", borderColor: "rgba(232,112,42,0.15)" }}>
-      <div className="flex whitespace-nowrap" style={{ animation: "ticker 30s linear infinite" }}>
+    <div className="ticker-wrap">
+      <div className="ticker-inner">
         {doubled.map((item, i) => (
-          <span key={i} className="inline-flex items-center gap-2.5 px-7 text-xs font-bold tracking-widest uppercase" style={{ color: ORANGE, opacity: 0.85 }}>
-            <span style={{ color: ORANGE, fontSize: 14 }}>◆</span>
+          <span className="ticker-item" key={i}>
+            <span style={{ color: ORANGE, fontSize: 16 }}>◆</span>
             {item}
           </span>
         ))}
       </div>
-      <style>{`
-        @keyframes ticker {
-          0% { transform: translateX(0); }
-          100% { transform: translateX(-50%); }
-        }
-      `}</style>
     </div>
   );
-}
+};
 
-// ── Animated Hero Title ────────────────────────────────────────────────────────
-function AnimatedHeroTitle({ onStart, onContact }) {
-  const [titleNumber, setTitleNumber] = useState(0);
-  const titles = useMemo(() => ["every call", "more revenue", "lost estimates", "every lead", "more bookings"], []);
+export default function App() {
+  const [showModal, setShowModal] = useState(false);
+  const [agreed, setAgreed] = useState(false);
 
-  useEffect(() => {
-    const t = setTimeout(() => setTitleNumber(p => p === titles.length - 1 ? 0 : p + 1), 2200);
-    return () => clearTimeout(t);
-  }, [titleNumber, titles]);
-
-  return (
-    <div className="w-full text-center">
-      {/* Tag */}
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.05 }} className="mb-6">
-        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold tracking-widest uppercase" style={{ background: "rgba(232,112,42,0.12)", border: "1px solid rgba(232,112,42,0.3)", color: ORANGE }}>
-          <Zap className="w-3 h-3" />
-          Not another call bot
-        </span>
-      </motion.div>
-
-      {/* Headline */}
-      <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.15 }} className="mb-5">
-        <h1 className="font-['Syne'] text-[44px] font-extrabold leading-[1.1] tracking-[-0.02em]" style={{ color: OFF_WHITE }}>
-          Never miss<br />
-          <span className="relative inline-block overflow-hidden align-bottom" style={{ height: "1.15em", minWidth: 280 }}>
-            {titles.map((title, index) => (
-              <motion.span
-                key={index}
-                className="absolute left-0 right-0 font-['Syne']"
-                style={{ color: ORANGE }}
-                initial={{ opacity: 0, y: 32 }}
-                animate={
-                  titleNumber === index
-                    ? { y: 0, opacity: 1 }
-                    : { y: titleNumber > index ? -32 : 32, opacity: 0 }
-                }
-                transition={{ type: "spring", stiffness: 80, damping: 18 }}
-              >
-                {title}
-              </motion.span>
-            ))}
-          </span>
-        </h1>
-      </motion.div>
-
-      {/* Subtitle */}
-      <motion.p
-        initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.25 }}
-        className="text-base leading-relaxed mb-8 max-w-sm mx-auto"
-        style={{ color: "rgba(245,240,235,0.65)" }}
-      >
-        Inbound AI. Outbound campaigns. Estimate recovery. AI coaching.
-        Review writing. All in one revenue system built by a painting contractor.
-      </motion.p>
-
-      {/* CTAs */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.35 }}
-        className="flex gap-3 justify-center mb-10"
-      >
-        <button
-          onClick={onStart}
-          className="px-7 py-3.5 rounded-lg text-base font-bold text-white transition-all hover:-translate-y-0.5"
-          style={{ background: ORANGE, fontFamily: "'Syne', sans-serif" }}
-          onMouseEnter={e => e.currentTarget.style.background = "#d15f20"}
-          onMouseLeave={e => e.currentTarget.style.background = ORANGE}
-        >
-          Start free →
-        </button>
-        <button
-          onClick={onContact}
-          className="px-6 py-3.5 rounded-lg text-base font-medium transition-colors flex items-center gap-2"
-          style={{ background: "transparent", border: "1.5px solid rgba(245,240,235,0.25)", color: OFF_WHITE }}
-          onMouseEnter={e => e.currentTarget.style.borderColor = OFF_WHITE}
-          onMouseLeave={e => e.currentTarget.style.borderColor = "rgba(245,240,235,0.25)"}
-        >
-          Get in touch
-          <PhoneCall className="w-4 h-4" />
-        </button>
-      </motion.div>
-
-      {/* Live proof bar */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.45 }}
-        className="rounded-xl p-4 flex justify-around gap-2 mb-3"
-        style={{ background: CARD_DARK, border: "1px solid rgba(245,240,235,0.08)" }}
-      >
-        {[{ val: "28", label: "Calls / mo" }, { val: "53%", label: "Booking rate" }, { val: "$11.5k", label: "Tracked rev" }].map((s, i) => (
-          <div key={i} className="text-center">
-            <div className="font-['Syne'] text-xl font-extrabold" style={{ color: ORANGE }}>{s.val}</div>
-            <div className="text-xs mt-0.5" style={{ color: MUTED }}>{s.label}</div>
-          </div>
-        ))}
-      </motion.div>
-
-      <motion.div
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.55 }}
-        className="text-xs flex items-center justify-center gap-1.5"
-        style={{ color: MUTED }}
-      >
-        <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block animate-pulse" />
-        Live on Gladiators Painting · Omaha, NE
-      </motion.div>
-    </div>
-  );
-}
-
-// ── Dark Feature Card ──────────────────────────────────────────────────────────
-function FeatureCard({ Icon, name, description, onClick }) {
-  return (
-    <div
-      className="group relative flex flex-col overflow-hidden rounded-2xl cursor-pointer transition-all duration-200 hover:-translate-y-1"
-      style={{ background: CARD_DARK, border: "1px solid rgba(245,240,235,0.07)" }}
-      onClick={onClick}
-      onMouseEnter={e => e.currentTarget.style.borderColor = "rgba(232,112,42,0.3)"}
-      onMouseLeave={e => e.currentTarget.style.borderColor = "rgba(245,240,235,0.07)"}
-    >
-      <div className="p-6 flex flex-col gap-3 flex-1">
-        {Icon && (
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "rgba(232,112,42,0.12)" }}>
-            <Icon className="w-5 h-5" style={{ color: ORANGE }} />
-          </div>
-        )}
-        <h3 className="font-['Syne'] text-base font-bold" style={{ color: OFF_WHITE }}>{name}</h3>
-        <p className="text-sm leading-relaxed" style={{ color: MUTED }}>{description}</p>
-      </div>
-      <div className="px-6 pb-5 opacity-0 group-hover:opacity-100 transition-opacity">
-        <span className="text-xs font-bold flex items-center gap-1" style={{ color: ORANGE }}>
-          Get started <MoveRight className="w-3 h-3" />
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// ── Step Card ──────────────────────────────────────────────────────────────────
-function StepCard({ icon: Icon, step, title, description, accent }) {
-  return (
-    <div
-      className="group relative rounded-2xl p-7 text-center transition-all duration-300 hover:-translate-y-1"
-      style={{ background: CARD_DARK, border: `1px solid rgba(245,240,235,0.07)` }}
-      onMouseEnter={e => e.currentTarget.style.borderColor = "rgba(232,112,42,0.25)"}
-      onMouseLeave={e => e.currentTarget.style.borderColor = "rgba(245,240,235,0.07)"}
-    >
-      <div
-        className="mx-auto w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg mb-4 transition-transform duration-300 group-hover:scale-110"
-        style={{ background: accent || "rgba(232,112,42,0.15)" }}
-      >
-        <Icon className="w-6 h-6" style={{ color: ORANGE }} />
-      </div>
-      <span className="text-xs font-bold uppercase tracking-widest" style={{ color: MUTED }}>Step {step}</span>
-      <h3 className="mt-2 text-lg font-['Syne'] font-bold" style={{ color: OFF_WHITE }}>{title}</h3>
-      <p className="mt-2 text-sm leading-relaxed" style={{ color: MUTED }}>{description}</p>
-    </div>
-  );
-}
-
-// ── Pricing Card ───────────────────────────────────────────────────────────────
-function PricingCard({ tier, label, tagline, monthlyPrice, setup, desc, features, featured, isAnnual, onStart }) {
-  const displayPrice = isAnnual ? Math.round((monthlyPrice * 10) / 12) : monthlyPrice;
-  const annualTotal = monthlyPrice * 10;
+  const openModal = () => { setAgreed(false); setShowModal(true); };
+  const closeModal = () => setShowModal(false);
+  const handleContinue = () => {
+    if (agreed) {
+      closeModal();
+      window.location.href = "https://aifrontdeskhelper.com/signup";
+    }
+  };
 
   return (
-    <div
-      className="relative rounded-2xl p-7 flex flex-col transition-all"
-      style={{
-        background: CARD_DARK,
-        border: featured ? `2px solid ${ORANGE}` : "1px solid rgba(245,240,235,0.08)",
-        boxShadow: featured ? `0 0 32px rgba(232,112,42,0.2)` : "none",
-      }}
-    >
-      {featured && (
-        <div
-          className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider text-white whitespace-nowrap"
-          style={{ background: ORANGE }}
-        >
-          Do it all for you
-        </div>
-      )}
+    <div style={{ background: DARK, minHeight: "100vh", width: "100%", position: "relative", overflowX: "hidden" }}>
+      <style>{style}</style>
 
-      <div className="flex justify-between items-start mb-4">
-        <div>
-          <div className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: MUTED }}>{label}</div>
-          <div className="font-['Syne'] text-xl font-extrabold" style={{ color: OFF_WHITE }}>{tier}</div>
-          <div className="text-sm" style={{ color: MUTED }}>{tagline}</div>
-        </div>
-        <div className="text-right">
-          <div className="font-['Syne'] text-2xl font-extrabold" style={{ color: OFF_WHITE }}>
-            ${displayPrice}<span className="text-sm font-normal" style={{ color: MUTED }}>/mo</span>
-          </div>
-          {isAnnual ? (
-            <div className="text-xs text-green-400">${annualTotal.toLocaleString()}/yr · 2 months free</div>
-          ) : (
-            <div className="text-xs" style={{ color: ORANGE }}>+${setup} setup</div>
-          )}
-        </div>
-      </div>
-
-      <p className="text-sm mb-4 leading-relaxed" style={{ color: "rgba(245,240,235,0.5)" }}>{desc}</p>
-
-      <ul className="space-y-2.5 mb-6 flex-1">
-        {features.map((f, i) => (
-          <li key={i} className="flex items-start gap-2.5 text-sm" style={{ color: "rgba(245,240,235,0.75)" }}>
-            <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: ORANGE }} />
-            {f}
-          </li>
-        ))}
-      </ul>
-
-      <button
-        onClick={onStart}
-        className="w-full py-3.5 rounded-xl text-sm font-bold transition-all font-['Syne']"
-        style={featured
-          ? { background: ORANGE, color: "#fff", border: "none" }
-          : { background: "transparent", color: OFF_WHITE, border: "1.5px solid rgba(245,240,235,0.2)" }
-        }
-        onMouseEnter={e => {
-          if (featured) e.currentTarget.style.background = "#d15f20";
-          else e.currentTarget.style.borderColor = OFF_WHITE;
-        }}
-        onMouseLeave={e => {
-          if (featured) e.currentTarget.style.background = ORANGE;
-          else e.currentTarget.style.borderColor = "rgba(245,240,235,0.2)";
-        }}
-      >
-        {featured ? "Do it all for me →" : "Get started"}
-      </button>
-    </div>
-  );
-}
-
-// ── Scroll Trigger Banner ──────────────────────────────────────────────────────
-function ScrollTriggerBanner({ onStart, onDismiss }) {
-  return (
-    <motion.div
-      initial={{ y: -80, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      exit={{ y: -80, opacity: 0 }}
-      transition={{ type: "spring", damping: 20, stiffness: 200 }}
-      className="fixed top-0 left-1/2 -translate-x-1/2 w-full max-w-[480px] z-[200]"
-    >
-      <div className="flex items-center justify-between gap-3 px-5 py-3.5" style={{ background: "#1A1918", borderBottom: `2px solid ${ORANGE}` }}>
-        <div className="flex-1">
-          <div className="text-xs font-bold uppercase tracking-widest mb-0.5" style={{ color: ORANGE }}>Still reading?</div>
-          <div className="font-['Syne'] text-sm font-bold" style={{ color: OFF_WHITE }}>Let Elite do it all for you →</div>
-          <div className="text-xs" style={{ color: MUTED }}>$997/mo · Full revenue machine</div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={onStart}
-            className="px-4 py-2 rounded-lg text-xs font-bold text-white transition-colors font-['Syne']"
-            style={{ background: ORANGE }}
-            onMouseEnter={e => e.currentTarget.style.background = "#d15f20"}
-            onMouseLeave={e => e.currentTarget.style.background = ORANGE}
-          >
-            Start now
-          </button>
-          <button onClick={onDismiss} className="text-lg leading-none" style={{ color: MUTED, background: "none", border: "none", cursor: "pointer", padding: 4 }}>✕</button>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
-// ── Main Home Component ────────────────────────────────────────────────────────
-export default function Home() {
-  const navigate = useNavigate();
-  const [isContactOpen, setIsContactOpen] = useState(false);
-  const [isSmsConsentOpen, setIsSmsConsentOpen] = useState(false);
-  const [showStickyCTA, setShowStickyCTA] = useState(false);
-  const [isAnnual, setIsAnnual] = useState(true);
-  const heroRef = useRef(null);
-  const triggerFiredRef = useRef(false);
-
-  function handleGetStarted() { setIsSmsConsentOpen(true); }
-  function handleConsentAccepted() { setIsSmsConsentOpen(false); navigate("/login?signup=1"); }
-
-  // Scroll behavior
-  useEffect(() => {
-    const handleScroll = () => {
-      const scrollY = window.scrollY;
-      const heroH = heroRef.current?.offsetHeight || 600;
-      setShowStickyCTA(scrollY > heroH);
-    };
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
-
-  const plans = [
-    {
-      tier: "Basic", label: "SMALL OPS", tagline: "AI Front Desk Starter",
-      monthlyPrice: 297, setup: 197,
-      desc: "For contractors who want to stop missing calls.",
-      features: ["24/7 AI call answering", "Missed call text-back", "Lead capture & CRM sync", "Call transcripts"],
-      featured: false,
-    },
-    {
-      tier: "Pro", label: "GROWING TEAMS", tagline: "AI Booking Assistant",
-      monthlyPrice: 497, setup: 297,
-      desc: "Full booking, follow-up, and multi-channel coverage.",
-      features: ["Everything in Basic", "Google Calendar booking", "SMS follow-up sequences", "Website AI chat widget", "Appointment reminders", "Facebook Messenger"],
-      featured: false,
-    },
-    {
-      tier: "Elite", label: "THE FULL SYSTEM", tagline: "AI Revenue Machine",
-      monthlyPrice: 997, setup: 497,
-      desc: "Everything. Inbound, outbound, coaching, reviews, and franchise-ready HQ tools.",
-      features: ["Everything in Pro", "Outbound AI campaigns", "Script retiring & win-backs", "AI revenue coaching", "Lead source insights", "Review response writer (SEO)", "Objection detection", "Referral autopilot", "HQ franchise rollup"],
-      featured: true,
-    },
-  ];
-
-  return (
-    <div className="min-h-screen flex flex-col" style={{ background: DARK }}>
-
-      {/* Global CSS */}
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap');
-        @keyframes ticker {
-          0% { transform: translateX(0); }
-          100% { transform: translateX(-50%); }
-        }
-        @keyframes glow {
-          0%, 100% { box-shadow: 0 0 24px rgba(232,112,42,0.2); }
-          50% { box-shadow: 0 0 48px rgba(232,112,42,0.45); }
-        }
-        .elite-glow { animation: glow 3s ease-in-out infinite; }
-        .sticky-cta-btn:hover { background: #d15f20 !important; }
-      `}</style>
-
-      {/* Bundle banner + Header */}
-      <BundleBanner onGetStarted={handleGetStarted} />
-      <div style={{ position: "relative", zIndex: 100 }}>
-  <NavBar items={NAV_ITEMS} />
-</div>
-
-      <main className="flex-1">
-
-        {/* ── HERO ── */}
-        <div ref={heroRef} className="relative z-[60] flex flex-col overflow-hidden pb-4">
-          <ContainerScroll
-            titleComponent={
-              <AnimatedHeroTitle
-                onStart={handleGetStarted}
-                onContact={() => setIsContactOpen(true)}
-              />
-            }
-          >
-            {/* Dashboard preview */}
-            <div className="h-full w-full rounded-xl overflow-hidden flex flex-col font-sans" style={{ background: CARD_DARK, border: "2px solid rgba(245,240,235,0.08)" }}>
-              <div className="px-6 py-4 flex justify-between items-center shrink-0" style={{ background: CARD_MID, borderBottom: "1px solid rgba(245,240,235,0.08)" }}>
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl flex items-center justify-center overflow-hidden p-1" style={{ background: OFF_WHITE }}>
-                    <img src="/favicon.png" alt="Logo" className="w-full h-full object-contain" />
-                  </div>
-                  <div className="text-left">
-                    <p className="font-bold text-sm leading-tight" style={{ color: OFF_WHITE }}>Gladiators Painting</p>
-                    <p className="text-xs mt-0.5" style={{ color: "#4ade80" }}>● AI Receptionist Active</p>
-                  </div>
-                </div>
-                <div className="hidden md:flex items-center gap-6 text-sm font-medium" style={{ color: MUTED }}>
-                  <div className="flex items-center gap-2"><PhoneCall className="w-4 h-4" style={{ color: ORANGE }} /> 14 Calls Today</div>
-                  <div className="flex items-center gap-2"><CalendarCheck className="w-4 h-4" style={{ color: ORANGE }} /> 3 Bookings</div>
-                </div>
-              </div>
-
-              <div className="flex-1 flex overflow-hidden">
-                <div className="w-56 hidden lg:flex flex-col p-4 gap-2 shrink-0" style={{ background: CARD_MID, borderRight: "1px solid rgba(245,240,235,0.07)" }}>
-                  {[
-                    { icon: Bot, label: "Live Calls", active: true },
-                    { icon: CalendarCheck, label: "Calendar", active: false },
-                    { icon: MessageSquare, label: "SMS Follow-ups", active: false },
-                  ].map(({ icon: Icon, label, active }, i) => (
-                    <div key={i} className="px-3 py-2 rounded-lg flex items-center gap-3 text-sm font-medium" style={{ background: active ? "rgba(232,112,42,0.12)" : "transparent", color: active ? ORANGE : MUTED }}>
-                      <Icon className="w-4 h-4" />
-                      {label}
-                    </div>
-                  ))}
-                </div>
-
-                <div className="flex-1 p-4 md:p-6 flex flex-col gap-4 overflow-y-auto">
-                  <div className="rounded-2xl flex-1 flex flex-col overflow-hidden" style={{ background: "#0F0F0E", border: "1px solid rgba(245,240,235,0.07)" }}>
-                    <div className="px-5 py-3.5 flex justify-between items-center text-left" style={{ borderBottom: "1px solid rgba(245,240,235,0.07)" }}>
-                      <div>
-                        <h3 className="font-semibold text-sm" style={{ color: OFF_WHITE }}>Live Transcript</h3>
-                        <p className="text-xs mt-0.5" style={{ color: MUTED }}>+1 (713) 555-0199 · Houston, TX</p>
-                      </div>
-                      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold uppercase" style={{ background: "rgba(96,165,250,0.1)", color: "#60a5fa" }}>
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                        Live
-                      </div>
-                    </div>
-                    <div className="flex-1 p-5 flex flex-col gap-5 overflow-y-auto text-left">
-                      {[
-                        { bot: true, text: "Thank you for calling Gladiators Painting! Are you looking to schedule a free painting estimate?" },
-                        { bot: false, text: "Yes, I need the exterior of my house painted. It's a two-story home." },
-                        { bot: true, text: "Great! When were you hoping to get started, and what's the best day for a free estimate this week?" },
-                        { bot: false, text: "Maybe Thursday or Friday morning works for me." },
-                        { bot: true, text: "Perfect — I have Thursday at 9:00 AM available. Can I get your name and address to confirm the booking?" },
-                      ].map((msg, i) => (
-                        <div key={i} className={`flex gap-3 ${msg.bot ? "" : "justify-end"}`}>
-                          {msg.bot && (
-                            <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "rgba(232,112,42,0.12)" }}>
-                              <Bot className="w-4 h-4" style={{ color: ORANGE }} />
-                            </div>
-                          )}
-                          <div className="px-4 py-2.5 rounded-2xl text-sm leading-relaxed max-w-[85%]" style={
-                            msg.bot
-                              ? { background: CARD_MID, color: "rgba(245,240,235,0.8)", borderRadius: "4px 16px 16px 16px" }
-                              : { background: ORANGE, color: "#fff", borderRadius: "16px 4px 16px 16px" }
-                          }>
-                            {msg.text}
-                          </div>
-                          {!msg.bot && (
-                            <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: "rgba(245,240,235,0.08)" }}>
-                              <User className="w-4 h-4" style={{ color: MUTED }} />
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                      <div className="flex justify-center">
-                        <div className="flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-lg" style={{ background: "rgba(74,222,128,0.08)", color: "#4ade80", border: "1px solid rgba(74,222,128,0.15)" }}>
-                          <CheckCircle2 className="w-3.5 h-3.5" /> AI verified availability — booking to Google Calendar
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+      {/* SMS COMPLIANCE MODAL */}
+      {showModal && (
+        <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}>
+          <div className="modal-sheet">
+            {/* Header row */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div className="modal-icon-wrap">💬</div>
+              <button
+                onClick={closeModal}
+                style={{ background: "none", border: "none", fontSize: 20, color: "#aaa", cursor: "pointer", padding: 4, lineHeight: 1 }}
+              >✕</button>
             </div>
-          </ContainerScroll>
-        </div>
 
-        {/* ── TICKER ── */}
-        <Ticker />
-
-        {/* ── WHY DIFFERENT ── */}
-        <section className="py-20 px-6 max-w-[480px] mx-auto" style={{ borderBottom: "1px solid rgba(245,240,235,0.07)" }}>
-          <div className="text-xs font-bold uppercase tracking-widest mb-4" style={{ color: ORANGE }}>Why this is different</div>
-          <h2 className="font-['Syne'] text-3xl font-extrabold leading-tight mb-5" style={{ color: OFF_WHITE }}>
-            Call bots answer the phone.<br/>
-            <span style={{ color: ORANGE }}>We close more revenue.</span>
-          </h2>
-          <p className="text-sm leading-relaxed mb-7" style={{ color: "rgba(245,240,235,0.55)" }}>
-            Tools like Goodcall and Smith.ai stop at inbound. The real money is in what happens
-            <em className="not-italic font-semibold" style={{ color: OFF_WHITE }}> after</em> the
-            call — follow-up, recovery, coaching, and referrals.
-          </p>
-
-          <div className="rounded-xl overflow-hidden" style={{ border: "1px solid rgba(245,240,235,0.08)" }}>
-            <div className="flex px-3 py-2.5" style={{ background: CARD_MID }}>
-              <div className="flex-1 text-xs font-bold uppercase tracking-wide" style={{ color: MUTED }}>Feature</div>
-              <div className="w-24 text-center text-xs font-bold uppercase tracking-wide" style={{ color: MUTED }}>Call bots</div>
-              <div className="w-24 text-center text-xs font-bold uppercase tracking-wide" style={{ color: ORANGE }}>AFDH</div>
-            </div>
-            {[
-              ["Answers inbound calls", true, true],
-              ["Books appointments", true, true],
-              ["Outbound campaigns", false, true],
-              ["Script retiring (win-backs)", false, true],
-              ["Estimate follow-up sequence", false, true],
-              ["AI revenue coaching", false, true],
-              ["Review writer", false, true],
-              ["Close rate by lead source", false, true],
-            ].map(([label, callBot, us], i) => (
-              <div key={i} className="flex px-3 py-2.5" style={{ borderTop: "1px solid rgba(245,240,235,0.05)", background: i % 2 === 0 ? CARD_DARK : "transparent" }}>
-                <div className="flex-1 text-xs" style={{ color: "rgba(245,240,235,0.7)" }}>{label}</div>
-                <div className="w-24 text-center text-sm" style={{ color: callBot ? "rgba(245,240,235,0.5)" : "#333" }}>{callBot ? "✓" : <span style={{ color: "#2a2a28" }}>✕</span>}</div>
-                <div className="w-24 text-center text-sm" style={{ color: ORANGE }}>{us ? "✓" : "✕"}</div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* ── FEATURES ── */}
-        <section id="features" className="py-20 px-6 max-w-[480px] mx-auto">
-          <div className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: ORANGE }}>Features</div>
-          <h2 className="font-['Syne'] text-3xl font-extrabold leading-tight mb-3" style={{ color: OFF_WHITE }}>
-            The full revenue pipeline
-          </h2>
-          <p className="text-sm mb-8" style={{ color: MUTED }}>Every step automates something your team was dropping.</p>
-
-          <div className="flex flex-col gap-3">
-            {[
-              { icon: Headphones, name: "AI Receptionist", description: "Natural conversations 24/7. Answers calls, asks the right questions, and sounds like a real team member." },
-              { icon: CalendarDays, name: "Book & Transfer", description: "Books estimates directly into Google Calendar and your CRM. Live-transfer to your team when needed." },
-              { icon: Zap, name: "Objection Detection", description: "When someone says 'too expensive' the AI detects it and switches to the right recovery sequence automatically." },
-              { icon: Users, name: "Referral Autopilot", description: "Customer texts a referral name — AI extracts the contact and calls them within minutes. Completely automatic." },
-              { icon: Smartphone, name: "SMS Follow-ups", description: "Automated follow-ups at 24h, 3d, 5d, 10d so quotes never go cold." },
-              { icon: BarChart2, name: "Revenue by Source", description: "Every number tagged to a lead source. Know exactly which marketing produces booked revenue — not just calls." },
-              { icon: Link2, name: "CRM Sync", description: "Every lead and booking sent to Jobber, DripJobs, Housecall Pro, or any system via Zapier. Zero manual entry." },
-              { icon: Star, name: "Review Response Writer", description: "Customer leaves a Google review — AI writes an SEO-optimized owner response. One click to post." },
-            ].map((card, i) => (
-              <FeatureCard key={i} {...card} onClick={handleGetStarted} />
-            ))}
-          </div>
-        </section>
-
-        {/* ── HOW IT WORKS ── */}
-        <section id="how-it-works" className="py-20 px-6 max-w-[480px] mx-auto" style={{ borderTop: "1px solid rgba(245,240,235,0.07)" }}>
-          <div className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: ORANGE }}>How it works</div>
-          <h2 className="font-['Syne'] text-3xl font-extrabold leading-tight mb-3" style={{ color: OFF_WHITE }}>Set up in minutes</h2>
-          <p className="text-sm mb-8" style={{ color: MUTED }}>Your existing number or a new one — we handle the rest.</p>
-
-          <div className="flex flex-col gap-4">
-            <StepCard icon={Phone} step={1} title="Connect your number" description="Point your Twilio number to AI Front Desk Helper. No new hardware — works with your current phone system." />
-            <StepCard icon={Settings} step={2} title="Configure once" description="Set your welcome message, transfer numbers, and CRM webhook in the dashboard. The AI follows your playbook." />
-            <StepCard icon={Zap} step={3} title="Let it run" description="Every call is answered, recorded, and transcribed. Review calls and metrics anytime in the dashboard." />
-          </div>
-        </section>
-
-        {/* ── PROOF SECTION ── */}
-        <section className="py-20 px-6 max-w-[480px] mx-auto" style={{ borderTop: "1px solid rgba(245,240,235,0.07)" }}>
-          <div className="rounded-2xl p-8" style={{ background: CARD_DARK, border: "1px solid rgba(245,240,235,0.07)" }}>
-            <div className="text-xs font-bold uppercase tracking-widest mb-4" style={{ color: ORANGE }}>
-              Real results — Gladiators Painting
-            </div>
-            <h3 className="font-['Syne'] text-2xl font-extrabold leading-snug mb-3" style={{ color: OFF_WHITE }}>
-              Running live on a real painting company right now
-            </h3>
-            <p className="text-sm leading-relaxed mb-7" style={{ color: MUTED }}>
-              We didn't build this for contractors — we built it as one. Every feature was tested on a real business before it shipped.
+            <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: 22, fontWeight: 800, color: "#111", marginBottom: 6 }}>
+              Before you get started
+            </h2>
+            <p style={{ fontSize: 15, color: "#777", lineHeight: 1.5 }}>
+              Please review and agree to our messaging policy.
             </p>
 
-            <div className="grid grid-cols-2 gap-3 mb-7">
+            {/* Policy box */}
+            <div className="modal-policy-box">
+              By submitting this form, you agree to receive SMS text messages from{" "}
+              <strong>AI Front Desk Helper</strong> related to your inquiry, including
+              appointment scheduling, follow-ups, and service notifications. Message
+              frequency may vary. Message and data rates may apply. Reply{" "}
+              <strong>STOP</strong> to opt out or <strong>HELP</strong> for assistance.
+              Consent is not required as a condition of purchasing services.{" "}
+              <a href="https://aifrontdeskhelper.com/privacy" style={{ color: ORANGE, fontWeight: 600 }}>
+                Privacy Policy
+              </a>.
+            </div>
+
+            {/* Checkbox */}
+            <div className="modal-checkbox-row" onClick={() => setAgreed(!agreed)}>
+              <div className={`modal-checkbox ${agreed ? "checked" : ""}`}>
+                {agreed && <span style={{ color: "#fff", fontSize: 13, fontWeight: 700, lineHeight: 1 }}>✓</span>}
+              </div>
+              <span style={{ fontSize: 14, color: "#333", lineHeight: 1.55 }}>
+                I have read and agree to the SMS messaging terms above.
+              </span>
+            </div>
+
+            {/* Buttons */}
+            <div className="modal-btn-row">
+              <button className="modal-cancel" onClick={closeModal}>Cancel</button>
+              <button
+                className="modal-continue"
+                disabled={!agreed}
+                onClick={handleContinue}
+              >
+                Continue to sign up →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      <nav className="nav-bar">
+        <div className="logo-box">
+          <div className="logo-icon">FD</div>
+          <span className="logo-name">AI Front Desk Helper</span>
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button className="btn-ghost" style={{ padding: "8px 16px", fontSize: 13 }}>Sign in</button>
+          <button className="btn-primary" style={{ padding: "8px 16px", fontSize: 13 }} onClick={openModal}>Start setup</button>
+        </div>
+      </nav>
+
+      {/* HERO */}
+      <section style={{ padding: "80px 24px 0", textAlign: "center", maxWidth: 1100, margin: "0 auto" }}>
+
+        {/* Not-a-bot tag */}
+        <div className="fade-up d1" style={{ marginBottom: 28 }}>
+          <span className="tag">
+            <span style={{ fontSize: 14 }}>⚡</span>
+            Not another call bot
+          </span>
+        </div>
+
+        {/* Headline */}
+        <h1 className="syne fade-up d2" style={{
+          fontSize: "clamp(44px, 7vw, 88px)",
+          fontWeight: 800,
+          lineHeight: 1.05,
+          letterSpacing: "-0.03em",
+          marginBottom: 24,
+          maxWidth: 820,
+          margin: "0 auto 24px",
+        }}>
+          The revenue <span style={{ color: ORANGE }}>machine</span><br/>
+          for home service pros
+        </h1>
+
+        <p className="fade-up d3" style={{
+          fontSize: "clamp(15px, 1.8vw, 18px)",
+          lineHeight: 1.7,
+          color: "rgba(245,240,235,0.6)",
+          maxWidth: 560,
+          margin: "0 auto 36px",
+        }}>
+          Inbound AI. Outbound campaigns. Estimate recovery. AI coaching.
+          Review responses. All in one revenue system built by a painting contractor.
+        </p>
+
+        {/* CTAs */}
+        <div className="fade-up d4" style={{ display: "flex", gap: 14, justifyContent: "center", marginBottom: 56 }}>
+          <button className="btn-primary" style={{ fontSize: 17, padding: "16px 36px" }} onClick={openModal}>
+            Start free →
+          </button>
+          <button className="btn-ghost" style={{ fontSize: 16, padding: "15px 30px" }}>
+            Get in touch ☎
+          </button>
+        </div>
+
+        {/* Live proof stats bar */}
+        <div className="fade-up d5" style={{
+          background: CARD_DARK,
+          border: "1px solid rgba(245,240,235,0.08)",
+          borderRadius: 14,
+          padding: "20px 40px",
+          display: "flex",
+          justifyContent: "space-around",
+          alignItems: "center",
+          gap: 12,
+          maxWidth: 760,
+          margin: "0 auto",
+        }}>
+          {[
+            { val: "28", label: "Calls / mo" },
+            { val: "53%", label: "Booking rate" },
+            { val: "$11.5k", label: "Tracked rev" },
+          ].map((s, i) => (
+            <div key={i} style={{ textAlign: "center" }}>
+              <div className="syne" style={{ fontSize: "clamp(26px, 3.5vw, 38px)", fontWeight: 800, color: ORANGE, lineHeight: 1 }}>{s.val}</div>
+              <div style={{ fontSize: 13, color: MUTED, marginTop: 4 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: 12, color: MUTED, marginTop: 10, textAlign: "center", marginBottom: 48 }}>
+          <span className="live-dot" />
+          Live on Gladiators Painting · Omaha, NE
+        </div>
+
+        {/* Dashboard Mockup */}
+        <div style={{
+          position: "relative",
+          maxWidth: 960,
+          margin: "0 auto",
+          borderRadius: "20px 20px 0 0",
+          overflow: "hidden",
+          border: "1px solid rgba(245,240,235,0.1)",
+          borderBottom: "none",
+          boxShadow: "0 -8px 80px rgba(232,112,42,0.12), 0 0 0 1px rgba(245,240,235,0.06)",
+          background: "#1a1918",
+        }}>
+          {/* App chrome top bar */}
+          <div style={{
+            background: "#111",
+            padding: "12px 20px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            borderBottom: "1px solid rgba(245,240,235,0.08)",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{
+                width: 32, height: 32, borderRadius: 8,
+                background: OFF_WHITE,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 11, color: "#222",
+              }}>FD</div>
+              <div>
+                <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: 13, color: OFF_WHITE }}>Gladiators Painting</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 1 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#4ade80", display: "inline-block" }} />
+                  <span style={{ fontSize: 11, color: MUTED }}>AI Receptionist Active</span>
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 20 }}>
+              {[["📞", "14 Calls Today"], ["📅", "3 Bookings"]].map(([icon, label], i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: MUTED }}>
+                  <span>{icon}</span>{label}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* App body */}
+          <div style={{ display: "flex", minHeight: 340 }}>
+            {/* Sidebar — hidden on small screens */}
+            <div style={{
+              width: 180,
+              background: "#161514",
+              borderRight: "1px solid rgba(245,240,235,0.06)",
+              padding: "16px 0",
+              flexShrink: 0,
+              display: "var(--sidebar-display, flex)",
+              flexDirection: "column",
+            }}
+            className="mockup-sidebar"
+            >
               {[
-                { val: "28", label: "Calls answered by AI last month" },
-                { val: "53%", label: "Booking rate (industry avg: 20-30%)" },
-                { val: "$11,500", label: "Revenue tracked in dashboard" },
-                { val: "15", label: "AI-booked estimates, last 30 days" },
-              ].map((s, i) => (
-                <div key={i} className="rounded-xl p-5" style={{ background: CARD_MID }}>
-                  <div className="font-['Syne'] font-extrabold mb-1" style={{ fontSize: i === 2 ? 20 : 26, color: ORANGE }}>{s.val}</div>
-                  <div className="text-xs leading-snug" style={{ color: MUTED }}>{s.label}</div>
+                { icon: "📞", label: "Live Calls", active: true },
+                { icon: "📅", label: "Calendar" },
+                { icon: "💬", label: "SMS Follow-ups" },
+                { icon: "📊", label: "Revenue" },
+                { icon: "🎯", label: "Coaching" },
+              ].map((item, i) => (
+                <div key={i} style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "10px 18px",
+                  background: item.active ? `rgba(232,112,42,0.15)` : "transparent",
+                  borderLeft: item.active ? `3px solid ${ORANGE}` : "3px solid transparent",
+                  cursor: "default",
+                }}>
+                  <span style={{ fontSize: 14 }}>{item.icon}</span>
+                  <span style={{
+                    fontSize: 13,
+                    fontWeight: item.active ? 600 : 400,
+                    color: item.active ? OFF_WHITE : MUTED,
+                  }}>{item.label}</span>
                 </div>
               ))}
             </div>
 
-            <blockquote className="pl-4" style={{ borderLeft: `3px solid ${ORANGE}` }}>
-              <p className="text-sm italic leading-relaxed mb-3" style={{ color: "rgba(245,240,235,0.75)" }}>
-                "I built this for my own painting company because I was losing jobs to voicemail every day. Now it answers every call, follows up on every cold estimate, and coaches me on what to fix."
-              </p>
-              <footer className="text-xs" style={{ color: MUTED }}>
-                Drew — Owner, Gladiators Painting & Founder, AFDH
-              </footer>
-            </blockquote>
-          </div>
-        </section>
+            {/* Main panel */}
+            <div style={{ flex: 1, padding: "20px 24px", overflow: "hidden" }}>
+              {/* Live transcript card */}
+              <div style={{
+                background: "#111",
+                borderRadius: 12,
+                padding: "16px 18px",
+                border: "1px solid rgba(245,240,235,0.08)",
+                marginBottom: 16,
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                  <div>
+                    <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: 14, color: OFF_WHITE }}>Live Transcript</div>
+                    <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>+1 (713) 555-0199 · Houston, TX</div>
+                  </div>
+                  <div style={{
+                    background: "#1a3a5c",
+                    color: "#60b4ff",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    padding: "4px 10px",
+                    borderRadius: 20,
+                    display: "flex", alignItems: "center", gap: 5,
+                  }}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#60b4ff", display: "inline-block", animation: "pulse 2s ease-in-out infinite" }} />
+                    LIVE
+                  </div>
+                </div>
 
-        {/* ── PRICING ── */}
-        <section id="pricing" className="py-20 px-6 max-w-[480px] mx-auto" style={{ borderTop: "1px solid rgba(245,240,235,0.07)" }}>
-          <div className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: ORANGE }}>Pricing</div>
-          <h2 className="font-['Syne'] text-3xl font-extrabold leading-tight mb-3" style={{ color: OFF_WHITE }}>Let the system do it all.</h2>
-          <p className="text-sm mb-7 leading-relaxed" style={{ color: MUTED }}>
-            Basic gets you in the door. Elite is the full revenue machine — outbound, coaching, reviews, and pipeline automation.
-          </p>
+                {/* Chat bubbles */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <div style={{
+                      width: 28, height: 28, borderRadius: "50%",
+                      background: "rgba(232,112,42,0.2)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 13, flexShrink: 0,
+                    }}>🤖</div>
+                    <div style={{
+                      background: CARD_MID,
+                      borderRadius: "4px 14px 14px 14px",
+                      padding: "10px 14px",
+                      fontSize: 13,
+                      color: OFF_WHITE,
+                      lineHeight: 1.5,
+                      maxWidth: "75%",
+                    }}>
+                      Thank you for calling Gladiators Painting! Are you looking to schedule a free painting estimate?
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start", justifyContent: "flex-end" }}>
+                    <div style={{
+                      background: ORANGE,
+                      borderRadius: "14px 4px 14px 14px",
+                      padding: "10px 14px",
+                      fontSize: 13,
+                      color: "#fff",
+                      lineHeight: 1.5,
+                      maxWidth: "75%",
+                    }}>
+                      Yes, I need the exterior of my house painted. It's a two-story home.
+                    </div>
+                    <div style={{
+                      width: 28, height: 28, borderRadius: "50%",
+                      background: "#333",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 13, flexShrink: 0,
+                    }}>👤</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <div style={{
+                      width: 28, height: 28, borderRadius: "50%",
+                      background: "rgba(232,112,42,0.2)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 13, flexShrink: 0,
+                    }}>🤖</div>
+                    <div style={{
+                      background: CARD_MID,
+                      borderRadius: "4px 14px 14px 14px",
+                      padding: "10px 14px",
+                      fontSize: 13,
+                      color: OFF_WHITE,
+                      lineHeight: 1.5,
+                      maxWidth: "75%",
+                    }}>
+                      Great! I can get you scheduled. What's the best date this week for an estimate?
+                    </div>
+                  </div>
+                </div>
+              </div>
 
-          {/* Annual toggle */}
-          <div className="flex items-center justify-center gap-3 mb-8">
-            <span className="text-sm font-semibold" style={{ color: isAnnual ? MUTED : OFF_WHITE }}>Monthly</span>
-            <div
-              className="relative w-12 h-6 rounded-full cursor-pointer transition-all"
-              style={{ background: isAnnual ? "rgba(232,112,42,0.2)" : "rgba(245,240,235,0.08)", border: isAnnual ? "1.5px solid rgba(232,112,42,0.5)" : "1.5px solid rgba(245,240,235,0.15)" }}
-              onClick={() => setIsAnnual(!isAnnual)}
-            >
-              <div
-                className="absolute top-[3px] w-4 h-4 rounded-full transition-all"
-                style={{ left: isAnnual ? "calc(100% - 19px)" : 3, background: isAnnual ? ORANGE : "rgba(245,240,235,0.4)" }}
-              />
+              {/* Bottom row mini cards */}
+              <div className="mockup-stats" style={{ display: "flex", gap: 12 }}>
+                {[
+                  { label: "Booking rate", val: "53%", sub: "vs 20–30% avg", up: true },
+                  { label: "Est. recovered", val: "$4,200", sub: "last 30 days", up: true },
+                  { label: "Follow-ups sent", val: "47", sub: "this month", up: false },
+                ].map((card, i) => (
+                  <div key={i} style={{
+                    flex: 1,
+                    background: "#111",
+                    border: "1px solid rgba(245,240,235,0.07)",
+                    borderRadius: 10,
+                    padding: "12px 14px",
+                  }}>
+                    <div style={{ fontSize: 11, color: MUTED, marginBottom: 4 }}>{card.label}</div>
+                    <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 18, color: card.up ? ORANGE : OFF_WHITE }}>{card.val}</div>
+                    <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{card.sub}</div>
+                  </div>
+                ))}
+              </div>
             </div>
-            <span className="text-sm font-semibold" style={{ color: isAnnual ? OFF_WHITE : MUTED }}>Annual</span>
-            {isAnnual && (
-              <span className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ background: "rgba(74,222,128,0.1)", color: "#4ade80", border: "1px solid rgba(74,222,128,0.2)" }}>
-                2 months free
-              </span>
-            )}
           </div>
+        </div>
+      </section>
 
-          <div className="flex flex-col gap-4">
-            {plans.map((plan, i) => (
-              <PricingCard key={i} {...plan} isAnnual={isAnnual} onStart={handleGetStarted} />
-            ))}
+      {/* TICKER */}
+      <Ticker />
+
+      {/* NOT A CALL BOT SECTION */}
+      <section className="section" style={{ paddingTop: 72, paddingBottom: 64 }}>
+        <div className="section-eyebrow">Why this is different</div>
+        <h2 className="syne" style={{ fontSize: 30, fontWeight: 800, lineHeight: 1.2, marginBottom: 20 }}>
+          Call bots answer the phone.<br/>
+          <span style={{ color: ORANGE }}>We close more revenue.</span>
+        </h2>
+        <p style={{ fontSize: 14, color: "rgba(245,240,235,0.6)", lineHeight: 1.7, marginBottom: 28 }}>
+          Tools like Goodcall and Smith.ai stop at inbound. That's the table stakes.
+          The real money is in what happens <em style={{ color: OFF_WHITE, fontStyle: "normal" }}>after</em> the call — follow-up, recovery, coaching, and referrals.
+        </p>
+
+        {/* Comparison table */}
+        <div style={{ borderRadius: 14, overflow: "hidden", border: "1px solid rgba(245,240,235,0.08)" }}>
+          {/* Header */}
+          <div style={{ display: "flex", background: CARD_MID, padding: "10px 12px" }}>
+            <div style={{ flex: 1, fontSize: 11, color: MUTED, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Feature</div>
+            <div style={{ width: 90, textAlign: "center", fontSize: 11, color: MUTED, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Call bots</div>
+            <div style={{ width: 90, textAlign: "center", fontSize: 11, color: ORANGE, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>AFDH</div>
           </div>
-          <p className="text-xs text-center mt-4" style={{ color: MUTED }}>
-            Annual billing charged upfront. Monthly plans cancel anytime.
-          </p>
-        </section>
-
-        {/* ── WHY US ── */}
-        <section id="why-us" className="py-20 px-6 max-w-[480px] mx-auto" style={{ borderTop: "1px solid rgba(245,240,235,0.07)" }}>
-          <div className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: ORANGE }}>Built for</div>
-          <h2 className="font-['Syne'] text-3xl font-extrabold leading-tight mb-7" style={{ color: OFF_WHITE }}>
-            Home service pros who are done leaving money on the table
-          </h2>
           {[
-            { trade: "Painting contractors", line: "Answer every estimate call. Follow up every cold quote. Retire the call script." },
-            { trade: "Roofing companies", line: "Speed-to-lead wins in roofing. AI answers in 2 rings, books the inspection." },
-            { trade: "HVAC & plumbing", line: "Emergency after-hours calls captured automatically. Never miss an urgent job." },
-            { trade: "Fencing & landscaping", line: "Outbound AI calls your seasonal past customers. Reactivation on autopilot." },
-            { trade: "Franchise groups", line: "HQ dashboard with AI coaching across all locations. Built for multi-unit scale." },
-          ].map((item, i) => (
-            <div key={i} className="flex gap-4 py-4" style={{ borderBottom: i < 4 ? "1px solid rgba(245,240,235,0.07)" : "none" }}>
-              <span className="text-lg mt-0.5" style={{ color: ORANGE }}>→</span>
-              <div>
-                <div className="font-['Syne'] text-sm font-bold mb-1" style={{ color: OFF_WHITE }}>{item.trade}</div>
-                <div className="text-sm leading-relaxed" style={{ color: MUTED }}>{item.line}</div>
+            ["Answers inbound calls", true, true],
+            ["Books appointments", true, true],
+            ["Outbound campaigns", false, true],
+            ["Script retiring (win-backs)", false, true],
+            ["Estimate follow-up sequence", false, true],
+            ["AI revenue coaching", false, true],
+            ["Review writer", false, true],
+            ["Close rate by lead source", false, true],
+          ].map(([label, callBot, us], i) => (
+            <div key={i} style={{
+              display: "flex",
+              padding: "11px 12px",
+              borderTop: "1px solid rgba(245,240,235,0.05)",
+              background: i % 2 === 0 ? CARD_DARK : "transparent"
+            }}>
+              <div style={{ flex: 1, fontSize: 13, color: "rgba(245,240,235,0.75)" }}>{label}</div>
+              <div style={{ width: 90, textAlign: "center", fontSize: 15 }}>{callBot ? "✓" : <span style={{ color: "#444" }}>✕</span>}</div>
+              <div style={{ width: 90, textAlign: "center", fontSize: 15, color: ORANGE }}>{us ? "✓" : "✕"}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="divider" />
+
+      {/* FEATURES / REVENUE PIPELINE — card layout matching live site */}
+      <section className="section">
+        <div className="section-eyebrow">Features</div>
+        <h2 className="syne" style={{ fontSize: "clamp(28px, 4vw, 40px)", fontWeight: 800, lineHeight: 1.15, marginBottom: 8 }}>
+          The full revenue pipeline
+        </h2>
+        <p style={{ fontSize: 15, color: MUTED, marginBottom: 40, lineHeight: 1.6 }}>
+          Every step automates something your team was dropping.
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {[
+            {
+              icon: "🎧",
+              title: "AI Receptionist",
+              desc: "Natural conversations 24/7. Answers calls, asks the right questions, and sounds like a real team member. Live transcripts of every call in your dashboard.",
+              highlight: false,
+            },
+            {
+              icon: "📅",
+              title: "Book & Transfer",
+              desc: "Books estimates directly into Google Calendar and your CRM. Live-transfer to your team when the caller needs a human.",
+              highlight: false,
+            },
+            {
+              icon: "⚡",
+              title: "Objection Detection",
+              desc: "When someone says 'too expensive' or 'need to think about it' the AI detects it and automatically switches to the right recovery sequence.",
+              highlight: false,
+            },
+            {
+              icon: "💬",
+              title: "SMS Follow-ups",
+              desc: "Automated follow-ups at 24h, 3d, 5d, and 10d so quotes don't go cold. Intelligent sequences — not generic blasts.",
+              highlight: false,
+            },
+            {
+              icon: "📞",
+              title: "Outbound Campaigns",
+              desc: "AI calls your past customer list — win-backs, seasonal reactivation, referral asks. You set the campaign; AI dials.",
+              highlight: true,
+            },
+            {
+              icon: "📊",
+              title: "AI Revenue Coaching",
+              desc: "Every phone number is tagged to a lead source. AI tells you which marketing channels are producing booked revenue — and where to stop spending.",
+              highlight: true,
+            },
+            {
+              icon: "⭐",
+              title: "Review Response Writer",
+              desc: "Customer leaves a Google review — one click generates an SEO-optimized owner response. Every review gets replied to automatically.",
+              highlight: true,
+            },
+            {
+              icon: "👥",
+              title: "Referral Autopilot",
+              desc: "AI texts your happy customers asking for a referral by name. Captures the contact and calls the referral within minutes.",
+              highlight: true,
+            },
+          ].map((feat, i) => (
+            <div
+              key={i}
+              style={{
+                background: CARD_DARK,
+                border: `1px solid ${feat.highlight ? "rgba(232,112,42,0.25)" : "rgba(245,240,235,0.07)"}`,
+                borderRadius: 14,
+                padding: "22px 24px",
+                display: "flex",
+                gap: 18,
+                alignItems: "flex-start",
+                transition: "border-color 0.2s, transform 0.15s",
+                cursor: "default",
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(232,112,42,0.4)"; e.currentTarget.style.transform = "translateY(-2px)"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = feat.highlight ? "rgba(232,112,42,0.25)" : "rgba(245,240,235,0.07)"; e.currentTarget.style.transform = "translateY(0)"; }}
+            >
+              <div style={{
+                width: 42, height: 42, borderRadius: 10, flexShrink: 0,
+                background: feat.highlight ? "rgba(232,112,42,0.15)" : "rgba(245,240,235,0.06)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 18,
+              }}>{feat.icon}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <span className="syne" style={{ fontSize: 16, fontWeight: 700, color: OFF_WHITE }}>{feat.title}</span>
+                  {feat.highlight && (
+                    <span style={{
+                      background: ORANGE, color: "#fff",
+                      fontSize: 9, fontWeight: 700,
+                      padding: "2px 7px", borderRadius: 3,
+                      letterSpacing: "0.06em", textTransform: "uppercase",
+                    }}>Elite</span>
+                  )}
+                </div>
+                <p style={{ fontSize: 13, color: "rgba(245,240,235,0.6)", lineHeight: 1.65, margin: 0 }}>{feat.desc}</p>
               </div>
             </div>
           ))}
-        </section>
+        </div>
+      </section>
 
-        {/* ── FINAL CTA ── */}
-        <section className="py-20 px-6 text-center max-w-[480px] mx-auto" style={{ paddingBottom: showStickyCTA ? 120 : 80 }}>
-          <div style={{ background: "radial-gradient(ellipse at center, rgba(232,112,42,0.12) 0%, transparent 70%)", padding: "8px 0" }}>
-            <h2 className="font-['Syne'] text-4xl font-extrabold leading-tight mb-4" style={{ color: OFF_WHITE }}>
-              Ready to stop <span style={{ color: ORANGE }}>missing revenue?</span>
-            </h2>
-            <p className="text-sm leading-relaxed mb-8" style={{ color: MUTED }}>
-              Create your account and connect your first number in minutes.
-            </p>
-            <button
-              onClick={handleGetStarted}
-              className="px-10 py-4 rounded-lg text-base font-bold text-white mb-4 transition-all hover:-translate-y-0.5 block mx-auto"
-              style={{ background: ORANGE, fontFamily: "'Syne', sans-serif" }}
-              onMouseEnter={e => e.currentTarget.style.background = "#d15f20"}
-              onMouseLeave={e => e.currentTarget.style.background = ORANGE}
-            >
-              Get Started →
-            </button>
-            <button
-              onClick={() => navigate("/login")}
-              className="text-sm font-semibold transition-colors"
-              style={{ background: "none", border: "none", cursor: "pointer", color: MUTED }}
-              onMouseEnter={e => e.currentTarget.style.color = OFF_WHITE}
-              onMouseLeave={e => e.currentTarget.style.color = MUTED}
-            >
-              I already have an account
-            </button>
-            <p className="text-xs mt-5" style={{ color: "#2a2a28" }}>
-              By signing up you agree to receive SMS messages from AI Front Desk Helper.{" "}
-              <Link to="/privacy-policy" style={{ color: "#3a3a38" }}>Privacy Policy</Link>.
-            </p>
+      {/* STICKY ELITE CTA BAR */}
+      <div style={{
+        position: "fixed",
+        bottom: 0,
+        left: 0,
+        right: 0,
+        zIndex: 200,
+        background: "linear-gradient(90deg, #1a1008, #2a1505)",
+        borderTop: `2px solid ${ORANGE}`,
+        padding: "14px 24px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 16,
+        boxShadow: "0 -4px 32px rgba(232,112,42,0.2)",
+      }}>
+        <div>
+          <div style={{
+            fontSize: 10, fontWeight: 700, color: ORANGE,
+            letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 2,
+          }}>Elite Plan · Full Revenue Machine</div>
+          <div className="syne" style={{ fontSize: "clamp(14px, 2.5vw, 18px)", fontWeight: 800, color: OFF_WHITE }}>
+            Do it all for you — <span style={{ color: ORANGE }}>$997/mo</span> →
           </div>
-        </section>
+        </div>
+        <button
+          className="btn-primary"
+          style={{ padding: "12px 24px", fontSize: 14, whiteSpace: "nowrap", flexShrink: 0 }}
+          onClick={openModal}
+        >
+          Start now
+        </button>
+      </div>
 
-      </main>
+      <div className="divider" />
 
-      {/* ── FOOTER ── */}
-     <SiteFooter onGetStarted={handleGetStarted} />
+      {/* HOW IT WORKS — SET UP IN MINUTES */}
+      <section className="section">
+        <div className="section-eyebrow">How it works</div>
+        <h2 className="syne" style={{ fontSize: "clamp(28px, 5vw, 40px)", fontWeight: 800, lineHeight: 1.15, marginBottom: 8 }}>
+          Set up in minutes
+        </h2>
+        <p style={{ fontSize: 14, color: MUTED, marginBottom: 40, lineHeight: 1.6 }}>
+          Your existing number or a new one — we handle the rest.
+        </p>
 
-      {/* ── STICKY BOTTOM CTA ── */}
-      <AnimatePresence>
-        {showStickyCTA && (
-          <motion.div
-            initial={{ y: 100, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 100, opacity: 0 }}
-            transition={{ type: "spring", damping: 22, stiffness: 250 }}
-            className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[480px] z-[90] px-5 pb-5 pt-3"
-            style={{ background: "linear-gradient(to top, rgba(17,16,16,1) 60%, transparent)" }}
-          >
-            <div
-              className="rounded-2xl px-5 py-4 flex items-center justify-between cursor-pointer transition-all hover:-translate-y-0.5"
-              style={{ background: ORANGE, boxShadow: "0 8px 32px rgba(232,112,42,0.4)" }}
-              onClick={handleGetStarted}
-            >
-              <div>
-                <div className="text-xs font-bold uppercase tracking-widest text-white/70 mb-0.5">Elite Plan · Full Revenue Machine</div>
-                <div className="font-['Syne'] text-sm font-extrabold text-white">Do it all for you — $997/mo →</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {[
+            {
+              step: "STEP 1",
+              icon: "📞",
+              iconBg: "#1a1918",
+              title: "Connect your number",
+              desc: "Point your Twilio number to AI Front Desk Helper. No new hardware — works with your current phone system.",
+            },
+            {
+              step: "STEP 2",
+              icon: "⚙️",
+              iconBg: "#1a1410",
+              title: "Configure once",
+              desc: "Set your welcome message, transfer numbers, and CRM webhook in the dashboard. The AI follows your playbook.",
+            },
+            {
+              step: "STEP 3",
+              icon: "⚡",
+              iconBg: "#0f1a0f",
+              title: "Let it run",
+              desc: "Every call is answered, recorded, and transcribed. Review calls and metrics anytime from your dashboard.",
+            },
+          ].map((item, i) => (
+            <div key={i} style={{
+              background: CARD_DARK,
+              border: "1px solid rgba(245,240,235,0.07)",
+              borderRadius: 16,
+              padding: "28px 24px",
+              textAlign: "center",
+            }}>
+              <div style={{
+                width: 56, height: 56, borderRadius: 14,
+                background: "rgba(232,112,42,0.15)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 24, margin: "0 auto 16px",
+              }}>{item.icon}</div>
+              <div style={{
+                fontSize: 11, fontWeight: 700, color: MUTED,
+                letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 10,
+              }}>{item.step}</div>
+              <div className="syne" style={{ fontSize: 18, fontWeight: 700, color: OFF_WHITE, marginBottom: 10 }}>
+                {item.title}
               </div>
-              <div className="px-3.5 py-2 rounded-lg text-xs font-bold text-white" style={{ background: "rgba(255,255,255,0.15)" }}>
-                Start now
+              <p style={{ fontSize: 13, color: "rgba(245,240,235,0.6)", lineHeight: 1.65, margin: 0 }}>
+                {item.desc}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="divider" />
+
+      {/* OUTBOUND / SCRIPT RETIRING — big feature */}
+      <section className="section">
+        <div className="section-eyebrow">Outbound AI</div>
+        <h2 className="syne" style={{ fontSize: 30, fontWeight: 800, lineHeight: 1.2, marginBottom: 16 }}>
+          Retire the call script.<br/>
+          <span style={{ color: ORANGE }}>Let AI dial for you.</span>
+        </h2>
+        <p style={{ fontSize: 14, color: "rgba(245,240,235,0.65)", lineHeight: 1.7, marginBottom: 28 }}>
+          Your past customer list is money sitting untouched. AI Front Desk Helper runs
+          outbound campaigns to win back cold leads, re-engage past customers, and
+          ask for referrals — without a salesperson picking up a phone.
+        </p>
+
+        {[
+          { icon: "🔁", title: "Win-back campaigns", desc: "Re-engage customers who got a quote but never booked. Automated, personalized outreach." },
+          { icon: "📅", title: "Seasonal reactivation", desc: "Spring exterior, fall interior — AI reaches out to your past customers on schedule." },
+          { icon: "🤝", title: "Referral campaigns", desc: "AI asks happy customers for a referral by name. Captures the contact and calls them automatically." },
+          { icon: "📋", title: "Estimate recovery", desc: "Quotes that went cold get a follow-up call at 24h, 3d, 5d, 10d. Intelligent objection handling included." },
+        ].map((item, i) => (
+          <div key={i} className="coaching-card" style={{ marginBottom: 10 }}>
+            <div className="icon-box" style={{ background: "rgba(232,112,42,0.12)" }}>
+              {item.icon}
+            </div>
+            <div>
+              <div className="syne" style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>{item.title}</div>
+              <div style={{ fontSize: 13, color: "rgba(245,240,235,0.6)", lineHeight: 1.6 }}>{item.desc}</div>
+            </div>
+          </div>
+        ))}
+      </section>
+
+      <div className="divider" />
+
+      {/* AI COACHING */}
+      <section className="section">
+        <div className="section-eyebrow">AI Revenue Coaching</div>
+        <h2 className="syne" style={{ fontSize: 30, fontWeight: 800, lineHeight: 1.2, marginBottom: 16 }}>
+          Know which marketing<br/>
+          <span style={{ color: ORANGE }}>is actually working</span>
+        </h2>
+        <p style={{ fontSize: 14, color: "rgba(245,240,235,0.65)", lineHeight: 1.7, marginBottom: 28 }}>
+          Every phone number is tagged to a lead source. AI connects that to call outcomes,
+          bookings, and revenue — then tells you exactly where to put your marketing dollars
+          and what to stop spending on.
+        </p>
+
+        {/* Coaching UI mockup */}
+        <div style={{
+          background: CARD_DARK,
+          border: "1px solid rgba(245,240,235,0.08)",
+          borderRadius: 16,
+          overflow: "hidden"
+        }}>
+          <div style={{
+            background: CARD_MID,
+            padding: "14px 18px",
+            borderBottom: "1px solid rgba(245,240,235,0.07)",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center"
+          }}>
+            <span className="syne" style={{ fontSize: 13, fontWeight: 700 }}>AI Coaching — This Week</span>
+            <span style={{ fontSize: 11, color: MUTED }}>Updated daily</span>
+          </div>
+          {[
+            {
+              icon: "📊",
+              label: "Marketing strategy",
+              insight: "Yard signs produced 14 leads at $0 cost — your highest ROI source. Google Ads delivered 9 leads at ~$38/lead. Consider shifting budget toward physical signage this quarter.",
+              type: "good"
+            },
+            {
+              icon: "📉",
+              label: "Estimate recovery",
+              insight: "Facebook leads are booking at 28% vs 61% for Google Organic. Facebook follow-up sequence may need a stronger hook on day 3.",
+              type: "warn"
+            },
+            {
+              icon: "✅",
+              label: "Close rate trend",
+              insight: "Leads who hear a price range on call 1 book 2× more. Your AI is already doing this.",
+              type: "good"
+            },
+            {
+              icon: "💡",
+              label: "Objection pattern",
+              insight: "'Too expensive' detected on 6 calls this week. Consider adding a financing mention to your playbook.",
+              type: "info"
+            },
+          ].map((item, i) => (
+            <div key={i} style={{
+              padding: "14px 18px",
+              borderBottom: i < 3 ? "1px solid rgba(245,240,235,0.06)" : "none",
+              display: "flex",
+              gap: 12,
+              alignItems: "flex-start"
+            }}>
+              <span style={{ fontSize: 16, marginTop: 1 }}>{item.icon}</span>
+              <div>
+                <div style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: item.type === "warn" ? "#FFA040" : item.type === "good" ? "#4ade80" : "#60a5fa",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                  marginBottom: 3
+                }}>{item.label}</div>
+                <div style={{ fontSize: 13, color: "rgba(245,240,235,0.7)", lineHeight: 1.55 }}>{item.insight}</div>
               </div>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          ))}
+        </div>
 
-      {/* ── MODALS ── */}
-      <AnimatePresence>
-        {isSmsConsentOpen && (
-          <SmsConsentModal
-            isOpen={isSmsConsentOpen}
-            onClose={() => setIsSmsConsentOpen(false)}
-            onAccept={handleConsentAccepted}
-          />
-        )}
-      </AnimatePresence>
+        <p style={{ fontSize: 12, color: MUTED, textAlign: "center", marginTop: 12 }}>
+          Franchise owners get coaching across all locations in one HQ view.
+        </p>
+      </section>
 
-      <ContactModal
-        isOpen={isContactOpen}
-        onClose={() => setIsContactOpen(false)}
-      />
+      <div className="divider" />
 
+      {/* REVIEW WRITER */}
+      <section className="section">
+        <div className="section-eyebrow">Review Response Writer</div>
+        <h2 className="syne" style={{ fontSize: 30, fontWeight: 800, lineHeight: 1.2, marginBottom: 16 }}>
+          Every review gets an<br/>
+          <span style={{ color: ORANGE }}>SEO-optimized response.</span>
+        </h2>
+        <p style={{ fontSize: 14, color: "rgba(245,240,235,0.65)", lineHeight: 1.7, marginBottom: 12 }}>
+          When a customer leaves a Google review, AI writes your owner response — naturally
+          weaving in your business name, city, and service keywords. More visibility in local search.
+          Zero time spent staring at a blank reply box.
+        </p>
+
+        {/* Review + Response mockup */}
+        <div className="review-mockup">
+          {/* Customer review */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <div style={{
+              width: 38, height: 38, borderRadius: "50%",
+              background: "#4285F4",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: "#fff", fontWeight: 700, fontSize: 15
+            }}>S</div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: "#111" }}>Sarah M.</div>
+              <div className="star-row">★★★★★</div>
+            </div>
+          </div>
+          <p style={{ fontSize: 13, color: "#333", lineHeight: 1.6, marginBottom: 14 }}>
+            Gladiators Painting did an incredible job on our exterior. Team was punctual and
+            the color matching was perfect. Will absolutely use them again.
+          </p>
+
+          {/* Owner response */}
+          <div style={{
+            background: "#F8F8F8",
+            borderLeft: "3px solid #E8702A",
+            borderRadius: "0 8px 8px 0",
+            padding: "12px 14px",
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#555", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Response from the owner
+            </div>
+            <p style={{ fontSize: 12, color: "#444", lineHeight: 1.65 }}>
+              Thank you so much, Sarah! We're thrilled the exterior painting turned out exactly
+              how you envisioned. Gladiators Painting takes pride in clean, professional work
+              for homeowners throughout Omaha — it means the world to hear this feedback.
+              We'd love to help with that interior project next spring. 🎨
+            </p>
+            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{
+                background: "#FFF3E8",
+                color: ORANGE,
+                fontSize: 10,
+                padding: "2px 7px",
+                borderRadius: 3,
+                fontWeight: 700,
+                letterSpacing: "0.05em",
+                textTransform: "uppercase"
+              }}>AI-written · SEO optimized</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div className="divider" />
+
+      {/* GLADIATORS PROOF */}
+      <section className="section" style={{ background: "none" }}>
+        <div style={{
+          background: CARD_DARK,
+          border: "1px solid rgba(245,240,235,0.07)",
+          borderRadius: 20,
+          padding: "32px 24px",
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: ORANGE, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 14 }}>
+            Real results — Gladiators Painting
+          </div>
+          <h3 className="syne" style={{ fontSize: 24, fontWeight: 800, lineHeight: 1.3, marginBottom: 12 }}>
+            Running live on a real painting company right now
+          </h3>
+          <p style={{ fontSize: 13, color: MUTED, lineHeight: 1.65, marginBottom: 28 }}>
+            We didn't build this for contractors — we built it as one.
+            Every feature was tested on a real painting business before it shipped.
+          </p>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+            {[
+              { val: "28", label: "Calls answered by AI last month" },
+              { val: "53%", label: "Booking rate (industry avg: 20-30%)" },
+              { val: "$11,500", label: "Revenue tracked in dashboard" },
+              { val: "15", label: "AI-booked estimates, last 30 days" },
+            ].map((s, i) => (
+              <div key={i} className="stat-card">
+                <div className="syne" style={{ fontSize: i === 2 ? 22 : 28, fontWeight: 800, color: ORANGE, lineHeight: 1.1, marginBottom: 4 }}>{s.val}</div>
+                <div style={{ fontSize: 11, color: MUTED, lineHeight: 1.5 }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{
+            borderLeft: `3px solid ${ORANGE}`,
+            paddingLeft: 16,
+          }}>
+            <p style={{ fontSize: 15, fontStyle: "italic", lineHeight: 1.7, color: "rgba(245,240,235,0.8)" }}>
+              "I built this for my own painting company because I was losing jobs to voicemail every day on the job site.
+              Now it answers every call, follows up on every cold estimate, and coaches me on what to fix."
+            </p>
+            <div style={{ marginTop: 10, fontSize: 13, color: MUTED }}>Drew — Owner, Gladiators Painting & Founder, AFDH</div>
+          </div>
+        </div>
+      </section>
+
+      <div className="divider" />
+
+      {/* WHO IT'S FOR */}
+      <section className="section">
+        <div className="section-eyebrow">Built for</div>
+        <h2 className="syne" style={{ fontSize: 28, fontWeight: 800, marginBottom: 28 }}>
+          Home service pros who are done leaving money on the table
+        </h2>
+        {[
+          { trade: "Painting contractors", line: "Answer every estimate call. Follow up every cold quote. Retire the call script." },
+          { trade: "Roofing companies", line: "Speed-to-lead wins in roofing. AI answers in 2 rings, books the inspection." },
+          { trade: "HVAC & plumbing", line: "Emergency after-hours calls captured automatically. Never miss an urgent job." },
+          { trade: "Fencing & landscaping", line: "Outbound AI calls your seasonal past customers. Reactivation on autopilot." },
+          { trade: "Franchise groups", line: "HQ dashboard with AI coaching across all locations. Built for multi-unit scale." },
+        ].map((item, i) => (
+          <div key={i} style={{
+            display: "flex",
+            gap: 14,
+            padding: "16px 0",
+            borderBottom: i < 4 ? "1px solid rgba(245,240,235,0.07)" : "none",
+          }}>
+            <span style={{ color: ORANGE, fontSize: 18, marginTop: 2 }}>→</span>
+            <div>
+              <div className="syne" style={{ fontSize: 15, fontWeight: 700, marginBottom: 3 }}>{item.trade}</div>
+              <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.55 }}>{item.line}</div>
+            </div>
+          </div>
+        ))}
+      </section>
+
+      <div className="divider" />
+
+      {/* PRICING */}
+      <section className="section">
+        <div className="section-eyebrow">Pricing</div>
+        <h2 className="syne" style={{ fontSize: 28, fontWeight: 800, marginBottom: 8 }}>
+          Let the system do it all.
+        </h2>
+        <p style={{ fontSize: 14, color: MUTED, marginBottom: 36, lineHeight: 1.6 }}>
+          Basic gets you in the door. Elite is where the real revenue machine runs —
+          outbound, coaching, reviews, and full pipeline automation. Most contractors
+          who try Pro move to Elite within 60 days.
+        </p>
+
+        {[
+          {
+            tier: "Basic",
+            label: "SMALL OPS",
+            tagline: "AI Front Desk Starter",
+            price: "$297",
+            setup: "+$197 setup",
+            desc: "For contractors who want to stop missing calls.",
+            features: ["24/7 AI call answering", "Missed call text-back", "Lead capture & CRM sync", "Call transcripts"],
+            featured: false
+          },
+          {
+            tier: "Pro",
+            label: "GROWING TEAMS",
+            tagline: "AI Booking Assistant",
+            price: "$497",
+            setup: "+$297 setup",
+            desc: "Full booking, follow-up, and multi-channel coverage.",
+            features: ["Everything in Basic", "Google Calendar booking", "SMS follow-up sequences", "Website AI chat widget", "Appointment reminders", "Facebook Messenger"],
+            featured: false
+          },
+          {
+            tier: "Elite",
+            label: "THE FULL SYSTEM",
+            tagline: "AI Revenue Machine",
+            price: "$997",
+            setup: "+$497 setup",
+            desc: "Everything. Inbound, outbound, coaching, reviews, and franchise-ready HQ tools.",
+            features: ["Everything in Pro", "Outbound AI campaigns", "Script retiring & win-backs", "AI revenue coaching", "Lead source marketing insights", "Review response writer (SEO)", "Objection detection", "Referral autopilot", "HQ franchise rollup"],
+            featured: true
+          },
+        ].map((plan, i) => (
+          <div key={i} className={`price-card ${plan.featured ? "featured" : ""}`}>
+            {plan.featured && (
+              <div style={{
+                position: "absolute",
+                top: -12,
+                left: "50%",
+                transform: "translateX(-50%)",
+                background: ORANGE,
+                color: "#fff",
+                fontSize: 11,
+                fontWeight: 700,
+                padding: "4px 14px",
+                borderRadius: 100,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase"
+              }}>Best value — do it all</div>
+            )}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, color: MUTED, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{plan.label}</div>
+                <div className="syne" style={{ fontSize: 22, fontWeight: 800 }}>{plan.tier}</div>
+                <div style={{ fontSize: 13, color: MUTED }}>{plan.tagline}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div className="syne" style={{ fontSize: 26, fontWeight: 800 }}>{plan.price}<span style={{ fontSize: 14, fontWeight: 500, color: MUTED }}>/mo</span></div>
+                <div style={{ fontSize: 12, color: ORANGE }}>{plan.setup}</div>
+              </div>
+            </div>
+            <p style={{ fontSize: 13, color: "rgba(245,240,235,0.55)", marginBottom: 16, lineHeight: 1.5 }}>{plan.desc}</p>
+            <ul className="check-list">
+              {plan.features.map((f, j) => <li key={j}>{f}</li>)}
+            </ul>
+            <button
+              className={plan.featured ? "btn-primary" : "btn-ghost"}
+              style={{ width: "100%", marginTop: 20, fontSize: 15, padding: "14px" }}
+              onClick={openModal}
+            >
+              Get started
+            </button>
+          </div>
+        ))}
+      </section>
+
+      {/* FINAL CTA */}
+      <section style={{ padding: "72px 24px 120px", textAlign: "center" }}>
+        <div style={{
+          background: `radial-gradient(ellipse at center, rgba(232,112,42,0.15) 0%, transparent 70%)`,
+          paddingBottom: 8
+        }}>
+          <h2 className="syne" style={{ fontSize: 36, fontWeight: 800, lineHeight: 1.2, marginBottom: 14 }}>
+            Ready to stop <span style={{ color: ORANGE }}>missing revenue?</span>
+          </h2>
+          <p style={{ fontSize: 15, color: MUTED, marginBottom: 32, lineHeight: 1.6 }}>
+            Create your account and connect your first number in minutes.
+          </p>
+          <button className="btn-primary" style={{ fontSize: 17, padding: "16px 40px", marginBottom: 14 }} onClick={openModal}>
+            Get Started →
+          </button>
+          <div style={{ marginTop: 12 }}>
+            <button className="btn-ghost" style={{ fontSize: 14 }}>I already have an account</button>
+          </div>
+          <p style={{ fontSize: 11, color: MUTED, marginTop: 18 }}>
+            By signing up you agree to receive SMS messages from AI Front Desk Helper.
+          </p>
+        </div>
+      </section>
     </div>
   );
 }

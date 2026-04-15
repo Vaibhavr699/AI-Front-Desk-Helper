@@ -370,15 +370,35 @@ app.post("/api/contact", async (req, res) => {
     return res.status(400).json({ error: "Name and email are required" });
   }
   try {
-    await emailService.sendContactEmail({
-      name,
-      email,
-      message: message || "",
+    await emailService.sendEmail({
+      to: process.env.CONTACT_EMAIL || "drew@aifrontdeskhelper.com",
+      subject: `📩 Contact form: ${name}`,
+      html: `
+        <h2>New message from Contact page</h2>
+        <p><strong>Name:</strong> ${name}</p>
+        <p><strong>Email:</strong> ${email}</p>
+        <p><strong>Message:</strong><br/>${(message || "").replace(/\n/g, "<br/>")}</p>
+      `,
     });
     res.json({ ok: true });
   } catch (err) {
-    console.error("[Contact] Failed to send:", err.message);
-    res.status(500).json({ error: "Failed to send message. Please email drew@aifrontdeskhelper.com directly." });
+    console.error("[Contact] /api/contact failed:", err.message);
+    res.status(500).json({ error: "Failed to send" });
+  }
+});
+
+// Contact modal form (name, phone, email, enquiry, bestTime)
+app.post("/api/public/contact", async (req, res) => {
+  const { name, phone, email, enquiry, bestTime } = req.body || {};
+  if (!name || !email) {
+    return res.status(400).json({ error: "Name and email are required" });
+  }
+  try {
+    await emailService.sendContactLeadEmail({ name, phone, email, enquiry, bestTime });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[Contact] /api/public/contact failed:", err.message);
+    res.status(500).json({ error: "Failed to send" });
   }
 });
 app.use("/api/public", require("./routes/public"));

@@ -1,14 +1,13 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useState } from "react";
-import { ShimmerButton } from "./ui/shimmer-button";
+
+const ORANGE = "#E8702A";
 
 /* ─────────────────────────────────────────────────────────────
-   SMS CONSENT MODAL — same modal as Home.jsx
-   Lives here so the "Start setup" navbar button is also covered.
+   SMS CONSENT MODAL — dark design
 ───────────────────────────────────────────────────────────── */
-function SmsConsentModal({ isOpen, onClose, onAccept }) {
+export function SmsConsentModal({ isOpen, onClose, onAccept }) {
   const [checked, setChecked] = useState(false);
-
   if (!isOpen) return null;
 
   function handleAccept() {
@@ -16,7 +15,6 @@ function SmsConsentModal({ isOpen, onClose, onAccept }) {
     onAccept();
     setChecked(false);
   }
-
   function handleClose() {
     setChecked(false);
     onClose();
@@ -24,184 +22,104 @@ function SmsConsentModal({ isOpen, onClose, onAccept }) {
 
   return (
     <div
-      className="fixed inset-0 z-[600] flex items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="sms-consent-header-title"
+      style={{ position:"fixed", inset:0, zIndex:600, display:"flex", alignItems:"flex-end", justifyContent:"center", background:"rgba(0,0,0,0.65)", backdropFilter:"blur(4px)" }}
+      role="dialog" aria-modal="true" aria-labelledby="sms-consent-title"
+      onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
     >
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-stone-900/60 backdrop-blur-sm"
-        onClick={handleClose}
-      />
-
-      {/* Modal box */}
-      <div className="relative z-10 w-full max-w-md bg-white rounded-2xl shadow-2xl p-8 flex flex-col gap-6">
-
-        {/* Header */}
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <div className="w-10 h-10 bg-orange-50 rounded-xl flex items-center justify-center">
-              <svg
-                className="w-5 h-5 text-orange-500"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-                />
-              </svg>
-            </div>
-            <button
-              type="button"
-              onClick={handleClose}
-              className="text-stone-400 hover:text-stone-600 transition-colors p-1 rounded-lg hover:bg-stone-100"
-              aria-label="Close"
-            >
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
+      <div style={{ background:"#fff", borderRadius:"24px 24px 0 0", padding:"28px 24px 40px", width:"100%", maxWidth:480, maxHeight:"92vh", overflowY:"auto" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20 }}>
+          <div>
+            <div style={{ width:48, height:48, background:"#FFF0E6", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, marginBottom:14 }}>💬</div>
+            <h2 id="sms-consent-title" style={{ fontFamily:"'Syne',sans-serif", fontSize:22, fontWeight:800, color:"#111", marginBottom:4 }}>Before you get started</h2>
+            <p style={{ fontSize:14, color:"#777", lineHeight:1.5 }}>Please review and agree to our messaging policy.</p>
           </div>
-          <h2
-            id="sms-consent-header-title"
-            className="text-xl font-bold text-stone-900"
-          >
-            Before you get started
-          </h2>
-          <p className="mt-1 text-sm text-stone-500">
-            Please review and agree to our messaging policy.
-          </p>
+          <button type="button" onClick={handleClose} style={{ background:"none", border:"none", fontSize:20, color:"#aaa", cursor:"pointer", padding:4 }} aria-label="Close">✕</button>
         </div>
 
-        {/* Consent text box — FIXED */}
-        <div className="bg-stone-50 rounded-xl p-4 border border-stone-200 text-xs text-stone-600 leading-relaxed">
-          <p>
-            By submitting this form, you agree to receive SMS text messages from{" "}
-            <span className="font-semibold text-stone-800">AI Front Desk Helper</span>{" "}
-            related to your inquiry, including appointment scheduling, follow-ups, and
-            service notifications. Message frequency may vary. Message and data rates
-            may apply. Reply <strong>STOP</strong> to opt out or{" "}
-            <strong>HELP</strong> for assistance. Consent is not required as a
-            condition of purchasing services.{" "}
-            <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:text-orange-600 underline underline-offset-2 font-medium">Privacy Policy</a>
-            .
-          </p>
+        <div style={{ background:"#F7F7F7", borderRadius:10, padding:"14px 16px", fontSize:13, color:"#444", lineHeight:1.65, marginBottom:20 }}>
+          By submitting this form, you agree to receive SMS text messages from{" "}
+          <strong style={{ color:"#111" }}>AI Front Desk Helper</strong>{" "}
+          related to your inquiry, including appointment scheduling, follow-ups, and service notifications.
+          Message frequency may vary. Message and data rates may apply. Reply <strong>STOP</strong> to opt out or{" "}
+          <strong>HELP</strong> for assistance. Consent is not required as a condition of purchasing services.{" "}
+          <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" style={{ color:ORANGE, fontWeight:600, textDecoration:"underline" }}>Privacy Policy</a>.
         </div>
 
-        {/* Checkbox */}
-        <label className="flex items-start gap-3 cursor-pointer">
-          <div className="flex-shrink-0 mt-0.5">
-            <input
-              type="checkbox"
-              checked={checked}
-              onChange={(e) => setChecked(e.target.checked)}
-              className="w-4 h-4 rounded border-stone-300 text-orange-500 focus:ring-orange-500 focus:ring-offset-0 cursor-pointer"
-            />
+        <div style={{ display:"flex", alignItems:"flex-start", gap:12, marginBottom:24, cursor:"pointer" }} onClick={() => setChecked(!checked)}>
+          <div style={{ width:20, height:20, border:checked?`2px solid ${ORANGE}`:"2px solid #ccc", borderRadius:4, background:checked?ORANGE:"transparent", flexShrink:0, marginTop:1, display:"flex", alignItems:"center", justifyContent:"center", transition:"all 0.15s" }}>
+            {checked && <span style={{ color:"#fff", fontSize:12, fontWeight:700 }}>✓</span>}
           </div>
-          <span className="text-sm text-stone-700 leading-snug">
-            I have read and agree to the SMS messaging terms above.
-          </span>
-        </label>
+          <span style={{ fontSize:14, color:"#333", lineHeight:1.55 }}>I have read and agree to the SMS messaging terms above.</span>
+        </div>
 
-        {/* Buttons */}
-        <div className="flex gap-3">
-          <button
-            type="button"
-            onClick={handleClose}
-            className="flex-1 px-4 py-3 rounded-xl border border-stone-200 bg-white text-sm font-semibold text-stone-600 hover:border-stone-300 hover:text-stone-800 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleAccept}
-            disabled={!checked}
-            className={`flex-1 px-4 py-3 rounded-xl text-sm font-semibold text-white transition-all ${
-              checked
-                ? "bg-orange-500 hover:bg-orange-600 shadow-lg shadow-orange-200 cursor-pointer"
-                : "bg-stone-200 text-stone-400 cursor-not-allowed"
-            }`}
-          >
+        <div style={{ display:"flex", gap:12 }}>
+          <button type="button" onClick={handleClose} style={{ flex:1, background:"#fff", border:"1.5px solid #ddd", borderRadius:10, padding:14, fontSize:15, fontWeight:600, color:"#333", cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>Cancel</button>
+          <button type="button" onClick={handleAccept} disabled={!checked} style={{ flex:1.4, background:checked?ORANGE:"#ccc", border:"none", borderRadius:10, padding:14, fontSize:15, fontWeight:700, color:"#fff", cursor:checked?"pointer":"not-allowed", fontFamily:"'Syne',sans-serif" }}>
             Continue to sign up →
           </button>
         </div>
-
       </div>
     </div>
   );
 }
 
 /* ─────────────────────────────────────────────────────────────
-   SITE HEADER
+   SITE HEADER — dark design
 ───────────────────────────────────────────────────────────── */
-export function SiteHeader() {
+export function SiteHeader({ onStartSetup }) {
   const navigate = useNavigate();
-  const [isSmsConsentOpen, setIsSmsConsentOpen] = useState(false);
+  const [isSmsOpen, setIsSmsOpen] = useState(false);
 
   function handleStartSetup() {
-    setIsSmsConsentOpen(true);
+    if (onStartSetup) { onStartSetup(); return; }
+    setIsSmsOpen(true);
   }
-
   function handleConsentAccepted() {
-    setIsSmsConsentOpen(false);
+    setIsSmsOpen(false);
     navigate("/login?signup=1");
   }
 
   return (
     <>
-      <header className="sticky top-0 z-[500] bg-white/95 backdrop-blur border-b border-stone-200">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <Link to="/" className="flex items-center gap-2 group transition-all">
-              <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-white border border-stone-200 shadow-sm group-hover:scale-105 transition-transform duration-200 overflow-hidden p-1">
-                <img src="/favicon.png" alt="Logo" className="w-full h-full object-contain" />
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&display=swap');
+        .afdh-header-signin:hover { color: #F5F0EB !important; }
+        .afdh-start-btn:hover { background: #d15f20 !important; transform: translateY(-1px); }
+      `}</style>
+      <header style={{ position:"sticky", top:0, zIndex:500, background:"rgba(17,16,16,0.92)", backdropFilter:"blur(12px)", borderBottom:"1px solid rgba(245,240,235,0.06)", fontFamily:"'DM Sans',sans-serif" }}>
+        <div style={{ maxWidth:480, margin:"0 auto", padding:"0 20px" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", height:60 }}>
+
+            {/* Logo */}
+            <Link to="/" style={{ display:"flex", alignItems:"center", gap:10, textDecoration:"none" }}>
+              <div style={{ width:36, height:36, background:"#F5F0EB", borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden", padding:3 }}>
+                <img src="/favicon.png" alt="AI Front Desk Helper Logo" style={{ width:"100%", height:"100%", objectFit:"contain" }} />
               </div>
-              <div className="flex flex-col">
-                <span className="font-bold text-stone-900 leading-none">
-                  AI Front Desk Helper
-                </span>
-              </div>
+              <span style={{ fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:13, color:"#F5F0EB", lineHeight:1.2 }}>
+                AI Front Desk Helper
+              </span>
             </Link>
 
-            <div className="flex items-center gap-3">
-              <Link
-                to="/login"
-                className="text-sm font-semibold text-stone-700 hover:text-stone-900 transition-colors"
-              >
+            {/* Actions */}
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <Link to="/login" className="afdh-header-signin" style={{ fontSize:13, fontWeight:600, color:"rgba(245,240,235,0.65)", textDecoration:"none", padding:"8px 10px", transition:"color 0.2s" }}>
                 Sign in
               </Link>
-              <ShimmerButton
+              <button
+                className="afdh-start-btn"
                 onClick={handleStartSetup}
-                className="text-sm text-white font-semibold px-4 py-2"
-                shimmerSize="0.04em"
-                background="rgba(41, 37, 36, 1)"
+                style={{ background:ORANGE, color:"#fff", border:"none", borderRadius:8, padding:"9px 18px", fontFamily:"'Syne',sans-serif", fontWeight:700, fontSize:13, cursor:"pointer", transition:"background 0.2s, transform 0.15s", boxShadow:"0 2px 12px rgba(232,112,42,0.35)", letterSpacing:"0.01em" }}
               >
                 Start setup
-              </ShimmerButton>
+              </button>
             </div>
           </div>
         </div>
       </header>
 
-      {/* SMS Consent Modal */}
       <SmsConsentModal
-        isOpen={isSmsConsentOpen}
-        onClose={() => setIsSmsConsentOpen(false)}
+        isOpen={isSmsOpen}
+        onClose={() => setIsSmsOpen(false)}
         onAccept={handleConsentAccepted}
       />
     </>

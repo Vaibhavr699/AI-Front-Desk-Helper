@@ -24,16 +24,17 @@ router.get("/config", async (req, res) => {
 /**
  * POST /api/stripe/checkout
  * Create a Stripe Checkout session for a plan subscription.
- * Body: { tenant_id, plan_id, return_url? }
+ * Body: { tenant_id, plan_id, return_url?, interval? }
+ * interval: "monthly" (default) | "annual"
  */
 router.post("/checkout", async (req, res) => {
     try {
         const tenant_id = getGuaranteedTenantId(req);
-       const { plan_id, return_url, interval } = req.body || {};
-if (!tenant_id) return res.status(400).json({ error: "tenant_id required" });
-if (!plan_id) return res.status(400).json({ error: "plan_id required" });
+        const { plan_id, return_url, interval } = req.body || {};
+        if (!tenant_id) return res.status(400).json({ error: "tenant_id required" });
+        if (!plan_id) return res.status(400).json({ error: "plan_id required" });
 
-const result = await createCheckoutSession(tenant_id, plan_id, return_url, interval);
+        const result = await createCheckoutSession(tenant_id, plan_id, return_url, interval);
         res.json(result);
     } catch (e) {
         console.error("[Stripe] Checkout error:", e.message);
@@ -126,7 +127,6 @@ router.get("/status", async (req, res) => {
             has_subscription: !!tenant.stripe_subscription_id,
         };
 
-        // If there's an active Stripe subscription, fetch billing details
         if (stripe && tenant.stripe_subscription_id) {
             try {
                 const sub = await stripe.subscriptions.retrieve(tenant.stripe_subscription_id);

@@ -267,9 +267,9 @@ export default function DashboardLayout() {
         </main>
       </div>
 
-    {tenantId !== "all" && <ChatWidget tenantId={tenantId} />}
-{!isSuspended && user?.role !== "staff" && <AICoachWidget />}
-
+   {tenantId !== "all" && <ChatWidget tenantId={tenantId} />}
+{!isSuspended && user?.role !== "staff" && <AICoachWidget tenantId={tenantId} />}
+      
       <CookieConsent
         location="bottom"
         cookieName="ai_front_desk_cookie_consent"

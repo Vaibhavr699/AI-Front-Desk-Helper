@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { SiteHeader, SmsConsentModal } from "../components/SiteHeader";
 import { SiteFooter } from "../components/SiteFooter";
+import { ContactModal } from "../components/ContactModal";
 
 // ─── Design tokens (match existing site) ─────────────────────────────────────
 const ORANGE   = "#E8702A";
@@ -203,50 +204,6 @@ const pageStyle = `
     .lp-mockup-stats { flex-direction: column !important; }
   }
 
-  /* CONTACT MODAL */
-  .lp-contact-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.65);
-    backdrop-filter: blur(4px);
-    z-index: 999;
-    display: flex;
-    align-items: flex-end;
-    justify-content: center;
-  }
-  .lp-contact-sheet {
-    background: #fff;
-    border-radius: 24px 24px 0 0;
-    padding: 28px 24px 40px;
-    width: 100%;
-    max-width: 480px;
-    max-height: 92vh;
-    overflow-y: auto;
-    animation: lpSlideUp 0.3s ease both;
-    font-family: 'DM Sans', sans-serif;
-  }
-  @keyframes lpSlideUp {
-    from { transform: translateY(100%); opacity: 0; }
-    to   { transform: translateY(0);    opacity: 1; }
-  }
-  .lp-contact-input {
-    width: 100%;
-    border: 1.5px solid #e0ddd9;
-    border-radius: 10px;
-    padding: 12px 14px;
-    font-size: 14px;
-    font-family: 'DM Sans', sans-serif;
-    color: #111;
-    background: #fafafa;
-    outline: none;
-    transition: border-color 0.15s;
-    box-sizing: border-box;
-    margin-bottom: 12px;
-  }
-  .lp-contact-input:focus { border-color: #E8702A; background: #fff; }
-  .lp-contact-input::placeholder { color: #aaa; }
-  textarea.lp-contact-input { resize: vertical; min-height: 90px; }
-
   /* BILLING TOGGLE */
   .lp-toggle-track {
     width: 48px;
@@ -307,19 +264,6 @@ export default function Home() {
   const [showModal, setShowModal] = useState(false);
   const [annual, setAnnual] = useState(true);
   const [showContact, setShowContact] = useState(false);
-  const [contactForm, setContactForm] = useState({ name: "", email: "", phone: "", message: "" });
-  const [contactSent, setContactSent] = useState(false);
-
-  function handleContactSubmit() {
-    if (!contactForm.name || !contactForm.email) return;
-    // Replace this with your real form submission / API call
-    setContactSent(true);
-    setTimeout(() => {
-      setShowContact(false);
-      setContactSent(false);
-      setContactForm({ name: "", email: "", phone: "", message: "" });
-    }, 2500);
-  }
 
   const openModal  = () => setShowModal(true);
   const closeModal = () => setShowModal(false);
@@ -342,94 +286,11 @@ export default function Home() {
         onAccept={handleConsentAccepted}
       />
 
-      {/* CONTACT MODAL */}
-      {showContact && (
-        <div
-          className="lp-contact-overlay"
-          onClick={(e) => { if (e.target === e.currentTarget) setShowContact(false); }}
-        >
-          <div className="lp-contact-sheet">
-
-            {/* Header */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-              <div>
-                <div style={{ width: 48, height: 48, background: "#FFF0E6", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, marginBottom: 14 }}>☎️</div>
-                <h2 style={{ fontFamily: "'Syne', sans-serif", fontSize: 22, fontWeight: 800, color: "#111", marginBottom: 4 }}>Get in touch</h2>
-                <p style={{ fontSize: 14, color: "#777", lineHeight: 1.5 }}>We'll get back to you within one business day.</p>
-              </div>
-              <button
-                onClick={() => setShowContact(false)}
-                style={{ background: "none", border: "none", fontSize: 20, color: "#aaa", cursor: "pointer", padding: 4, lineHeight: 1, flexShrink: 0 }}
-              >✕</button>
-            </div>
-
-            {contactSent ? (
-              <div style={{ textAlign: "center", padding: "32px 0" }}>
-                <div style={{ fontSize: 40, marginBottom: 14 }}>✅</div>
-                <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 700, color: "#111", marginBottom: 8 }}>Message sent!</div>
-                <p style={{ fontSize: 14, color: "#777" }}>We'll be in touch shortly.</p>
-              </div>
-            ) : (
-              <>
-                <input
-                  className="lp-contact-input"
-                  placeholder="Your name *"
-                  value={contactForm.name}
-                  onChange={e => setContactForm({ ...contactForm, name: e.target.value })}
-                />
-                <input
-                  className="lp-contact-input"
-                  placeholder="Email address *"
-                  type="email"
-                  value={contactForm.email}
-                  onChange={e => setContactForm({ ...contactForm, email: e.target.value })}
-                />
-                <input
-                  className="lp-contact-input"
-                  placeholder="Phone number"
-                  type="tel"
-                  value={contactForm.phone}
-                  onChange={e => setContactForm({ ...contactForm, phone: e.target.value })}
-                />
-                <textarea
-                  className="lp-contact-input"
-                  placeholder="What can we help you with?"
-                  value={contactForm.message}
-                  onChange={e => setContactForm({ ...contactForm, message: e.target.value })}
-                />
-
-                <div style={{ display: "flex", gap: 12, marginTop: 4 }}>
-                  <button
-                    onClick={() => setShowContact(false)}
-                    style={{ flex: 1, background: "#fff", border: "1.5px solid #ddd", borderRadius: 10, padding: 14, fontSize: 15, fontWeight: 600, color: "#333", cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}
-                  >Cancel</button>
-                  <button
-                    onClick={handleContactSubmit}
-                    disabled={!contactForm.name || !contactForm.email}
-                    style={{
-                      flex: 1.4,
-                      background: contactForm.name && contactForm.email ? ORANGE : "#ccc",
-                      border: "none",
-                      borderRadius: 10,
-                      padding: 14,
-                      fontSize: 15,
-                      fontWeight: 700,
-                      color: "#fff",
-                      cursor: contactForm.name && contactForm.email ? "pointer" : "not-allowed",
-                      fontFamily: "'Syne', sans-serif",
-                      transition: "background 0.15s",
-                    }}
-                  >Send message →</button>
-                </div>
-
-                <p style={{ fontSize: 11, color: "#bbb", textAlign: "center", marginTop: 14 }}>
-                  By submitting you agree to receive SMS messages from AI Front Desk Helper. Reply STOP to opt out.
-                </p>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+      {/* CONTACT MODAL — uses your real ContactModal component */}
+      <ContactModal
+        isOpen={showContact}
+        onClose={() => setShowContact(false)}
+      />
 
       <div style={{ background: DARK, minHeight: "100vh" }}>
 

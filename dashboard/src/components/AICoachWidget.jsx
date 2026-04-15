@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { getMetrics, getLeadsByTenant, api } from "../api";
 
-// ── Constants ──────────────────────────────────────────────────────────────
 const MODES = {
   nurture: { label: "Nurture", icon: "🌱" },
   coaching: { label: "Coaching", icon: "🏆" },
@@ -54,12 +53,9 @@ function buildCoachingPrompt(level, liveContext, memory) {
     const confused = metrics?.ai?.calls_confused || 0;
     const todayCalls = metrics?.today?.calls || 0;
     const todayBooked = metrics?.today?.booked || 0;
-
     const dayOfMonth = new Date().getDate();
     const daysInMonth = new Date(YEAR, NOW_MONTH + 1, 0).getDate();
-    const pacePct = monthGoal > 0
-      ? Math.round((monthActual / monthGoal) * 100)
-      : null;
+    const pacePct = monthGoal > 0 ? Math.round((monthActual / monthGoal) * 100) : null;
     const expectedPct = Math.round((dayOfMonth / daysInMonth) * 100);
 
     dataCtx = `
@@ -88,7 +84,7 @@ Coaching philosophy by tier:
 - Growth: Close rate by lead source, estimate recovery sequences, team KPI visibility.
 - Franchise: HQ rollup dashboards, multi-location benchmarking, white-label positioning, SOC 2 readiness.
 
-Industry benchmarks for context: avg booking rate 25-35%, avg close rate 35-50%, avg job value $2,400-$4,000 for painting.
+Industry benchmarks: avg booking rate 25-35%, avg close rate 35-50%, avg job value $2,400-$4,000 for painting.
 
 Be direct, specific, and dollar-quantified. Always reference the owner's actual numbers when available. End every response with one concrete action they can take today.${dataCtx}${memCtx}`;
 }
@@ -100,12 +96,13 @@ function buildNurturePrompt(contact, memory) {
     : "";
   return `You are an AI contact nurturing specialist embedded inside AI Front Desk Helper for home service contractors.
 ${contact ? `\nActive contact: ${contact.name} | Stage: ${contact.stage} | Est. Value: ${contact.value} | Days since contact: ${contact.days} | Lead source: ${contact.source}` : ""}
-Craft specific, human, conversion-focused outreach messages (texts, emails, or voicemail scripts). Keep messages short, warm, and action-oriented. Reference the contact's stage and lead source. Never sound robotic or templated. Always include a clear next step.${memCtx}`;
+Craft specific, human, conversion-focused outreach messages (texts, emails, or voicemail scripts). Keep messages short, warm, and action-oriented. Reference the contact's stage and lead source. Never sound robotic. Always include a clear next step.${memCtx}`;
 }
 
-// ── Backend proxy call (streaming) ────────────────────────────────────────
-async function callClaude(messages, systemPrompt, onChunk) {
+// ── Calls backend proxy — uses OpenAI gpt-4o streaming ────────────────────
+async function callAI(messages, systemPrompt, onChunk) {
   const token = localStorage.getItem("token");
+
   const res = await fetch("/api/ai-coach", {
     method: "POST",
     headers: {
@@ -114,20 +111,28 @@ async function callClaude(messages, systemPrompt, onChunk) {
     },
     body: JSON.stringify({ messages, system: systemPrompt }),
   });
-  if (!res.ok) throw new Error(`AI service error: ${res.status}`);
+
+  if (!res.ok) {
+    throw new Error(`AI service error: ${res.status}`);
+  }
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let full = "";
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     const chunk = decoder.decode(value);
-    for (const line of chunk.split("\n").filter((l) => l.startsWith("data: "))) {
+    const lines = chunk.split("\n").filter((l) => l.startsWith("data: "));
+    for (const line of lines) {
+      const data = line.slice(6).trim();
+      if (data === "[DONE]") break;
       try {
-        const json = JSON.parse(line.slice(6));
-        if (json.type === "content_block_delta" && json.delta?.text) {
-          full += json.delta.text;
+        const json = JSON.parse(data);
+        const text = json.choices?.[0]?.delta?.content;
+        if (text) {
+          full += text;
           onChunk(full);
         }
       } catch {}
@@ -226,7 +231,7 @@ export default function AICoachWidget({ tenantId }) {
       : buildCoachingPrompt(coachLevel, liveContext, memory);
 
     try {
-      const full = await callClaude(
+      const full = await callAI(
         newMessages.map((m) => ({ role: m.role, content: m.content })),
         systemPrompt,
         (partial) => setStreamText(partial)
@@ -234,9 +239,12 @@ export default function AICoachWidget({ tenantId }) {
       setStreamText("");
       setMessages((prev) => [...prev, { role: "assistant", content: full }]);
       setMemory((prev) => [`[${mode}] ${full.slice(0, 100).replace(/\n/g, " ")}…`, ...prev.slice(0, 7)]);
-    } catch {
+    } catch (e) {
       setStreamText("");
-      setMessages((prev) => [...prev, { role: "assistant", content: "⚠️ Connection error. Please try again." }]);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "⚠️ Connection error. Please try again." },
+      ]);
     }
     setLoading(false);
   }, [input, loading, messages, mode, coachLevel, selectedContact, liveContext, memory]);

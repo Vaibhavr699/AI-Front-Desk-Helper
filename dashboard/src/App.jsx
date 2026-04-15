@@ -86,6 +86,7 @@ export default function App() {
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/sms-terms" element={<SmsTerms />} />
+          <Route path="/sms-policy" element={<Navigate to="/sms-terms" replace />} />
           <Route path="/terms" element={<TermsOfService />} />
           <Route path="/cookies" element={<CookiePolicy />} />
           {/* Authenticated dashboard routes */}

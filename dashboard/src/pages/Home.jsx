@@ -258,7 +258,7 @@ const pageStyle = `
     transition: background 0.2s;
     flex-shrink: 0;
   }
-  .lp-toggle-track.on { background: #E8702A; }
+  .lp-toggle-track.on { background: #22c55e; }
   .lp-toggle-thumb {
     position: absolute;
     top: 3px;
@@ -305,7 +305,7 @@ function Ticker() {
 export default function Home() {
   const navigate = useNavigate();
   const [showModal, setShowModal] = useState(false);
-  const [annual, setAnnual] = useState(false);
+  const [annual, setAnnual] = useState(true);
   const [showContact, setShowContact] = useState(false);
   const [contactForm, setContactForm] = useState({ name: "", email: "", phone: "", message: "" });
   const [contactSent, setContactSent] = useState(false);
@@ -898,9 +898,9 @@ export default function Home() {
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontSize: 14, fontWeight: annual ? 700 : 400, color: annual ? OFF_WHITE : MUTED, transition: "color 0.2s" }}>Annual</span>
               <span style={{
-                background: annual ? "rgba(232,112,42,0.15)" : "rgba(245,240,235,0.06)",
-                color: annual ? ORANGE : MUTED,
-                border: `1px solid ${annual ? "rgba(232,112,42,0.3)" : "rgba(245,240,235,0.1)"}`,
+                background: annual ? "rgba(34,197,94,0.12)" : "rgba(245,240,235,0.06)",
+                color: annual ? "#22c55e" : MUTED,
+                border: `1px solid ${annual ? "rgba(34,197,94,0.3)" : "rgba(245,240,235,0.1)"}`,
                 borderRadius: 100,
                 fontSize: 11,
                 fontWeight: 700,
@@ -977,7 +977,7 @@ export default function Home() {
                       <span style={{ fontSize: 14, fontWeight: 500, color: MUTED }}>/mo</span>
                     </div>
                     {annual ? (
-                      <div style={{ fontSize: 11, color: ORANGE, marginTop: 2 }}>
+                      <div style={{ fontSize: 11, color: "#22c55e", marginTop: 2 }}>
                         Billed ${plan.annualTotal.toLocaleString()}/yr · save ${saving.toLocaleString()}
                       </div>
                     ) : (
@@ -991,10 +991,17 @@ export default function Home() {
                 </ul>
                 <button
                   className={plan.featured ? "lp-btn-primary" : "lp-btn-ghost"}
-                  style={{ width: "100%", marginTop: 20, fontSize: 15, padding: "14px" }}
+                  style={{ width: "100%", marginTop: 20, fontSize: 15, padding: "14px", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
                   onClick={openModal}
                 >
-                  {annual ? "Get started — save $" + saving.toLocaleString() : "Get started"}
+                  {annual ? (
+                    <>
+                      Get started
+                      <span style={{ background: "rgba(34,197,94,0.2)", color: "#22c55e", fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 100, letterSpacing: "0.04em" }}>
+                        save ${saving.toLocaleString()}
+                      </span>
+                    </>
+                  ) : "Get started"}
                 </button>
               </div>
             );

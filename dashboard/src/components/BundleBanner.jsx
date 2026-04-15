@@ -1,14 +1,11 @@
 import { useState } from "react";
-
 const ORANGE = "#E8702A";
 const MUTED = "#8A8480";
-
 export function BundleBanner({ onGetStarted }) {
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
-
   return (
-    <div style={{ background:"linear-gradient(135deg,rgba(232,112,42,0.15),rgba(232,112,42,0.08))", borderBottom:"1px solid rgba(232,112,42,0.25)", padding:"10px 20px", fontFamily:"'DM Sans',sans-serif", position:"relative", zIndex:600 }}>
+    <div style={{ background:"linear-gradient(135deg,rgba(232,112,42,0.15),rgba(232,112,42,0.08))", borderBottom:"1px solid rgba(232,112,42,0.25)", padding:"10px 20px", fontFamily:"'DM Sans',sans-serif", position:"relative", zIndex:40 }}>
       <div style={{ maxWidth:480, margin:"0 auto", display:"flex", alignItems:"center", justifyContent:"space-between", gap:12 }}>
         <div style={{ display:"flex", alignItems:"center", gap:10, flex:1, minWidth:0 }}>
           <span style={{ fontSize:14, flexShrink:0 }}>🔥</span>

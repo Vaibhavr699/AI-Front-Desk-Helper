@@ -5,6 +5,7 @@ import { useToast } from "../components/ui/Toast";
 import { useRef } from "react";
 import { getUsage, getTenants, getUser } from "../api";
 import { Header, Sidebar } from "../components";
+import AICoachWidget from "../components/AICoachWidget";
 import { AlertTriangle } from "lucide-react";
 
 const TENANT_STORAGE_KEY = "tenantId";
@@ -266,7 +267,8 @@ export default function DashboardLayout() {
         </main>
       </div>
 
-      {tenantId !== "all" && <ChatWidget tenantId={tenantId} />}
+    {tenantId !== "all" && <ChatWidget tenantId={tenantId} />}
+{!isSuspended && user?.role !== "staff" && <AICoachWidget />}
 
       <CookieConsent
         location="bottom"

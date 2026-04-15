@@ -422,7 +422,7 @@ export default function Home() {
     };
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
-  }, [scrollTriggerDismissed]);
+  }, []);
 
   const plans = [
     {
@@ -471,7 +471,6 @@ export default function Home() {
       <div style={{ position: "relative", zIndex: 100 }}>
   <NavBar items={NAV_ITEMS} />
 </div>
-      <SiteFooter onGetStarted={handleGetStarted} />
 
       <main className="flex-1">
 
@@ -785,7 +784,7 @@ export default function Home() {
       </main>
 
       {/* ── FOOTER ── */}
-      <SiteFooter />
+     <SiteFooter onGetStarted={handleGetStarted} />
 
       {/* ── STICKY BOTTOM CTA ── */}
       <AnimatePresence>

@@ -6,7 +6,7 @@ const CARD_DARK = "#1A1918";
 const OFF_WHITE = "#F5F0EB";
 const MUTED = "#8A8480";
 
-export function SiteFooter() {
+export function SiteFooter({ onGetStarted }) {
   return (
     <footer style={{ background: CARD_DARK, borderTop: "1px solid rgba(245,240,235,0.06)", fontFamily: "'DM Sans', sans-serif", padding: "48px 24px 32px" }}>
       <div style={{ maxWidth: 480, margin: "0 auto" }}>
@@ -28,24 +28,54 @@ export function SiteFooter() {
 
         {/* Links */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 0", marginBottom: 32 }}>
-          {[
-            { label: "Sign in", to: "/login" },
-            { label: "Start free", to: "/login?signup=1" },
-            { label: "Privacy Policy", to: "/privacy-policy" },
-            { label: "Terms of Service", to: "/terms" },
-            { label: "SMS Policy", to: "/sms-policy" },
-            { label: "Contact", to: "/contact" },
-          ].map((link, i) => (
-            <Link
-              key={i}
-              to={link.to}
-              style={{ fontSize: 13, color: MUTED, textDecoration: "none", padding: "4px 0", transition: "color 0.2s" }}
-              onMouseEnter={e => e.target.style.color = OFF_WHITE}
-              onMouseLeave={e => e.target.style.color = MUTED}
-            >
-              {link.label}
-            </Link>
-          ))}
+          <Link
+            to="/login"
+            style={{ fontSize: 13, color: MUTED, textDecoration: "none", padding: "4px 0", transition: "color 0.2s" }}
+            onMouseEnter={e => e.target.style.color = OFF_WHITE}
+            onMouseLeave={e => e.target.style.color = MUTED}
+          >
+            Sign in
+          </Link>
+          <button
+            onClick={onGetStarted}
+            style={{ fontSize: 13, color: MUTED, background: "none", border: "none", padding: "4px 0", textAlign: "left", cursor: "pointer", transition: "color 0.2s", fontFamily: "'DM Sans', sans-serif" }}
+            onMouseEnter={e => e.target.style.color = OFF_WHITE}
+            onMouseLeave={e => e.target.style.color = MUTED}
+          >
+            Start free
+          </button>
+          <Link
+            to="/privacy-policy"
+            style={{ fontSize: 13, color: MUTED, textDecoration: "none", padding: "4px 0", transition: "color 0.2s" }}
+            onMouseEnter={e => e.target.style.color = OFF_WHITE}
+            onMouseLeave={e => e.target.style.color = MUTED}
+          >
+            Privacy Policy
+          </Link>
+          <Link
+            to="/terms"
+            style={{ fontSize: 13, color: MUTED, textDecoration: "none", padding: "4px 0", transition: "color 0.2s" }}
+            onMouseEnter={e => e.target.style.color = OFF_WHITE}
+            onMouseLeave={e => e.target.style.color = MUTED}
+          >
+            Terms of Service
+          </Link>
+          <Link
+            to="/sms-terms"
+            style={{ fontSize: 13, color: MUTED, textDecoration: "none", padding: "4px 0", transition: "color 0.2s" }}
+            onMouseEnter={e => e.target.style.color = OFF_WHITE}
+            onMouseLeave={e => e.target.style.color = MUTED}
+          >
+            SMS Policy
+          </Link>
+          <Link
+            to="/contact"
+            style={{ fontSize: 13, color: MUTED, textDecoration: "none", padding: "4px 0", transition: "color 0.2s" }}
+            onMouseEnter={e => e.target.style.color = OFF_WHITE}
+            onMouseLeave={e => e.target.style.color = MUTED}
+          >
+            Contact
+          </Link>
         </div>
 
         {/* Divider */}
@@ -63,7 +93,7 @@ export function SiteFooter() {
             Consent is not required as a condition of purchase.{" "}
             <Link to="/privacy-policy" style={{ color: ORANGE, textDecoration: "none" }}>Privacy Policy</Link>
             {" · "}
-            <Link to="/sms-policy" style={{ color: ORANGE, textDecoration: "none" }}>SMS Policy</Link>
+            <Link to="/sms-terms" style={{ color: ORANGE, textDecoration: "none" }}>SMS Terms</Link>
           </p>
         </div>
 

@@ -333,10 +333,10 @@ export async function getRecordingAudioUrl(recordingId) {
 
 // ── Stripe ──
 
-export function createCheckout(tenantId, planId) {
+export function createCheckout(tenantId, planId, returnUrl, interval) {
   return api("/api/stripe/checkout", {
     method: "POST",
-    body: JSON.stringify({ tenant_id: tenantId, plan_id: planId, return_url: window.location.origin + "/plans" }),
+    body: JSON.stringify({ tenant_id: tenantId, plan_id: planId, return_url: returnUrl || window.location.origin + "/plans", interval }),
   });
 }
 

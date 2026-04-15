@@ -485,9 +485,11 @@ export default function Home() {
       </AnimatePresence>
 
       {/* Bundle banner + Header */}
-      <BundleBanner onCtaClick={handleGetStarted} />
-      <NavBar items={NAV_ITEMS} />
-      <SiteFooter onGetStarted={onGetStarted} />
+      <BundleBanner onGetStarted={handleGetStarted} />
+      <div style={{ position: "relative", zIndex: 100 }}>
+  <NavBar items={NAV_ITEMS} />
+</div>
+      <SiteFooter onGetStarted={handleGetStarted} />
 
       <main className="flex-1">
 

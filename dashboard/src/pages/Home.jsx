@@ -487,7 +487,7 @@ export default function Home() {
       {/* Bundle banner + Header */}
       <BundleBanner onCtaClick={handleGetStarted} />
       <NavBar items={NAV_ITEMS} />
-      <SiteHeader />
+      <SiteFooter onGetStarted={onGetStarted} />
 
       <main className="flex-1">
 

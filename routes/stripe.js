@@ -29,11 +29,11 @@ router.get("/config", async (req, res) => {
 router.post("/checkout", async (req, res) => {
     try {
         const tenant_id = getGuaranteedTenantId(req);
-        const { plan_id, return_url } = req.body || {};
-        if (!tenant_id) return res.status(400).json({ error: "tenant_id required" });
-        if (!plan_id) return res.status(400).json({ error: "plan_id required" });
+       const { plan_id, return_url, interval } = req.body || {};
+if (!tenant_id) return res.status(400).json({ error: "tenant_id required" });
+if (!plan_id) return res.status(400).json({ error: "plan_id required" });
 
-        const result = await createCheckoutSession(tenant_id, plan_id, return_url);
+const result = await createCheckoutSession(tenant_id, plan_id, return_url, interval);
         res.json(result);
     } catch (e) {
         console.error("[Stripe] Checkout error:", e.message);

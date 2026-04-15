@@ -417,6 +417,7 @@ app.use("/auth/google/calendar", require("./routes/google-calendar"));
 app.use("/api/google-calendar", authMiddleware, require("./routes/google-calendar"));
 app.use("/webhooks", require("./routes/webhooks"));
 app.use("/api/coaching", authMiddleware, require("./routes/coaching"));
+app.use("/api/ai-coach", authMiddleware, require("./routes/aicoach"));
 app.use("/api/reviews", require("./routes/reviews"));
 
 // Serve dashboard static assets early so JS/CSS/images load,

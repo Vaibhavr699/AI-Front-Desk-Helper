@@ -364,6 +364,23 @@ app.get("/api/public-tenant/:id", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+app.post("/api/contact", async (req, res) => {
+  const { name, email, message } = req.body || {};
+  if (!name || !email) {
+    return res.status(400).json({ error: "Name and email are required" });
+  }
+  try {
+    await emailService.sendContactEmail({
+      name,
+      email,
+      message: message || "",
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[Contact] Failed to send:", err.message);
+    res.status(500).json({ error: "Failed to send message. Please email drew@aifrontdeskhelper.com directly." });
+  }
+});
 app.use("/api/public", require("./routes/public"));
 app.use("/twilio", twilioRoutes);
 app.use("/api/webhooks", require("./routes/webhooks"));

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { getMetrics, getLeadsByTenant, getCalls, getBookings, getFollowups, getTeam, api } from "../api";
+import { getMetrics, getLeadsByTenant, api } from "../api";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const MODES = {
@@ -29,234 +29,75 @@ const COACHING_QUICK = [
 ];
 
 const MONTH_NAME = new Date().toLocaleString("default", { month: "long" });
-const YEAR = new Date().getFullYear();
-const NOW_MONTH = new Date().getMonth();
-const DAY_OF_MONTH = new Date().getDate();
-const DAYS_IN_MONTH = new Date(YEAR, NOW_MONTH + 1, 0).getDate();
+const YEAR       = new Date().getFullYear();
+const NOW_MONTH  = new Date().getMonth();
 
-// ── History storage helpers ────────────────────────────────────────────────
+// ── History helpers ────────────────────────────────────────────────────────
 function getHistoryKey(tenantId) { return `aicoach_history_${tenantId}`; }
 
 function loadHistory(tenantId) {
-  try {
-    const raw = localStorage.getItem(getHistoryKey(tenantId));
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+  try { return JSON.parse(localStorage.getItem(getHistoryKey(tenantId)) || "[]"); }
+  catch { return []; }
 }
 
 function saveSession(tenantId, session) {
   try {
-    const history = loadHistory(tenantId);
-    const existing = history.findIndex((s) => s.id === session.id);
-    const updated = existing >= 0
-      ? history.map((s, i) => (i === existing ? session : s))
-      : [session, ...history];
+    const all = loadHistory(tenantId);
+    const idx = all.findIndex((s) => s.id === session.id);
+    const updated = idx >= 0
+      ? all.map((s, i) => (i === idx ? session : s))
+      : [session, ...all];
     localStorage.setItem(getHistoryKey(tenantId), JSON.stringify(updated.slice(0, 20)));
   } catch {}
 }
 
-// ── Activity + team context builder ───────────────────────────────────────
-function buildActivityContext(activity) {
-  const { goals, metrics, calls, leads, bookings, followups, team } = activity;
-
-  // Goals
-  const monthRow = goals?.months?.find((m) => m.month === NOW_MONTH);
-  const monthGoal   = monthRow ? Math.round((monthRow.revenue_goal   || 0) / 100) : 0;
-  const monthActual = monthRow ? Math.round((monthRow.actual_revenue || 0) / 100) : 0;
-  const annualGoal  = goals?.annual_goal ? Math.round(goals.annual_goal / 100) : 0;
-  const pacePct     = monthGoal > 0 ? Math.round((monthActual / monthGoal) * 100) : null;
-  const expectedPct = Math.round((DAY_OF_MONTH / DAYS_IN_MONTH) * 100);
-
-  // Metrics
-  const calls30d      = metrics?.totals?.calls          || 0;
-  const bookingRate   = metrics?.totals?.booking_rate   || 0;
-  const closeRate     = metrics?.sales?.close_rate      || 0;
-  const avgJobValue   = metrics?.metrics?.ops?.avg_job_value || 0;
-  const openLeads     = metrics?.pipeline?.open_estimates    || 0;
-  const pipelineValue = metrics?.pipeline?.estimated_revenue
-    ? Math.round(metrics.pipeline.estimated_revenue / 100) : 0;
-  const hungUp   = metrics?.ai?.calls_hung_up  || 0;
-  const confused = metrics?.ai?.calls_confused || 0;
-  const todayCalls  = metrics?.today?.calls  || 0;
-  const todayBooked = metrics?.today?.booked || 0;
-
-  // Calls disposition breakdown
-  const callList = calls?.calls || (Array.isArray(calls) ? calls : []);
-  const dispositions = {};
-  callList.forEach((c) => {
-    const d = c.disposition || "unknown";
-    dispositions[d] = (dispositions[d] || 0) + 1;
-  });
-
-  // Leads breakdown
-  const leadList = Array.isArray(leads) ? leads : (leads?.leads || []);
-  const statuses = {};
-  let staleLeadCount = 0;
-  leadList.forEach((l) => {
-    const s = l.status || "unknown";
-    statuses[s] = (statuses[s] || 0) + 1;
-    const ref = l.last_contact_at || l.created_at;
-    if (ref && Math.floor((Date.now() - new Date(ref)) / 86400000) > 7) staleLeadCount++;
-  });
-
-  // Bookings breakdown
-  const bookingList   = bookings?.bookings || (Array.isArray(bookings) ? bookings : []);
-  const pendingCount  = bookingList.filter((b) => b.status === "Booked").length;
-  const confirmedCount = bookingList.filter((b) => b.status === "Confirmed").length;
-  const totalBookingValue = bookingList.reduce((s, b) => s + (b.estimated_revenue_cents || 0), 0) / 100;
-
-  // Follow-ups
-  const followupList    = followups?.followups || (Array.isArray(followups) ? followups : []);
-  const overdueCount    = followupList.filter((f) => f.status === "pending" && new Date(f.due_at || f.scheduled_at) < new Date()).length;
-  const pendingFollowups = followupList.filter((f) => f.status === "pending").length;
-
-  // Team members
-  const teamList = team?.members || team?.team || (Array.isArray(team) ? team : []);
-  const teamSummary = teamList.length > 0
-    ? teamList.map((m) => {
-        const role  = m.role  || "staff";
-        const name  = m.name  || m.email || "Unknown";
-        const email = m.email || "";
-        return `  • ${name} (${role})${email ? ` — ${email}` : ""}`;
-      }).join("\n")
-    : "  No team members found — owner handling everything";
-
-  return `
-═══════════════════════════════════════
-LIVE BUSINESS INTELLIGENCE — ${MONTH_NAME.toUpperCase()} ${YEAR}
-═══════════════════════════════════════
-
-REVENUE GOALS:
-- Monthly goal:   ${monthGoal > 0   ? `$${monthGoal.toLocaleString()}`   : "NOT SET ⚠️"}
-- Monthly actual: ${monthActual > 0 ? `$${monthActual.toLocaleString()}` : "$0"}
-- Pace: ${pacePct !== null ? `${pacePct}% achieved vs ${expectedPct}% expected — ${pacePct >= expectedPct ? "AHEAD ✅" : `BEHIND ⚠️ (gap: $${(monthGoal - monthActual).toLocaleString()})`}` : "No goal set"}
-- Annual goal: ${annualGoal > 0 ? `$${annualGoal.toLocaleString()}` : "NOT SET"}
-- Open pipeline value: ${pipelineValue > 0 ? `$${pipelineValue.toLocaleString()}` : "$0"}
-
-CALL PERFORMANCE (30d):
-- Total calls:  ${calls30d}
-- Booking rate: ${bookingRate}%${bookingRate >= 50 ? " — ELITE ✅" : bookingRate >= 35 ? " — GOOD" : bookingRate > 0 ? " — BELOW TARGET ⚠️ (industry avg 25-35%)" : ""}
-- Close rate:   ${closeRate}%${closeRate >= 50 ? " — ELITE ✅" : closeRate >= 35 ? " — GOOD" : closeRate > 0 ? " — BELOW TARGET ⚠️ (industry avg 35-50%)" : ""}
-- Avg job value: ${avgJobValue > 0 ? `$${avgJobValue.toLocaleString()}` : "unknown"}
-- Hung-up calls: ${hungUp}${hungUp > 5 ? " ⚠️ HIGH — review AI script" : ""}
-- Confused calls: ${confused}${confused > 5 ? " ⚠️ — update FAQ/instructions" : ""}
-- Today: ${todayCalls} calls, ${todayBooked} booked
-${Object.keys(dispositions).length > 0 ? `- Dispositions: ${Object.entries(dispositions).map(([k, v]) => `${k}(${v})`).join(", ")}` : ""}
-
-LEADS PIPELINE:
-- Open estimates: ${openLeads}
-- Stale leads (7d+ no contact): ${staleLeadCount}${staleLeadCount > 3 ? " ⚠️ FOLLOW UP NOW" : ""}
-${Object.keys(statuses).length > 0 ? `- Status breakdown: ${Object.entries(statuses).map(([k, v]) => `${k}(${v})`).join(", ")}` : ""}
-
-BOOKINGS:
-- Pending/unconfirmed: ${pendingCount}
-- Confirmed: ${confirmedCount}
-- Total value in system: ${totalBookingValue > 0 ? `$${totalBookingValue.toLocaleString()}` : "$0"}
-
-FOLLOW-UP PIPELINE:
-- Pending follow-ups: ${pendingFollowups}
-- OVERDUE follow-ups: ${overdueCount}${overdueCount > 0 ? " 🚨 URGENT — revenue sitting on table" : " ✅ all current"}
-
-TEAM ROSTER (${teamList.length} member${teamList.length !== 1 ? "s" : ""}):
-${teamSummary}
-═══════════════════════════════════════`;
-}
-
-// ── Elite coaching system prompt ───────────────────────────────────────────
-function buildCoachingPrompt(level, activity, memory) {
-  const activityCtx = activity ? buildActivityContext(activity) : "";
-  const memCtx = memory.length
-    ? `\n\nCOACHING SESSION MEMORY:\n${memory.map((m) => `- ${m}`).join("\n")}`
-    : "";
-
-  const tierGuidance = {
-    Starter: `
-TIER: STARTER — Owner doing most things alone, early growth stage.
-- Primary focus: Speed-to-lead, AI automation wins, booking rate above 40%
-- Leadership focus: Owner needs to stop being the bottleneck. Document everything.
-- Key message: Fix your front door BEFORE you hire. A broken process times two reps = disaster.
-- Sales focus: Script consistency, follow-up cadence, first 3 objections handled perfectly.`,
-    Growth: `
-TIER: GROWTH — Small team, scaling revenue, building systems.
-- Primary focus: Close rate by lead source, estimate recovery, delegating effectively
-- Leadership focus: Weekly accountability rhythms, scoreboard visibility for every rep
-- Key message: Revenue shouldn't depend on the owner being on every call. Build that now.
-- Sales focus: Rep performance gaps, pipeline velocity, upsell adoption, referral system.`,
-    Franchise: `
-TIER: FRANCHISE — Multi-location or franchise-ready operator.
-- Primary focus: HQ rollup benchmarking, white-label, location-by-location KPIs
-- Leadership focus: Location manager accountability, franchise playbook, culture at scale
-- Key message: You can't franchise chaos. Systemize EVERYTHING before opening location 2.
-- Sales focus: Cross-location close rate benchmarking, best practice sharing, centralized lead routing.`,
-  };
-
-  return `You are an elite business performance coach and sales trainer embedded inside AI Front Desk Helper. You specialize in scaling home service businesses — painting, roofing, HVAC, plumbing — from $300K to $3M+ in annual revenue.
-
-Your coaching DNA combines:
-— Alex Hormozi: ruthless offer optimization, lead gen ROI, business systems thinking
-— Grant Cardone: relentless sales energy, closing mindset, 10x urgency
-— Verne Harnish (Scaling Up): team accountability rhythms, OKRs, meeting cadence
-— Marcus Lemonis (3Ps): People, Process, Product diagnostic framework
-— Home service industry depth: real benchmarks, seasonal patterns, contractor psychology
-${tierGuidance[level] || tierGuidance["Growth"]}
-
-YOUR COACHING FRAMEWORK — apply this structure in every response:
-1. DIAGNOSE FIRST — identify the #1 constraint the data reveals. Don't dance around it.
-2. QUANTIFY IN DOLLARS — convert every problem to a dollar amount ("that's $X/month in lost revenue")
-3. PRESCRIBE SPECIFICALLY — give 1-3 concrete tactics, not generic advice
-4. CHALLENGE HARD — push them to think bigger and move faster. Comfort = danger.
-5. COMMIT TO ACTION — end with ONE specific thing they can do in the next 24 hours
-
-SALES MASTERY PILLARS (reference when coaching sales):
-- Speed to Lead: Sub-5 min response = 9x more likely to close. Every minute costs money.
-- Booking Rate: Industry avg 25-35%. Below 35% = script/AI problem. Above 50% = elite.
-- Close Rate (estimate to signed job): Industry avg 35-50%. Track separately by lead source.
-- Average Job Value: Most owners undercharge 20-30%. One upsell question = 15-25% revenue lift.
-- Follow-up Cadence: 80% of sales happen on follow-ups 5-12. Most businesses quit at 1-2.
-- Objection Handling: Price objections = value hasn't landed yet. Never discount first. Reframe first.
-- Referral Rate: Every completed job should generate 0.3-0.5 referrals. If not, you're leaving millions behind.
-
-TEAM LEADERSHIP PILLARS (reference for team/management questions):
-- Morning Huddle: 15 min daily. Numbers on screen. Wins celebrated. Blockers surfaced.
-- Scoreboard Visibility: Every rep sees their booking rate, close rate, and avg job value daily.
-- Accountability Rhythm: Weekly 10-min 1:1s, monthly reviews, quarterly goal-setting.
-- Performance Coaching: Celebrate wins loudly and publicly. Coach losses privately and specifically.
-- Pipeline Review: Weekly 30-min deep-dive on stuck deals and stale estimates.
-- Rep Onboarding: New reps shadow 10 live calls before taking their own. Zero exceptions.
-- Firing Fast: A-players leave when you keep C-players. Don't let one person poison the well.
-
-GROWTH ACCELERATION PILLARS:
-- Lead Source ROI: Know cost per booked job by channel. Kill losers. Double winners.
-- Upsell/Cross-sell: Every booked interior = ask about exterior, garage, deck. Every. Single. Time.
-- Referral Engine: Follow-up within 48 hours of job completion asking for a referral.
-- Seasonal Planning: Jan-Feb = invest in marketing. Mar-Sep = execute flawlessly. Oct-Dec = plan next year.
-- Process Documentation: If you can't explain your process in a 1-page SOP, you can't scale it.
-- Franchise Readiness: You need 3 profitable locations before franchising. Systemize first.
-
-INDUSTRY BENCHMARKS (use to contextualize the owner's numbers):
-- Elite booking rate: 50%+ | Good: 35-50% | Below target: <35%
-- Elite close rate: 55%+ | Good: 40-55% | Below target: <40%
-- Elite avg job value (painting): $4,000+ | Good: $2,500-4,000 | Below: <$2,500
-- Speed to lead: <5 min = 9x conversion | >1 hour = near zero
-- Referral rate: 0.5+ per job = strong | <0.2 = broken referral system
-- Follow-up attempts: Winners make 8-12 attempts. Average companies make 1-2.
-- Team size at $1M revenue: 2-3 reps + 1 manager. At $3M: 5-7 reps + 2 managers.
-
-TONE: Direct. Confident. Challenging. You care deeply about their success which is WHY you tell them hard truths. You don't coddle. You don't give generic advice. You look at their actual numbers and call out what's broken. Every response ends with a specific 24-hour action the owner can take today.
-${activityCtx}${memCtx}`;
-}
-
-// ── Nurture prompt ─────────────────────────────────────────────────────────
+// ── Nurture system prompt ──────────────────────────────────────────────────
 function buildNurturePrompt(contact, memory) {
   const memCtx = memory.length
     ? `\n\nSession memory:\n${memory.map((m) => `- ${m}`).join("\n")}`
     : "";
   return `You are an AI contact nurturing specialist for home service contractors inside AI Front Desk Helper.
 ${contact ? `\nActive contact: ${contact.name} | Stage: ${contact.stage} | Est. Value: ${contact.value} | Days since contact: ${contact.days} | Lead source: ${contact.source}` : ""}
-Write specific, human, conversion-focused outreach (texts, emails, or voicemail scripts). Short, warm, action-oriented. Reference the contact's stage and source. Never robotic. Always a clear next step.${memCtx}`;
+Write specific, human, conversion-focused outreach (texts, emails, or voicemail scripts). Short, warm, action-oriented. Reference the contact's stage and source. Never robotic. Always include a clear next step.${memCtx}`;
 }
 
-// ── OpenAI streaming call via backend proxy ────────────────────────────────
+// ── Typewriter helper — simulates streaming for non-streaming responses ────
+async function typewrite(text, onChunk, delayMs = 8) {
+  let current = "";
+  for (const char of text) {
+    current += char;
+    onChunk(current);
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return text;
+}
+
+// ── Coaching call — uses existing /api/coaching/chat (rich DB context) ─────
+async function callCoach(message, history, tenantId, onChunk) {
+  const token = localStorage.getItem("token");
+  const res = await fetch(
+    `/api/coaching/chat?tenant_id=${tenantId}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        message,
+        conversation_history: history.map((m) => ({ role: m.role, content: m.content })),
+      }),
+    }
+  );
+  if (!res.ok) throw new Error(`Coach error: ${res.status}`);
+  const data = await res.json();
+  const reply = data.reply || "No response received.";
+  // Typewrite the reply for a streaming-like feel
+  await typewrite(reply, onChunk, 6);
+  return reply;
+}
+
+// ── Nurture call — uses /api/ai-coach (true streaming) ────────────────────
 async function callAI(messages, systemPrompt, onChunk) {
   const token = localStorage.getItem("token");
   const res = await fetch("/api/ai-coach", {
@@ -269,7 +110,7 @@ async function callAI(messages, systemPrompt, onChunk) {
   });
   if (!res.ok) throw new Error(`AI service error: ${res.status}`);
 
-  const reader = res.body.getReader();
+  const reader  = res.body.getReader();
   const decoder = new TextDecoder();
   let full = "";
   while (true) {
@@ -290,21 +131,24 @@ async function callAI(messages, systemPrompt, onChunk) {
 
 // ── Main Widget ────────────────────────────────────────────────────────────
 export default function AICoachWidget({ tenantId }) {
-  const [open, setOpen]           = useState(false);
-  const [mode, setMode]           = useState("nurture");
+  const [open, setOpen]             = useState(false);
+  const [mode, setMode]             = useState("nurture");
   const [coachLevel, setCoachLevel] = useState("Growth");
 
-  // Nurture state
+  // Nurture
   const [contacts, setContacts]               = useState([]);
   const [contactsLoading, setContactsLoading] = useState(false);
   const [selectedContact, setSelectedContact] = useState(null);
   const [showContacts, setShowContacts]       = useState(false);
 
-  // Coaching activity context
-  const [activity, setActivity]           = useState(null);
-  const [activityLoading, setActivityLoading] = useState(false);
+  // Metrics for data bar (lightweight)
+  const [metrics, setMetrics]           = useState(null);
+  const [metricsLoading, setMetricsLoading] = useState(false);
 
-  // Chat state
+  // Goals for data bar
+  const [goals, setGoals]     = useState(null);
+
+  // Chat
   const [messages, setMessages]     = useState([]);
   const [input, setInput]           = useState("");
   const [loading, setLoading]       = useState(false);
@@ -312,11 +156,11 @@ export default function AICoachWidget({ tenantId }) {
   const [memory, setMemory]         = useState([]);
   const [sessionId]                 = useState(() => `session_${Date.now()}`);
 
-  // History state
-  const [history, setHistory]             = useState([]);
+  // History
+  const [history, setHistory]               = useState([]);
   const [selectedSession, setSelectedSession] = useState(null);
 
-  // UI overlays
+  // UI
   const [showMemory, setShowMemory] = useState(false);
 
   const bottomRef = useRef(null);
@@ -327,7 +171,7 @@ export default function AICoachWidget({ tenantId }) {
     if (tenantId) setHistory(loadHistory(tenantId));
   }, [tenantId]);
 
-  // ── Fetch leads for Nurture mode ─────────────────────────────────────
+  // ── Fetch leads for Nurture ──────────────────────────────────────────
   useEffect(() => {
     if (!tenantId || tenantId === "all") return;
     setContactsLoading(true);
@@ -354,36 +198,31 @@ export default function AICoachWidget({ tenantId }) {
       .finally(() => setContactsLoading(false));
   }, [tenantId]);
 
-  // ── Fetch ALL activity + team for Coaching mode ───────────────────────
+  // ── Fetch metrics + goals for data bar when coaching mode opens ───────
   useEffect(() => {
     if (!tenantId || tenantId === "all" || mode !== "coaching") return;
-    setActivityLoading(true);
+    setMetricsLoading(true);
     Promise.all([
-      api(`/api/coaching/annual?year=${YEAR}&tenant_id=${tenantId}`).catch(() => null),
       getMetrics(tenantId, "30d").catch(() => null),
-      getCalls(tenantId, { limit: 20 }).catch(() => null),
-      getLeadsByTenant(tenantId, 20, 0).catch(() => null),
-      getBookings(tenantId, { limit: 20 }).catch(() => null),
-      getFollowups(tenantId).catch(() => null),
-      getTeam(tenantId).catch(() => null),
-    ]).then(([goals, metrics, calls, leads, bookings, followups, team]) => {
-      setActivity({ goals, metrics, calls, leads, bookings, followups, team });
-    }).finally(() => setActivityLoading(false));
+      api(`/api/coaching/annual?year=${YEAR}&tenant_id=${tenantId}`).catch(() => null),
+    ]).then(([m, g]) => {
+      setMetrics(m);
+      setGoals(g);
+    }).finally(() => setMetricsLoading(false));
   }, [tenantId, mode]);
 
-  // ── Auto-save session on every new message ───────────────────────────
+  // ── Auto-save session ────────────────────────────────────────────────
   useEffect(() => {
     if (!tenantId || messages.length < 2) return;
-    const session = {
-      id:       sessionId,
-      date:     new Date().toLocaleDateString(),
+    saveSession(tenantId, {
+      id:        sessionId,
+      date:      new Date().toLocaleDateString(),
       timestamp: Date.now(),
       mode,
-      level:    coachLevel,
-      preview:  messages.find((m) => m.role === "user")?.content?.slice(0, 80) || "",
+      level:     coachLevel,
+      preview:   messages.find((m) => m.role === "user")?.content?.slice(0, 80) || "",
       messages,
-    };
-    saveSession(tenantId, session);
+    });
     setHistory(loadHistory(tenantId));
   }, [messages]);
 
@@ -393,7 +232,7 @@ export default function AICoachWidget({ tenantId }) {
 
   const reset = () => { setMessages([]); setStreamText(""); setSelectedSession(null); };
 
-  // ── Send message ─────────────────────────────────────────────────────
+  // ── Send ──────────────────────────────────────────────────────────────
   const send = useCallback(async (text) => {
     const userText = text || input.trim();
     if (!userText || loading) return;
@@ -401,27 +240,38 @@ export default function AICoachWidget({ tenantId }) {
     setLoading(true);
     setStreamText("");
 
-    const userMsg    = { role: "user", content: userText };
+    const userMsg     = { role: "user", content: userText };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
 
-    const systemPrompt = mode === "nurture"
-      ? buildNurturePrompt(selectedContact, memory)
-      : buildCoachingPrompt(coachLevel, activity, memory);
-
     try {
-      const full = await callAI(
-        newMessages.map((m) => ({ role: m.role, content: m.content })),
-        systemPrompt,
-        (partial) => setStreamText(partial)
-      );
+      let full = "";
+
+      if (mode === "coaching") {
+        // Use the existing coaching endpoint — it has full DB context
+        full = await callCoach(
+          userText,
+          messages, // conversation history (excludes latest user msg — coaching.js appends it)
+          tenantId,
+          (partial) => setStreamText(partial)
+        );
+      } else {
+        // Nurture mode — use streaming AI with contact context
+        full = await callAI(
+          newMessages.map((m) => ({ role: m.role, content: m.content })),
+          buildNurturePrompt(selectedContact, memory),
+          (partial) => setStreamText(partial)
+        );
+      }
+
       setStreamText("");
       setMessages((prev) => [...prev, { role: "assistant", content: full }]);
       setMemory((prev) => [
         `[${mode}/${coachLevel}] ${full.slice(0, 120).replace(/\n/g, " ")}…`,
         ...prev.slice(0, 9),
       ]);
-    } catch {
+    } catch (err) {
+      console.error("[AICoachWidget] send error:", err);
       setStreamText("");
       setMessages((prev) => [
         ...prev,
@@ -429,21 +279,15 @@ export default function AICoachWidget({ tenantId }) {
       ]);
     }
     setLoading(false);
-  }, [input, loading, messages, mode, coachLevel, selectedContact, activity, memory]);
+  }, [input, loading, messages, mode, coachLevel, selectedContact, tenantId, memory]);
 
-  // ── Derived context bar values ────────────────────────────────────────
-  const monthRow    = activity?.goals?.months?.find((m) => m.month === NOW_MONTH);
+  // ── Data bar values ───────────────────────────────────────────────────
+  const monthRow    = goals?.months?.find((m) => m.month === NOW_MONTH);
   const monthGoal   = monthRow ? Math.round((monthRow.revenue_goal   || 0) / 100) : 0;
   const monthActual = monthRow ? Math.round((monthRow.actual_revenue || 0) / 100) : 0;
-  const bookingRate = activity?.metrics?.totals?.booking_rate    || 0;
-  const closeRate   = activity?.metrics?.sales?.close_rate       || 0;
-  const openLeadsCount = activity?.metrics?.pipeline?.open_estimates || 0;
-  const followupList   = activity?.followups?.followups || (Array.isArray(activity?.followups) ? activity?.followups : []);
-  const overdueCount   = followupList.filter(
-    (f) => f.status === "pending" && new Date(f.due_at || f.scheduled_at) < new Date()
-  ).length;
-  const teamList  = activity?.team?.members || activity?.team?.team || (Array.isArray(activity?.team) ? activity?.team : []);
-  const teamCount = teamList.length;
+  const bookingRate = metrics?.totals?.booking_rate    || 0;
+  const closeRate   = metrics?.sales?.close_rate       || 0;
+  const openLeads   = metrics?.pipeline?.open_estimates || 0;
 
   const stageDot = (s) =>
     s === "booked" ? "#22c55e" : s === "estimate_sent" ? "#f59e0b" : "#6b7280";
@@ -490,7 +334,6 @@ export default function AICoachWidget({ tenantId }) {
         .aiw-stv{font-size:12px;font-weight:700;color:#e5e7eb;margin-top:1px;}
         .aiw-stv.warn{color:#ef4444;}
         .aiw-stv.good{color:#22c55e;}
-        .aiw-stv.info{color:#818cf8;}
         .aiw-msgs{flex:1;overflow-y:auto;padding:12px 13px 6px;display:flex;flex-direction:column;gap:9px;min-height:0;}
         .aiw-msgs::-webkit-scrollbar{width:2px;}
         .aiw-msgs::-webkit-scrollbar-thumb{background:#2a2a3e;border-radius:2px;}
@@ -530,7 +373,6 @@ export default function AICoachWidget({ tenantId }) {
         .aiw-hisdate{font-size:9px;color:#4b5563;font-family:'DM Mono',monospace;letter-spacing:.05em;}
         .aiw-hisprev{font-size:11px;color:#9ca3af;margin-top:3px;line-height:1.4;font-family:'DM Mono',monospace;}
         .aiw-hisbadge{display:inline-flex;align-items:center;gap:4px;margin-top:5px;font-size:9px;font-family:'Syne',sans-serif;font-weight:700;padding:2px 7px;border-radius:20px;background:#1c1007;color:#f59e0b;border:1px solid #2a2a3e;}
-        .aiw-alert{background:#1f0a0a;border:1px solid #7f1d1d;border-radius:8px;padding:7px 10px;font-size:11px;color:#fca5a5;font-family:'DM Mono',monospace;display:flex;align-items:center;gap:6px;}
         .aiw-inp{padding:9px 12px 13px;border-top:1px solid #1e1e2e;background:#0d0d14;flex-shrink:0;}
         .aiw-ir{display:flex;gap:6px;align-items:flex-end;}
         .aiw-ta{flex:1;background:#1a1a28;border:1.5px solid #2a2a3e;border-radius:10px;padding:8px 12px;color:#e5e7eb;font-size:12px;font-family:'DM Mono',monospace;resize:none;max-height:90px;min-height:38px;line-height:1.5;transition:border-color .15s;outline:none;}
@@ -542,17 +384,16 @@ export default function AICoachWidget({ tenantId }) {
         .aiw-pw{text-align:center;font-size:9px;color:#1f2937;margin-top:4px;letter-spacing:.06em;font-family:'DM Mono',monospace;}
       `}</style>
 
-      {/* ── FAB ─────────────────────────────────────────────────────────── */}
+      {/* FAB */}
       {!open && (
         <div className="aiw aiw-fab-wrap">
           <div style={{ position: "relative" }}>
             <button className="aiw-fab" onClick={() => setOpen(true)}>🤖</button>
-            {overdueCount > 0 && <div className="aiw-badge">{overdueCount}</div>}
+            <div className="aiw-badge">AI</div>
           </div>
         </div>
       )}
 
-      {/* ── Panel ───────────────────────────────────────────────────────── */}
       <div className={`aiw aiw-panel ${open ? "open" : ""}`}>
 
         {/* Memory overlay */}
@@ -572,7 +413,7 @@ export default function AICoachWidget({ tenantId }) {
           </div>
         )}
 
-        {/* Contact selector overlay */}
+        {/* Contact selector */}
         {showContacts && (
           <div className="aiw-ov">
             <div className="aiw-ovh">
@@ -603,7 +444,7 @@ export default function AICoachWidget({ tenantId }) {
           </div>
         )}
 
-        {/* History session overlay */}
+        {/* History session viewer */}
         {selectedSession && (
           <div className="aiw-ov">
             <div className="aiw-ovh">
@@ -614,7 +455,7 @@ export default function AICoachWidget({ tenantId }) {
               {selectedSession.messages.map((m, i) => (
                 <div key={i} className={`aiw-bw ${m.role}`}>
                   <div className={`aiw-b ${m.role}`}>{m.content}</div>
-                  <div className="aiw-bm">{m.role === "user" ? "You" : "AI Coach"}</div>
+                  <div className="aiw-bm">{m.role === "user" ? "You" : "Alex · AI Coach"}</div>
                 </div>
               ))}
             </div>
@@ -672,7 +513,7 @@ export default function AICoachWidget({ tenantId }) {
         {/* Live data bar — coaching only */}
         {mode === "coaching" && (
           <div className="aiw-databar">
-            {activityLoading ? (
+            {metricsLoading ? (
               <div className="aiw-stl" style={{ alignSelf: "center" }}>Loading intel…</div>
             ) : (
               <>
@@ -702,40 +543,28 @@ export default function AICoachWidget({ tenantId }) {
                     <div className={`aiw-stv ${closeRate >= 50 ? "good" : closeRate < 35 ? "warn" : ""}`}>{closeRate}%</div>
                   </div>
                 )}
-                {openLeadsCount > 0 && (
+                {openLeads > 0 && (
                   <div className="aiw-stat">
                     <div className="aiw-stl">Open Est.</div>
-                    <div className="aiw-stv">{openLeadsCount}</div>
-                  </div>
-                )}
-                {overdueCount > 0 && (
-                  <div className="aiw-stat">
-                    <div className="aiw-stl">Overdue F/U</div>
-                    <div className="aiw-stv warn">{overdueCount} 🚨</div>
-                  </div>
-                )}
-                {teamCount > 0 && (
-                  <div className="aiw-stat">
-                    <div className="aiw-stl">Team</div>
-                    <div className="aiw-stv info">{teamCount} 👥</div>
+                    <div className="aiw-stv">{openLeads}</div>
                   </div>
                 )}
                 {!monthGoal && !bookingRate && !closeRate && (
-                  <div className="aiw-stl" style={{ alignSelf: "center" }}>No data yet — set goals in Metrics</div>
+                  <div className="aiw-stl" style={{ alignSelf: "center" }}>Set goals in Metrics to unlock full coaching</div>
                 )}
               </>
             )}
           </div>
         )}
 
-        {/* ── History tab content ── */}
+        {/* History tab */}
         {mode === "history" ? (
           <div className="aiw-msgs">
             {history.length === 0 ? (
               <div className="aiw-empty">
                 <div className="aiw-ei">📋</div>
                 <div className="aiw-et">No sessions yet</div>
-                <div className="aiw-es">Your coaching sessions save here automatically. Switch to Coach tab to get started.</div>
+                <div className="aiw-es">Your coaching sessions save here automatically.</div>
               </div>
             ) : (
               history.map((session) => (
@@ -744,7 +573,7 @@ export default function AICoachWidget({ tenantId }) {
                   <div className="aiw-hisprev">{session.preview || "Session started"}</div>
                   <div>
                     <span className="aiw-hisbadge">
-                      {session.mode === "nurture" ? "🌱" : "🏆"} {session.mode} {session.level ? `· ${session.level}` : ""}
+                      {session.mode === "nurture" ? "🌱" : "🏆"} {session.mode}{session.level ? ` · ${session.level}` : ""}
                     </span>
                   </div>
                 </div>
@@ -752,26 +581,20 @@ export default function AICoachWidget({ tenantId }) {
             )}
           </div>
         ) : (
-          /* ── Chat content ── */
+          /* Chat */
           <div className="aiw-msgs">
-            {mode === "coaching" && overdueCount > 0 && messages.length === 0 && (
-              <div className="aiw-alert">
-                🚨 {overdueCount} overdue follow-up{overdueCount > 1 ? "s" : ""} — ask your coach what to prioritize
-              </div>
-            )}
-
             {messages.length === 0 && !streamText ? (
               <div className="aiw-empty">
                 <div className="aiw-ei">{MODES[mode].icon}</div>
                 <div className="aiw-et">
                   {mode === "nurture"
                     ? selectedContact ? `Nurturing ${selectedContact.name}` : "Select a lead to start"
-                    : `${coachLevel} Performance Coach`}
+                    : "Alex · Your Revenue Coach"}
                 </div>
                 <div className="aiw-es">
                   {mode === "nurture"
                     ? "AI-powered outreach for your pipeline."
-                    : `Elite coaching powered by your live data.\nTeam of ${teamCount > 0 ? teamCount : "?"} · Direct, data-driven, results-focused.`}
+                    : "Direct, data-driven coaching powered by\nyour live goals, pipeline & team activity."}
                 </div>
                 <div className="aiw-qg">
                   {(mode === "nurture" ? NURTURE_QUICK : COACHING_QUICK).map((a) => (
@@ -784,7 +607,7 @@ export default function AICoachWidget({ tenantId }) {
                 {messages.map((m, i) => (
                   <div key={i} className={`aiw-bw ${m.role}`}>
                     <div className={`aiw-b ${m.role}`}>{m.content}</div>
-                    <div className="aiw-bm">{m.role === "user" ? "You" : "AI Coach"}</div>
+                    <div className="aiw-bm">{m.role === "user" ? "You" : mode === "coaching" ? "Alex · AI Coach" : "AI"}</div>
                   </div>
                 ))}
                 {streamText && (
@@ -800,14 +623,14 @@ export default function AICoachWidget({ tenantId }) {
           </div>
         )}
 
-        {/* Input — coaching and nurture only */}
+        {/* Input */}
         {mode !== "history" && (
           <div className="aiw-inp">
             <div className="aiw-ir">
               <textarea
                 ref={inputRef}
                 className="aiw-ta"
-                placeholder={mode === "nurture" ? "Draft a message for this lead…" : "Ask your coach anything…"}
+                placeholder={mode === "nurture" ? "Draft a message for this lead…" : "Ask Alex anything…"}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}

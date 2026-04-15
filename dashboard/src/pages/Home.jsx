@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { SiteHeader, SmsConsentModal } from "../components/SiteHeader";
+import { SmsConsentModal } from "../components/SiteHeader";
 import { SiteFooter } from "../components/SiteFooter";
 import { ContactModal } from "../components/ContactModal";
 
@@ -195,6 +195,140 @@ const pageStyle = `
   }
   .lp-star-row { color: #FBBC04; font-size: 16px; letter-spacing: 2px; }
 
+  /* LANDING NAV */
+  .lp-nav {
+    position: sticky;
+    top: 0;
+    z-index: 500;
+    background: rgba(17,16,16,0.94);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(245,240,235,0.06);
+    font-family: 'DM Sans', sans-serif;
+  }
+  .lp-nav-inner {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 20px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .lp-nav-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+    flex-shrink: 0;
+  }
+  .lp-nav-logo-icon {
+    width: 36px; height: 36px;
+    background: #F5F0EB;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden; padding: 3px;
+  }
+  .lp-nav-logo-name {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+    color: #F5F0EB;
+    line-height: 1.2;
+  }
+
+  /* Desktop nav links */
+  .lp-nav-links {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    justify-content: center;
+  }
+  .lp-nav-link {
+    font-size: 13px;
+    font-weight: 500;
+    color: rgba(245,240,235,0.65);
+    text-decoration: none;
+    padding: 7px 12px;
+    border-radius: 6px;
+    transition: color 0.15s, background 0.15s;
+    white-space: nowrap;
+  }
+  .lp-nav-link:hover {
+    color: #F5F0EB;
+    background: rgba(245,240,235,0.06);
+  }
+
+  /* Nav actions */
+  .lp-nav-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  /* Hamburger button — shown on mobile only */
+  .lp-hamburger {
+    display: none;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 8px;
+    color: #F5F0EB;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 5px;
+  }
+  .lp-hamburger-line {
+    width: 22px;
+    height: 2px;
+    background: #F5F0EB;
+    border-radius: 2px;
+    transition: transform 0.2s, opacity 0.2s;
+    display: block;
+  }
+
+  /* Mobile drawer */
+  .lp-mobile-menu {
+    display: none;
+    flex-direction: column;
+    background: #161514;
+    border-top: 1px solid rgba(245,240,235,0.06);
+    padding: 12px 20px 20px;
+  }
+  .lp-mobile-link {
+    font-size: 15px;
+    font-weight: 500;
+    color: rgba(245,240,235,0.75);
+    text-decoration: none;
+    padding: 13px 0;
+    border-bottom: 1px solid rgba(245,240,235,0.06);
+    display: block;
+    transition: color 0.15s;
+  }
+  .lp-mobile-link:last-of-type { border-bottom: none; }
+  .lp-mobile-link:hover { color: #F5F0EB; }
+  .lp-mobile-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+  }
+
+  @media (max-width: 700px) {
+    .lp-nav-links { display: none; }
+    .lp-hamburger { display: flex; }
+    .lp-nav-actions .lp-nav-signin { display: none; }
+  }
+  @media (min-width: 701px) {
+    .lp-mobile-menu { display: none !important; }
+  }
+
+  /* Smooth scroll */
+  html { scroll-behavior: smooth; }
+
   /* MOBILE */
   @media (max-width: 600px) {
     .lp-section { padding: 56px 18px; }
@@ -264,6 +398,20 @@ export default function Home() {
   const [showModal, setShowModal] = useState(false);
   const [annual, setAnnual] = useState(true);
   const [showContact, setShowContact] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const NAV_LINKS = [
+    { label: "Why Us",      href: "#why-us" },
+    { label: "Features",    href: "#features" },
+    { label: "How It Works",href: "#how-it-works" },
+    { label: "Pricing",     href: "#pricing" },
+  ];
+
+  function scrollTo(id) {
+    setMenuOpen(false);
+    const el = document.getElementById(id.replace("#", ""));
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   const openModal  = () => setShowModal(true);
   const closeModal = () => setShowModal(false);
@@ -276,8 +424,72 @@ export default function Home() {
     <>
       <style>{pageStyle}</style>
 
-      {/* HEADER — uses your real SiteHeader */}
-      <SiteHeader onStartSetup={openModal} />
+      {/* LANDING NAV */}
+      <nav className="lp-nav">
+        <div className="lp-nav-inner">
+
+          {/* Logo */}
+          <a href="/" className="lp-nav-logo">
+            <div className="lp-nav-logo-icon">
+              <img src="/favicon.png" alt="AI Front Desk Helper" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+            </div>
+            <span className="lp-nav-logo-name">AI Front Desk Helper</span>
+          </a>
+
+          {/* Desktop links */}
+          <div className="lp-nav-links">
+            {NAV_LINKS.map(link => (
+              <a
+                key={link.href}
+                href={link.href}
+                className="lp-nav-link"
+                onClick={e => { e.preventDefault(); scrollTo(link.href); }}
+              >{link.label}</a>
+            ))}
+          </div>
+
+          {/* Actions */}
+          <div className="lp-nav-actions">
+            <a href="/login" className="lp-nav-signin" style={{ fontSize: 13, fontWeight: 600, color: "rgba(245,240,235,0.65)", textDecoration: "none", padding: "8px 10px", transition: "color 0.2s" }}
+              onMouseEnter={e => e.target.style.color = "#F5F0EB"}
+              onMouseLeave={e => e.target.style.color = "rgba(245,240,235,0.65)"}
+            >Sign in</a>
+            <button
+              onClick={openModal}
+              style={{ background: ORANGE, color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontFamily: "'Syne',sans-serif", fontWeight: 700, fontSize: 13, cursor: "pointer", boxShadow: "0 2px 12px rgba(232,112,42,0.35)", transition: "background 0.2s, transform 0.15s" }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#d15f20"; e.currentTarget.style.transform = "translateY(-1px)"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = ORANGE; e.currentTarget.style.transform = "translateY(0)"; }}
+            >Start setup</button>
+
+            {/* Hamburger */}
+            <button
+              className="lp-hamburger"
+              onClick={() => setMenuOpen(!menuOpen)}
+              aria-label="Toggle menu"
+            >
+              <span className="lp-hamburger-line" style={{ transform: menuOpen ? "rotate(45deg) translateY(7px)" : "none" }} />
+              <span className="lp-hamburger-line" style={{ opacity: menuOpen ? 0 : 1 }} />
+              <span className="lp-hamburger-line" style={{ transform: menuOpen ? "rotate(-45deg) translateY(-7px)" : "none" }} />
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile drawer */}
+        <div className="lp-mobile-menu" style={{ display: menuOpen ? "flex" : "none" }}>
+          {NAV_LINKS.map(link => (
+            <a
+              key={link.href}
+              href={link.href}
+              className="lp-mobile-link"
+              onClick={e => { e.preventDefault(); scrollTo(link.href); }}
+            >{link.label}</a>
+          ))}
+          <div className="lp-mobile-actions">
+            <a href="/login" style={{ flex: 1, textAlign: "center", padding: "12px", border: "1.5px solid rgba(245,240,235,0.2)", borderRadius: 8, color: OFF_WHITE, textDecoration: "none", fontSize: 14, fontWeight: 600 }}>Sign in</a>
+            <button onClick={() => { setMenuOpen(false); openModal(); }} style={{ flex: 1, background: ORANGE, border: "none", borderRadius: 8, padding: "12px", color: "#fff", fontFamily: "'Syne',sans-serif", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>Start setup</button>
+          </div>
+        </div>
+      </nav>
 
       {/* SMS MODAL — uses your real SmsConsentModal */}
       <SmsConsentModal
@@ -466,7 +678,7 @@ export default function Home() {
         <Ticker />
 
         {/* ── NOT A CALL BOT ───────────────────────────────────────────────── */}
-        <section className="lp-section" style={{ paddingTop: 72, paddingBottom: 64 }}>
+        <section id="why-us" className="lp-section" style={{ paddingTop: 72, paddingBottom: 64 }}>
           <div className="lp-eyebrow">Why this is different</div>
           <h2 className="syne" style={{ fontSize: 30, fontWeight: 800, lineHeight: 1.2, marginBottom: 20, color: OFF_WHITE }}>
             Call bots answer the phone.<br/>
@@ -504,7 +716,7 @@ export default function Home() {
         <div className="lp-divider" />
 
         {/* ── FEATURES ─────────────────────────────────────────────────────── */}
-        <section className="lp-section">
+        <section id="features" className="lp-section">
           <div className="lp-eyebrow">Features</div>
           <h2 className="syne" style={{ fontSize: "clamp(28px, 4vw, 40px)", fontWeight: 800, lineHeight: 1.15, marginBottom: 8, color: OFF_WHITE }}>
             The full revenue pipeline
@@ -558,7 +770,7 @@ export default function Home() {
         <div className="lp-divider" />
 
         {/* ── HOW IT WORKS ─────────────────────────────────────────────────── */}
-        <section className="lp-section">
+        <section id="how-it-works" className="lp-section">
           <div className="lp-eyebrow">How it works</div>
           <h2 className="syne" style={{ fontSize: "clamp(28px, 5vw, 40px)", fontWeight: 800, lineHeight: 1.15, marginBottom: 8, color: OFF_WHITE }}>
             Set up in minutes
@@ -738,7 +950,7 @@ export default function Home() {
         <div className="lp-divider" />
 
         {/* ── PRICING ──────────────────────────────────────────────────────── */}
-        <section className="lp-section">
+        <section id="pricing" className="lp-section">
           <div className="lp-eyebrow">Pricing</div>
           <h2 className="syne" style={{ fontSize: 28, fontWeight: 800, marginBottom: 8, color: OFF_WHITE }}>Let the system do it all.</h2>
           <p style={{ fontSize: 14, color: MUTED, marginBottom: 32, lineHeight: 1.6 }}>

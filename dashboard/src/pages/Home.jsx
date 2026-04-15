@@ -406,8 +406,6 @@ export default function Home() {
   const [isContactOpen, setIsContactOpen] = useState(false);
   const [isSmsConsentOpen, setIsSmsConsentOpen] = useState(false);
   const [showStickyCTA, setShowStickyCTA] = useState(false);
-  const [showScrollTrigger, setShowScrollTrigger] = useState(false);
-  const [scrollTriggerDismissed, setScrollTriggerDismissed] = useState(false);
   const [isAnnual, setIsAnnual] = useState(true);
   const heroRef = useRef(null);
   const triggerFiredRef = useRef(false);
@@ -421,12 +419,6 @@ export default function Home() {
       const scrollY = window.scrollY;
       const heroH = heroRef.current?.offsetHeight || 600;
       setShowStickyCTA(scrollY > heroH);
-      const docH = document.documentElement.scrollHeight - window.innerHeight;
-      if (scrollY / docH > 0.75 && !triggerFiredRef.current && !scrollTriggerDismissed) {
-        triggerFiredRef.current = true;
-        setShowScrollTrigger(true);
-        setTimeout(() => setShowScrollTrigger(false), 8000);
-      }
     };
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
@@ -473,16 +465,6 @@ export default function Home() {
         .elite-glow { animation: glow 3s ease-in-out infinite; }
         .sticky-cta-btn:hover { background: #d15f20 !important; }
       `}</style>
-
-      {/* Scroll trigger banner */}
-      <AnimatePresence>
-        {showScrollTrigger && !scrollTriggerDismissed && (
-          <ScrollTriggerBanner
-            onStart={handleGetStarted}
-            onDismiss={() => { setShowScrollTrigger(false); setScrollTriggerDismissed(true); triggerFiredRef.current = false; }}
-          />
-        )}
-      </AnimatePresence>
 
       {/* Bundle banner + Header */}
       <BundleBanner onGetStarted={handleGetStarted} />

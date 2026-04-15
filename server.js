@@ -839,10 +839,33 @@ async function sendToCRM(leadCapture, tenantId = null) {
 
   if (webhookUrls.length === 0) {
     console.warn(`CRM webhooks not configured for tenant ${tenantId || "global"}. Skipping lead push.`);
-    return;
+    return false;
   }
 
   const payload = finalizeCrmLeadPayload(leadCapture);
+
+  // --- CRM required-field gate ---
+  // Only push to CRM when minimum viable lead fields are present.
+  // DripJobs (and most CRMs) require at minimum: first_name, phone, email.
+  const fn = (payload.first_name || "").trim();
+  const ph = (payload.phone || payload.contact_phone || "").trim();
+  const em = (payload.email || payload.contact_email || "").trim();
+
+  if (!fn || !ph) {
+    console.log("[CRM] Skipping webhook push – missing required fields (first_name=%s, phone=%s, email=%s) tenant=%s", !!fn, !!ph, !!em, tenantId || "global");
+    return false;
+  }
+
+  if (!em) {
+    console.log("[CRM] Skipping webhook push – missing email (first_name=%s, phone=%s) tenant=%s", fn, ph, tenantId || "global");
+    return false;
+  }
+
+  // Provide safe fallbacks for secondary CRM-required fields
+  if (!(payload.last_name || "").trim()) payload.last_name = ".";
+  if (!(payload.address || "").trim()) payload.address = "Not provided";
+
+  console.log("[CRM] Lead payload passed field gate – pushing to %d webhook(s)", webhookUrls.length);
 
   for (const url of webhookUrls) {
     try {
@@ -862,6 +885,8 @@ async function sendToCRM(leadCapture, tenantId = null) {
       console.error(`CRM push error for url=${url}:`, error.message);
     }
   }
+
+  return true;
 }
 
 
@@ -885,7 +910,8 @@ function getOrCreateSmsThread(phone) {
     followUpCount: 0, // 0 = no follow-ups sent yet. Max is 2.
     channel: normalizedPhone.startsWith("fb-") ? "facebook" : (normalizedPhone.startsWith("web-") ? "website" : "sms"),
     lastInboundAt: null,
-    lastOutboundAt: null
+    lastOutboundAt: null,
+    crmLeadSent: false
   };
   smsThreads.set(normalizedPhone, created);
   return created;
@@ -1401,9 +1427,10 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
     thread.needsFollowUpAt = Date.now() + followUpMinutes * 60 * 1000;
   }
 
-  if (thread.leadCapture?.full_name || thread.phone) {
+  if ((thread.leadCapture?.full_name || thread.phone) && !thread.crmLeadSent) {
     if (!isNewBookingConfirmation(bookingResult)) {
-      await sendToCRM(buildThreadCrmLeadPayload(thread, ai, tenant, bookingResult), tenant?.id);
+      const sent = await sendToCRM(buildThreadCrmLeadPayload(thread, ai, tenant, bookingResult), tenant?.id);
+      if (sent) thread.crmLeadSent = true;
     }
   }
 
@@ -1514,9 +1541,10 @@ async function processFacebookConversation(senderId, messageText, tenant = null,
     thread.needsFollowUpAt = Date.now() + followUpMinutes * 60 * 1000;
   }
 
-  if (thread.leadCapture?.full_name || hasPhoneToSend) {
+  if ((thread.leadCapture?.full_name || hasPhoneToSend) && !thread.crmLeadSent) {
     if (!isNewBookingConfirmation(bookingResult)) {
-      await sendToCRM(buildThreadCrmLeadPayload(thread, ai, tenant, bookingResult), tenant?.id);
+      const sent = await sendToCRM(buildThreadCrmLeadPayload(thread, ai, tenant, bookingResult), tenant?.id);
+      if (sent) thread.crmLeadSent = true;
     }
   }
 

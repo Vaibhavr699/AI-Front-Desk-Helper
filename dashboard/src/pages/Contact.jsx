@@ -38,7 +38,7 @@ export default function Contact({ onGetStarted }) {
 
   return (
     <div style={{ background: DARK, minHeight: "100vh", fontFamily: "'DM Sans', sans-serif" }}>
-      <SiteHeader onGetStarted={onGetStarted} />
+      <SiteHeader onStartSetup={onGetStarted} />
 
       <div style={{ maxWidth: 480, margin: "0 auto", padding: "64px 24px 80px" }}>
 

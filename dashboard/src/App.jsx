@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useOutletContext, useLocation }
 import { getUser } from "./api";
 import { DashboardLayout } from "./layouts";
 import SmsTerms from "./pages/SmsTerms";
+import Contact from "./pages/Contact";
 import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, Outbound, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy, AddLocation, Team } from "./pages";
 import MetricsPage from "./pages/MetricsPage";
 import { ToastProvider } from "./components/ui/Toast";
@@ -87,6 +88,7 @@ export default function App() {
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/sms-terms" element={<SmsTerms />} />
           <Route path="/sms-policy" element={<Navigate to="/sms-terms" replace />} />
+          <Route path="/contact" element={<Contact />} />
           <Route path="/terms" element={<TermsOfService />} />
           <Route path="/cookies" element={<CookiePolicy />} />
           {/* Authenticated dashboard routes */}

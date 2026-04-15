@@ -55,7 +55,7 @@ async function syncBookingToCrm(tenantId, booking) {
     contact_phone: phone,
     contact_email: booking.contact_email || `lead-${phone.replace(/\D/g, "").slice(-10)}@placeholder.local`,
     address: booking.address || "Not provided",
-    city: booking.city,
+    city: booking.city || "Omaha",
     state: booking.state || "Unknown",
     zip: "00000",
     scope: booking.scope,

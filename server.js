@@ -862,6 +862,7 @@ async function sendToCRM(leadCapture, tenantId = null) {
     payload.contact_email = payload.email;
   }
   if (!(payload.address || "").trim()) payload.address = "Not provided";
+  if (!(payload.city || "").trim()) payload.city = "Omaha";
   if (!(payload.state || "").trim()) payload.state = "Unknown";
   if (!(payload.zip || "").trim()) payload.zip = "00000";
   if (!(payload.preferred_date || "").trim()) payload.preferred_date = new Date().toISOString().split("T")[0];

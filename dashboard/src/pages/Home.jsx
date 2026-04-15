@@ -408,7 +408,7 @@ export default function Home() {
   const [showStickyCTA, setShowStickyCTA] = useState(false);
   const [showScrollTrigger, setShowScrollTrigger] = useState(false);
   const [scrollTriggerDismissed, setScrollTriggerDismissed] = useState(false);
-  const [isAnnual, setIsAnnual] = useState(false);
+  const [isAnnual, setIsAnnual] = useState(true);
   const heroRef = useRef(null);
   const triggerFiredRef = useRef(false);
 

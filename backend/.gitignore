@@ -1,0 +1,11 @@
+node_modules/
+.env
+*.log
+.DS_Store
+dashboard/dist/
+scripts/export-tenant.js
+scripts/import-tenant.js
+scripts/find-missing-columns.js
+scripts/fix-schema.js
+migration_data.json
+old_schema.sql

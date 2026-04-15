@@ -177,10 +177,13 @@ router.post("/webhook", express.raw({ type: "application/json" }), async (req, r
         const sub = event.data.object;
         const customerId = sub.customer;
         const priceId = sub.items?.data?.[0]?.price?.id;
-       const planMap = {
-         [process.env.STRIPE_PRICE_BASIC]: "basic",
-         [process.env.STRIPE_PRICE_PRO]: "pro",
-         [process.env.STRIPE_PRICE_ELITE]: "elite",
+const planMap = {
+  [process.env.STRIPE_PRICE_BASIC]:         "basic",
+  [process.env.STRIPE_PRICE_PRO]:           "pro",
+  [process.env.STRIPE_PRICE_ELITE]:         "elite",
+  [process.env.STRIPE_PRICE_BASIC_ANNUAL]:  "basic",
+  [process.env.STRIPE_PRICE_PRO_ANNUAL]:    "pro",
+  [process.env.STRIPE_PRICE_ELITE_ANNUAL]:  "elite",
 };
         const newPlan = planMap[priceId];
         if (newPlan && customerId) {

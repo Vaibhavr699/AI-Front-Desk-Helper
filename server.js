@@ -845,25 +845,27 @@ async function sendToCRM(leadCapture, tenantId = null) {
   const payload = finalizeCrmLeadPayload(leadCapture);
 
   // --- CRM required-field gate ---
-  // Only push to CRM when minimum viable lead fields are present.
-  // DripJobs (and most CRMs) require at minimum: first_name, phone, email.
-  const fn = (payload.first_name || "").trim();
+  // Only truly require a phone number (minimum to identify a lead).
+  // All other CRM-required fields get smart fallbacks so no leads are lost.
   const ph = (payload.phone || payload.contact_phone || "").trim();
-  const em = (payload.email || payload.contact_email || "").trim();
 
-  if (!fn || !ph) {
-    console.log("[CRM] Skipping webhook push – missing required fields (first_name=%s, phone=%s, email=%s) tenant=%s", !!fn, !!ph, !!em, tenantId || "global");
+  if (!ph) {
+    console.log("[CRM] Skipping webhook push – no phone number, tenant=%s", tenantId || "global");
     return false;
   }
 
-  if (!em) {
-    console.log("[CRM] Skipping webhook push – missing email (first_name=%s, phone=%s) tenant=%s", fn, ph, tenantId || "global");
-    return false;
+  // Smart fallbacks for CRM-required fields
+  if (!(payload.first_name || "").trim()) payload.first_name = "New Lead";
+  if (!(payload.last_name || "").trim())  payload.last_name = ".";
+  if (!(payload.email || "").trim() && !(payload.contact_email || "").trim()) {
+    payload.email = `lead-${ph.replace(/\D/g, "").slice(-10)}@placeholder.local`;
+    payload.contact_email = payload.email;
   }
-
-  // Provide safe fallbacks for secondary CRM-required fields
-  if (!(payload.last_name || "").trim()) payload.last_name = ".";
   if (!(payload.address || "").trim()) payload.address = "Not provided";
+  // Sync aliases
+  if (!payload.full_name?.trim()) payload.full_name = `${payload.first_name} ${payload.last_name}`.trim();
+  if (!payload.contact_name?.trim()) payload.contact_name = payload.full_name;
+  if (!payload.contact_phone?.trim()) payload.contact_phone = ph;
 
   console.log("[CRM] Lead payload passed field gate – pushing to %d webhook(s)", webhookUrls.length);
 

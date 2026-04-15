@@ -20,11 +20,11 @@ export default function Contact({ onGetStarted }) {
     e.preventDefault();
     setStatus("sending");
     try {
-      const res = await fetch("https://formspree.io/f/YOUR_FORM_ID", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(form),
-      });
+      const res = await fetch("https://your-backend.onrender.com/api/contact", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(form),
+});
       if (res.ok) {
         setStatus("sent");
         setForm({ name: "", email: "", message: "" });

@@ -20,6 +20,8 @@ import {
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import { ConfirmationModal } from "../components/ConfirmationModal";
+import Billing from "./Billing";
+import Plans from "./Plans";
 import { useToast } from "../components/ui/Toast";
 import {
   Bot,
@@ -108,12 +110,14 @@ const GoogleCalendarIcon = ({ className = "w-6 h-6" }) => (
 );
 
 const TABS = [
-  { id: "numbers", label: "Phone & voice", icon: Phone },
-  { id: "ai", label: "AI behavior", icon: Bot },
-  { id: "knowledge", label: "Knowledge base", icon: BookOpen },
-  { id: "hours", label: "Business hours", icon: Clock },
-  { id: "nurturing", label: "Nurturing & referrals", icon: UserPlus },
-  { id: "integrations", label: "Integrations", icon: LinkIcon },
+ { id: "numbers",      label: "Phone & voice",       icon: Phone      },
+ { id: "ai",           label: "AI behavior",          icon: Bot        },
+ { id: "knowledge",    label: "Knowledge base",       icon: BookOpen   },
+ { id: "hours",        label: "Business hours",       icon: Clock      },
+ { id: "nurturing",    label: "Nurturing & referrals", icon: UserPlus  },
+ { id: "integrations", label: "Integrations",         icon: LinkIcon   },
+ { id: "plans",        label: "Plans",                icon: CreditCard },
+ { id: "billing",      label: "Usage & Billing",      icon: BarChart3  },
 ];
 
 export default function Settings({ tenantId }) {
@@ -2253,7 +2257,14 @@ export default function Settings({ tenantId }) {
               </div>
             </div>
           )}
-
+             {activeTab === "plans" && (
+             <Plans tenantId={tenantId} />
+          )}
+          
+           {activeTab === "billing" && (
+           <Billing tenantId={tenantId} />
+          )}
+          
         </main>
       </div>
 

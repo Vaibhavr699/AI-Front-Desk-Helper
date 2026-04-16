@@ -554,7 +554,7 @@ router.get("/metrics", async (req, res) => {
     prevWindow.setDate(prevWindow.getDate() - (days * 2));
 
     const results = await Promise.all([
-      db.query(
+      db.query(`
         `SELECT 
           COUNT(DISTINCT l.id) as leads_generated,
           COUNT(DISTINCT er.id) as estimates_sent,
@@ -566,7 +566,7 @@ router.get("/metrics", async (req, res) => {
          WHERE l.tenant_id = ANY($1) AND l.created_at > $2`,
         [tenantIds, currentWindow]
       ),
-      db.query(
+      db.query(`
         `SELECT 
           COUNT(DISTINCT l.id) as leads_generated,
           COUNT(DISTINCT er.id) as estimates_sent,
@@ -578,7 +578,7 @@ router.get("/metrics", async (req, res) => {
          WHERE l.tenant_id = ANY($1) AND l.created_at BETWEEN $2 AND $3`,
         [tenantIds, prevWindow, currentWindow]
       ),
-      db.query(
+      db.query(`
         `SELECT 
           COUNT(*) as calls_handled,
           (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND call_id IS NOT NULL AND created_at > $2) as appointments_booked,
@@ -599,7 +599,7 @@ router.get("/metrics", async (req, res) => {
          WHERE tenant_id = ANY($1) AND started_at > $2`,
         [tenantIds, currentWindow]
       ),
-      db.query(
+      db.query(`
         `SELECT 
           COUNT(*) as calls_handled,
           (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND call_id IS NOT NULL AND created_at BETWEEN $2 AND $3) as appointments_booked,
@@ -620,7 +620,7 @@ router.get("/metrics", async (req, res) => {
          WHERE tenant_id = ANY($1) AND started_at BETWEEN $2 AND $3`,
         [tenantIds, prevWindow, currentWindow]
       ),
-      db.query(
+      db.query(`
         `SELECT 
           source,
           COUNT(*) as leads,
@@ -656,7 +656,7 @@ router.get("/metrics", async (req, res) => {
          ORDER BY leads DESC`,
         [tenantIds, currentWindow]
       ),
-      db.query(
+      db.query(`
         `SELECT 
           method,
           COUNT(*) as actions,

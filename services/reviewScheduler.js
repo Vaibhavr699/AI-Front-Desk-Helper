@@ -159,14 +159,14 @@ async function runScheduledFetch() {
 // ── Register the cron job ──────────────────────────────────────────────────
 function startReviewScheduler() {
   // Run at 2:00 AM every day (server local time)
-  cron.schedule("0 2 * * *", async () => {
+  cron.schedule("0 */6 * * *", async () => {
     try {
       await runScheduledFetch();
     } catch (err) {
       console.error("[ReviewScheduler] Cron job failed:", err.message);
     }
   });
-  console.log("[ReviewScheduler] Nightly review scheduler registered — runs at 2:00 AM daily.");
+  console.log("[ReviewScheduler] Nightly review scheduler registered — runs every 6 hours.");
 }
 
 module.exports = {

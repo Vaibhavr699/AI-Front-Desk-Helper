@@ -62,13 +62,35 @@ function saveSession(tenantId, session) {
 }
 
 // ── Nurture system prompt ──────────────────────────────────────────────────
-function buildNurturePrompt(contact, memory) {
+// FIX: accepts tenant data so AI drafts use real company name / owner / phone
+function buildNurturePrompt(contact, memory, tenant) {
+  const companyName = tenant?.company_name || tenant?.name || "our company";
+  const ownerName   = tenant?.owner_name   || "";
+  const phone       = tenant?.phone        || (tenant?.phones?.[0]?.phone) || "";
+  const website     = tenant?.website      || "";
+
+  const tenantCtx = `
+Business: ${companyName}${ownerName ? ` | Owner: ${ownerName}` : ""}${phone ? ` | Phone: ${phone}` : ""}${website ? ` | Website: ${website}` : ""}`;
+
   const memCtx = memory.length
     ? `\n\nSession memory:\n${memory.map(m => `- ${m}`).join("\n")}`
     : "";
+
   return `You are an AI contact nurturing specialist for home service contractors inside AI Front Desk Helper.
-${contact ? `\nActive contact: ${contact.name} | Stage: ${contact.stage} | Est. Value: ${contact.value} | Days since contact: ${contact.days} | Lead source: ${contact.source}` : ""}
-Write specific, human, conversion-focused outreach (texts, emails, or voicemail scripts). Short, warm, action-oriented. Reference the contact's stage and source. Never robotic. Always include a clear next step.${memCtx}`;
+${tenantCtx}
+${contact
+  ? `\nActive contact: ${contact.name} | Stage: ${contact.stage} | Est. Value: ${contact.value} | Days since contact: ${contact.days} | Lead source: ${contact.source}`
+  : ""}
+
+Write specific, human, conversion-focused outreach (texts, emails, or voicemail scripts).
+Short, warm, action-oriented. Reference the contact's stage and source. Never robotic. Always include a clear next step.
+
+CRITICAL: Never use placeholder text like [Your Name], [Your Company Name], or [Your Contact Information].
+Always use the real business details provided above:
+- Sign off with: ${ownerName || companyName}
+- Company name: ${companyName}
+- Phone (if needed): ${phone || "the number on file"}
+${memCtx}`;
 }
 
 // ── Typewriter animation for coaching responses ────────────────────────────
@@ -147,9 +169,12 @@ export default function AICoachWidget({ tenantId }) {
   const [selectedContact, setSelectedContact] = useState(null);
   const [showContacts, setShowContacts]       = useState(false);
 
+  // FIX: tenant info for real company name / owner in nurture drafts
+  const [tenantInfo, setTenantInfo] = useState(null);
+
   // Data bar
-  const [metrics, setMetrics]             = useState(null);
-  const [goals, setGoals]                 = useState(null);
+  const [metrics, setMetrics]               = useState(null);
+  const [goals, setGoals]                   = useState(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
 
   // Chat
@@ -161,7 +186,7 @@ export default function AICoachWidget({ tenantId }) {
   const [sessionId]                 = useState(() => `session_${Date.now()}`);
 
   // History
-  const [history, setHistory]               = useState([]);
+  const [history, setHistory]                 = useState([]);
   const [selectedSession, setSelectedSession] = useState(null);
 
   // UI
@@ -172,6 +197,18 @@ export default function AICoachWidget({ tenantId }) {
   // ── Load saved history ───────────────────────────────────────────────
   useEffect(() => {
     if (tenantId) setHistory(loadHistory(tenantId));
+  }, [tenantId]);
+
+  // ── FIX: Fetch tenant info for nurture prompt ────────────────────────
+  useEffect(() => {
+    if (!tenantId || tenantId === "all") return;
+    const token = localStorage.getItem("token");
+    fetch(`${API_BASE}/api/tenants/${tenantId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data) setTenantInfo(data); })
+      .catch(() => {});
   }, [tenantId]);
 
   // ── Fetch leads for Nurture ──────────────────────────────────────────
@@ -248,13 +285,12 @@ export default function AICoachWidget({ tenantId }) {
     try {
       let full = "";
       if (mode === "coaching") {
-        // Uses existing /api/coaching/chat — pulls real DB data + all 8 coach personas
         full = await callCoach(userText, messages, tenantId, p => setStreamText(p));
       } else {
-        // Nurture mode — streaming AI with contact context
+        // FIX: pass tenantInfo so real company name / owner replaces placeholders
         full = await callAI(
           newMessages.map(m => ({ role: m.role, content: m.content })),
-          buildNurturePrompt(selectedContact, memory),
+          buildNurturePrompt(selectedContact, memory, tenantInfo),
           p => setStreamText(p)
         );
       }
@@ -270,7 +306,7 @@ export default function AICoachWidget({ tenantId }) {
       setMessages(prev => [...prev, { role: "assistant", content: "⚠️ Connection error. Please try again." }]);
     }
     setLoading(false);
-  }, [input, loading, messages, mode, coachLevel, selectedContact, tenantId, memory]);
+  }, [input, loading, messages, mode, coachLevel, selectedContact, tenantId, memory, tenantInfo]);
 
   // ── Data bar values ───────────────────────────────────────────────────
   const monthRow    = goals?.months?.find(m => m.month === NOW_MONTH);
@@ -584,7 +620,7 @@ export default function AICoachWidget({ tenantId }) {
                 </div>
                 <div className="aiw-es">
                   {mode === "nurture"
-                    ? "AI-powered outreach for your pipeline."
+                    ? `Drafting for ${tenantInfo?.company_name || tenantInfo?.name || "your business"}`
                     : "Powered by Tommy Mello · GaryVee · Hormozi\nJocko · Cardone · Lavley · Michalowicz · Elliott"}
                 </div>
                 <div className="aiw-qg">

@@ -326,7 +326,7 @@ export default function Reviews({ tenantId }) {
               {filter === "pending" ? "No reviews waiting" : filter === "posted" ? "No posted responses yet" : "No skipped reviews"}
             </div>
             <div style={{ fontSize: 12, color: "#888" }}>
-              {filter === "pending" ? "Click \"Check for new reviews\" to fetch the latest from Google." : ""}
+              {filter === "pending" ? "Reviews are checked automatically every 6 hours. Click above to check now." : ""}
             </div>
           </div>
         ) : (

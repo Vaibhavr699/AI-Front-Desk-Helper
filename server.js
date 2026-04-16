@@ -3942,11 +3942,9 @@ cron.schedule("0 */4 * * *", () => {
   notificationsService.checkUsageAlerts().catch((e) => console.error("Usage alert notification failed:", e));
 });
 
-// Poll Google reviews every 4 hours
-cron.schedule("0 */4 * * *", () => {
-  const { pollAllTenants } = require("./routes/reviews");
-  pollAllTenants().catch((e) => console.error("Reviews cron:", e));
-});
+// Auto-fetch Google reviews nightly + notify on new reviews needing approval
+const { startReviewScheduler } = require("./services/reviewScheduler");
+startReviewScheduler();
 
 // -------------------- Listen --------------------
 loadTenants().then(() => {

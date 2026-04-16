@@ -75,7 +75,7 @@ router.get("/bookings", async (req, res) => {
 
     params.push(limit, offset);
     const result = await db.query(`
-      `SELECT b.*, t.name as technician_name, biz.name as business_name
+       SELECT b.*, t.name as technician_name, biz.name as business_name
        FROM bookings b 
        LEFT JOIN technicians t ON b.technician_id = t.id
        JOIN tenants biz ON b.tenant_id = biz.id

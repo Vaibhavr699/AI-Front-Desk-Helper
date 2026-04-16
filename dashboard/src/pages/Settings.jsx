@@ -31,6 +31,8 @@ import {
   RefreshCw,
   Plus,
   Trash2,
+  CreditCard,
+  BarChart3,
   CheckCircle2,
   AlertCircle,
   Phone,

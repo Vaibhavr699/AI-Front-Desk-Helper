@@ -142,46 +142,46 @@ export default function Metrics({ tenantId }) {
 
       <MetricHero revPerCall={revPerCall} callsHandled={callsHandled} confirmedRevenue={actualRev} lostWithoutAi={lostPotential} />
 
-
-        {/* Dynamic Insight Banners */}
-        <div className="space-y-4 pt-2">
-          {hungup > 0 && (
-            <InsightBar 
-              type={ (hungup/Math.max(callsHandled,1)) > 0.1 ? "error" : "success" }
-              title={`Hung-up rate is ${Math.round((hungup/Math.max(callsHandled,1))*100)}% — ${ (hungup/Math.max(callsHandled,1)) > 0.1 ? "above 10% target" : "within optimal range" }`}
-              description={`${hungup} callers hung up without resolution this month. ${ ai.hung_up_30s > (hungup/2) ? "Most hung-up calls lasted under 30 seconds — suggesting the AI greeting or first response is confusing callers. Review the AI instructions and welcome message. Consider A/B testing a different opening line." : "Pattern suggests callers are dropping later in the conversation. Review AI instructions." }`}
-            />
-          )}
+      {/* Dynamic Insight Banners */}
+      <div className="space-y-4 pt-2">
+        {hungup > 0 && (
           <InsightBar 
-            type={ (confused/Math.max(callsHandled,1)) > 0.05 ? "warning" : "success" }
-            title={`Confusion rate is ${Math.round((confused/Math.max(callsHandled,1))*100)}% — ${ (confused/Math.max(callsHandled,1)) > 0.05 ? "requires attention" : "excellent" }`}
-            description={`Only ${confused} calls showed confusion signals this month. ${ (confused/Math.max(callsHandled,1)) > 0.05 ? "AI may need more clear training data." : "AI is understanding callers clearly. No action needed." }`}
+            type={ (hungup/Math.max(callsHandled,1)) > 0.1 ? "error" : "success" }
+            title={`Hung-up rate is ${Math.round((hungup/Math.max(callsHandled,1))*100)}% — ${ (hungup/Math.max(callsHandled,1)) > 0.1 ? "above 10% target" : "within optimal range" }`}
+            description={`${hungup} callers hung up without resolution this month. ${ ai.hung_up_30s > (hungup/2) ? "Most hung-up calls lasted under 30 seconds — suggesting the AI greeting or first response is confusing callers. Review the AI instructions and welcome message. Consider A/B testing a different opening line." : "Pattern suggests callers are dropping later in the conversation. Review AI instructions." }`}
           />
-        </div>
+        )}
+        <InsightBar 
+          type={ (confused/Math.max(callsHandled,1)) > 0.05 ? "warning" : "success" }
+          title={`Confusion rate is ${Math.round((confused/Math.max(callsHandled,1))*100)}% — ${ (confused/Math.max(callsHandled,1)) > 0.05 ? "requires attention" : "excellent" }`}
+          description={`Only ${confused} calls showed confusion signals this month. ${ (confused/Math.max(callsHandled,1)) > 0.05 ? "AI may need more clear training data." : "AI is understanding callers clearly. No action needed." }`}
+        />
+      </div>
+
       {metrics.isRollup && (
         <section className="space-y-3 pt-4">
           <SectionTitle title="Network Locations" />
           <div className="bg-white border border-gray-200/60 rounded-xl shadow-sm overflow-hidden">
-             <div className="overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="bg-gray-50/50 border-b border-gray-200/60 font-bold text-gray-500 text-[10px] uppercase tracking-wider">
-                    <tr><th className="px-6 py-4">Business Location</th><th className="px-4 py-4 text-right">Volume</th><th className="px-4 py-4 text-right">Success</th><th className="px-6 py-4 text-right">Confirmed Revenue</th></tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {metrics.location_breakdown?.map((l, i) => (
-                      <tr key={l.id} className="hover:bg-gray-50/30 transition-colors group">
-                        <td className="px-6 py-4 flex items-center gap-3">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-[10px] ${i%2===0?'bg-blue-50 text-blue-600':'bg-orange-50 text-orange-600'}`}>{l.name.substring(0,2)}</div>
-                          <span className="font-bold text-gray-700">{l.name}</span>
-                        </td>
-                        <td className="px-4 py-4 text-right font-mono font-medium">{l.calls} calls</td>
-                        <td className="px-4 py-4 text-right font-bold text-emerald-600">{l.rate}%</td>
-                        <td className="px-6 py-4 text-right font-bold text-gray-900">${Math.round(l.revenue/100).toLocaleString()}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-             </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead className="bg-gray-50/50 border-b border-gray-200/60 font-bold text-gray-500 text-[10px] uppercase tracking-wider">
+                  <tr><th className="px-6 py-4">Business Location</th><th className="px-4 py-4 text-right">Volume</th><th className="px-4 py-4 text-right">Success</th><th className="px-6 py-4 text-right">Confirmed Revenue</th></tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {metrics.location_breakdown?.map((l, i) => (
+                    <tr key={l.id} className="hover:bg-gray-50/30 transition-colors group">
+                      <td className="px-6 py-4 flex items-center gap-3">
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-[10px] ${i%2===0?'bg-blue-50 text-blue-600':'bg-orange-50 text-orange-600'}`}>{l.name.substring(0,2)}</div>
+                        <span className="font-bold text-gray-700">{l.name}</span>
+                      </td>
+                      <td className="px-4 py-4 text-right font-mono font-medium">{l.calls} calls</td>
+                      <td className="px-4 py-4 text-right font-bold text-emerald-600">{l.rate}%</td>
+                      <td className="px-6 py-4 text-right font-bold text-gray-900">${Math.round(l.revenue/100).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
       )}
@@ -190,11 +190,11 @@ export default function Metrics({ tenantId }) {
       <section className="space-y-3 pt-2">
         <SectionTitle title="Primary KPIs" />
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
-           <ModernKpiCard label="Calls Answered" value={callsHandled.toLocaleString()} trendValue={`${Math.abs(callsHandled - callsHandledPrev)}`} trendLabel="vs last month" trendDirection={(callsHandled - callsHandledPrev) >= 0 ? 'up' : 'down'} topBadge="+18%" />
-           <ModernKpiCard label="Booking Rate" value={`${bookingRate}%`} trendLabel="Industry avg 25%" trendDirection="neutral" topBadge="+6pts" />
-           <ModernKpiCard label="Est. Acceptance Rate" value={`${pipeline.close_rate || 0}%`} trendLabel="Target 60%" trendDirection="neutral" topBadge="Target 60%" topBadgeColor="text-orange-700 bg-orange-50 border-orange-100" />
-           <ModernKpiCard label="Active Follow-ups" value={pipeline.open_estimates || 34} trendLabel="AI working background" topBadge="Active" topBadgeColor="text-blue-700 bg-blue-50 border-blue-100" />
-           <ModernKpiCard label="No-show Rate" value="7%" trendLabel="Target under 10%" topBadge="Great" topBadgeColor="text-emerald-700 bg-emerald-50 border-emerald-100" />
+          <ModernKpiCard label="Calls Answered" value={callsHandled.toLocaleString()} trendValue={`${Math.abs(callsHandled - callsHandledPrev)}`} trendLabel="vs last month" trendDirection={(callsHandled - callsHandledPrev) >= 0 ? 'up' : 'down'} topBadge="+18%" />
+          <ModernKpiCard label="Booking Rate" value={`${bookingRate}%`} trendLabel="Industry avg 25%" trendDirection="neutral" topBadge="+6pts" />
+          <ModernKpiCard label="Est. Acceptance Rate" value={`${pipeline.close_rate || 0}%`} trendLabel="Target 60%" trendDirection="neutral" topBadge="Target 60%" topBadgeColor="text-orange-700 bg-orange-50 border-orange-100" />
+          <ModernKpiCard label="Active Follow-ups" value={pipeline.open_estimates || 34} trendLabel="AI working background" topBadge="Active" topBadgeColor="text-blue-700 bg-blue-50 border-blue-100" />
+          <ModernKpiCard label="No-show Rate" value="7%" trendLabel="Target under 10%" topBadge="Great" topBadgeColor="text-emerald-700 bg-emerald-50 border-emerald-100" />
         </div>
       </section>
 
@@ -202,118 +202,115 @@ export default function Metrics({ tenantId }) {
       <section className="space-y-3 pt-4">
         <SectionTitle title="AI Performance Breakdown" />
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-           <PerformanceCard label="AI Success Rate" value={`${Math.round(((booked + followup)/Math.max(callsHandled,1))*100)}%`} sub="Booked + follow-up needed" color="text-emerald-600" />
-           <PerformanceCard label="Failure Rate" value={`${Math.round(((hungup + confused)/Math.max(callsHandled,1))*100)}%`} sub="Hung up + confused" color="text-rose-600" />
-           <PerformanceCard label="Transfer Rate" value={`${Math.round((transferred/Math.max(callsHandled,1))*100)}%`} sub="Caller requested human" color="text-blue-600" />
+          <PerformanceCard label="AI Success Rate" value={`${Math.round(((booked + followup)/Math.max(callsHandled,1))*100)}%`} sub="Booked + follow-up needed" color="text-emerald-600" />
+          <PerformanceCard label="Failure Rate" value={`${Math.round(((hungup + confused)/Math.max(callsHandled,1))*100)}%`} sub="Hung up + confused" color="text-rose-600" />
+          <PerformanceCard label="Transfer Rate" value={`${Math.round((transferred/Math.max(callsHandled,1))*100)}%`} sub="Caller requested human" color="text-blue-600" />
         </div>
-
-
 
         <div className="space-y-4 pt-4">
           <SectionTitle title="Call outcome breakdown" />
           <div className="bg-white border border-gray-200/60 rounded-xl shadow-sm overflow-hidden">
-             <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/10">
-                <div className="flex gap-8 text-[10px] font-bold text-gray-400 uppercase leading-none ml-auto">
-                   <span>Count</span> <span>% Weight</span> <span className="w-16 text-right">Trend</span>
-                </div>
-             </div>
-             <div className="p-6 space-y-5">
-                <OutcomeBar dotColor="bg-emerald-500" color="bg-emerald-500" label="Booked" count={booked} pct={Math.round((booked/Math.max(callsHandled,1))*100)} trend={getTrend(booked, callsHandled, aiPrev.calls_booked||0, callsHandledPrev)} subtext="appointments" />
-                <OutcomeBar dotColor="bg-orange-500" color="bg-orange-500" label="Follow-up needed" count={followup} pct={Math.round((followup/Math.max(callsHandled,1))*100)} trend="0%" />
-                <OutcomeBar dotColor="bg-blue-500" color="bg-blue-500" label="Transferred" count={transferred} pct={Math.round((transferred/Math.max(callsHandled,1))*100)} trend="0%" />
-             </div>
-        </div>
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/10">
+              <div className="flex gap-8 text-[10px] font-bold text-gray-400 uppercase leading-none ml-auto">
+                <span>Count</span> <span>% Weight</span> <span className="w-16 text-right">Trend</span>
+              </div>
+            </div>
+            <div className="p-6 space-y-5">
+              <OutcomeBar dotColor="bg-emerald-500" color="bg-emerald-500" label="Booked" count={booked} pct={Math.round((booked/Math.max(callsHandled,1))*100)} trend={getTrend(booked, callsHandled, aiPrev.calls_booked||0, callsHandledPrev)} subtext="appointments" />
+              <OutcomeBar dotColor="bg-orange-500" color="bg-orange-500" label="Follow-up needed" count={followup} pct={Math.round((followup/Math.max(callsHandled,1))*100)} trend="0%" />
+              <OutcomeBar dotColor="bg-blue-500" color="bg-blue-500" label="Transferred" count={transferred} pct={Math.round((transferred/Math.max(callsHandled,1))*100)} trend="0%" />
+            </div>
+          </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pt-6">
-          <AnalysisCard 
-            title="Hung-up call analysis"
-            question="When in the call did they hang up?"
-            icon={PhoneOff}
-            headers={["Timing window", "Calls", "% Weight"]}
-            rows={[
-              ["Under 10 seconds", ai.hung_up_10s || 0, `${Math.round(((ai.hung_up_10s || 0) / Math.max(hungup, 1)) * 100)}%`],
-              ["10–30 seconds", ai.hung_up_30s || 0, `${Math.round(((ai.hung_up_30s || 0) / Math.max(hungup, 1)) * 100)}%`],
-              ["30+ seconds", Math.max(0, hungup - (ai.hung_up_10s || 0) - (ai.hung_up_30s || 0)), `${Math.round((Math.max(0, hungup - (ai.hung_up_10s || 0) - (ai.hung_up_30s || 0)) / Math.max(hungup, 1)) * 100)}%`]
-            ]}
-            insightText={`${Math.round((( (ai.hung_up_10s||0) + (ai.hung_up_30s||0) ) / Math.max(hungup, 1)) * 100)}% of hung-up calls ended in the first 30 seconds. This points to the ${ ( (ai.hung_up_10s||0) + (ai.hung_up_30s||0) ) / Math.max(hungup, 1) > 0.6 ? "greeting or AI voice as the issue — not the conversation itself. Try updating the welcome message in Settings." : "conversation flow. Review the AI instructions." }`}
-          />
-          <AnalysisCard 
-            title="Confused call triggers"
-            question="What phrases caused confusion — last 30 days"
-            icon={HelpCircle}
-            headers={["Trigger phrase detected", "Count", "Resolved?"]}
-            rows={[
-              ["\"Can you repeat that?\"", ai.confused_repeat || 0, { text: "Yes", color: "bg-emerald-50 text-emerald-600 border border-emerald-100" }],
-              ["\"I don't understand\"", ai.confused_understand || 0, { text: "Partial", color: "bg-orange-50 text-orange-600 border border-orange-100" }],
-              ["\"What did you say?\"", ai.confused_what_say || 0, { text: "Yes", color: "bg-emerald-50 text-emerald-600 border border-emerald-100" }],
-              ["\"Huh?\" / \"What?\"", ai.confused_huh || 0, { text: "No", color: "bg-rose-50 text-rose-600 border border-rose-100" }]
-            ]}
-            insightText={`AI is handling confusion well overall — ${Math.round((confused / Math.max(callsHandled, 1)) * 100)}% rate is ${ (confused / Math.max(callsHandled, 1)) < 0.05 ? "excellent" : "within target range" }. Most confusion signals are resolved during the call.`}
-          />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pt-6">
+            <AnalysisCard 
+              title="Hung-up call analysis"
+              question="When in the call did they hang up?"
+              icon={PhoneOff}
+              headers={["Timing window", "Calls", "% Weight"]}
+              rows={[
+                ["Under 10 seconds", ai.hung_up_10s || 0, `${Math.round(((ai.hung_up_10s || 0) / Math.max(hungup, 1)) * 100)}%`],
+                ["10–30 seconds", ai.hung_up_30s || 0, `${Math.round(((ai.hung_up_30s || 0) / Math.max(hungup, 1)) * 100)}%`],
+                ["30+ seconds", Math.max(0, hungup - (ai.hung_up_10s || 0) - (ai.hung_up_30s || 0)), `${Math.round((Math.max(0, hungup - (ai.hung_up_10s || 0) - (ai.hung_up_30s || 0)) / Math.max(hungup, 1)) * 100)}%`]
+              ]}
+              insightText={`${Math.round((( (ai.hung_up_10s||0) + (ai.hung_up_30s||0) ) / Math.max(hungup, 1)) * 100)}% of hung-up calls ended in the first 30 seconds. This points to the ${ ( (ai.hung_up_10s||0) + (ai.hung_up_30s||0) ) / Math.max(hungup, 1) > 0.6 ? "greeting or AI voice as the issue — not the conversation itself. Try updating the welcome message in Settings." : "conversation flow. Review the AI instructions." }`}
+            />
+            <AnalysisCard 
+              title="Confused call triggers"
+              question="What phrases caused confusion — last 30 days"
+              icon={HelpCircle}
+              headers={["Trigger phrase detected", "Count", "Resolved?"]}
+              rows={[
+                ["\"Can you repeat that?\"", ai.confused_repeat || 0, { text: "Yes", color: "bg-emerald-50 text-emerald-600 border border-emerald-100" }],
+                ["\"I don't understand\"", ai.confused_understand || 0, { text: "Partial", color: "bg-orange-50 text-orange-600 border border-orange-100" }],
+                ["\"What did you say?\"", ai.confused_what_say || 0, { text: "Yes", color: "bg-emerald-50 text-emerald-600 border border-emerald-100" }],
+                ["\"Huh?\" / \"What?\"", ai.confused_huh || 0, { text: "No", color: "bg-rose-50 text-rose-600 border border-rose-100" }]
+              ]}
+              insightText={`AI is handling confusion well overall — ${Math.round((confused / Math.max(callsHandled, 1)) * 100)}% rate is ${ (confused / Math.max(callsHandled, 1)) < 0.05 ? "excellent" : "within target range" }. Most confusion signals are resolved during the call.`}
+            />
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
 
       {/* Tables Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pt-8">
-         <div className="space-y-4">
-            <SectionTitle title="Lead Source Analysis" />
-            <div className="bg-white border border-gray-200/60 rounded-xl p-6 shadow-sm h-[520px] flex flex-col">
-               <div className="mb-6 shrink-0">
-                 <h3 className="text-sm font-bold text-gray-900 leading-tight">By Marketing Source</h3>
-                 <p className="text-[10px] text-gray-400 font-medium">Which channel drove the lead — tracked by phone number</p>
-               </div>
-               <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
-                 <SourceTable 
-                   headers={['Source', 'Leads', 'Booked', 'Rate', 'Revenue']} 
-                   rows={(() => {
-                     const existingRows = dm.sources || [];
-                     return ALL_MARKETING_SOURCES.map((sourceDef, i) => {
-                       const found = existingRows.find(s => 
-                         s.label === sourceDef.value || 
-                         s.label === sourceDef.label ||
-                         (sourceDef.value === 'Other' && s.label === 'Direct')
-                       );
-                       return {
-                         label: sourceDef.label, 
-                         leads: found ? found.leads : 0, 
-                         booked: found ? found.booked : 0, 
-                         rate: `${found ? found.rate : 0}%`, 
-                         revenue: found ? formatPrice(found.revenue) : "$0",
-                         dotColor: ['bg-blue-500', 'bg-emerald-500', 'bg-orange-500', 'bg-indigo-500', 'bg-rose-500', 'bg-gray-400', 'bg-sky-500', 'bg-emerald-400', 'bg-amber-500', 'bg-purple-500', 'bg-pink-500', 'bg-slate-500', 'bg-cyan-500', 'bg-teal-500', 'bg-rose-400', 'bg-gray-300'][i % 16]
-                       };
-                     });
-                   })()} 
-                 />
-                 {(!dm.sources?.length && !ALL_MARKETING_SOURCES.length) && <div className="h-40 flex items-center justify-center text-xs font-bold text-gray-400 uppercase tracking-tighter">Awaiting source data...</div>}
-               </div>
-
+        <div className="space-y-4">
+          <SectionTitle title="Lead Source Analysis" />
+          <div className="bg-white border border-gray-200/60 rounded-xl p-6 shadow-sm h-[520px] flex flex-col">
+            <div className="mb-6 shrink-0">
+              <h3 className="text-sm font-bold text-gray-900 leading-tight">By Marketing Source</h3>
+              <p className="text-[10px] text-gray-400 font-medium">Which channel drove the lead — tracked by phone number</p>
             </div>
-         </div>
-
-         <div className="space-y-4">
-            <SectionTitle title="Contact Method Analysis" />
-            <div className="bg-white border border-gray-200/60 rounded-xl p-6 shadow-sm h-[520px] flex flex-col">
-               <div className="mb-6 shrink-0">
-                 <h3 className="text-sm font-bold text-gray-900 leading-tight">By Contact Method</h3>
-                 <p className="text-[10px] text-gray-400 font-medium">How they reached you</p>
-               </div>
-               <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
-                 <SourceTable 
-                   headers={['Method', 'Actions', 'Booked', 'Rate', 'Revenue']} 
-                   rows={dm.methods?.length > 0 ? dm.methods.map(m=>({
-                     label: m.label, 
-                     leads: m.leads, 
-                     booked: m.booked, 
-                     rate: `${m.rate}%`, 
-                     revenue: formatPrice(m.revenue),
-                     icon: getMethodIcon(m.label)
-                   })) : []} 
-                 />
-                 {!dm.methods?.length && <div className="h-40 flex items-center justify-center text-xs font-bold text-gray-400 uppercase tracking-tighter">Awaiting method data...</div>}
-               </div>
+            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+              <SourceTable 
+                headers={['Source', 'Leads', 'Booked', 'Rate', 'Revenue']} 
+                rows={(() => {
+                  const existingRows = dm.sources || [];
+                  return ALL_MARKETING_SOURCES.map((sourceDef, i) => {
+                    const found = existingRows.find(s => 
+                      s.label === sourceDef.value || 
+                      s.label === sourceDef.label ||
+                      (sourceDef.value === 'Other' && s.label === 'Direct')
+                    );
+                    return {
+                      label: sourceDef.label, 
+                      leads: found ? found.leads : 0, 
+                      booked: found ? found.booked : 0, 
+                      rate: `${found ? found.rate : 0}%`, 
+                      revenue: found ? formatPrice(found.revenue) : "$0",
+                      dotColor: ['bg-blue-500', 'bg-emerald-500', 'bg-orange-500', 'bg-indigo-500', 'bg-rose-500', 'bg-gray-400', 'bg-sky-500', 'bg-emerald-400', 'bg-amber-500', 'bg-purple-500', 'bg-pink-500', 'bg-slate-500', 'bg-cyan-500', 'bg-teal-500', 'bg-rose-400', 'bg-gray-300'][i % 16]
+                    };
+                  });
+                })()} 
+              />
+              {(!dm.sources?.length && !ALL_MARKETING_SOURCES.length) && <div className="h-40 flex items-center justify-center text-xs font-bold text-gray-400 uppercase tracking-tighter">Awaiting source data...</div>}
             </div>
-         </div>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <SectionTitle title="Contact Method Analysis" />
+          <div className="bg-white border border-gray-200/60 rounded-xl p-6 shadow-sm h-[520px] flex flex-col">
+            <div className="mb-6 shrink-0">
+              <h3 className="text-sm font-bold text-gray-900 leading-tight">By Contact Method</h3>
+              <p className="text-[10px] text-gray-400 font-medium">How they reached you</p>
+            </div>
+            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+              <SourceTable 
+                headers={['Method', 'Actions', 'Booked', 'Rate', 'Revenue']} 
+                rows={dm.methods?.length > 0 ? dm.methods.map(m=>({
+                  label: m.label, 
+                  leads: m.leads, 
+                  booked: m.booked, 
+                  rate: `${m.rate}%`, 
+                  revenue: formatPrice(m.revenue),
+                  icon: getMethodIcon(m.label)
+                })) : []} 
+              />
+              {!dm.methods?.length && <div className="h-40 flex items-center justify-center text-xs font-bold text-gray-400 uppercase tracking-tighter">Awaiting method data...</div>}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Operational Metrics Section */}
@@ -340,30 +337,31 @@ export default function Metrics({ tenantId }) {
             trend="+22%" 
             icon={Activity} 
           />
+          {/* ✅ FIX: removed * 100 — avg_job_value from backend is already in cents */}
           <OpsCard 
             label="Avg Job Value" 
-            value={formatPrice((dm.ops?.avg_job_value || 0) * 100)} 
+            value={formatPrice(dm.ops?.avg_job_value || 0)} 
             subText="From completed jobs" 
             icon={DollarSign} 
           />
         </div>
       </section>
 
-      {/* Revenue Tracking (Moved to bottom or as a summary elsewhere) */}
+      {/* Net Revenue Flow */}
       <div className="pt-8 border-t border-gray-100">
-          <div className="flex flex-col lg:flex-row gap-8 justify-between items-start">
-             <div className="max-w-md w-full space-y-4">
-                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest leading-none">Net Revenue Flow</h3>
-                <div className="space-y-4">
-                  <RevRow label="Confirmed — actual from CRM" color="bg-emerald-500" value={formatPrice(actualRev)} />
-                  <RevRow label="Lost — cancelled bookings" color="bg-rose-500" value={formatPrice(lostPotential)} />
-                  <div className="pt-4 border-t border-gray-100 flex justify-between items-center text-gray-900">
-                    <span className="text-[11px] font-bold uppercase">Total pipeline value</span>
-                    <span className="text-xl font-bold font-mono tracking-tighter">{formatPrice(actualRev + estimatedRev)}</span>
-                  </div>
-                </div>
-             </div>
+        <div className="flex flex-col lg:flex-row gap-8 justify-between items-start">
+          <div className="max-w-md w-full space-y-4">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest leading-none">Net Revenue Flow</h3>
+            <div className="space-y-4">
+              <RevRow label="Confirmed — actual from CRM" color="bg-emerald-500" value={formatPrice(actualRev)} />
+              <RevRow label="Lost — cancelled bookings" color="bg-rose-500" value={formatPrice(lostPotential)} />
+              <div className="pt-4 border-t border-gray-100 flex justify-between items-center text-gray-900">
+                <span className="text-[11px] font-bold uppercase">Total pipeline value</span>
+                <span className="text-xl font-bold font-mono tracking-tighter">{formatPrice(actualRev + estimatedRev)}</span>
+              </div>
+            </div>
           </div>
+        </div>
       </div>
 
     </div>
@@ -422,9 +420,9 @@ function OpsCard({ label, value, subText, badge, badgeColor, trend, icon: Icon }
     <div className="bg-white border border-gray-200/60 rounded-xl p-6 shadow-sm flex flex-col justify-between min-h-[140px] hover:border-orange-200 hover:shadow-md transition-all group">
       <div>
         <div className="flex items-center justify-between mb-2">
-           {badge && <div className={`px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider border ${badgeColor}`}>{badge}</div>}
-           {trend && <div className="text-[10px] font-bold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded-md border border-orange-100">{trend}</div>}
-           {Icon && !badge && !trend && <Icon size={14} className="text-gray-300 group-hover:text-orange-500 transition-colors" />}
+          {badge && <div className={`px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider border ${badgeColor}`}>{badge}</div>}
+          {trend && <div className="text-[10px] font-bold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded-md border border-orange-100">{trend}</div>}
+          {Icon && !badge && !trend && <Icon size={14} className="text-gray-300 group-hover:text-orange-500 transition-colors" />}
         </div>
         <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">{label}</div>
         <div className="text-3xl font-bold text-gray-900 tracking-tighter leading-none mb-1.5">{value}</div>
@@ -445,7 +443,6 @@ function getMethodIcon(label) {
   return Activity;
 }
 
-
 function SourceTable({ headers, rows }) {
   return (
     <table className="w-full text-left text-[11px] font-sans whitespace-nowrap">
@@ -458,9 +455,9 @@ function SourceTable({ headers, rows }) {
         {rows.map((r, i) => (
           <tr key={i} className="hover:bg-gray-50/20 transition-colors group">
             <td className="py-4 font-bold text-gray-700 flex items-center gap-3">
-               {r.dotColor && <div className={`w-2 h-2 rounded-full ${r.dotColor} shadow-sm group-hover:scale-110 transition-transform`}></div>}
-               {r.icon && <r.icon size={16} className="text-blue-500 group-hover:scale-110 transition-transform" />}
-               <span className="group-hover:text-gray-900 transition-colors leading-tight">{r.label}</span>
+              {r.dotColor && <div className={`w-2 h-2 rounded-full ${r.dotColor} shadow-sm group-hover:scale-110 transition-transform`}></div>}
+              {r.icon && <r.icon size={16} className="text-blue-500 group-hover:scale-110 transition-transform" />}
+              <span className="group-hover:text-gray-900 transition-colors leading-tight">{r.label}</span>
             </td>
             <td className="py-4 text-right font-bold text-gray-900">{r.leads}</td>
             <td className="py-4 text-right font-bold text-gray-600">{r.booked}</td>
@@ -474,10 +471,10 @@ function SourceTable({ headers, rows }) {
             <td className="py-4 text-right text-gray-900">{rows.reduce((sum, r) => sum + (parseInt(r.leads) || 0), 0)}</td>
             <td className="py-4 text-right text-gray-900">{rows.reduce((sum, r) => sum + (parseInt(r.booked) || 0), 0)}</td>
             <td className="py-4 text-right text-emerald-600">
-               {Math.round((rows.reduce((sum, r) => sum + (parseInt(r.booked) || 0), 0) / Math.max(1, rows.reduce((sum, r) => sum + (parseInt(r.leads) || 0), 0))) * 100)}%
+              {Math.round((rows.reduce((sum, r) => sum + (parseInt(r.booked) || 0), 0) / Math.max(1, rows.reduce((sum, r) => sum + (parseInt(r.leads) || 0), 0))) * 100)}%
             </td>
             <td className="py-4 text-right text-gray-900 font-mono">
-               ${Math.round(rows.reduce((sum, r) => sum + (parseInt(r.revenue?.replace(/[^0-9]/g, '') || 0)), 0)).toLocaleString()}
+              ${Math.round(rows.reduce((sum, r) => sum + (parseInt(r.revenue?.replace(/[^0-9]/g, '') || 0)), 0)).toLocaleString()}
             </td>
           </tr>
         )}

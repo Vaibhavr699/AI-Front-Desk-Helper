@@ -1,3 +1,15 @@
+/**
+ * ⚠️  DEPRECATED — DO NOT USE
+ *
+ * This file has been replaced by services/estimateRecovery.js
+ * which handles the full 21-day follow-up sequence with AI calls
+ * and voicemail detection.
+ *
+ * The cron job that called processDueFollowUps() has been removed
+ * from server.js. This file is kept for reference only.
+ *
+ * Deprecated: April 2026
+ */
 "use strict";
 
 const db = require("../lib/db");

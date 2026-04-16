@@ -559,7 +559,7 @@ router.get("/metrics", async (req, res) => {
           COUNT(DISTINCT l.id) as leads_generated,
           COUNT(DISTINCT er.id) as estimates_sent,
           COUNT(DISTINCT b.id) as estimates_accepted,
-          COALESCE(SUM(b.estimated_revenue_cents), 0) as revenue_booked
+          COALESCE(SUM(b.estimated_revenue_cents), 0) as revenue_booked,
          FROM leads l
          LEFT JOIN estimate_recoveries er ON er.lead_id = l.id AND er.created_at > $2
          LEFT JOIN bookings b ON b.lead_id = l.id AND b.created_at > $2
@@ -571,7 +571,7 @@ router.get("/metrics", async (req, res) => {
           COUNT(DISTINCT l.id) as leads_generated,
           COUNT(DISTINCT er.id) as estimates_sent,
           COUNT(DISTINCT b.id) as estimates_accepted,
-          COALESCE(SUM(b.estimated_revenue_cents), 0) as revenue_booked
+          COALESCE(SUM(b.estimated_revenue_cents), 0) as revenue_booked,
          FROM leads l
          LEFT JOIN estimate_recoveries er ON er.lead_id = l.id AND er.created_at BETWEEN $2 AND $3
          LEFT JOIN bookings b ON b.lead_id = l.id AND b.created_at BETWEEN $2 AND $3
@@ -734,7 +734,7 @@ router.get("/metrics", async (req, res) => {
    FROM bookings WHERE tenant_id = ANY($1) 
    AND actual_revenue_cents IS NOT NULL AND actual_revenue_cents > 0),
   0
-) as actual_revenue`,
+) as actual_revenue',
         [tenantIds]
       ),
       db.query(

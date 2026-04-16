@@ -68,7 +68,7 @@ router.get("/bookings", async (req, res) => {
     const activeSort = allowedSort.includes(sortBy) ? sortBy : "preferred_date";
 
     const countRes = await db.query(`
-      `SELECT COUNT(*) FROM bookings b ${where}`,
+      SELECT COUNT(*) FROM bookings b ${where}`,
       params
     );
     const total = parseInt(countRes.rows[0].count, 10);

@@ -680,7 +680,7 @@ router.get("/metrics", async (req, res) => {
       ),
       // ── FIX 1: avg_job_value now falls back to estimated_revenue_cents
       // ── FIX 2: total_recoveries counts estimate_recovery rows directly (not via lead join)
-      db.query(
+      db.query(`
         `SELECT
           COALESCE(
             NULLIF(AVG(b.actual_revenue_cents), 0),
@@ -694,7 +694,7 @@ router.get("/metrics", async (req, res) => {
          WHERE b.tenant_id = ANY($1) AND b.created_at > $2`,
         [tenantIds, currentWindow]
       ),
-      db.query(
+      db.query(`
         `SELECT 
           d.day::date as date,
           COUNT(l.id) as leads,
@@ -706,7 +706,7 @@ router.get("/metrics", async (req, res) => {
          ORDER BY d.day ASC`,
         [tenantIds]
       ),
-      db.query(
+      db.query(`
         SELECT
           (SELECT COUNT(*) FROM calls WHERE tenant_id = ANY($1) AND started_at >= now() - interval '24 hours') as calls,
           (SELECT COUNT(*) FROM estimate_recoveries WHERE tenant_id = ANY($1) AND status = 'converted' AND updated_at >= now() - interval '24 hours') as recovered,

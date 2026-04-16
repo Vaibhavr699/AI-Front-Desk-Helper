@@ -33,7 +33,7 @@ function Tooltip({ children, content }) {
     >
       {children}
       {show && (
-        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 px-4 py-3 bg-stone-900 text-white text-sm rounded-xl shadow-2xl max-w-xs whitespace-normal z-50 animate-in fade-in duration-200 border border-stone-700">
+       <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 px-4 py-3 bg-gray-900 text-white text-sm font-medium rounded-xl shadow-2xl max-w-xs whitespace-normal z-50 animate-in fade-in duration-200 border border-gray-600">
           {content}
           <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-6 border-transparent border-t-stone-900"></div>
         </div>

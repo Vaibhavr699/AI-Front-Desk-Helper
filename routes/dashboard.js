@@ -707,14 +707,14 @@ router.get("/metrics", async (req, res) => {
         [tenantIds]
       ),
       db.query(
-        `SELECT
+        SELECT
           (SELECT COUNT(*) FROM calls WHERE tenant_id = ANY($1) AND started_at >= now() - interval '24 hours') as calls,
           (SELECT COUNT(*) FROM estimate_recoveries WHERE tenant_id = ANY($1) AND status = 'converted' AND updated_at >= now() - interval '24 hours') as recovered,
           (SELECT COUNT(*) FROM leads WHERE tenant_id = ANY($1) AND created_at >= now() - interval '24 hours') as leads,
           (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND created_at >= now() - interval '24 hours') as booked`,
         [tenantIds]
       ),
-      db.query(
+      db.query(`
         `SELECT
           (SELECT COUNT(*) FROM leads WHERE tenant_id = ANY($1) AND status NOT IN ('Closed', 'Lost')) as open_leads,
           (SELECT COUNT(*) FROM leads WHERE tenant_id = ANY($1) AND status = 'New') as leads_needing_followup,
@@ -737,13 +737,13 @@ router.get("/metrics", async (req, res) => {
 ) as actual_revenue',
         [tenantIds]
       ),
-      db.query(
+      db.query(`
         `SELECT
           (SELECT COUNT(*) FROM campaign_log WHERE tenant_id = ANY($1) AND sent_at > $2) as emails_sent,
           (SELECT COUNT(*) FROM referral_leads WHERE tenant_id = ANY($1) AND created_at > $2) as referrals_generated`,
         [tenantIds, currentWindow]
       ),
-      isRollup ? db.query(
+      isRollup ? db.query(`
         `SELECT 
           t.id, t.name, t.city, t.state, t.business_type,
           (SELECT COUNT(*) FROM calls c WHERE c.tenant_id = t.id AND c.started_at > $2) as total_calls,

@@ -120,7 +120,6 @@ router.patch("/bookings/:id", async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ error: "Not found" });
     const booking = result.rows[0];
 
-    // ── Audit log: booking updated ──────────────────────────────────────
     await logAction({
       organization_id: String(booking.tenant_id),
       user_id: req.user?.sub ? String(req.user.sub) : null,
@@ -279,7 +278,6 @@ router.get("/recordings/:id/audio", async (req, res) => {
     const rec = r.rows[0];
     if (!rec || !rec.recording_url) return res.status(404).json({ error: "Not found" });
 
-    // ── Audit log: recording played ─────────────────────────────────────
     await logAction({
       organization_id: String(rec.tenant_id),
       user_id: req.user?.sub ? String(req.user.sub) : null,
@@ -680,12 +678,17 @@ router.get("/metrics", async (req, res) => {
          ORDER BY actions DESC`,
         [tenantIds, currentWindow]
       ),
+      // ── FIX 1: avg_job_value now falls back to estimated_revenue_cents
+      // ── FIX 2: total_recoveries counts estimate_recovery rows directly (not via lead join)
       db.query(
         `SELECT
-          COALESCE(AVG(b.actual_revenue_cents), 0) as avg_job_value,
+          COALESCE(
+            NULLIF(AVG(b.actual_revenue_cents), 0),
+            AVG(b.estimated_revenue_cents)
+          ) as avg_job_value,
           COALESCE(AVG(EXTRACT(EPOCH FROM (b.created_at - l.created_at))/60), 0) as avg_time_to_book,
           (SELECT COUNT(*) FROM estimate_recoveries WHERE tenant_id = ANY($1) AND status = 'converted' AND created_at > $2) as recovered_count,
-          (SELECT COUNT(*) FROM leads l JOIN estimate_recoveries er ON l.id = er.lead_id WHERE l.tenant_id = ANY($1) AND er.created_at > $2) as total_recoveries
+          (SELECT COUNT(*) FROM estimate_recoveries WHERE tenant_id = ANY($1) AND created_at > $2) as total_recoveries
          FROM bookings b
          JOIN leads l ON b.lead_id = l.id
          WHERE b.tenant_id = ANY($1) AND b.created_at > $2`,
@@ -760,24 +763,24 @@ router.get("/metrics", async (req, res) => {
       ) : Promise.resolve({ rows: [] })
     ]);
 
-    const salesStats = results[0];
-    const salesStatsPrev = results[1];
-    const aiStats = results[2];
-    const aiStatsPrev = results[3];
-    const sourceStats = results[4];
+    const salesStats         = results[0];
+    const salesStatsPrev     = results[1];
+    const aiStats            = results[2];
+    const aiStatsPrev        = results[3];
+    const sourceStats        = results[4];
     const contactMethodStats = results[5];
-    const opsStats = results[6];
-    const trendStats = results[7];
-    const todayStats = results[8];
-    const pipelineStats = results[9];
-    const nurturingStats = results[10];
-    const locationStats = results[11];
+    const opsStats           = results[6];
+    const trendStats         = results[7];
+    const todayStats         = results[8];
+    const pipelineStats      = results[9];
+    const nurturingStats     = results[10];
+    const locationStats      = results[11];
 
-    const sales = salesStats.rows[0] || { leads_generated: 0, estimates_sent: 0, estimates_accepted: 0, revenue_booked: 0 };
-    const salesPrev = salesStatsPrev.rows[0] || { leads_generated: 0, estimates_sent: 0, estimates_accepted: 0, revenue_booked: 0 };
-    const ai = aiStats.rows[0] || { calls_handled: 0, appointments_booked: 0 };
-    const aiPrev = aiStatsPrev.rows[0] || { calls_handled: 0, appointments_booked: 0 };
-    const pipeline = pipelineStats.rows[0] || { open_leads: 0, leads_needing_followup: 0, jobs_scheduled: 0 };
+    const sales       = salesStats.rows[0]     || { leads_generated: 0, estimates_sent: 0, estimates_accepted: 0, revenue_booked: 0 };
+    const salesPrev   = salesStatsPrev.rows[0] || { leads_generated: 0, estimates_sent: 0, estimates_accepted: 0, revenue_booked: 0 };
+    const ai          = aiStats.rows[0]        || { calls_handled: 0, appointments_booked: 0 };
+    const aiPrev      = aiStatsPrev.rows[0]    || { calls_handled: 0, appointments_booked: 0 };
+    const pipeline    = pipelineStats.rows[0]  || { open_leads: 0, leads_needing_followup: 0, jobs_scheduled: 0 };
     const nurturingRow = nurturingStats.rows[0] || { emails_sent: 0, referrals_generated: 0 };
 
     const getTrend = (curr, prev) => {
@@ -819,6 +822,18 @@ router.get("/metrics", async (req, res) => {
         }
       });
     }
+
+    // ── FIX: followup_conv now uses direct recovery count (not lead-joined count)
+    //         which prevents inflated percentages like 400%
+    const recoveredCount   = parseInt(opsStats.rows[0]?.recovered_count  || 0, 10);
+    const totalRecoveries  = parseInt(opsStats.rows[0]?.total_recoveries || 0, 10);
+    const followupConv     = totalRecoveries > 0
+      ? Math.min(Math.round((recoveredCount / totalRecoveries) * 100), 100)
+      : 0;
+
+    // ── FIX: avg_job_value uses estimated_revenue_cents fallback
+    const rawAvgJobValue = parseFloat(opsStats.rows[0]?.avg_job_value || 0);
+    const avgJobValue    = Math.round(rawAvgJobValue);
 
     res.json({
       period: "30d",
@@ -908,10 +923,10 @@ router.get("/metrics", async (req, res) => {
           revenue: parseInt(r.revenue, 10)
         })),
         ops: {
-          avg_job_value: Math.round(parseInt(opsStats.rows[0]?.avg_job_value || 0, 10)),
+          avg_job_value: avgJobValue,
           avg_time_to_book: Math.round(parseInt(opsStats.rows[0]?.avg_time_to_book || 0, 10)),
-          recovered_count: parseInt(opsStats.rows[0]?.recovered_count || 0, 10),
-          followup_conv: (opsStats.rows[0]?.total_recoveries > 0) ? Math.round((parseInt(opsStats.rows[0].recovered_count, 10) / parseInt(opsStats.rows[0].total_recoveries, 10)) * 100) : 0
+          recovered_count: recoveredCount,
+          followup_conv: followupConv,
         }
       },
       location_breakdown,
@@ -1341,7 +1356,6 @@ router.patch("/tenants/:id", async (req, res) => {
     if (out.plan == null) out.plan = "basic";
     out.has_nurturing_referral = hasNurturingReferralAccess(out);
 
-    // ── Audit log: settings updated ─────────────────────────────────────
     await logAction({
       organization_id: String(id),
       user_id: req.user?.sub ? String(req.user.sub) : null,

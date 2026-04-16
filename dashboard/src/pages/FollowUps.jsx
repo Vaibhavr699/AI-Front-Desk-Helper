@@ -179,11 +179,32 @@ export default function FollowUps({ tenantId }) {
 
   if (loading) return <div className="flex items-center justify-center py-24"><LumaSpin /></div>;
 
+  // ── Filter tabs with tooltips ─────────────────────────────────────────────
   const filterTabs = [
-    { key: "all", label: "All", icon: null },
-    { key: "recovery", label: "Estimate Recovery", icon: DollarSign },
-    { key: "appointment", label: "Appointments", icon: CalendarCheck },
-    { key: "nurturing", label: "Nurturing", icon: History },
+    {
+      key: "all",
+      label: "All",
+      icon: null,
+      tooltip: "All active follow-ups across every pipeline stage.",
+    },
+    {
+      key: "recovery",
+      label: "Estimate Recovery",
+      icon: DollarSign,
+      tooltip: "Leads who received estimates but haven't booked yet. AI automatically follows up with SMS and calls to recover potential lost revenue.",
+    },
+    {
+      key: "appointment",
+      label: "Appointments",
+      icon: CalendarCheck,
+      tooltip: "Confirmed bookings with a scheduled date. Automated reminders sent before the appointment to reduce no-shows.",
+    },
+    {
+      key: "nurturing",
+      label: "Nurturing",
+      icon: History,
+      tooltip: "Long-term relationship building for repeat business. Includes post-job follow-ups, maintenance reminders, seasonal campaigns, and referral requests.",
+    },
   ];
 
   return (
@@ -204,6 +225,7 @@ export default function FollowUps({ tenantId }) {
             <button
               key={tab.key}
               onClick={() => setFilterSystem(tab.key)}
+              title={tab.tooltip}
               className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all border ${
                 isActive
                   ? "bg-stone-900 text-white border-stone-900 shadow-md"
@@ -472,6 +494,15 @@ function formatStage(step, systemType) {
     'reengagement': 'Re-engagement',
     // Appointment
     'pre_appointment': 'Upcoming Appt',
+    // New 21-day sequence steps
+    'day1_checkin': 'Day 1 Check-in',
+    'day3_value': 'Day 3 Value',
+    'day5_call': 'Day 5 Call',
+    'day7_urgency': 'Day 7 Urgency',
+    'day10_call': 'Day 10 Call',
+    'day14_softclose': 'Day 14 Soft Close',
+    'day17_call': 'Day 17 Call',
+    'day21_hardclose': 'Day 21 Close',
   };
   return map[step] || step.replace(/_/g, ' ');
 }
@@ -483,10 +514,18 @@ function getStageStyle(step, systemType) {
 
   switch (step) {
     case 'estimate_sent': return 'bg-blue-50 text-blue-700 border border-blue-100';
+    case 'day1_checkin': return 'bg-blue-50 text-blue-700 border border-blue-100';
     case 'sms_followup': return 'bg-amber-50 text-amber-700 border border-amber-100';
+    case 'day3_value': return 'bg-amber-50 text-amber-700 border border-amber-100';
     case 'ai_call_followup': return 'bg-indigo-50 text-indigo-700 border border-indigo-100';
+    case 'day5_call': return 'bg-indigo-50 text-indigo-700 border border-indigo-100';
+    case 'day7_urgency': return 'bg-orange-50 text-orange-700 border border-orange-100';
     case 'second_reminder': return 'bg-purple-50 text-purple-700 border border-purple-100';
+    case 'day10_call': return 'bg-purple-50 text-purple-700 border border-purple-100';
+    case 'day14_softclose': return 'bg-rose-50 text-rose-700 border border-rose-100';
     case 'final_attempt': return 'bg-red-50 text-red-700 border border-red-100';
+    case 'day17_call': return 'bg-red-50 text-red-700 border border-red-100';
+    case 'day21_hardclose': return 'bg-red-50 text-red-700 border border-red-100';
     case 'inquiry_thanks': return 'bg-cyan-50 text-cyan-700 border border-cyan-100';
     case 'inquiry_call': return 'bg-orange-50 text-orange-700 border border-orange-100';
     

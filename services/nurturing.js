@@ -15,8 +15,8 @@ function addDays(d, days) {
 }
 
 /**
- * Schedule post-service follow-up (1 day) and referral request (tenant.referral_request_days_after_service).
- * Call when booking status becomes Completed and tenant has nurturing_enabled.
+ * Schedule post-service follow-up and referral request after a completed job.
+ * Completed job leads → maintenance + re-engagement + referral + seasonal (all flows).
  */
 async function schedulePostServiceCampaigns(tenantId, booking) {
   if (!booking?.lead_id) return;
@@ -50,7 +50,7 @@ async function schedulePostServiceCampaigns(tenantId, booking) {
 }
 
 /**
- * Process due nurturing_schedule rows: send email (and optionally SMS), log to campaign_log, mark sent.
+ * Process due nurturing_schedule rows.
  */
 async function processDueNurturing() {
   const rows = await db.query(
@@ -66,21 +66,21 @@ async function processDueNurturing() {
   );
 
   for (const row of rows.rows) {
-    // Restrict outreach to 8 AM - 7 PM in the tenant's timezone
-    const tz = row.timezone || "America/Chicago";
+    const tz       = row.timezone || "America/Chicago";
     const nowLocal = DateTime.now().setZone(tz);
-    const hour = nowLocal.hour;
+    const hour     = nowLocal.hour;
 
     if (hour < 8 || hour >= 19) {
-      console.log(`[Nurturing] Outside outreach window for tenant ${row.tenant_name} (${row.tenant_id}). Local time: ${nowLocal.toFormat("HH:mm")}. Skipping.`);
+      console.log(`[Nurturing] Outside outreach window for tenant ${row.tenant_name}. Local time: ${nowLocal.toFormat("HH:mm")}. Skipping.`);
       continue;
     }
 
-    if (!hasNurturingReferralAccess({ 
-      plan: row.plan, 
-      plan_overrides: row.plan_overrides,
-      nurturing_enabled: row.nurturing_enabled 
+    if (!hasNurturingReferralAccess({
+      plan:              row.plan,
+      plan_overrides:    row.plan_overrides,
+      nurturing_enabled: row.nurturing_enabled,
     })) continue;
+
     await processOneNurturing(row);
   }
 }
@@ -90,7 +90,6 @@ async function processOneNurturing(row) {
   const toEmail = lead_email || null;
   const toPhone = lead_phone || null;
 
-  // Resolve owner email so customer replies go to the business owner
   let ownerReplyTo = null;
   try {
     const tenantRes = await db.query(
@@ -110,64 +109,60 @@ async function processOneNurturing(row) {
     console.error("[Nurturing] Failed to resolve owner email for tenant %s:", tenant_id, err.message);
   }
 
-  let logId = null;
+  let logId    = null;
   let emailSent = false;
-  let smsSent = false;
-  let body = "";
+  let smsSent   = false;
+  let body      = "";
 
   if (campaign_type === "post_service_followup") {
     if (toEmail) {
       const r = await emailService.sendPostServiceFollowUpEmail(company_name, lead_name, toEmail, ownerReplyTo);
       emailSent = r.ok;
-      body = r.body || "Quick follow-up after your recent service.";
+      body      = r.body || "Quick follow-up after your recent service.";
     }
     if (toPhone) {
       const smsBody = `${company_name} here — hope you're happy with the work we did. If you have any questions or need a follow-up, just reply or give us a call.`;
-      const sent = await sendNurturingSms(tenant_id, toPhone, smsBody);
-      smsSent = sent;
-      if (sent && !body) body = smsBody;
+      smsSent = await sendNurturingSms(tenant_id, toPhone, smsBody);
+      if (smsSent && !body) body = smsBody;
     }
   } else if (campaign_type === "referral_request") {
     if (toEmail) {
       const r = await emailService.sendReferralRequestEmail(company_name, lead_name, toEmail, ownerReplyTo);
       emailSent = r.ok;
-      body = r.body || "Quick favor — know someone who could use our help?";
+      body      = r.body || "Quick favor — know someone who could use our help?";
     }
     if (toPhone) {
       const smsBody = `Hi${lead_name ? " " + lead_name : ""}! This is ${company_name}. We'd love a quick favor — know anyone who could use our help? Reply with their name and number and we'll reach out. Thanks!`;
-      const sent = await sendNurturingSms(tenant_id, toPhone, smsBody);
-      smsSent = sent;
-      if (sent && !body) body = smsBody;
+      smsSent = await sendNurturingSms(tenant_id, toPhone, smsBody);
+      if (smsSent && !body) body = smsBody;
     }
   } else if (campaign_type === "maintenance_reminder") {
     const touchpointHeader = (row.schedule_metadata && row.schedule_metadata.header) || "";
     if (toEmail) {
       const r = await emailService.sendMaintenanceReminderEmail(company_name, lead_name, toEmail, ownerReplyTo);
       emailSent = r.ok;
-      body = r.body || "Maintenance reminder.";
+      body      = r.body || "Maintenance reminder.";
     }
     if (toPhone) {
       const smsBody = touchpointHeader
         ? `${company_name} here — time for your ${touchpointHeader}! We're here when you're ready. Reply or give us a call.`
         : `${company_name} here — it's been a while. We're here when you're ready for your next project. Reply or give us a call.`;
-      const sent = await sendNurturingSms(tenant_id, toPhone, smsBody);
-      smsSent = sent;
-      if (sent && !body) body = smsBody;
+      smsSent = await sendNurturingSms(tenant_id, toPhone, smsBody);
+      if (smsSent && !body) body = smsBody;
     }
   } else if (campaign_type === "reengagement") {
     const touchpointHeader = (row.schedule_metadata && row.schedule_metadata.header) || "";
     if (toEmail) {
       const r = await emailService.sendReengagementEmail(company_name, lead_name, toEmail, ownerReplyTo);
       emailSent = r.ok;
-      body = r.body || "Quick check-in.";
+      body      = r.body || "Quick check-in.";
     }
     if (toPhone) {
       const smsBody = touchpointHeader
         ? `Hi${lead_name ? " " + lead_name : ""}! ${company_name} here — ${touchpointHeader}. We'd love to hear how things are going. Reply or call anytime.`
         : `Hi${lead_name ? " " + lead_name : ""}! Quick check-in from ${company_name} — we'd love to hear how things are going. Reply or call anytime.`;
-      const sent = await sendNurturingSms(tenant_id, toPhone, smsBody);
-      smsSent = sent;
-      if (sent && !body) body = smsBody;
+      smsSent = await sendNurturingSms(tenant_id, toPhone, smsBody);
+      if (smsSent && !body) body = smsBody;
     }
   } else if (campaign_type === "no_response_phone") {
     const hadReply = await db.query(
@@ -178,7 +173,7 @@ async function processOneNurturing(row) {
       await db.query("UPDATE nurturing_schedule SET status = 'skipped' WHERE id = $1", [scheduleId]);
       return;
     }
-    const script = `Hi, this is ${company_name}. We're checking in to see if you need help with any upcoming projects. Say "schedule" or press 1 if you'd like to book an estimate.`;
+    const script   = `Hi, this is ${company_name}. We're checking in to see if you need help with any upcoming projects. Say "schedule" or press 1 if you'd like to book an estimate.`;
     const callSent = await triggerNurturingCall(scheduleId, tenant_id, lead_id, lead_phone, script);
     if (callSent) {
       await db.query(
@@ -222,7 +217,7 @@ async function processOneNurturing(row) {
 }
 
 /**
- * Place an outbound AI call for nurturing (no-response follow-up). Uses /twilio/nurturing-call.
+ * Place an outbound AI call for nurturing with voicemail detection.
  */
 async function triggerNurturingCall(scheduleId, tenantId, leadId, toPhone, script) {
   if (!toPhone || !script) return false;
@@ -241,17 +236,22 @@ async function triggerNurturingCall(scheduleId, tenantId, leadId, toPhone, scrip
     console.warn("[Nurturing] BASE_URL not set, cannot place nurturing call");
     return false;
   }
-  const twimlUrl = `${baseUrl.replace(/\/$/, "")}/twilio/nurturing-call?scheduleId=${encodeURIComponent(scheduleId)}&script=${encodeURIComponent(script)}`;
+  const twimlUrl = `${baseUrl.replace(/\/$/, "")}/twilio/nurturing-call`
+    + `?scheduleId=${encodeURIComponent(scheduleId)}`
+    + `&script=${encodeURIComponent(script)}`;
   try {
     await client.calls.create({
-      to: toPhone,
+      to:     toPhone,
       from,
-      url: twimlUrl,
+      url:    twimlUrl,
       method: "GET",
       timeout: 30,
+      // ✅ Voicemail detection
+      machineDetection:        "Enable",
+      machineDetectionTimeout: 8,
       statusCallback: `${baseUrl.replace(/\/$/, "")}/twilio/nurturing-call-status?scheduleId=${encodeURIComponent(scheduleId)}`,
       statusCallbackMethod: "POST",
-      statusCallbackEvent: ["completed"],
+      statusCallbackEvent:  ["completed"],
     });
     return true;
   } catch (e) {
@@ -280,10 +280,6 @@ async function sendNurturingSms(tenantId, toPhone, body) {
   }
 }
 
-/**
- * Check if this lead recently received a referral_request and parse reply for name/phone.
- * Returns { isReferralReply, referralName, referralPhone, referralEmail } or { isReferralReply: false }.
- */
 async function tryParseReferralReply(tenantId, leadId, messageBody) {
   const recent = await db.query(
     `SELECT id FROM campaign_log
@@ -297,8 +293,8 @@ async function tryParseReferralReply(tenantId, leadId, messageBody) {
   if (text.length < 5) return { isReferralReply: false };
 
   const phoneMatch = text.match(/(?:^|\s)(?:\+?1[-.\s]*)?(\d{3})[-.\s]*(\d{3})[-.\s]*(\d{4})(?:\s|$|,|\.)/);
-  const phone = phoneMatch ? `+1${phoneMatch[1]}${phoneMatch[2]}${phoneMatch[3]}` : null;
-  let name = null;
+  const phone      = phoneMatch ? `+1${phoneMatch[1]}${phoneMatch[2]}${phoneMatch[3]}` : null;
+  let name         = null;
   const namePatterns = [
     /(?:my\s+)?(?:friend|neighbor|brother|sister|coworker|dad|mom)\s+([A-Za-z][A-Za-z\s'-]{1,40})(?:\s+(?:is|needs|his|her|number|at|@))/i,
     /(?:name is|call them)\s+([A-Za-z][A-Za-z\s'-]{1,40})(?:\s|,|\.|$)/i,
@@ -306,26 +302,20 @@ async function tryParseReferralReply(tenantId, leadId, messageBody) {
   ];
   for (const re of namePatterns) {
     const m = text.match(re);
-    if (m && m[1]) {
-      name = m[1].trim();
-      break;
-    }
+    if (m && m[1]) { name = m[1].trim(); break; }
   }
-  const emailMatch = text.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+  const emailMatch   = text.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
   const referralEmail = emailMatch ? emailMatch[1] : null;
 
   if (!phone && !name) return { isReferralReply: false };
   return {
     isReferralReply: true,
-    referralName: name || "Referred customer",
-    referralPhone: phone || null,
-    referralEmail: referralEmail || null,
+    referralName:    name || "Referred customer",
+    referralPhone:   phone || null,
+    referralEmail:   referralEmail || null,
   };
 }
 
-/**
- * Create referral_lead and lead (source=referral), then send AI outreach SMS to the referral.
- */
 async function createReferralAndOutreach(tenantId, referringLeadId, referringBookingId, referralName, referralPhone, referralEmail, serviceInterest) {
   const referringLead = await db.query(
     "SELECT id, name, phone FROM leads WHERE id = $1",
@@ -375,10 +365,6 @@ async function createReferralAndOutreach(tenantId, referringLeadId, referringBoo
   return { referralLeadId, leadId };
 }
 
-/**
- * Find leads due for maintenance reminder. Supports multiple touchpoints via maintenance_touchpoints JSONB.
- * Falls back to single maintenance_reminder_months if touchpoints not set.
- */
 async function processMaintenanceReminders() {
   const tenants = await db.query(
     `SELECT id, company_name, maintenance_reminder_months, maintenance_touchpoints, plan, plan_overrides FROM tenants
@@ -389,7 +375,7 @@ async function processMaintenanceReminders() {
     for (let tpIdx = 0; tpIdx < touchpoints.length; tpIdx++) {
       const tp = touchpoints[tpIdx];
       if (!tp.months || tp.months <= 0) continue;
-      const campaignKey = `maintenance_reminder_tp${tpIdx}`;
+      // ✅ Only leads with a completed job (last_service_date IS NOT NULL)
       const leads = await db.query(
         `SELECT l.id as lead_id FROM leads l
          WHERE l.tenant_id = $1 AND l.last_service_date IS NOT NULL
@@ -420,10 +406,6 @@ async function processMaintenanceReminders() {
   }
 }
 
-/**
- * Find leads due for re-engagement. Supports multiple touchpoints via reengagement_touchpoints JSONB.
- * Falls back to single reengagement_reminder_months if touchpoints not set.
- */
 async function processReengagement() {
   const tenants = await db.query(
     `SELECT id, company_name, reengagement_reminder_months, reengagement_touchpoints, plan, plan_overrides FROM tenants
@@ -434,6 +416,7 @@ async function processReengagement() {
     for (let tpIdx = 0; tpIdx < touchpoints.length; tpIdx++) {
       const tp = touchpoints[tpIdx];
       if (!tp.months || tp.months <= 0) continue;
+      // ✅ Only leads with a completed job (last_service_date IS NOT NULL)
       const leads = await db.query(
         `SELECT l.id as lead_id FROM leads l
          WHERE l.tenant_id = $1 AND l.last_service_date IS NOT NULL
@@ -464,9 +447,6 @@ async function processReengagement() {
   }
 }
 
-/**
- * Parse touchpoints JSONB array, falling back to a single entry from the legacy scalar column.
- */
 function parseTouchpoints(touchpointsJson, fallbackMonths) {
   if (Array.isArray(touchpointsJson) && touchpointsJson.length > 0) {
     return touchpointsJson.slice(0, 3).map((tp) => ({
@@ -478,25 +458,31 @@ function parseTouchpoints(touchpointsJson, fallbackMonths) {
 }
 
 /**
- * Seasonal campaigns: current month from calendar (or default), send to leads with last_service_date in past 24 months.
+ * Seasonal campaigns.
+ *
+ * Eligible leads:
+ *   1. Completed job leads — last_service_date within past 24 months (existing behavior)
+ *   2. Dormant estimate leads — no completed job but were in estimate recovery,
+ *      created within past 24 months (NEW — estimate-only outreach)
+ *
+ * Maintenance/re-engagement/referral are NOT sent to estimate-only leads.
  */
 async function processSeasonalCampaigns() {
-  const month = new Date().getMonth() + 1;
+  const month   = new Date().getMonth() + 1;
   const tenants = await db.query(
     `SELECT id, company_name, nurturing_campaign_calendar FROM tenants
      WHERE nurturing_enabled = true AND seasonal_campaigns_enabled = true
        AND (plan = 'elite' OR (plan_overrides->'addons'->>'customerNurturingReferral') = 'true')`
   );
-  for (const t of tenants.rows) {
-    const calendar = t.nurturing_campaign_calendar && typeof t.nurturing_campaign_calendar === "object"
-      ? t.nurturing_campaign_calendar
-      : {};
-    const campaignKey = calendar[String(month)] || `seasonal_${month}`;
-    const subject = getDefaultSeasonalSubject(month);
-    const bodyHtml = getDefaultSeasonalBody(month);
-    const smsBody = getDefaultSeasonalSms(month, t.company_name);
 
-    // Resolve owner email for reply-to
+  for (const t of tenants.rows) {
+    const calendar    = t.nurturing_campaign_calendar && typeof t.nurturing_campaign_calendar === "object"
+      ? t.nurturing_campaign_calendar : {};
+    const campaignKey = calendar[String(month)] || `seasonal_${month}`;
+    const subject     = getDefaultSeasonalSubject(month);
+    const bodyHtml    = getDefaultSeasonalBody(month);
+    const smsBody     = getDefaultSeasonalSms(month, t.company_name);
+
     let ownerReplyTo = null;
     try {
       const ownerRes = await db.query(
@@ -506,7 +492,8 @@ async function processSeasonalCampaigns() {
       if (ownerRes.rows.length > 0) ownerReplyTo = ownerRes.rows[0].email;
     } catch (_) {}
 
-    const leads = await db.query(
+    // ── Group 1: Completed job leads (existing behavior) ────────────────
+    const completedLeads = await db.query(
       `SELECT l.id, l.phone, l.email, l.name FROM leads l
        WHERE l.tenant_id = $1 AND l.last_service_date IS NOT NULL
          AND l.last_service_date >= current_date - interval '24 months'
@@ -517,9 +504,40 @@ async function processSeasonalCampaigns() {
        LIMIT 100`,
       [t.id, campaignKey]
     );
-    for (const row of leads.rows) {
+
+    // ── Group 2: Dormant estimate leads — no completed job ──────────────
+    // These people got a quote, didn't book, went through the full 21-day sequence.
+    // They receive seasonal outreach only (not maintenance/re-engagement/referral).
+    const dormantEstimateLeads = await db.query(
+      `SELECT DISTINCT l.id, l.phone, l.email, l.name FROM leads l
+       JOIN estimate_recoveries er ON er.lead_id = l.id
+       WHERE l.tenant_id = $1
+         AND l.last_service_date IS NULL
+         AND er.status = 'dormant'
+         AND l.created_at >= current_date - interval '24 months'
+         AND NOT EXISTS (
+           SELECT 1 FROM campaign_log c
+           WHERE c.lead_id = l.id AND c.campaign_type = $2 AND c.sent_at >= date_trunc('month', current_date)
+         )
+       LIMIT 100`,
+      [t.id, campaignKey]
+    );
+
+    // Combine both groups (deduplicated by lead id)
+    const seenIds  = new Set();
+    const allLeads = [];
+    for (const row of [...completedLeads.rows, ...dormantEstimateLeads.rows]) {
+      if (!seenIds.has(row.id)) {
+        seenIds.add(row.id);
+        allLeads.push(row);
+      }
+    }
+
+    for (const row of allLeads) {
       if (row.email) {
-        await emailService.sendSeasonalCampaignEmail(t.company_name, row.name, subject, bodyHtml, row.email, ownerReplyTo).catch(() => {});
+        await emailService.sendSeasonalCampaignEmail(
+          t.company_name, row.name, subject, bodyHtml, row.email, ownerReplyTo
+        ).catch(() => {});
       }
       if (row.phone) {
         await sendNurturingSms(t.id, row.phone, smsBody).catch(() => {});
@@ -530,23 +548,21 @@ async function processSeasonalCampaigns() {
         [t.id, row.id, campaignKey, smsBody]
       ).catch(() => {});
     }
+
+    if (allLeads.length > 0) {
+      console.log(`[Nurturing] Seasonal ${campaignKey}: sent to ${completedLeads.rows.length} completed + ${dormantEstimateLeads.rows.length} dormant estimate leads for tenant ${t.id}`);
+    }
   }
 }
 
 function getDefaultSeasonalSubject(month) {
   const titles = {
-    1: "Interior refresh ideas",
-    2: "Pre-spring planning",
-    3: "Exterior season is here",
-    4: "Spring project ideas",
-    5: "Summer prep",
-    6: "Mid-year refresh",
-    7: "Summer projects",
-    8: "Back-to-school touch-ups",
-    9: "Fall projects",
-    10: "Holiday prep",
-    11: "Year-end projects",
-    12: "Year in review",
+    1: "Interior refresh ideas", 2: "Pre-spring planning",
+    3: "Exterior season is here", 4: "Spring project ideas",
+    5: "Summer prep", 6: "Mid-year refresh",
+    7: "Summer projects", 8: "Back-to-school touch-ups",
+    9: "Fall projects", 10: "Holiday prep",
+    11: "Year-end projects", 12: "Year in review",
   };
   return titles[month] || "News from us";
 }

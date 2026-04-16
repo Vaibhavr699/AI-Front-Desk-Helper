@@ -38,7 +38,7 @@ router.post("/voice/:tenantId?", async (req, res) => {
         tenant = await getTenantBySlug(req.params.tenantId);
       }
     }
-    const tenantByTo = await getTenantByPhone(toNumber);
+    const tenantByTo   = await getTenantByPhone(toNumber);
     const tenantByFrom = await getTenantByPhone(fromNumber);
     if (!tenant) tenant = tenantByTo;
     if (!tenant) tenant = tenantByFrom;
@@ -47,15 +47,13 @@ router.post("/voice/:tenantId?", async (req, res) => {
       sendVoiceError(res, "We're sorry, this number is not configured. Goodbye.");
       return;
     }
-    // Direction detection: explicit query param > Twilio header > FROM lookup
+
     let direction = req.body?.Direction === "inbound" ? "inbound" : "outbound";
     if (req.body?.Direction === "outbound-api") direction = "outbound";
-    if (req.query.direction === "inbound") direction = "inbound";
+    if (req.query.direction === "inbound")  direction = "inbound";
     if (req.query.direction === "outbound") direction = "outbound";
-    
-    // Fallback: if no explicit signal, use tenant-from lookup
     if (!req.query.direction && !req.body?.Direction) {
-        direction = tenantByFrom ? "outbound" : "inbound";
+      direction = tenantByFrom ? "outbound" : "inbound";
     }
 
     await callsService.createCall(tenant.id, CallSid, fromNumber, toNumber, direction);
@@ -66,7 +64,6 @@ router.post("/voice/:tenantId?", async (req, res) => {
     const testCallFrom = (process.env.TEST_CALL_FROM || "").replace(/\s/g, "");
     if (testCallFrom && fromNumber && fromNumber.replace(/\D/g, "") === testCallFrom.replace(/\D/g, "")) {
       streamUrl += "&turnBased=1";
-      console.log("[AI-Desk] Voice webhook using turn-based stream (TEST_CALL_FROM)");
     }
     const actionUrl = BASE_URL ? `${BASE_URL}/twilio/status` : null;
 
@@ -90,7 +87,6 @@ router.post("/recording-status", (req, res) => {
   res.status(200).send();
 });
 
-// Live transfer: Dial transfer number. Call remains recorded (AI leg + this Dial leg via record/recordingStatusCallback).
 router.get("/transfer-dial", (req, res) => {
   const to = req.query.to;
   if (!to) {
@@ -114,7 +110,6 @@ router.get("/transfer-dial", (req, res) => {
   `);
 });
 
-// Twilio status / <Connect> action callback. Must return valid TwiML < 64KB.
 router.post("/status", (req, res) => {
   const twiml = '<?xml version="1.0" encoding="UTF-8"?><Response/>';
   res.writeHead(200, {
@@ -123,37 +118,79 @@ router.post("/status", (req, res) => {
   });
   res.end(twiml);
 
-  const CallSid = req.body && req.body.CallSid;
+  const CallSid    = req.body && req.body.CallSid;
   const CallStatus = req.body && req.body.CallStatus;
-if (CallSid && (CallStatus === "completed" || CallStatus === "busy" || CallStatus === "failed" || CallStatus === "no-answer")) {
+  if (CallSid && (CallStatus === "completed" || CallStatus === "busy" || CallStatus === "failed" || CallStatus === "no-answer")) {
     const endedAt = new Date().toISOString();
     updateCallByTwilioSid(CallSid, {
-      status: CallStatus,
-      ended_at: endedAt,
+      status:           CallStatus,
+      ended_at:         endedAt,
       duration_minutes: req.body?.CallDuration ? parseFloat(req.body.CallDuration) / 60 : null,
     }).catch(() => {});
   }
 });
 
-// -------------------- Estimate Recovery Outbound Calls --------------------
-
-// TwiML for recovery outbound calls — connects to live AI via WebSocket stream
+// ── Estimate Recovery Outbound Calls ──────────────────────────────────────
+//
+// Twilio calls this URL when the outbound recovery call connects.
+// With machineDetection="Enable", Twilio adds an AnsweredBy param:
+//   • "human"            → real person answered → connect to AI stream
+//   • "machine_*"        → voicemail detected → play voicemail script + hang up
+//   • "fax" / "unknown"  → play voicemail as fallback
+//
 router.get("/recovery-call", async (req, res) => {
   const recoveryId = req.query.recoveryId || "";
-  const script = req.query.script || "";
+  const script     = req.query.script     || "";
+  const voicemail  = req.query.voicemail  || script; // falls back to script if no voicemail provided
+  const answeredBy = req.query.AnsweredBy || "";     // set by Twilio when machineDetection="Enable"
 
-  const db = require("../lib/db");
+  console.log("[Recovery-Call] recoveryId=%s answeredBy=%s", recoveryId, answeredBy || "unknown");
+
+  // ── Voicemail detected — leave message and hang up ─────────────────────
+  const isMachine = answeredBy.startsWith("machine") || answeredBy === "fax";
+
+  if (isMachine && voicemail) {
+    console.log("[Recovery-Call] Voicemail detected — playing voicemail script");
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Pause length="1"/>
+  <Say voice="Polly.Joanna">${escapeXml(voicemail)}</Say>
+  <Pause length="1"/>
+  <Hangup/>
+</Response>`;
+    res.type("text/xml").send(twiml);
+
+    // Log the voicemail touch
+    setImmediate(async () => {
+      try {
+        const db = require("../lib/db");
+        await db.query(
+          `UPDATE recovery_touches SET status = 'voicemail_left' WHERE call_sid = $1 AND recovery_id = $2`,
+          [req.query.CallSid || "", recoveryId]
+        );
+        console.log("[Recovery-Call] Voicemail left for recoveryId=%s", recoveryId);
+      } catch (e) {
+        console.error("[Recovery-Call] Voicemail log error:", e.message);
+      }
+    });
+    return;
+  }
+
+  // ── Human answered (or detection unknown) — connect to AI stream ───────
+  const db    = require("../lib/db");
   const wsUrl = (BASE_URL || "")
     .replace("https://", "wss://")
     .replace("http://", "ws://") + "/twilio-media";
 
   let tenantId = "";
   try {
-    const res = await db.query("SELECT tenant_id, contact_phone FROM estimate_recoveries WHERE id = $1", [recoveryId]);
-    if (res.rows[0]) {
-      tenantId = res.rows[0].tenant_id;
-      const contactPhone = res.rows[0].contact_phone;
-      // CREATE CALL RECORD if it doesn't exist (using CallSid if available)
+    const r = await db.query(
+      "SELECT tenant_id, contact_phone FROM estimate_recoveries WHERE id = $1",
+      [recoveryId]
+    );
+    if (r.rows[0]) {
+      tenantId = r.rows[0].tenant_id;
+      const contactPhone = r.rows[0].contact_phone;
       const callSid = req.query.CallSid || "";
       if (callSid) {
         await callsService.createCall(tenantId, callSid, "RECOVERY", contactPhone, "outbound");
@@ -163,60 +200,150 @@ router.get("/recovery-call", async (req, res) => {
     console.error("[Twilio] recovery-call tenant/call setup failed:", e.message);
   }
 
-  const streamUrl = `${wsUrl}${tenantId ? '/' + tenantId : ''}?type=recovery&recoveryId=${encodeURIComponent(recoveryId)}&script=${encodeURIComponent(script)}&callSid=${encodeURIComponent(req.query.CallSid || "")}`;
-  const actionUrl = BASE_URL ? `${BASE_URL}/twilio/status` : "";
-  const connectAttrs = actionUrl
-    ? ` action="${escapeXml(actionUrl)}" method="POST"`
-    : "";
+  const streamUrl = `${wsUrl}${tenantId ? "/" + tenantId : ""}?type=recovery`
+    + `&recoveryId=${encodeURIComponent(recoveryId)}`
+    + `&script=${encodeURIComponent(script)}`
+    + `&callSid=${encodeURIComponent(req.query.CallSid || "")}`;
 
-  const twiml = `
-    <Response>
-      <Connect${connectAttrs}>
-        <Stream url="${escapeXml(streamUrl)}" />
-      </Connect>
-    </Response>
-  `;
+  const actionUrl    = BASE_URL ? `${BASE_URL}/twilio/status` : "";
+  const connectAttrs = actionUrl ? ` action="${escapeXml(actionUrl)}" method="POST"` : "";
+
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Connect${connectAttrs}>
+    <Stream url="${escapeXml(streamUrl)}" />
+  </Connect>
+</Response>`;
   res.type("text/xml").send(twiml);
 });
 
-// Status callback for recovery outbound calls — logs the outcome.
-// Twilio requires response body < 64KB. Send empty 200 immediately with raw Node to avoid any middleware adding body.
+// Status callback for recovery outbound calls
 router.post("/recovery-call-status", (req, res) => {
   res.writeHead(200, { "Content-Length": "0" });
   res.end();
 
-  const CallSid = req.body && req.body.CallSid;
+  const CallSid    = req.body && req.body.CallSid;
   const CallStatus = req.body && req.body.CallStatus;
   const recoveryId = req.query && req.query.recoveryId;
 
   if (recoveryId && CallSid) {
     const statusMap = {
-      completed: "answered",
-      busy: "busy",
-      failed: "failed",
+      completed:   "answered",
+      busy:        "busy",
+      failed:      "failed",
       "no-answer": "no_answer",
-      canceled: "failed",
+      canceled:    "failed",
     };
     const touchStatus = statusMap[CallStatus] || CallStatus;
     setImmediate(() => {
       const db = require("../lib/db");
-      db
-        .query(
-          "UPDATE recovery_touches SET status = $1 WHERE call_sid = $2 AND recovery_id = $3",
-          [touchStatus, CallSid, recoveryId]
-        )
-        .catch((e) => console.error("[Recovery] Call status update error:", e.message));
+      db.query(
+        "UPDATE recovery_touches SET status = $1 WHERE call_sid = $2 AND recovery_id = $3",
+        [touchStatus, CallSid, recoveryId]
+      ).catch((e) => console.error("[Recovery] Call status update error:", e.message));
     });
   }
 });
 
-// Outbound campaign entry (Supports both GET and POST from Twilio)
+// ── Nurturing outbound call TwiML ─────────────────────────────────────────
+//
+// Same voicemail detection logic for nurturing calls.
+//
+router.get("/nurturing-call", async (req, res) => {
+  const scheduleId = req.query.scheduleId || "";
+  const script     = req.query.script     || "";
+  const answeredBy = req.query.AnsweredBy || "";
+
+  console.log("[Nurturing-Call] scheduleId=%s answeredBy=%s", scheduleId, answeredBy || "unknown");
+
+  const isMachine = answeredBy.startsWith("machine") || answeredBy === "fax";
+
+  if (isMachine && script) {
+    console.log("[Nurturing-Call] Voicemail detected — playing voicemail script");
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Pause length="1"/>
+  <Say voice="Polly.Joanna">${escapeXml(script)}</Say>
+  <Pause length="1"/>
+  <Hangup/>
+</Response>`;
+    res.type("text/xml").send(twiml);
+
+    setImmediate(async () => {
+      try {
+        const db = require("../lib/db");
+        await db.query(
+          "UPDATE nurturing_schedule SET status = 'voicemail_left' WHERE id = $1",
+          [scheduleId]
+        );
+        console.log("[Nurturing-Call] Voicemail left for scheduleId=%s", scheduleId);
+      } catch (e) {
+        console.error("[Nurturing-Call] Voicemail log error:", e.message);
+      }
+    });
+    return;
+  }
+
+  // Human answered — connect to AI stream
+  const db    = require("../lib/db");
+  const wsUrl = (BASE_URL || "")
+    .replace("https://", "wss://")
+    .replace("http://", "ws://") + "/twilio-media";
+
+  let tenantId = "";
+  try {
+    const r = await db.query(
+      "SELECT tenant_id FROM nurturing_schedule WHERE id = $1",
+      [scheduleId]
+    );
+    if (r.rows[0]) tenantId = r.rows[0].tenant_id;
+  } catch (e) {
+    console.error("[Twilio] nurturing-call tenant setup failed:", e.message);
+  }
+
+  const streamUrl = `${wsUrl}${tenantId ? "/" + tenantId : ""}?type=nurturing`
+    + `&scheduleId=${encodeURIComponent(scheduleId)}`
+    + `&script=${encodeURIComponent(script)}`;
+
+  const actionUrl    = BASE_URL ? `${BASE_URL}/twilio/status` : "";
+  const connectAttrs = actionUrl ? ` action="${escapeXml(actionUrl)}" method="POST"` : "";
+
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Connect${connectAttrs}>
+    <Stream url="${escapeXml(streamUrl)}" />
+  </Connect>
+</Response>`;
+  res.type("text/xml").send(twiml);
+});
+
+// Status callback for nurturing calls
+router.post("/nurturing-call-status", (req, res) => {
+  res.writeHead(200, { "Content-Length": "0" });
+  res.end();
+
+  const CallStatus = req.body && req.body.CallStatus;
+  const scheduleId = req.query && req.query.scheduleId;
+
+  if (scheduleId && CallStatus) {
+    setImmediate(() => {
+      const db = require("../lib/db");
+      const status = CallStatus === "completed" ? "sent" : "failed";
+      db.query(
+        "UPDATE nurturing_schedule SET status = $1 WHERE id = $2 AND status = 'pending'",
+        [status, scheduleId]
+      ).catch((e) => console.error("[Nurturing] Call status update error:", e.message));
+    });
+  }
+});
+
+// ── Outbound campaign TwiML ───────────────────────────────────────────────
 router.all("/outbound", async (req, res) => {
   const campaignId = req.query.campaignId || req.body.campaignId;
-  const contactId = req.query.contactId || req.body.contactId;
-  const scriptId = req.query.scriptId || req.body.scriptId;
+  const contactId  = req.query.contactId  || req.body.contactId;
+  const scriptId   = req.query.scriptId   || req.body.scriptId;
 
-  const db = require("../lib/db");
+  const db    = require("../lib/db");
   const wsUrl = (BASE_URL || "")
     .replace("https://", "wss://")
     .replace("http://", "ws://") + "/twilio-media";
@@ -224,18 +351,20 @@ router.all("/outbound", async (req, res) => {
   let tenantId = "";
   if (campaignId) {
     try {
-      const db = require("../lib/db");
-      const campaignRes = await db.query("SELECT tenant_id FROM outbound_campaigns WHERE id = $1", [campaignId]);
+      const campaignRes = await db.query(
+        "SELECT tenant_id FROM outbound_campaigns WHERE id = $1",
+        [campaignId]
+      );
       if (campaignRes.rows[0]) {
         tenantId = campaignRes.rows[0].tenant_id;
-        
-        // Fetch contact phone to create call record
         let contactPhone = "";
         if (contactId) {
-          const contactRes = await db.query("SELECT phone FROM outbound_contacts WHERE id = $1", [contactId]);
+          const contactRes = await db.query(
+            "SELECT phone FROM outbound_contacts WHERE id = $1",
+            [contactId]
+          );
           contactPhone = contactRes.rows[0]?.phone || "";
         }
-        
         const callSid = req.body.CallSid || req.query.CallSid;
         if (callSid && tenantId) {
           await callsService.createCall(tenantId, callSid, "CAMPAIGN", contactPhone, "outbound");
@@ -247,16 +376,16 @@ router.all("/outbound", async (req, res) => {
     }
   }
 
-  let streamUrl = `${wsUrl}${tenantId ? '/' + tenantId : ''}/outbound/${req.body.CallSid || req.query.CallSid}?campaignId=${encodeURIComponent(campaignId)}&contactId=${encodeURIComponent(contactId)}`;
+  let streamUrl = `${wsUrl}${tenantId ? "/" + tenantId : ""}/outbound/${req.body.CallSid || req.query.CallSid}`
+    + `?campaignId=${encodeURIComponent(campaignId)}&contactId=${encodeURIComponent(contactId)}`;
   if (scriptId) streamUrl += `&scriptId=${encodeURIComponent(scriptId)}`;
 
-  const twiml = `
-    <Response>
-      <Connect>
-        <Stream url="${escapeXml(streamUrl)}" />
-      </Connect>
-    </Response>
-  `;
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Connect>
+    <Stream url="${escapeXml(streamUrl)}" />
+  </Connect>
+</Response>`;
   res.type("text/xml").send(twiml);
 });
 

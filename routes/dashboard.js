@@ -728,13 +728,11 @@ router.get("/metrics", async (req, res) => {
             0
           ) as estimated_revenue,
           (SELECT SUM(estimated_revenue_cents) FROM bookings WHERE tenant_id = ANY($1) AND LOWER(status) IN ('cancelled', 'lost', 'rejected', 'lost lead')) as lost_revenue,
-          COALESCE(
-            (SELECT SUM(actual_revenue_cents) FROM bookings WHERE tenant_id = ANY($1)),
-            0
-          ) + COALESCE(
-            (SELECT SUM(actual_revenue_cents) FROM leads WHERE tenant_id = ANY($1)),
-            0
-          ) as actual_revenue`,
+         COALESCE(
+  (SELECT SUM(COALESCE(actual_revenue_cents, estimated_revenue_cents, 0))
+   FROM bookings WHERE tenant_id = ANY($1) AND LOWER(status) NOT IN ('cancelled','lost','rejected')),
+  0
+) as actual_revenue
         [tenantIds]
       ),
       db.query(
@@ -748,13 +746,11 @@ router.get("/metrics", async (req, res) => {
           t.id, t.name, t.city, t.state, t.business_type,
           (SELECT COUNT(*) FROM calls c WHERE c.tenant_id = t.id AND c.started_at > $2) as total_calls,
           (SELECT COUNT(*) FROM bookings b WHERE b.tenant_id = t.id AND b.created_at > $2) as total_bookings,
-          COALESCE(
-            (SELECT SUM(l.estimated_revenue_cents) FROM leads l WHERE l.tenant_id = t.id AND l.status NOT IN ('Closed', 'Lost') AND l.estimated_revenue_cents > 0),
-            0
-          ) + COALESCE(
-            (SELECT SUM(b.estimated_revenue_cents) FROM bookings b WHERE b.tenant_id = t.id AND b.created_at > $2 AND b.lead_id IS NULL AND b.estimated_revenue_cents > 0),
-            0
-          ) as total_revenue,
+         COALESCE(
+  (SELECT SUM(COALESCE(b.actual_revenue_cents, b.estimated_revenue_cents, 0))
+   FROM bookings b WHERE b.tenant_id = t.id AND b.created_at > $2 AND LOWER(b.status) NOT IN ('cancelled','lost','rejected')),
+  0
+) as total_revenue,
           (SELECT COUNT(*) FROM leads l WHERE l.tenant_id = t.id AND l.status NOT IN ('Closed', 'Lost')) as open_leads
          FROM tenants t
          WHERE t.id = ANY($1)

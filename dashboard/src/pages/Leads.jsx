@@ -3,13 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { getLeadsByTenant } from '../api';
 import FollowUps from './FollowUps';
 
-// ── Tab config ─────────────────────────────────────────────────────────────
-const LEADS_TABS = [
-  { id: "pipeline",      label: "Pipeline"         },
-  { id: "followups",     label: "Follow-ups"       },
-  { id: "conversations", label: "AI Conversations" },
-];
-
 const STATUS_CONFIG = {
   'New Lead':      { color: 'bg-blue-50 text-blue-700 border-blue-200',          dot: '#3b82f6' },
   'Qualified':     { color: 'bg-violet-50 text-violet-700 border-violet-200',    dot: '#8b5cf6' },
@@ -22,11 +15,11 @@ const STATUS_CONFIG = {
 };
 
 const SOURCE_CONFIG = {
-  facebook: { label: 'Facebook', bg: 'bg-blue-50 text-blue-600 border-blue-100'           },
-  website:  { label: 'Website',  bg: 'bg-indigo-50 text-indigo-600 border-indigo-100'     },
-  google:   { label: 'Google',   bg: 'bg-red-50 text-red-500 border-red-100'              },
-  dripjobs: { label: 'DripJobs', bg: 'bg-teal-50 text-teal-600 border-teal-100'           },
-  referral: { label: 'Referral', bg: 'bg-emerald-50 text-emerald-600 border-emerald-100'  },
+  facebook: { label: 'Facebook', bg: 'bg-blue-50 text-blue-600 border-blue-100'          },
+  website:  { label: 'Website',  bg: 'bg-indigo-50 text-indigo-600 border-indigo-100'    },
+  google:   { label: 'Google',   bg: 'bg-red-50 text-red-500 border-red-100'             },
+  dripjobs: { label: 'DripJobs', bg: 'bg-teal-50 text-teal-600 border-teal-100'          },
+  referral: { label: 'Referral', bg: 'bg-emerald-50 text-emerald-600 border-emerald-100' },
 };
 
 function daysSince(dateStr) {
@@ -49,7 +42,6 @@ function Avatar({ name, phone }) {
   );
 }
 
-// ── Pipeline tab ───────────────────────────────────────────────────────────
 function Pipeline({ tenantId }) {
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -275,8 +267,8 @@ function Pipeline({ tenantId }) {
   );
 }
 
-// ── Main page ──────────────────────────────────────────────────────────────
 export default function Leads({ tenantId }) {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("pipeline");
 
   return (
@@ -287,41 +279,34 @@ export default function Leads({ tenantId }) {
           <h1 className="text-2xl font-bold text-stone-900">Leads Pipeline</h1>
         </div>
 
-        {/* Tab bar */}
+        {/* Tab bar — AI Conversations navigates directly to /conversations */}
         <div className="flex gap-2 border-b border-stone-200 mb-6">
-          {LEADS_TABS.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-all -mb-px ${
-                activeTab === tab.id
-                  ? "border-brand-600 text-brand-600"
-                  : "border-transparent text-stone-500 hover:text-stone-700"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+          <button
+            onClick={() => setActiveTab("pipeline")}
+            className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-all -mb-px ${
+              activeTab === "pipeline" ? "border-brand-600 text-brand-600" : "border-transparent text-stone-500 hover:text-stone-700"
+            }`}
+          >
+            Pipeline
+          </button>
+          <button
+            onClick={() => setActiveTab("followups")}
+            className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-all -mb-px ${
+              activeTab === "followups" ? "border-brand-600 text-brand-600" : "border-transparent text-stone-500 hover:text-stone-700"
+            }`}
+          >
+            Follow-ups
+          </button>
+          <button
+            onClick={() => navigate("/conversations")}
+            className="px-4 py-2.5 text-sm font-bold border-b-2 border-transparent text-stone-500 hover:text-stone-700 transition-all -mb-px"
+          >
+            AI Conversations
+          </button>
         </div>
 
-        {/* Tab content */}
         {activeTab === "pipeline"  && <Pipeline  tenantId={tenantId} />}
         {activeTab === "followups" && <FollowUps tenantId={tenantId} />}
-
-        {/* AI Conversations — link to full page */}
-        {activeTab === "conversations" && (
-          <div className="bg-white rounded-2xl border border-stone-200 p-12 text-center shadow-sm">
-            <div className="text-4xl mb-4">💬</div>
-            <h3 className="text-lg font-bold text-stone-900 mb-2">AI Conversations</h3>
-            <p className="text-stone-500 text-sm mb-6">View all AI-handled conversations with leads across SMS, calls, and chat.</p>
-            <a
-              href="/conversations"
-              className="inline-flex items-center gap-2 px-6 py-3 bg-stone-900 text-white rounded-xl text-sm font-bold hover:bg-black transition-all"
-            >
-              Open AI Conversations →
-            </a>
-          </div>
-        )}
 
       </main>
     </div>

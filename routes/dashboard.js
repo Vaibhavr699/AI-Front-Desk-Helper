@@ -1267,7 +1267,7 @@ router.patch("/tenants/:id", async (req, res) => {
       "tone_of_voice", "objection_handling_config", "business_hours", "afterhours_behavior", 
       "google_calendar_linked", "google_calendar_id", "zapier_webhook_url",
       "voice_model", "faqs", "inbound_voice", "outbound_voice", "outbound_agent_name", "outbound_instructions",
-      "nurturing_enabled", "referral_enabled", "seasonal_campaigns_enabled",
+      "brand_color","nurturing_enabled", "referral_enabled", "seasonal_campaigns_enabled",
       "maintenance_reminder_months", "reengagement_reminder_months", "referral_request_days_after_service",
       "nurturing_campaign_calendar",
       "maintenance_touchpoints", "reengagement_touchpoints"

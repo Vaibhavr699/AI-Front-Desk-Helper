@@ -2,32 +2,31 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getLeadsByTenant } from '../api';
 import FollowUps from './FollowUps';
-import Conversations from './Conversations';
 
 // ── Tab config ─────────────────────────────────────────────────────────────
 const LEADS_TABS = [
-  { id: "pipeline",      label: "Pipeline"          },
-  { id: "followups",     label: "Follow-ups"        },
-  { id: "conversations", label: "AI Conversations"  },
+  { id: "pipeline",      label: "Pipeline"         },
+  { id: "followups",     label: "Follow-ups"       },
+  { id: "conversations", label: "AI Conversations" },
 ];
 
 const STATUS_CONFIG = {
-  'New Lead':      { color: 'bg-blue-50 text-blue-700 border-blue-200',       dot: '#3b82f6' },
-  'Qualified':     { color: 'bg-violet-50 text-violet-700 border-violet-200', dot: '#8b5cf6' },
-  'Estimate Sent': { color: 'bg-amber-50 text-amber-700 border-amber-200',    dot: '#f59e0b' },
-  'FollowUp':      { color: 'bg-orange-50 text-orange-700 border-orange-200', dot: '#f97316' },
+  'New Lead':      { color: 'bg-blue-50 text-blue-700 border-blue-200',          dot: '#3b82f6' },
+  'Qualified':     { color: 'bg-violet-50 text-violet-700 border-violet-200',    dot: '#8b5cf6' },
+  'Estimate Sent': { color: 'bg-amber-50 text-amber-700 border-amber-200',       dot: '#f59e0b' },
+  'FollowUp':      { color: 'bg-orange-50 text-orange-700 border-orange-200',    dot: '#f97316' },
   'Won':           { color: 'bg-emerald-50 text-emerald-700 border-emerald-200', dot: '#22c55e' },
   'Booked':        { color: 'bg-emerald-50 text-emerald-700 border-emerald-200', dot: '#22c55e' },
-  'Lost':          { color: 'bg-rose-50 text-rose-700 border-rose-200',       dot: '#f43f5e' },
-  'Closed':        { color: 'bg-stone-100 text-stone-600 border-stone-200',   dot: '#a8a29e' },
+  'Lost':          { color: 'bg-rose-50 text-rose-700 border-rose-200',          dot: '#f43f5e' },
+  'Closed':        { color: 'bg-stone-100 text-stone-600 border-stone-200',      dot: '#a8a29e' },
 };
 
 const SOURCE_CONFIG = {
-  facebook:  { label: 'Facebook',  bg: 'bg-blue-50 text-blue-600 border-blue-100'       },
-  website:   { label: 'Website',   bg: 'bg-indigo-50 text-indigo-600 border-indigo-100' },
-  google:    { label: 'Google',    bg: 'bg-red-50 text-red-500 border-red-100'          },
-  dripjobs:  { label: 'DripJobs',  bg: 'bg-teal-50 text-teal-600 border-teal-100'       },
-  referral:  { label: 'Referral',  bg: 'bg-emerald-50 text-emerald-600 border-emerald-100' },
+  facebook: { label: 'Facebook', bg: 'bg-blue-50 text-blue-600 border-blue-100'           },
+  website:  { label: 'Website',  bg: 'bg-indigo-50 text-indigo-600 border-indigo-100'     },
+  google:   { label: 'Google',   bg: 'bg-red-50 text-red-500 border-red-100'              },
+  dripjobs: { label: 'DripJobs', bg: 'bg-teal-50 text-teal-600 border-teal-100'           },
+  referral: { label: 'Referral', bg: 'bg-emerald-50 text-emerald-600 border-emerald-100'  },
 };
 
 function daysSince(dateStr) {
@@ -40,7 +39,7 @@ function Avatar({ name, phone }) {
   const colors = [
     'bg-blue-100 text-blue-600', 'bg-violet-100 text-violet-600',
     'bg-amber-100 text-amber-600', 'bg-emerald-100 text-emerald-600',
-    'bg-rose-100 text-rose-600',  'bg-teal-100 text-teal-600',
+    'bg-rose-100 text-rose-600', 'bg-teal-100 text-teal-600',
   ];
   const color = colors[letter.charCodeAt(0) % colors.length];
   return (
@@ -50,7 +49,7 @@ function Avatar({ name, phone }) {
   );
 }
 
-// ── Pipeline tab content ───────────────────────────────────────────────────
+// ── Pipeline tab ───────────────────────────────────────────────────────────
 function Pipeline({ tenantId }) {
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -130,7 +129,6 @@ function Pipeline({ tenantId }) {
 
   return (
     <>
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-6">
         <p className="mt-1 text-stone-500 text-sm">
           Pre-booking contacts · Booked appointments live in{' '}
@@ -150,7 +148,6 @@ function Pipeline({ tenantId }) {
         </div>
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         {[
           { label: 'Total Leads',    value: stats.total,         color: 'text-stone-900'   },
@@ -165,7 +162,6 @@ function Pipeline({ tenantId }) {
         ))}
       </div>
 
-      {/* Filter tabs */}
       <div className="flex gap-1 mb-4 overflow-x-auto pb-1">
         {FILTER_TABS.map(tab => {
           const count = statusCounts[tab] || 0;
@@ -187,7 +183,6 @@ function Pipeline({ tenantId }) {
         })}
       </div>
 
-      {/* Table */}
       <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
         {loading ? (
           <div className="p-16 text-center">
@@ -209,7 +204,7 @@ function Pipeline({ tenantId }) {
             <table className="min-w-full divide-y divide-stone-100">
               <thead className="bg-stone-50/80">
                 <tr>
-                  {['Contact','Status','Est. Value','Source','Last Activity','Project',''].map((h,i) => (
+                  {['Contact','Status','Est. Value','Source','Last Activity','Project',''].map((h, i) => (
                     <th key={i} className="px-5 py-3.5 text-left text-[10px] font-bold text-stone-400 uppercase tracking-widest">{h}</th>
                   ))}
                 </tr>
@@ -288,7 +283,6 @@ export default function Leads({ tenantId }) {
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-full w-full mx-auto">
 
-        {/* Header */}
         <div className="mb-4">
           <h1 className="text-2xl font-bold text-stone-900">Leads Pipeline</h1>
         </div>
@@ -311,9 +305,23 @@ export default function Leads({ tenantId }) {
         </div>
 
         {/* Tab content */}
-        {activeTab === "pipeline"      && <Pipeline      tenantId={tenantId} />}
-        {activeTab === "followups"     && <FollowUps     tenantId={tenantId} />}
-        {activeTab === "conversations" && <Conversations tenantId={tenantId} />}
+        {activeTab === "pipeline"  && <Pipeline  tenantId={tenantId} />}
+        {activeTab === "followups" && <FollowUps tenantId={tenantId} />}
+
+        {/* AI Conversations — link to full page */}
+        {activeTab === "conversations" && (
+          <div className="bg-white rounded-2xl border border-stone-200 p-12 text-center shadow-sm">
+            <div className="text-4xl mb-4">💬</div>
+            <h3 className="text-lg font-bold text-stone-900 mb-2">AI Conversations</h3>
+            <p className="text-stone-500 text-sm mb-6">View all AI-handled conversations with leads across SMS, calls, and chat.</p>
+            <a
+              href="/conversations"
+              className="inline-flex items-center gap-2 px-6 py-3 bg-stone-900 text-white rounded-xl text-sm font-bold hover:bg-black transition-all"
+            >
+              Open AI Conversations →
+            </a>
+          </div>
+        )}
 
       </main>
     </div>

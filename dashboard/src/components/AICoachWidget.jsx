@@ -366,16 +366,16 @@ export default function AICoachWidget({ tenantId }) {
         .aiw-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:16px;}
         .aiw-ei{font-size:32px;}
         .aiw-et{font-family:'Syne',sans-serif;font-size:14px;font-weight:700;color:#e5e7eb;text-align:center;}
-        .aiw-es{font-size:11px;color:#6b7280;text-align:center;line-height:1.6;}
+        .aiw-es{font-size:11px;color:#ffffff;text-align:center;line-height:1.6;}
         .aiw-qg{display:flex;flex-wrap:wrap;gap:5px;justify-content:center;margin-top:8px;}
-        .aiw-qb{background:#1a1a28;border:1px solid #2a2a3e;border-radius:8px;padding:6px 10px;font-size:11px;color:#9ca3af;cursor:pointer;font-family:'DM Mono',monospace;transition:all .15s;text-align:left;}
+        .aiw-qb{background:#1a1a28;border:1px solid #2a2a3e;border-radius:8px;padding:6px 10px;font-size:11px;color:#ffffff;cursor:pointer;font-family:'DM Mono',monospace;transition:all .15s;text-align:left;}
         .aiw-qb:hover{border-color:#f59e0b;color:#f59e0b;background:#1c1007;}
         .aiw-bw{display:flex;flex-direction:column;gap:2px;}
         .aiw-bw.user{align-items:flex-end;}
         .aiw-bw.assistant{align-items:flex-start;}
         .aiw-b{max-width:88%;padding:9px 12px;border-radius:13px;font-size:12px;line-height:1.65;white-space:pre-wrap;font-family:'DM Mono',monospace;}
         .aiw-b.user{background:linear-gradient(135deg,#f59e0b22,#ea580c22);border:1px solid #f59e0b44;color:#fde68a;border-bottom-right-radius:4px;}
-        .aiw-b.assistant{background:#15151f;border:1px solid #1e1e2e;color:#d1d5db;border-bottom-left-radius:4px;}
+        .aiw-b.assistant{background:#15151f;border:1px solid #1e1e2e;color:#ffffff;border-bottom-left-radius:4px;}
         .aiw-b.streaming{border-color:#f59e0b55;}
         .aiw-bm{font-size:9px;color:#374151;margin:2px 4px;font-family:'DM Mono',monospace;}
         .aiw-cur{display:inline-block;width:2px;height:12px;background:#f59e0b;margin-left:2px;vertical-align:middle;animation:aiw-blink .7s infinite;}
@@ -401,9 +401,9 @@ export default function AICoachWidget({ tenantId }) {
         .aiw-hisbadge{display:inline-flex;align-items:center;gap:4px;margin-top:5px;font-size:9px;font-family:'Syne',sans-serif;font-weight:700;padding:2px 7px;border-radius:20px;background:#1c1007;color:#f59e0b;border:1px solid #2a2a3e;}
         .aiw-inp{padding:9px 12px 13px;border-top:1px solid #1e1e2e;background:#0d0d14;flex-shrink:0;}
         .aiw-ir{display:flex;gap:6px;align-items:flex-end;}
-        .aiw-ta{flex:1;background:#1a1a28;border:1.5px solid #2a2a3e;border-radius:10px;padding:8px 12px;color:#e5e7eb;font-size:12px;font-family:'DM Mono',monospace;resize:none;max-height:90px;min-height:38px;line-height:1.5;transition:border-color .15s;outline:none;}
+        .aiw-ta{flex:1;background:#1a1a28;border:1.5px solid #2a2a3e;border-radius:10px;padding:8px 12px;color:#ffffff;font-size:12px;font-family:'DM Mono',monospace;resize:none;max-height:90px;min-height:38px;line-height:1.5;transition:border-color .15s;outline:none;}
         .aiw-ta:focus{border-color:#f59e0b55;}
-        .aiw-ta::placeholder{color:#374151;}
+        .aiw-ta::placeholder{color:#ffffff;}
         .aiw-sb{width:38px;height:38px;border-radius:10px;flex-shrink:0;background:linear-gradient(135deg,#f59e0b,#ea580c);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;color:white;transition:opacity .15s,transform .15s;}
         .aiw-sb:disabled{opacity:.4;cursor:default;}
         .aiw-sb:not(:disabled):hover{transform:scale(1.07);}

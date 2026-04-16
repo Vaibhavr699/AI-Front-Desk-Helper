@@ -33,9 +33,9 @@ function Tooltip({ children, content }) {
     >
       {children}
       {show && (
-       <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 px-4 py-3 bg-gray-900 text-white text-sm font-medium rounded-xl shadow-2xl max-w-xs whitespace-normal z-50 animate-in fade-in duration-200 border border-gray-600">
+       <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 px-3 py-2 bg-black text-white text-xs font-semibold rounded-lg shadow-xl max-w-48 whitespace-normal z-50 animate-in fade-in duration-200 leading-tight">
           {content}
-          <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-6 border-transparent border-t-stone-900"></div>
+          <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-black"></div>
         </div>
       )}
     </div>

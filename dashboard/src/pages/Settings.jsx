@@ -247,6 +247,7 @@ export default function Settings({ tenantId }) {
         google_calendar_email: t.google_calendar_email || "",
         faqs: Array.isArray(t.faqs) ? t.faqs : [],
         inbound_voice: t.inbound_voice || "shimmer",
+        brand_color: t.brand_color || "#E8600A",
         outbound_voice: t.outbound_voice || "ash",
         outbound_instructions: t.outbound_instructions || "",
         outbound_agent_name: t.outbound_agent_name || "Alex",
@@ -550,6 +551,7 @@ export default function Settings({ tenantId }) {
       facebook_page_id: form.facebook_page_id.trim() || null,
       faqs: form.faqs.filter(f => f.question.trim() && f.answer.trim()),
       inbound_voice: form.inbound_voice || "shimmer",
+      brand_color: form.brand_color || "#E8600A",
       outbound_voice: form.outbound_voice || "ash",
       outbound_instructions: form.outbound_instructions || null,
       outbound_agent_name: form.outbound_agent_name || "Alex",
@@ -1193,6 +1195,31 @@ export default function Settings({ tenantId }) {
                   AI Receptionist Behavior
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="col-span-2 mb-2">
+  <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">
+    Brand Color
+  </label>
+  <div className="flex items-center gap-4">
+    <input
+      type="color"
+      value={form.brand_color || "#E8600A"}
+      onChange={(e) => handleUpdateForm("brand_color", e.target.value)}
+      className="w-12 h-10 rounded-lg border border-slate-200 cursor-pointer p-1"
+    />
+    <input
+      type="text"
+      value={form.brand_color || "#E8600A"}
+      onChange={(e) => handleUpdateForm("brand_color", e.target.value)}
+      placeholder="#E8600A"
+      className="w-36 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:ring-4 focus:ring-primary/5 transition-all outline-none"
+    />
+    <div
+      className="w-10 h-10 rounded-xl border border-slate-200 shadow-sm"
+      style={{ background: form.brand_color || "#E8600A" }}
+    />
+    <p className="text-xs text-gray-400">Used for the chat widget on your website</p>
+  </div>
+</div>
                   <div className="col-span-1">
                     <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Tone of Voice</label>
                     <select

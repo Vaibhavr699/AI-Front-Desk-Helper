@@ -67,14 +67,14 @@ router.get("/bookings", async (req, res) => {
     const allowedSort = ["contact_name", "preferred_date", "estimated_revenue_cents", "status", "created_at"];
     const activeSort = allowedSort.includes(sortBy) ? sortBy : "preferred_date";
 
-    const countRes = await db.query(
+    const countRes = await db.query(`
       `SELECT COUNT(*) FROM bookings b ${where}`,
       params
     );
     const total = parseInt(countRes.rows[0].count, 10);
 
     params.push(limit, offset);
-    const result = await db.query(
+    const result = await db.query(`
       `SELECT b.*, t.name as technician_name, biz.name as business_name
        FROM bookings b 
        LEFT JOIN technicians t ON b.technician_id = t.id
@@ -115,7 +115,7 @@ router.patch("/bookings/:id", async (req, res) => {
 
     values.push(req.params.id);
     const query = `UPDATE bookings SET ${setParts.join(", ")}, updated_at = now() WHERE id = $${i} RETURNING *`;
-    const result = await db.query(query, values);
+    const result = await db.query(`query, values);
 
     if (result.rows.length === 0) return res.status(404).json({ error: "Not found" });
     const booking = result.rows[0];
@@ -135,7 +135,7 @@ router.patch("/bookings/:id", async (req, res) => {
       const tenantId = booking.tenant_id;
       const [tenantResult, techResult] = await Promise.all([
         getTenantById(tenantId),
-        db.query("SELECT id, name, email, phone FROM technicians WHERE id = $1", [technician_id]),
+        db.query(`"SELECT id, name, email, phone FROM technicians WHERE id = $1", [technician_id]),
       ]);
       const technician = techResult.rows[0];
       const tenant = tenantResult;
@@ -153,7 +153,7 @@ router.patch("/bookings/:id", async (req, res) => {
             ? booking.preferred_date.slice(0, 10)
             : booking.preferred_date)
         : new Date().toISOString().slice(0, 10);
-      await db.query(
+      await db.query(`
         "UPDATE leads SET last_service_date = $1::date, updated_at = now() WHERE id = $2",
         [serviceDate, booking.lead_id]
       ).catch((e) => console.error("[Bookings] Update lead last_service_date:", e));
@@ -207,7 +207,7 @@ router.get("/calls", async (req, res) => {
     }
     q += " ORDER BY c.started_at DESC LIMIT $" + (params.length + 1) + " OFFSET $" + (params.length + 2);
     params.push(limit, offset);
-    const result = await db.query(q, params);
+    const result = await db.query(`q, params);
     res.json({ calls: result.rows });
   } catch (e) {
     console.error(e);
@@ -217,7 +217,7 @@ router.get("/calls", async (req, res) => {
 
 router.get("/calls/:id", async (req, res) => {
   try {
-    const r = await db.query(
+    const r = await db.query(`
       "SELECT c.*, (SELECT json_agg(r.*) FROM recordings r WHERE r.call_id = c.id) as recordings FROM calls c WHERE c.id = $1",
       [req.params.id]
     );
@@ -250,7 +250,7 @@ router.patch("/calls/:id", async (req, res) => {
 
     values.push(req.params.id);
     const query = `UPDATE calls SET ${setParts.join(", ")}, updated_at = now() WHERE id = $${i} RETURNING *`;
-    const result = await db.query(query, values);
+    const result = await db.query(`query, values);
 
     if (result.rows.length === 0) return res.status(404).json({ error: "Not found" });
     res.json(result.rows[0]);
@@ -262,7 +262,7 @@ router.patch("/calls/:id", async (req, res) => {
 
 router.get("/recordings/:id", async (req, res) => {
   try {
-    const r = await db.query("SELECT * FROM recordings WHERE id = $1", [req.params.id]);
+    const r = await db.query(`"SELECT * FROM recordings WHERE id = $1", [req.params.id]);
     const rec = r.rows[0];
     if (!rec) return res.status(404).json({ error: "Not found" });
     res.json(rec);
@@ -274,7 +274,7 @@ router.get("/recordings/:id", async (req, res) => {
 
 router.get("/recordings/:id/audio", async (req, res) => {
   try {
-    const r = await db.query("SELECT id, tenant_id, recording_url FROM recordings WHERE id = $1", [req.params.id]);
+    const r = await db.query(`"SELECT id, tenant_id, recording_url FROM recordings WHERE id = $1", [req.params.id]);
     const rec = r.rows[0];
     if (!rec || !rec.recording_url) return res.status(404).json({ error: "Not found" });
 
@@ -319,7 +319,7 @@ router.get("/technicians", async (req, res) => {
   try {
     const tenantIds = await getTargetTenantIds(req);
     if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
-    const result = await db.query(
+    const result = await db.query(`
       "SELECT * FROM technicians WHERE tenant_id = ANY($1) ORDER BY name ASC",
       [tenantIds]
     );
@@ -336,7 +336,7 @@ router.post("/technicians", async (req, res) => {
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
     const { name, email, phone } = req.body || {};
     if (!name) return res.status(400).json({ error: "Name is required" });
-    const result = await db.query(
+    const result = await db.query(`
       "INSERT INTO technicians (tenant_id, name, email, phone) VALUES ($1, $2, $3, $4) RETURNING *",
       [tenantId, name, email, phone]
     );
@@ -350,7 +350,7 @@ router.post("/technicians", async (req, res) => {
 router.patch("/technicians/:id", async (req, res) => {
   try {
     const { name, email, phone } = req.body || {};
-    const result = await db.query(
+    const result = await db.query(`
       "UPDATE technicians SET name = COALESCE($1, name), email = COALESCE($2, email), phone = COALESCE($3, phone), updated_at = now() WHERE id = $4 RETURNING *",
       [name, email, phone, req.params.id]
     );
@@ -364,7 +364,7 @@ router.patch("/technicians/:id", async (req, res) => {
 
 router.delete("/technicians/:id", async (req, res) => {
   try {
-    await db.query("DELETE FROM technicians WHERE id = $1", [req.params.id]);
+    await db.query(`"DELETE FROM technicians WHERE id = $1", [req.params.id]);
     res.json({ success: true });
   } catch (e) {
     console.error(e);
@@ -378,7 +378,7 @@ router.get("/followups", async (req, res) => {
     if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
 
     const [recoveryRes, followupRes, appointmentRes] = await Promise.all([
-      db.query(
+      db.query(`
         `SELECT er.*, 
                 l.estimated_revenue_cents,
                 l.name as lead_name,
@@ -392,7 +392,7 @@ router.get("/followups", async (req, res) => {
          WHERE er.tenant_id = ANY($1) AND er.status IN ('active', 'paused')`,
         [tenantIds]
       ),
-      db.query(
+      db.query(`
         `SELECT f.id, f.tenant_id, f.contact_name, f.status,
                 f.contact_name as lead_name,
                 f.due_at as next_action_at,
@@ -407,7 +407,7 @@ router.get("/followups", async (req, res) => {
          WHERE f.tenant_id = ANY($1) AND f.status = 'pending'`,
         [tenantIds]
       ),
-      db.query(
+      db.query(`
         `SELECT b.id, b.tenant_id, b.contact_name, b.contact_phone, b.status,
                 b.contact_name as lead_name,
                 b.preferred_date as next_action_at,
@@ -507,7 +507,7 @@ router.patch("/followups/:id/status", async (req, res) => {
       await estimateRecovery.markConverted(recoveryId);
       const rec = await estimateRecovery.getRecoveryById(recoveryId);
       if (rec.lead_id) {
-        await db.query("UPDATE leads SET status = 'Booked' WHERE id = $1", [rec.lead_id]);
+        await db.query(`"UPDATE leads SET status = 'Booked' WHERE id = $1", [rec.lead_id]);
       }
       notificationsService.createNotification(rec.tenant_id, {
         type: 'follow_up_converted',
@@ -519,7 +519,7 @@ router.patch("/followups/:id/status", async (req, res) => {
       await estimateRecovery.markCancelled(recoveryId);
       const rec = await estimateRecovery.getRecoveryById(recoveryId);
       if (rec.lead_id) {
-        await db.query("UPDATE leads SET status = 'Lost' WHERE id = $1", [rec.lead_id]);
+        await db.query(`"UPDATE leads SET status = 'Lost' WHERE id = $1", [rec.lead_id]);
       }
     }
 
@@ -957,19 +957,19 @@ router.get("/activity-feed", async (req, res) => {
     if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
 
     const [calls, bookings, recoveries, followUps] = await Promise.all([
-      db.query(
+      db.query(`
         "SELECT c.id, c.started_at as at, 'call' as type, c.disposition, c.transferred, t.name as business_name FROM calls c JOIN tenants t ON c.tenant_id = t.id WHERE c.tenant_id = ANY($1) ORDER BY c.started_at DESC LIMIT 15",
         [tenantIds]
       ),
-      db.query(
+      db.query(`
         "SELECT b.id, b.created_at as at, 'booking' as type, b.contact_name, b.status, t.name as business_name FROM bookings b JOIN tenants t ON b.tenant_id = t.id WHERE b.tenant_id = ANY($1) ORDER BY b.created_at DESC LIMIT 15",
         [tenantIds]
       ),
-      db.query(
+      db.query(`
         "SELECT er.id, er.updated_at as at, 'recovery' as type, er.status, er.contact_name, t.name as business_name FROM estimate_recoveries er JOIN tenants t ON er.tenant_id = t.id WHERE er.tenant_id = ANY($1) ORDER BY er.updated_at DESC LIMIT 15",
         [tenantIds]
       ),
-      db.query(
+      db.query(`
         "SELECT f.id, f.created_at as at, 'follow_up' as type, f.follow_up_type, f.status, t.name as business_name FROM follow_ups f JOIN tenants t ON f.tenant_id = t.id WHERE f.tenant_id = ANY($1) ORDER BY f.created_at DESC LIMIT 15",
         [tenantIds]
       ),
@@ -1030,7 +1030,7 @@ router.get("/tenants/:id", async (req, res) => {
       }
     }
 
-    const r = await db.query(
+    const r = await db.query(`
       `SELECT ${TENANT_SELECT_BASE}, ${TENANT_SELECT_TWILIO},
        (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1`,
       [id]
@@ -1077,7 +1077,7 @@ router.get("/tenants", async (req, res) => {
       params = [userTenantId];
     }
 
-    const r = await db.query(query, params);
+    const r = await db.query(`query, params);
     const tenants = r.rows.map(t => {
       const masked = { ...t };
       masked.twilio_account_sid_masked = maskTwilioSid(t.twilio_account_sid);
@@ -1155,7 +1155,7 @@ router.post("/tenants", async (req, res) => {
     }
 
     if (phone) {
-      const phoneExists = await db.query("SELECT id FROM phone_numbers WHERE phone = $1", [phone]);
+      const phoneExists = await db.query(`"SELECT id FROM phone_numbers WHERE phone = $1", [phone]);
       if (phoneExists.rows.length > 0) {
         return res.status(409).json({ error: "This phone number is already assigned to another business." });
       }
@@ -1165,25 +1165,25 @@ router.post("/tenants", async (req, res) => {
     const finalCompany = companyName || displayName;
     const slug = (slugInput || finalName).toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
     if (!slug) return res.status(400).json({ error: "Could not generate a valid slug from the business name" });
-    const existing = await db.query("SELECT id FROM tenants WHERE slug = $1", [slug]);
+    const existing = await db.query(`"SELECT id FROM tenants WHERE slug = $1", [slug]);
     if (existing.rows.length > 0) {
       return res.status(409).json({ error: "A business with this slug already exists. Try a different name." });
     }
-    const insert = await db.query(
+    const insert = await db.query(`
       "INSERT INTO tenants (name, slug, company_name, business_type, parent_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, slug, company_name, business_type, parent_id",
       [finalName, slug, finalCompany, businessType, parentId]
     );
     const tenant = insert.rows[0];
 
     if (isByot) {
-      await db.query(
+      await db.query(`
         "UPDATE tenants SET twilio_account_sid = $1, twilio_auth_token = $2, updated_at = now() WHERE id = $3",
         [byotSid, byotToken, tenant.id]
       );
     }
 
     if (phone) {
-      const phoneRow = await db.query(
+      const phoneRow = await db.query(`
         "INSERT INTO phone_numbers (tenant_id, phone, is_primary, twilio_sid) VALUES ($1, $2, false, $3) RETURNING id",
         [tenant.id, phone, twilioSid]
       );
@@ -1191,7 +1191,7 @@ router.post("/tenants", async (req, res) => {
       const webhookResult = await configurePhoneWebhook(phone, tenant.id, tenantForTwilio);
       if (webhookResult.success) {
         if (webhookResult.twilioSid && !twilioSid) {
-          await db.query("UPDATE phone_numbers SET twilio_sid = $1, updated_at = now() WHERE id = $2", [webhookResult.twilioSid, phoneRow.rows[0].id]);
+          await db.query(`"UPDATE phone_numbers SET twilio_sid = $1, updated_at = now() WHERE id = $2", [webhookResult.twilioSid, phoneRow.rows[0].id]);
         }
       } else {
         console.warn("[Onboarding] Could not configure webhook for %s: %s", phone, webhookResult.error);
@@ -1199,7 +1199,7 @@ router.post("/tenants", async (req, res) => {
     }
 
     if (!userTenantId) {
-      await db.query(
+      await db.query(`
         "UPDATE dashboard_users SET tenant_id = $1, role = $2, updated_at = now() WHERE id = $3",
         [tenant.id, "admin", userId]
       );
@@ -1212,7 +1212,7 @@ router.post("/tenants", async (req, res) => {
       tenant_id: effectiveTenantId,
       role: "admin",
     });
-    const userRow = await db.query(
+    const userRow = await db.query(`
       "SELECT id, email, tenant_id, role FROM dashboard_users WHERE id = $1",
       [userId]
     );
@@ -1251,7 +1251,7 @@ router.patch("/tenants/:id", async (req, res) => {
   try {
     const id = req.params.id;
 
-    const checkResult = await db.query("SELECT parent_id FROM tenants WHERE id = $1", [id]);
+    const checkResult = await db.query(`"SELECT parent_id FROM tenants WHERE id = $1", [id]);
     const targetTenant = checkResult.rows[0];
     if (!targetTenant) return res.status(404).json({ error: "Tenant not found" });
 
@@ -1275,7 +1275,7 @@ router.patch("/tenants/:id", async (req, res) => {
       "maintenance_touchpoints", "reengagement_touchpoints"
     ];
     try {
-      await db.query("SELECT twilio_account_sid FROM tenants WHERE id = $1 LIMIT 1", [id]);
+      await db.query(`"SELECT twilio_account_sid FROM tenants WHERE id = $1 LIMIT 1", [id]);
     } catch (colErr) {
       if (colErr.code === "42703") {
         allowed = allowed.filter((k) => k !== "twilio_account_sid" && k !== "twilio_auth_token");
@@ -1302,7 +1302,7 @@ router.patch("/tenants/:id", async (req, res) => {
     const nurturingKeys = ["nurturing_enabled", "referral_enabled", "seasonal_campaigns_enabled", "maintenance_reminder_months", "reengagement_reminder_months", "referral_request_days_after_service", "nurturing_campaign_calendar", "maintenance_touchpoints", "reengagement_touchpoints"];
     const hasNurturingUpdate = Object.keys(updates).some((k) => nurturingKeys.includes(k));
     if (hasNurturingUpdate) {
-      const current = await db.query("SELECT id, plan, plan_overrides FROM tenants WHERE id = $1", [id]).then((r) => r.rows[0]);
+      const current = await db.query(`"SELECT id, plan, plan_overrides FROM tenants WHERE id = $1", [id]).then((r) => r.rows[0]);
       if (!current || !hasNurturingReferralAccess(current)) {
         return res.status(403).json({ error: "Customer Nurturing & Referral is available on Elite or as an add-on. Upgrade your plan to enable." });
       }
@@ -1316,20 +1316,20 @@ router.patch("/tenants/:id", async (req, res) => {
       return v;
     });
     values.push(id);
-    await db.query(
+    await db.query(`
       `UPDATE tenants SET ${set}, updated_at = now() WHERE id = $${values.length}`,
       values
     );
     let r;
     try {
-      r = await db.query(
+      r = await db.query(`
         `SELECT ${TENANT_SELECT_BASE}, ${TENANT_SELECT_TWILIO},
          (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1`,
         [id]
       );
     } catch (colErr) {
       if (colErr.code === "42703") {
-        r = await db.query(
+        r = await db.query(`
           `SELECT ${TENANT_SELECT_BASE_LEGACY}, ${TENANT_SELECT_TWILIO}
            (SELECT json_agg(json_build_object('phone', pn.phone, 'is_primary', pn.is_primary)) FROM phone_numbers pn WHERE pn.tenant_id = t.id) as phones FROM tenants t WHERE t.id = $1`,
           [id]
@@ -1397,7 +1397,7 @@ router.get("/phone-numbers", async (req, res) => {
   try {
     const tenantIds = await getTargetTenantIds(req);
     if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
-    const result = await db.query(
+    const result = await db.query(`
       "SELECT id, tenant_id, phone, is_primary, lead_source, created_at FROM phone_numbers WHERE tenant_id = ANY($1) ORDER BY is_primary DESC, created_at",
       [tenantIds]
     );
@@ -1413,12 +1413,12 @@ router.post("/phone-numbers", async (req, res) => {
     const tenantId = getTenantIdFromQuery(req);
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
 
-    const tenant = await db.query(
+    const tenant = await db.query(`
       "SELECT plan, extra_numbers_count FROM tenants WHERE id = $1",
       [tenantId]
     ).then((r) => r.rows[0]);
 
-    const countRes = await db.query("SELECT COUNT(*) FROM phone_numbers WHERE tenant_id = $1", [tenantId]);
+    const countRes = await db.query(`"SELECT COUNT(*) FROM phone_numbers WHERE tenant_id = $1", [tenantId]);
     const currentCount = parseInt(countRes.rows[0].count, 10);
     
     const { getPlan } = require("../lib/plans");
@@ -1446,7 +1446,7 @@ router.post("/phone-numbers", async (req, res) => {
       return res.status(400).json({ error: "A valid phone number is required (e.g. +14025551234)" });
     }
 
-    const existing = await db.query("SELECT id, tenant_id FROM phone_numbers WHERE phone = $1", [phone]);
+    const existing = await db.query(`"SELECT id, tenant_id FROM phone_numbers WHERE phone = $1", [phone]);
     if (existing.rows.length > 0) {
       const owner = existing.rows[0].tenant_id;
       if (owner === tenantId) {
@@ -1465,7 +1465,7 @@ router.post("/phone-numbers", async (req, res) => {
     }
 
     if (setPrimary) {
-      await db.query(
+      await db.query(`
         "UPDATE phone_numbers SET is_primary = false, updated_at = now() WHERE tenant_id = $1",
         [tenantId]
       );
@@ -1474,7 +1474,7 @@ router.post("/phone-numbers", async (req, res) => {
     const tenantForTwilio = await getTenantById(tenantId);
     const webhookResult = await configurePhoneWebhook(phone, tenantId, tenantForTwilio);
     
-    const result = await db.query(
+    const result = await db.query(`
       "INSERT INTO phone_numbers (tenant_id, phone, is_primary, twilio_sid, lead_source) VALUES ($1, $2, $3, $4, $5) RETURNING id, tenant_id, phone, is_primary, twilio_sid, lead_source, created_at",
       [tenantId, phone, setPrimary, webhookResult.success ? (webhookResult.twilioSid || null) : null, lead_source]
     );
@@ -1495,14 +1495,14 @@ router.delete("/phone-numbers/:id", async (req, res) => {
     const tenantId = getTenantIdFromQuery(req);
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
     const phoneId = req.params.id;
-    const existing = await db.query(
+    const existing = await db.query(`
       "SELECT id, is_primary FROM phone_numbers WHERE id = $1 AND tenant_id = $2",
       [phoneId, tenantId]
     );
     if (existing.rows.length === 0) {
       return res.status(404).json({ error: "Phone number not found" });
     }
-    await db.query("DELETE FROM phone_numbers WHERE id = $1", [phoneId]);
+    await db.query(`"DELETE FROM phone_numbers WHERE id = $1", [phoneId]);
     res.json({ success: true });
   } catch (e) {
     console.error(e);
@@ -1518,7 +1518,7 @@ router.patch("/phone-numbers/:id", async (req, res) => {
     const finalSource = lead_source || label;
     const phoneId = req.params.id;
 
-    const existing = await db.query(
+    const existing = await db.query(`
       "SELECT id FROM phone_numbers WHERE id = $1 AND tenant_id = $2",
       [phoneId, tenantId]
     );
@@ -1527,23 +1527,23 @@ router.patch("/phone-numbers/:id", async (req, res) => {
     }
 
     if (is_primary) {
-      await db.query(
+      await db.query(`
         "UPDATE phone_numbers SET is_primary = false, updated_at = now() WHERE tenant_id = $1",
         [tenantId]
       );
-      await db.query(
+      await db.query(`
         "UPDATE phone_numbers SET is_primary = true, updated_at = now() WHERE id = $1",
         [phoneId]
       );
     } else {
-      await db.query(
+      await db.query(`
         "UPDATE phone_numbers SET is_primary = false, updated_at = now() WHERE id = $1",
         [phoneId]
       );
     }
 
     if (finalSource !== undefined) {
-      await db.query(
+      await db.query(`
         "UPDATE phone_numbers SET lead_source = $1, updated_at = now() WHERE id = $2",
         [finalSource, phoneId]
       );
@@ -1563,7 +1563,7 @@ router.get("/sales-wins", async (req, res) => {
     const tenantIds = await getTargetTenantIds(req);
     if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
     const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
-    const result = await db.query(
+    const result = await db.query(`
       "SELECT * FROM estimate_recoveries WHERE tenant_id = ANY($1) AND status = 'converted' ORDER BY updated_at DESC LIMIT $2",
       [tenantIds, limit]
     );
@@ -1674,7 +1674,7 @@ router.get("/conversations", async (req, res) => {
     const tenantId = getTenantIdFromQuery(req);
     if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
 
-    const result = await db.query(
+    const result = await db.query(`
       `SELECT l.id, l.name, l.phone, l.status, l.metadata as lead_metadata,
               act.last_at, act.last_body, act.last_type, act.last_channel
        FROM leads l
@@ -1706,7 +1706,7 @@ router.get("/conversations", async (req, res) => {
 router.get("/conversations/:id/timeline", async (req, res) => {
   try {
     const leadId = req.params.id;
-    const result = await db.query(
+    const result = await db.query(`
       `SELECT 'message' as type, id, channel, direction, body as content, created_at as at, metadata
        FROM messages
        WHERE lead_id = $1
@@ -1729,7 +1729,7 @@ router.post("/tenants/:id/reset-api-key", async (req, res) => {
   try {
     const id = req.params.id;
 
-    const checkResult = await db.query("SELECT parent_id FROM tenants WHERE id = $1", [id]);
+    const checkResult = await db.query(`"SELECT parent_id FROM tenants WHERE id = $1", [id]);
     const targetTenant = checkResult.rows[0];
     if (!targetTenant) return res.status(404).json({ error: "Tenant not found" });
 
@@ -1740,7 +1740,7 @@ router.post("/tenants/:id/reset-api-key", async (req, res) => {
     }
 
     const newKey = require("crypto").randomBytes(24).toString("base64");
-    const result = await db.query(
+    const result = await db.query(`
       "UPDATE tenants SET api_key = $1, updated_at = now() WHERE id = $2 RETURNING api_key",
       [newKey, id]
     );
@@ -1764,7 +1764,7 @@ router.get("/notifications", async (req, res) => {
       ORDER BY created_at DESC 
       LIMIT $2
     `;
-    const result = await db.query(q, [tenantIds, limit]);
+    const result = await db.query(`q, [tenantIds, limit]);
     res.json({ notifications: result.rows });
   } catch (e) {
     console.error(e);

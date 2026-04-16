@@ -3916,11 +3916,6 @@ cron.schedule("*/10 * * * *", () => {
   salesEngine.runEstimateFollowUps().catch((e) => console.error("Sales Engine cron:", e));
 });
 
-// -------------------- Cron: Follow-ups (24h, 3d, 5d, 10d after booking) every 10 min --------------------
-cron.schedule("*/10 * * * *", () => {
-  followUpService.processDueFollowUps().catch((e) => console.error("Follow-up cron:", e));
-});
-
 cron.schedule("*/10 * * * *", () => {
   nurturingService.processDueNurturing().catch((e) => console.error("Nurturing cron:", e));
 });

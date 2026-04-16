@@ -21,6 +21,27 @@ import {
 import { format, formatDistanceToNow } from "date-fns";
 import { Link } from "react-router-dom";
 
+/** Enhanced Tooltip Component with better visibility */
+function Tooltip({ children, content }) {
+  const [show, setShow] = useState(false);
+  
+  return (
+    <div 
+      className="relative"
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+    >
+      {children}
+      {show && (
+        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 px-4 py-3 bg-stone-900 text-white text-sm rounded-xl shadow-2xl max-w-xs whitespace-normal z-50 animate-in fade-in duration-200 border border-stone-700">
+          {content}
+          <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-6 border-transparent border-t-stone-900"></div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Color-coded day counter badge: green < 2d, orange 2–5d, red > 5d */
 function DaysBadge({ days, label }) {
   if (days == null || isNaN(days)) return null;
@@ -179,7 +200,7 @@ export default function FollowUps({ tenantId }) {
 
   if (loading) return <div className="flex items-center justify-center py-24"><LumaSpin /></div>;
 
-  // ── Filter tabs with tooltips ─────────────────────────────────────────────
+  // ── Enhanced Filter tabs with custom tooltips ─────────────────────────────────────────────
   const filterTabs = [
     {
       key: "all",
@@ -216,32 +237,32 @@ export default function FollowUps({ tenantId }) {
         </div>
       </div>
 
-      {/* Filter Tabs */}
+      {/* Enhanced Filter Tabs with Custom Tooltips */}
       <div className="flex gap-2 flex-wrap">
         {filterTabs.map(tab => {
           const isActive = filterSystem === tab.key;
           const count = counts[tab.key] || 0;
           return (
-            <button
-              key={tab.key}
-              onClick={() => setFilterSystem(tab.key)}
-              title={tab.tooltip}
-              className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all border ${
-                isActive
-                  ? "bg-stone-900 text-white border-stone-900 shadow-md"
-                  : "bg-white text-stone-600 border-stone-200 hover:border-stone-400 hover:bg-stone-50"
-              }`}
-            >
-              {tab.icon && <tab.icon className="w-4 h-4" />}
-              {tab.label}
-              <span className={`ml-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold ${
-                isActive
-                  ? "bg-white/20 text-white"
-                  : "bg-stone-100 text-stone-500"
-              }`}>
-                {count}
-              </span>
-            </button>
+            <Tooltip key={tab.key} content={tab.tooltip}>
+              <button
+                onClick={() => setFilterSystem(tab.key)}
+                className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all border ${
+                  isActive
+                    ? "bg-stone-900 text-white border-stone-900 shadow-md"
+                    : "bg-white text-stone-600 border-stone-200 hover:border-stone-400 hover:bg-stone-50"
+                }`}
+              >
+                {tab.icon && <tab.icon className="w-4 h-4" />}
+                {tab.label}
+                <span className={`ml-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold ${
+                  isActive
+                    ? "bg-white/20 text-white"
+                    : "bg-stone-100 text-stone-500"
+                }`}>
+                  {count}
+                </span>
+              </button>
+            </Tooltip>
           );
         })}
       </div>

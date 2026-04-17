@@ -460,12 +460,14 @@ function parseTouchpoints(touchpointsJson, fallbackMonths) {
 /**
  * Seasonal campaigns.
  *
- * Eligible leads:
- *   1. Completed job leads — last_service_date within past 24 months (existing behavior)
- *   2. Dormant estimate leads — no completed job but were in estimate recovery,
- *      created within past 24 months (NEW — estimate-only outreach)
- *
- * Maintenance/re-engagement/referral are NOT sent to estimate-only leads.
+ * Eligible leads (all enrolled in seasonal; referral/maintenance/reengagement
+ * remain post-service only and are NOT sent here):
+ *   Group 1: Completed job leads — last_service_date within past 24 months
+ *   Group 2: Dormant estimate leads — no completed job but were in estimate
+ *            recovery that has since gone dormant, created within past 24 months
+ *   Group 3: Lost leads — marked Lost OR recovery cancelled, AND at least
+ *            90 days have passed since the lead was last updated (cooling-off
+ *            period so we don't nurture someone right after they said no)
  */
 async function processSeasonalCampaigns() {
   const month   = new Date().getMonth() + 1;
@@ -492,7 +494,7 @@ async function processSeasonalCampaigns() {
       if (ownerRes.rows.length > 0) ownerReplyTo = ownerRes.rows[0].email;
     } catch (_) {}
 
-    // ── Group 1: Completed job leads (existing behavior) ────────────────
+    // ── Group 1: Completed job leads ────────────────────────────────────
     const completedLeads = await db.query(
       `SELECT l.id, l.phone, l.email, l.name FROM leads l
        WHERE l.tenant_id = $1 AND l.last_service_date IS NOT NULL
@@ -505,7 +507,7 @@ async function processSeasonalCampaigns() {
       [t.id, campaignKey]
     );
 
-    // ── Group 2: Dormant estimate leads — no completed job ──────────────
+    // ── Group 2: Dormant estimate leads — no completed job, recovery dormant
     // These people got a quote, didn't book, went through the full 21-day sequence.
     // They receive seasonal outreach only (not maintenance/re-engagement/referral).
     const dormantEstimateLeads = await db.query(
@@ -523,10 +525,30 @@ async function processSeasonalCampaigns() {
       [t.id, campaignKey]
     );
 
-    // Combine both groups (deduplicated by lead id)
+    // ── Group 3: Lost leads — 90-day cooling-off period before seasonal ──
+    // Enrolls leads that were explicitly marked Lost OR whose estimate recovery
+    // was cancelled, but only after 90 days have passed (based on leads.updated_at,
+    // which flips when the status is set). No referral/maintenance/reengagement.
+    const lostLeads = await db.query(
+      `SELECT DISTINCT l.id, l.phone, l.email, l.name FROM leads l
+       LEFT JOIN estimate_recoveries er ON er.lead_id = l.id
+       WHERE l.tenant_id = $1
+         AND l.last_service_date IS NULL
+         AND (l.status = 'Lost' OR er.status = 'cancelled')
+         AND l.updated_at <= current_date - interval '90 days'
+         AND l.created_at >= current_date - interval '24 months'
+         AND NOT EXISTS (
+           SELECT 1 FROM campaign_log c
+           WHERE c.lead_id = l.id AND c.campaign_type = $2 AND c.sent_at >= date_trunc('month', current_date)
+         )
+       LIMIT 100`,
+      [t.id, campaignKey]
+    );
+
+    // Combine all groups (deduplicated by lead id)
     const seenIds  = new Set();
     const allLeads = [];
-    for (const row of [...completedLeads.rows, ...dormantEstimateLeads.rows]) {
+    for (const row of [...completedLeads.rows, ...dormantEstimateLeads.rows, ...lostLeads.rows]) {
       if (!seenIds.has(row.id)) {
         seenIds.add(row.id);
         allLeads.push(row);
@@ -550,7 +572,7 @@ async function processSeasonalCampaigns() {
     }
 
     if (allLeads.length > 0) {
-      console.log(`[Nurturing] Seasonal ${campaignKey}: sent to ${completedLeads.rows.length} completed + ${dormantEstimateLeads.rows.length} dormant estimate leads for tenant ${t.id}`);
+      console.log(`[Nurturing] Seasonal ${campaignKey}: sent to ${completedLeads.rows.length} completed + ${dormantEstimateLeads.rows.length} dormant estimate + ${lostLeads.rows.length} lost (90d+) leads for tenant ${t.id}`);
     }
   }
 }

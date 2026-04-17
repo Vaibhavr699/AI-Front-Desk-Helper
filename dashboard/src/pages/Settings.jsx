@@ -2404,12 +2404,15 @@ Thanks!`;
                 </div>
               </div>
 
-              {/* Webhooks */}
+              {/* Revenue Tracking & Sales Recovery */}
               <div className="pt-6 border-t border-gray-100">
-                <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-                  <Zap className="text-yellow-500 w-5 h-5" />
-                  Webhooks & CRM
+                <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">
+                  <TrendingUp className="text-emerald-500 w-5 h-5" />
+                  Revenue Tracking & Sales Recovery
                 </h2>
+                <p className="text-sm text-gray-500 mb-6 leading-relaxed max-w-2xl">
+                  Two webhooks from your CRM power revenue tracking and AI follow-ups. Click "How to connect" on each card for field-by-field mapping instructions.
+                </p>
                 <div className="space-y-5">
                   {/* CRM Platform Selector */}
                   <div>
@@ -2479,16 +2482,31 @@ Thanks!`;
                     <p className="text-xs text-gray-500 mt-2">If provided, we will also send the same data to this second URL.</p>
                   </div>
 
-                  <div className="mt-8 p-6 bg-blue-50/50 border border-blue-100 rounded-2xl">
-                    <h3 className="text-sm font-bold text-blue-900 mb-2 flex items-center gap-2">
-                      <Bot className="w-4 h-4" />
-                      Inbound Webhook (Nurturing Flow)
-                    </h3>
-                    <p className="text-xs text-blue-700/80 mb-4 leading-relaxed">
-                      Use this URL in Zapier to notify our system when a job is completed in your CRM. This triggers the follow-up/nurturing sequence.
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 p-3 bg-white border border-blue-200 rounded-xl font-mono text-[10px] text-blue-900 break-all select-all">
+                  {/* ──────────── Job Won → Revenue Pipeline (primary) ──────────── */}
+                  <div className="mt-8 p-6 bg-gradient-to-br from-emerald-50 to-emerald-50/30 border-2 border-emerald-200 rounded-2xl">
+                    <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-sm font-bold text-emerald-900 mb-1 flex items-center gap-2">
+                          <span className="text-base">💰</span>
+                          Revenue Pipeline
+                          <span className="px-2 py-0.5 bg-emerald-600 text-white text-[9px] font-black uppercase tracking-widest rounded-md shadow-sm">Primary</span>
+                        </h3>
+                        <p className="text-xs text-emerald-800/70 leading-relaxed">
+                          <strong>Job Won → Confirmed Revenue.</strong> When DripJobs marks a job as Won or Completed, revenue lands on your dashboard tile and post-service nurturing kicks off automatically.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setOpenGuide("job-completed")}
+                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-emerald-600/20 transition-all active:scale-95 flex items-center gap-2 whitespace-nowrap shrink-0"
+                      >
+                        <BookOpen className="w-3.5 h-3.5" />
+                        How to Connect
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2 mt-4">
+                      <div className="flex-1 p-3 bg-white border border-emerald-200 rounded-xl font-mono text-[10px] text-emerald-900 break-all select-all">
                         {`${import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}/webhooks/crm/job-completed`.replace(/\/+$/, "")}
                       </div>
                       <button
@@ -2496,43 +2514,58 @@ Thanks!`;
                         onClick={() => {
                           const url = `${import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}/webhooks/crm/job-completed`.replace(/\/+$/, "");
                           navigator.clipboard.writeText(url);
-                          setMessage("Inbound URL copied to clipboard!");
+                          success("Revenue Pipeline URL copied!");
                         }}
-                        className="p-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
+                        className="p-3 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-600/20"
                         title="Copy to clipboard"
                       >
                         <RefreshCw className="w-4 h-4" />
                       </button>
                     </div>
                     <div className="mt-4 space-y-2">
-                      <p className="text-[10px] text-blue-600/70 font-bold uppercase tracking-wider">Required Header:</p>
-                      <div className="p-2 bg-white/50 border border-blue-100 rounded-lg font-mono text-[9px] text-blue-800 flex justify-between items-center">
-                        <span>Authorization: Bearer <span className="font-bold text-blue-900">{tenant?.api_key || "Loading..."}</span></span>
+                      <p className="text-[10px] text-emerald-700/80 font-black uppercase tracking-wider">Auth Header (Required):</p>
+                      <div className="p-2 bg-white/70 border border-emerald-100 rounded-lg font-mono text-[9px] text-emerald-900 flex justify-between items-center gap-2">
+                        <span className="truncate">Authorization: Bearer <span className="font-bold">{tenant?.api_key || "Loading..."}</span></span>
                         <button
                           type="button"
                           onClick={() => {
-                            if(tenant?.api_key) {
+                            if (tenant?.api_key) {
                               navigator.clipboard.writeText(tenant.api_key);
-                              setMessage("API Key copied to clipboard!");
+                              success("API Key copied!");
                             }
                           }}
-                          className="px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-[9px] font-bold transition-colors"
+                          className="px-2 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded text-[9px] font-black transition-colors shrink-0"
                         >
                           COPY KEY
                         </button>
                       </div>
                     </div>
                   </div>
+                  
+                {/* ──────────── Estimate Sent → AI Sales Recovery (optional) ──────────── */}
+                  <div className="mt-4 p-6 bg-gradient-to-br from-purple-50 to-purple-50/30 border-2 border-purple-200 rounded-2xl">
+                    <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-sm font-bold text-purple-900 mb-1 flex items-center gap-2">
+                          <span className="text-base">🤖</span>
+                          AI Sales Recovery
+                          <span className="px-2 py-0.5 bg-purple-600 text-white text-[9px] font-black uppercase tracking-widest rounded-md shadow-sm">Optional</span>
+                        </h3>
+                        <p className="text-xs text-purple-800/70 leading-relaxed">
+                          <strong>Estimate Sent → 21-day follow-up.</strong> When you send a proposal, the AI texts, calls, and leaves voicemails at optimal intervals to recover the estimate if the prospect goes cold.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setOpenGuide("estimate-sent")}
+                        className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-purple-600/20 transition-all active:scale-95 flex items-center gap-2 whitespace-nowrap shrink-0"
+                      >
+                        <BookOpen className="w-3.5 h-3.5" />
+                        How to Connect
+                      </button>
+                    </div>
 
-                  <div className="mt-4 p-6 bg-purple-50/50 border border-purple-100 rounded-2xl">
-                    <h3 className="text-sm font-bold text-purple-900 mb-2 flex items-center gap-2">
-                      <Bot className="w-4 h-4" />
-                      Estimate Sent Webhook (Sales Recovery)
-                    </h3>
-                    <p className="text-xs text-purple-700/80 mb-4 leading-relaxed">
-                      Use this URL in Zapier to notify our system when you send a proposal in your CRM (e.g. DripJobs). This automatically triggers the AI to chase the estimate.
-                    </p>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 mt-4">
                       <div className="flex-1 p-3 bg-white border border-purple-200 rounded-xl font-mono text-[10px] text-purple-900 break-all select-all">
                         {`${import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}/webhooks/crm/estimate-sent`.replace(/\/+$/, "")}
                       </div>
@@ -2541,7 +2574,7 @@ Thanks!`;
                         onClick={() => {
                           const url = `${import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}/webhooks/crm/estimate-sent`.replace(/\/+$/, "");
                           navigator.clipboard.writeText(url);
-                          setMessage("Estimate Webhook URL copied to clipboard!");
+                          success("AI Recovery URL copied!");
                         }}
                         className="p-3 bg-purple-600 text-white rounded-xl hover:bg-purple-700 transition-colors shadow-lg shadow-purple-600/20"
                         title="Copy to clipboard"
@@ -2550,15 +2583,25 @@ Thanks!`;
                       </button>
                     </div>
                     <div className="mt-4 space-y-2">
-                      <p className="text-[10px] text-purple-600/70 font-bold uppercase tracking-wider">Required JSON Payload Body Key:</p>
-                      <div className="p-2 bg-white/50 border border-purple-100 rounded-lg font-mono text-[9px] text-purple-800 flex justify-between items-center">
-                        <span>"api_key": "<span className="font-bold text-purple-900">{tenant?.api_key || "Loading..."}</span>"</span>
+                      <p className="text-[10px] text-purple-700/80 font-black uppercase tracking-wider">JSON Body Key (Required):</p>
+                      <div className="p-2 bg-white/70 border border-purple-100 rounded-lg font-mono text-[9px] text-purple-900 flex justify-between items-center gap-2">
+                        <span className="truncate">"api_key": "<span className="font-bold">{tenant?.api_key || "Loading..."}</span>"</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (tenant?.api_key) {
+                              navigator.clipboard.writeText(tenant.api_key);
+                              success("API Key copied!");
+                            }
+                          }}
+                          className="px-2 py-1 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded text-[9px] font-black transition-colors shrink-0"
+                        >
+                          COPY KEY
+                        </button>
                       </div>
                     </div>
-                  </div>
-                </div>
-              </div>
-
+                  </div>  
+                  
               {/* Google Calendar */}
               <div className="pt-6 border-t border-gray-100">
                 <div className="flex items-center justify-between gap-4 mb-2">

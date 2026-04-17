@@ -42,6 +42,8 @@ import {
   ChevronRight,
   ExternalLink,
   Zap,
+  TrendingUp,
+  DollarSign,
   BookOpen,
   Search,
   Star,
@@ -1469,54 +1471,6 @@ export default function Settings({ tenantId }) {
                   </p>
                 </div>
               )}
-
-              <div className="mt-12 pt-8 border-t border-gray-200">
-                <h3 className="text-lg font-bold text-gray-900 mb-2 flex items-center gap-2">
-                  <MessageSquare className="text-primary w-5 h-5" />
-                  Website Chat Widget
-                </h3>
-                <p className="text-sm text-gray-500 mb-6 font-medium">
-                  Add the AI chat widget to your website to handle leads, quotes, and bookings 24/7.
-                </p>
-
-                <div className="space-y-6">
-                  {/* Script Tag */}
-                  <div className="bg-gray-900 rounded-2xl p-6 shadow-xl border border-gray-800">
-                    <div className="flex items-center justify-between mb-4">
-                      <span className="text-[10px] font-black text-primary uppercase tracking-[0.2em]">1. Install the Widget</span>
-                      <span className="text-[10px] font-bold text-gray-500">PASTE BEFORE &lt;/BODY&gt;</span>
-                    </div>
-                    <code className="block p-4 bg-black/40 rounded-xl text-xs font-mono text-emerald-400 break-all border border-emerald-500/20">
-                      {`<script src="https://ai-front-desk-backend.onrender.com/chat-widget.js" data-tenant-id="${tenant?.id}"></script>`}
-                    </code>
-                  </div>
-
-                  {/* SMS Shortcut */}
-                  <div className="bg-white rounded-2xl p-6 border-2 border-dashed border-gray-100">
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
-                        <Phone className="w-5 h-5 text-emerald-600" />
-                      </div>
-                      <div>
-                        <h4 className="font-bold text-gray-900">"Click-to-Text" Shortcut</h4>
-                        <p className="text-xs text-gray-500 font-medium">Add a standalone button to your site that opens the customer's SMS app.</p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-3">
-                      <div className="flex flex-col gap-2">
-                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest pl-1">HTML Example</label>
-                        <code className="block p-3 bg-gray-50 rounded-xl text-[11px] font-mono text-gray-600 border border-gray-100">
-                          {`<a href="sms:${tenant?.twilio_phone_number || "+1234567890"}" class="text-us-button">
-  Text Us to Book
-</a>`}
-                        </code>
-                      </div>
-                      <p className="text-[10px] text-gray-400 font-medium italic">
-                        * When clicked on mobile, this will open the phone's native messaging app with your business number pre-filled.
-                      </p>
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
@@ -1851,6 +1805,178 @@ export default function Settings({ tenantId }) {
 
           {activeTab === "integrations" && (
             <div className="space-y-10">
+               {/* Website Chat Widget Installation */}
+              <div>
+                <div className="flex items-center justify-between gap-4 mb-2 flex-wrap">
+                  <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                    <MessageSquare className="text-primary w-5 h-5" />
+                    Website Chat Widget
+                  </h2>
+                  {tenant?.id && (
+                    
+                      href="https://www.gladiatorspainting.com/?widget_test=1"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-100 transition-colors"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      Test Live Widget
+                    </a>
+                  )}
+                </div>
+                <p className="text-sm text-gray-500 mb-6 font-medium leading-relaxed max-w-2xl">
+                  Install this script on your website to let customers chat with your AI 24/7. Leads captured here flow straight into your dashboard and follow-up sequences.
+                </p>
+
+                {/* Script Tag with Copy Button */}
+                <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-6 shadow-xl border border-slate-700 mb-6">
+                  <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+                    <span className="text-[10px] font-black text-emerald-400 uppercase tracking-[0.2em]">1. Copy your script tag</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const snippet = `<script src="${import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}/chat-widget.js" data-tenant-id="${tenant?.id}" async></script>`;
+                        navigator.clipboard.writeText(snippet);
+                        success("Widget script copied to clipboard!");
+                      }}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-lg text-[10px] font-black uppercase tracking-widest shadow-lg shadow-emerald-500/20 transition-all active:scale-95"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      Copy Script
+                    </button>
+                  </div>
+                  <code className="block p-4 bg-black/40 rounded-xl text-xs font-mono text-emerald-400 break-all border border-emerald-500/20 leading-relaxed">
+                    {`<script src="${import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}/chat-widget.js" data-tenant-id="${tenant?.id}" async></script>`}
+                  </code>
+                  <p className="text-[10px] text-slate-400 font-medium italic mt-3 leading-relaxed">
+                    💡 Paste this before your closing <code className="bg-slate-800 px-1.5 py-0.5 rounded text-emerald-400">&lt;/body&gt;</code> tag, or inside <code className="bg-slate-800 px-1.5 py-0.5 rounded text-emerald-400">&lt;head&gt;</code> (the <code className="bg-slate-800 px-1.5 py-0.5 rounded text-emerald-400">async</code> attribute prevents it from blocking page load).
+                  </p>
+                </div>
+
+                {/* Platform-Specific Guides */}
+                <div className="mb-6">
+                  <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-primary" />
+                    2. Install on your platform
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 hover:shadow-md transition-all">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-7 h-7 rounded-md bg-blue-500 text-white flex items-center justify-center text-xs font-black">W</div>
+                        <span className="text-sm font-bold text-gray-900">Webflow</span>
+                      </div>
+                      <p className="text-xs text-gray-600 leading-relaxed">
+                        Project Settings → <strong>Custom Code</strong> → Paste in <strong>Footer Code</strong> → Save & Publish.
+                      </p>
+                    </div>
+
+                    <div className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 hover:shadow-md transition-all">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-7 h-7 rounded-md bg-slate-700 text-white flex items-center justify-center text-xs font-black">W</div>
+                        <span className="text-sm font-bold text-gray-900">WordPress</span>
+                      </div>
+                      <p className="text-xs text-gray-600 leading-relaxed">
+                        Install the <strong>"Insert Headers and Footers"</strong> plugin → Paste in <strong>Footer</strong> → Save.
+                      </p>
+                    </div>
+
+                    <div className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 hover:shadow-md transition-all">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-7 h-7 rounded-md bg-black text-white flex items-center justify-center text-xs font-black">W</div>
+                        <span className="text-sm font-bold text-gray-900">Wix</span>
+                      </div>
+                      <p className="text-xs text-gray-600 leading-relaxed">
+                        Settings → <strong>Custom Code</strong> → Add New Code → Paste → Apply to All Pages → <strong>Place Code in Body - End</strong>.
+                      </p>
+                    </div>
+
+                    <div className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 hover:shadow-md transition-all">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-7 h-7 rounded-md bg-emerald-600 text-white flex items-center justify-center text-xs font-black">S</div>
+                        <span className="text-sm font-bold text-gray-900">Shopify</span>
+                      </div>
+                      <p className="text-xs text-gray-600 leading-relaxed">
+                        Online Store → Themes → <strong>Edit Code</strong> → <code className="bg-gray-100 px-1 rounded text-[10px]">theme.liquid</code> → Paste before <code className="bg-gray-100 px-1 rounded text-[10px]">&lt;/body&gt;</code>.
+                      </p>
+                    </div>
+
+                    <div className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 hover:shadow-md transition-all">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-7 h-7 rounded-md bg-slate-900 text-white flex items-center justify-center text-xs font-black">S</div>
+                        <span className="text-sm font-bold text-gray-900">Squarespace</span>
+                      </div>
+                      <p className="text-xs text-gray-600 leading-relaxed">
+                        Settings → Advanced → <strong>Code Injection</strong> → Paste in <strong>Footer</strong> → Save.
+                      </p>
+                    </div>
+
+                    <div className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 hover:shadow-md transition-all">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="w-7 h-7 rounded-md bg-gradient-to-br from-orange-500 to-red-500 text-white flex items-center justify-center text-xs font-black">&lt;/&gt;</div>
+                        <span className="text-sm font-bold text-gray-900">Custom HTML</span>
+                      </div>
+                      <p className="text-xs text-gray-600 leading-relaxed">
+                        Paste the script anywhere before your closing <code className="bg-gray-100 px-1 rounded text-[10px]">&lt;/body&gt;</code> tag on every page.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Verification */}
+                <div className="mb-6 p-5 bg-emerald-50/50 border border-emerald-100 rounded-2xl">
+                  <h3 className="text-sm font-bold text-emerald-900 mb-2 flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4" />
+                    3. Verify it's working
+                  </h3>
+                  <p className="text-xs text-emerald-800/80 leading-relaxed mb-3">
+                    Open your website in a new tab after pasting the script. You should see a chat bubble appear in the bottom-right corner within 2–3 seconds. Click it to test a message — the AI should respond using your tenant's settings.
+                  </p>
+                  <p className="text-[11px] text-emerald-700/70 italic leading-relaxed">
+                    💡 Troubleshooting: if the widget doesn't appear, check your browser console for errors (F12). Most issues are caused by aggressive ad-blockers or a missing HTTPS connection on your site.
+                  </p>
+                </div>
+
+                {/* SMS Shortcut */}
+                <div className="bg-white rounded-2xl p-6 border-2 border-dashed border-gray-100">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
+                      <Phone className="w-5 h-5 text-emerald-600" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-gray-900">Bonus: "Click-to-Text" shortcut</h4>
+                      <p className="text-xs text-gray-500 font-medium">Optional standalone button that opens the customer's SMS app.</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex flex-col gap-2">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest pl-1">HTML Example</label>
+                      <div className="relative">
+                        <code className="block p-3 bg-gray-50 rounded-xl text-[11px] font-mono text-gray-600 border border-gray-100 pr-16">
+                          {`<a href="sms:${tenant?.twilio_phone_number || "+1234567890"}" class="text-us-button">
+  Text Us to Book
+</a>`}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const snippet = `<a href="sms:${tenant?.twilio_phone_number || "+1234567890"}" class="text-us-button">\n  Text Us to Book\n</a>`;
+                            navigator.clipboard.writeText(snippet);
+                            success("SMS shortcut copied!");
+                          }}
+                          className="absolute top-2 right-2 px-2 py-1 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded text-[9px] font-bold transition-colors"
+                        >
+                          COPY
+                        </button>
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-gray-400 font-medium italic">
+                      * On mobile, this opens the phone's native messaging app with your business number pre-filled.
+                    </p>
+                  </div>
+                </div>
+              </div>
+      
               {/* Twilio */}
               <div>
                 <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">

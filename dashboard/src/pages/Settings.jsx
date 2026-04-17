@@ -1922,7 +1922,7 @@ Thanks!`;
                         navigator.clipboard.writeText(emailBody);
                         success("Developer email copied to clipboard \u2014 paste it into your email app!");
                       }}
-                      className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-primary text-white rounded-xl font-black text-xs uppercase tracking-widest shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all active:scale-95"
+                      className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-emerald-600 text-white rounded-xl font-black text-xs uppercase tracking-widest shadow-lg shadow-emerald-600/30 hover:bg-emerald-700 transition-all active:scale-95"
                     >
                       <Mail className="w-4 h-4" />
                       Copy Email for Developer

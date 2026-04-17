@@ -87,7 +87,7 @@ router.post("/recording-status", (req, res) => {
   res.status(200).send();
 });
 
-router.get("/transfer-dial", (req, res) => {
+router.get("/transfer-dial", async (req, res) => {
   const to = req.query.to;
   if (!to) {
     res.type("text/xml").send('<Response><Say>Transfer failed.</Say><Hangup/></Response>');
@@ -98,6 +98,49 @@ router.get("/transfer-dial", (req, res) => {
   const recordingAttrs = recordingCallback
     ? ` record="record-from-answer" recordingStatusCallback="${recordingCallback}" recordingStatusCallbackEvent="completed"`
     : ' record="record-from-answer"';
+
+  // 🔄 Transfer requested notification (non-blocking, runs after TwiML response sent)
+  setImmediate(async () => {
+    try {
+      const callSid = req.query.CallSid || req.body?.CallSid || null;
+      if (!callSid) return;
+
+      const db = require("../lib/db");
+      const callRes = await db.query(
+        "SELECT tenant_id, from_number FROM calls WHERE twilio_call_sid = $1 LIMIT 1",
+        [callSid]
+      );
+      const call = callRes.rows[0];
+      if (!call?.tenant_id) return;
+
+      // Dedup per CallSid
+      const dup = await db.query(
+        `SELECT id FROM notifications
+         WHERE tenant_id = $1 AND type = 'transfer_requested'
+           AND data->>'callSid' = $2 LIMIT 1`,
+        [call.tenant_id, callSid]
+      );
+      if (dup.rows.length > 0) return;
+
+      await db.query(
+        `INSERT INTO notifications (tenant_id, type, title, body, data, created_at)
+         VALUES ($1, $2, $3, $4, $5, now())`,
+        [
+          call.tenant_id,
+          'transfer_requested',
+          'Call Transferred to Human',
+          call.from_number
+            ? `Caller ${call.from_number} asked to speak with a team member — call is being connected now.`
+            : `A caller asked to speak with a team member — call is being connected now.`,
+          JSON.stringify({ callSid, from_number: call.from_number, transfer_to: number }),
+        ]
+      );
+      console.log("[Notification] transfer_requested fired for tenant=%s callSid=%s", call.tenant_id, callSid);
+    } catch (e) {
+      console.error("[Notification] transfer_requested failed:", e.message);
+    }
+  });
+
   res.type("text/xml").send(`
     <Response>
       <Say voice="Polly.Joanna">Please hold while we connect you to a team member.</Say>

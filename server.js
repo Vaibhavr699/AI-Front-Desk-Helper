@@ -408,6 +408,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/billing", authMiddleware, billingRoutes);
 app.use("/api/outbound", authMiddleware, outboundRoutes);
 app.use("/api/leads", leadRoutes);
+app.use("/api/notifications", require("./routes/notifications"));
 app.use("/api/stripe", authMiddleware, require("./routes/stripe"));
 app.use("/api/admin", authMiddleware, requireSuperAdmin, require("./routes/admin"));
 app.use("/api/team", authMiddleware, require("./routes/team"));

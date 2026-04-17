@@ -5,6 +5,7 @@ const db = require("../lib/db");
 const { getOrCreateLead, updateLeadInfo } = require("../services/leads");
 const estimateRecoveryService = require("../services/estimateRecovery");
 const { schedulePostServiceCampaigns } = require("../services/nurturing");
+const notificationService = require("../services/notifications");
 
 const router = express.Router();
 
@@ -110,6 +111,16 @@ router.post("/crm/estimate-sent", async (req, res) => {
         lead = { ...lead, ...updates };
     }
 
+    // 🔥 Hot lead notification (non-blocking) — fires only for $5k+ estimates
+    if (updates.estimated_revenue_cents) {
+      notificationService.notifyHotLead(tenantId, {
+        customer_name: lead.name,
+        amount_cents:  updates.estimated_revenue_cents,
+        lead_id:       lead.id,
+        phone:         lead.phone,
+      }).catch((e) => console.error("[Webhooks] notifyHotLead failed:", e.message));
+    }
+
     // Fire the Sales Recovery system
     const recoveryProcess = await estimateRecoveryService.startEstimateRecovery(tenantId, lead, {
         lead_source: source
@@ -179,6 +190,16 @@ router.post("/crm/job-won", async (req, res) => {
     await updateLeadInfo(lead.id, updates);
     await schedulePostServiceCampaigns(tenantId, { lead_id: lead.id, preferred_date: new Date().toISOString() });
     await db.query("UPDATE leads SET last_service_date = CURRENT_DATE WHERE id = $1", [lead.id]);
+
+    // 💰 Revenue recovered notification (non-blocking)
+    if (updates.actual_revenue_cents) {
+      notificationService.notifyRevenueRecovered(tenantId, {
+        amount_cents:  updates.actual_revenue_cents,
+        customer_name: lead.name,
+        lead_id:       lead.id,
+        booking_id:    null, // job-won doesn't create a booking directly
+      }).catch((e) => console.error("[Webhooks] notifyRevenueRecovered failed:", e.message));
+    }
    
     res.json({ 
       success: true, 

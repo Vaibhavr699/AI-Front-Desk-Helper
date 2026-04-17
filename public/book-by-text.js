@@ -25,11 +25,11 @@
                   (scriptUrl ? scriptUrl.origin : "https://ai-front-desk-backend.onrender.com");
 
   if (!tenantId) {
-    console.error("[AI-BookByText] Missing data-tenant-id on script tag.");
+    console.error("[BookByText] Missing data-tenant-id on script tag.");
   }
 
   // ─────────────────────────────────────────────────────────
-  // 2. SESSION ID — FIX 1: safe localStorage with fallback
+  // 2. SESSION ID
   // ─────────────────────────────────────────────────────────
   var sessionId;
   try {
@@ -43,23 +43,27 @@
   }
 
   // ─────────────────────────────────────────────────────────
-  // 3. FETCH TENANT CONFIG — FIX 7: dynamic brand color + name
+  // 3. FETCH TENANT CONFIG — uses /api/public-tenant/:tenantId
   // ─────────────────────────────────────────────────────────
+  // NOTE (white-label): no platform-branded fallbacks here.
+  // brandName falls back to a neutral "Us" only as a last resort;
+  // privacyUrl is left blank if the tenant has not configured one,
+  // so we never leak a platform URL to an end customer.
   var cfg = {
     brandName:  "Us",
     brandColor: "#000000",
-    privacyUrl: "https://www.aifrontdeskhelper.com/privacy-policy"
+    privacyUrl: ""
   };
 
   function fetchConfig(cb) {
     if (!tenantId) { cb(cfg); return; }
-    fetch(apiBase + "/widget/config?tenantId=" + encodeURIComponent(tenantId))
+    fetch(apiBase + "/api/public-tenant/" + encodeURIComponent(tenantId))
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (data) {
         if (data) {
-          cfg.brandName  = data.brandName  || cfg.brandName;
-          cfg.brandColor = data.brandColor || cfg.brandColor;
-          cfg.privacyUrl = data.privacyUrl || cfg.privacyUrl;
+          cfg.brandName  = data.company_name || data.name || cfg.brandName;
+          cfg.brandColor = data.brand_color  || cfg.brandColor;
+          cfg.privacyUrl = data.privacy_url  || cfg.privacyUrl;
         }
         cb(cfg);
       })
@@ -67,7 +71,7 @@
   }
 
   // ─────────────────────────────────────────────────────────
-  // 4. PHONE VALIDATION — FIX 5
+  // 4. PHONE VALIDATION
   // ─────────────────────────────────────────────────────────
   function isValidPhone(phone) {
     var digits = phone.replace(/\D/g, "");
@@ -83,7 +87,7 @@
   }
 
   // ─────────────────────────────────────────────────────────
-  // 5. LOG CONSENT SEPARATELY — FIX 6
+  // 5. LOG CONSENT
   // ─────────────────────────────────────────────────────────
   function logConsent(phone, consentText) {
     try {
@@ -104,21 +108,39 @@
   }
 
   // ─────────────────────────────────────────────────────────
-  // 6. BUILD WIDGET — called after config is fetched
+  // 6. HTML ESCAPE (prevents XSS via tenant-supplied brandName)
+  // ─────────────────────────────────────────────────────────
+  function escapeHtml(str) {
+    if (str == null) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // 7. BUILD WIDGET — called after config is fetched
   // ─────────────────────────────────────────────────────────
   function buildWidget(config) {
-    var color    = config.brandColor;
-    var name     = config.brandName;
-    var privUrl  = config.privacyUrl;
+    var color   = config.brandColor;
+    var name    = config.brandName;
+    var nameEsc = escapeHtml(name);
+    var privUrl = config.privacyUrl;
 
-    // FIX 2 + 3: consent text includes business name and Privacy Policy link
+    // Privacy link only rendered if tenant has configured one.
+    var privacyLinkHtml = privUrl
+      ? " <a href='" + escapeHtml(privUrl) + "' target='_blank' rel='noopener' " +
+        "style='color:#666;text-decoration:underline'>Privacy Policy</a>."
+      : "";
+
     var consentHtml =
-      "By submitting, you agree to receive text messages from <strong>" + name + "</strong> " +
+      "By submitting, you agree to receive text messages from <strong>" + nameEsc + "</strong> " +
       "about your quote, scheduling, and service updates. Msg/data rates may apply. " +
-      "Reply STOP to opt out, HELP for help. " +
-      "<a href='" + privUrl + "' target='_blank' rel='noopener' " +
-      "style='color:#666;text-decoration:underline'>Privacy Policy</a>. " +
-      "<em style='display:block;margin-top:3px;color:#aaa'>Consent not required to purchase.</em>";
+      "Reply STOP to opt out, HELP for help." +
+      privacyLinkHtml +
+      " <em style='display:block;margin-top:3px;color:#aaa'>Consent not required to purchase.</em>";
 
     var consentPlain =
       "By submitting, you agree to receive text messages from " + name +
@@ -174,7 +196,6 @@
       "border:none;padding:0}",
       ".ai-bbt-close:hover{color:#111}",
 
-      /* Mobile: full width */
       "@media(max-width:480px){",
       ".ai-bbt-modal{padding:28px 20px;border-radius:16px}",
       ".ai-bbt-title{font-size:20px}",
@@ -194,7 +215,7 @@
         // Form step
         '<div id="ai-bbt-form">' +
           '<h2 class="ai-bbt-title">Book via Text</h2>' +
-          '<p class="ai-bbt-desc">Enter your number and <strong>' + name + '</strong> will text you to coordinate your appointment and quote details.</p>' +
+          '<p class="ai-bbt-desc">Enter your number and <strong>' + nameEsc + '</strong> will text you to coordinate your appointment and quote details.</p>' +
           '<label class="ai-bbt-label" for="ai-bbt-phone">Phone Number</label>' +
           '<input type="tel" id="ai-bbt-phone" class="ai-bbt-input" placeholder="(555) 000-0000" autocomplete="tel" />' +
           '<div id="ai-bbt-phone-error" class="ai-bbt-error-msg" style="display:none">Please enter a valid 10-digit phone number.</div>' +
@@ -208,11 +229,11 @@
           '<button class="ai-bbt-submit" id="ai-bbt-submit">Start Texting</button>' +
         '</div>' +
 
-        // Success step
+        // Success step — uses tenant brand, not "AI Assistant"
         '<div id="ai-bbt-success" style="display:none;padding:20px 0">' +
           '<div style="font-size:52px;margin-bottom:16px">✅</div>' +
           '<h2 class="ai-bbt-title">Check Your Phone!</h2>' +
-          '<p class="ai-bbt-desc">We just sent you a text message.<br>Our AI Assistant is ready to help you finish your booking.</p>' +
+          '<p class="ai-bbt-desc">We just sent you a text message.<br><strong>' + nameEsc + '</strong> will be in touch shortly to finish your booking.</p>' +
           '<button class="ai-bbt-submit" id="ai-bbt-got-it">Got it</button>' +
         '</div>' +
       '</div>';
@@ -232,19 +253,19 @@
 
     function resetModal() {
       setTimeout(function () {
-        formStep.style.display   = "block";
+        formStep.style.display    = "block";
         successStep.style.display = "none";
-        phoneInput.value         = "";
+        phoneInput.value          = "";
         phoneInput.classList.remove("error");
-        consentCheck.checked     = false;
-        submitBtn.disabled       = false;
-        submitBtn.innerText      = "Start Texting";
+        consentCheck.checked      = false;
+        submitBtn.disabled        = false;
+        submitBtn.innerText       = "Start Texting";
         phoneError.style.display   = "none";
         consentError.style.display = "none";
       }, 350);
     }
 
-    // FIX 4: scoped open/close — no global namespace pollution
+    // Scoped open/close
     var ns = "_aiBookByText_" + (tenantId || "default");
     window[ns + "_open"] = function () {
       overlay.classList.add("active");
@@ -255,7 +276,7 @@
       resetModal();
     };
 
-    // Keep legacy globals for backward compatibility
+    // Legacy globals for backward compatibility
     window.__aiBookOpen  = window[ns + "_open"];
     window.__aiBookClose = window[ns + "_close"];
 
@@ -276,7 +297,6 @@
       var phone = phoneInput.value.trim();
       var valid = true;
 
-      // FIX 5: validate phone
       if (!isValidPhone(phone)) {
         phoneInput.classList.add("error");
         phoneError.style.display = "block";
@@ -295,7 +315,7 @@
       phoneError.style.display   = "none";
       consentError.style.display = "none";
 
-      // FIX 6: log consent to sms_consents table FIRST — decoupled from SMS send
+      // Log consent first — decoupled from SMS send
       logConsent(phone, consentPlain);
 
       try {
@@ -350,7 +370,7 @@
     observer.observe(document.body, { childList: true, subtree: true });
     attachListeners();
 
-    console.log("[AI-BookByText] Ready. Tenant: " + tenantId + " | API: " + apiBase);
+    console.log("[BookByText] Ready. Tenant: " + tenantId + " | API: " + apiBase);
   }
 
   // ── INIT ──

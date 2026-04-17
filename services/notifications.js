@@ -4,13 +4,6 @@ const db = require("../lib/db");
 
 /**
  * Creates a notification for a specific tenant.
- * @param {string|number} tenantId - The ID of the tenant.
- * @param {Object} options - Notification options.
- * @param {string} options.type - Type of notification (e.g., 'booking_created', 'missed_call').
- * @param {string} options.title - Short descriptive title.
- * @param {string} [options.body] - Detailed body text.
- * @param {Object} [options.data] - Additional metadata for the notification.
- * @returns {Promise<Object>} The created notification record.
  */
 async function createNotification(tenantId, { type, title, body = "", data = {} }) {
   try {
@@ -30,8 +23,6 @@ async function createNotification(tenantId, { type, title, body = "", data = {} 
 
 /**
  * Retrieves unread notifications for a tenant.
- * @param {string|number} tenantId - The ID of the tenant.
- * @param {number} [limit=10] - Number of notifications to fetch.
  */
 async function getUnreadNotifications(tenantId, limit = 10) {
   try {
@@ -49,11 +40,6 @@ async function getUnreadNotifications(tenantId, limit = 10) {
   }
 }
 
-/**
- * Marks a notification as read.
- * @param {number} notificationId - The ID of the notification.
- * @param {string|number} tenantId - Security check tenantId.
- */
 async function markAsRead(notificationId, tenantId) {
   try {
     const q = `
@@ -70,10 +56,6 @@ async function markAsRead(notificationId, tenantId) {
   }
 }
 
-/**
- * Marks all notifications as read for a tenant.
- * @param {string|number} tenantId - The ID of the tenant.
- */
 async function markAllAsRead(tenantId) {
   try {
     const q = `
@@ -90,9 +72,189 @@ async function markAllAsRead(tenantId) {
   }
 }
 
+// ─────────────────────────────────────────────────────────
+// EVENT-DRIVEN NOTIFICATIONS (business activity)
+// Each wrapped in try/catch — notification failures must never
+// break the parent business operation.
+// ─────────────────────────────────────────────────────────
+
 /**
- * Checks for high hung-up rates (>10%) in the last 24h.
+ * Fires when DripJobs reports a job completed with revenue.
  */
+async function notifyRevenueRecovered(tenantId, { amount_cents, customer_name, lead_id, booking_id }) {
+  try {
+    if (!tenantId || !amount_cents || amount_cents <= 0) return null;
+
+    // Dedup: if we've already notified for this booking, skip.
+    if (booking_id) {
+      const existing = await db.query(
+        `SELECT id FROM notifications 
+         WHERE tenant_id = $1 AND type = 'revenue_recovered' 
+         AND data->>'booking_id' = $2
+         LIMIT 1`,
+        [tenantId, String(booking_id)]
+      );
+      if (existing.rows.length > 0) return null;
+    }
+
+    const dollars = (amount_cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return await createNotification(tenantId, {
+      type: 'revenue_recovered',
+      title: `Revenue Recovered: $${dollars}`,
+      body: customer_name
+        ? `${customer_name}'s job completed — $${dollars} attributed to AI recovery.`
+        : `New job completed — $${dollars} in confirmed revenue.`,
+      data: { amount_cents, customer_name, lead_id, booking_id },
+    });
+  } catch (err) {
+    console.error("[Notification] notifyRevenueRecovered failed:", err.message);
+    return null;
+  }
+}
+
+/**
+ * Fires when a new booking is created.
+ */
+async function notifyNewBooking(tenantId, { customer_name, service_date, booking_id, lead_id, source }) {
+  try {
+    if (!tenantId || !booking_id) return null;
+
+    const existing = await db.query(
+      `SELECT id FROM notifications 
+       WHERE tenant_id = $1 AND type = 'booking_created' 
+       AND data->>'booking_id' = $2
+       LIMIT 1`,
+      [tenantId, String(booking_id)]
+    );
+    if (existing.rows.length > 0) return null;
+
+    const dateStr = service_date
+      ? new Date(service_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      : null;
+    return await createNotification(tenantId, {
+      type: 'booking_created',
+      title: 'New Booking',
+      body: customer_name
+        ? `${customer_name}${dateStr ? ` is booked for ${dateStr}` : ' has a new booking'}.`
+        : `A new appointment was booked${dateStr ? ` for ${dateStr}` : ''}.`,
+      data: { customer_name, service_date, booking_id, lead_id, source: source || 'ai' },
+    });
+  } catch (err) {
+    console.error("[Notification] notifyNewBooking failed:", err.message);
+    return null;
+  }
+}
+
+/**
+ * Fires when a new lead is captured. Skips auto-created CRM leads.
+ */
+async function notifyNewLead(tenantId, { customer_name, phone, source, lead_id }) {
+  try {
+    if (!tenantId || !lead_id) return null;
+
+    const skipSources = ['crm_job_completed', 'crm_job_won'];
+    if (source && skipSources.includes(source)) return null;
+
+    const existing = await db.query(
+      `SELECT id FROM notifications 
+       WHERE tenant_id = $1 AND type = 'lead_captured' 
+       AND data->>'lead_id' = $2
+       LIMIT 1`,
+      [tenantId, String(lead_id)]
+    );
+    if (existing.rows.length > 0) return null;
+
+    const sourceLabel = {
+      phone:    'Phone call',
+      sms:      'Text message',
+      facebook: 'Facebook',
+      web:      'Website',
+      referral: 'Referral',
+      widget:   'Chat widget',
+    }[source] || (source ? source.replace(/_/g, ' ') : 'Unknown source');
+
+    return await createNotification(tenantId, {
+      type: 'lead_captured',
+      title: 'New Lead',
+      body: customer_name
+        ? `${customer_name} came in via ${sourceLabel}.`
+        : `New lead via ${sourceLabel}${phone ? ` — ${phone}` : ''}.`,
+      data: { customer_name, phone, source, lead_id },
+    });
+  } catch (err) {
+    console.error("[Notification] notifyNewLead failed:", err.message);
+    return null;
+  }
+}
+
+/**
+ * Fires when an estimate is sent with $5k+.
+ */
+const HOT_LEAD_THRESHOLD_CENTS = 500000;
+
+async function notifyHotLead(tenantId, { customer_name, amount_cents, lead_id, phone }) {
+  try {
+    if (!tenantId || !lead_id) return null;
+    if (!amount_cents || amount_cents < HOT_LEAD_THRESHOLD_CENTS) return null;
+
+    const existing = await db.query(
+      `SELECT id FROM notifications 
+       WHERE tenant_id = $1 AND type = 'hot_lead' 
+       AND data->>'lead_id' = $2
+       LIMIT 1`,
+      [tenantId, String(lead_id)]
+    );
+    if (existing.rows.length > 0) return null;
+
+    const dollars = (amount_cents / 100).toLocaleString('en-US');
+    return await createNotification(tenantId, {
+      type: 'hot_lead',
+      title: `Hot Lead: $${dollars} Estimate`,
+      body: customer_name
+        ? `${customer_name} just received a $${dollars} estimate. Personal follow-up recommended.`
+        : `High-value estimate ($${dollars}) sent — follow up personally${phone ? ` at ${phone}` : ''}.`,
+      data: { customer_name, amount_cents, lead_id, phone },
+    });
+  } catch (err) {
+    console.error("[Notification] notifyHotLead failed:", err.message);
+    return null;
+  }
+}
+
+/**
+ * Fires when the 21-day estimate recovery sequence engages.
+ */
+async function notifyEstimateRecoveryStarted(tenantId, { customer_name, lead_id, recovery_id }) {
+  try {
+    if (!tenantId || !recovery_id) return null;
+
+    const existing = await db.query(
+      `SELECT id FROM notifications 
+       WHERE tenant_id = $1 AND type = 'estimate_recovery_started' 
+       AND data->>'recovery_id' = $2
+       LIMIT 1`,
+      [tenantId, String(recovery_id)]
+    );
+    if (existing.rows.length > 0) return null;
+
+    return await createNotification(tenantId, {
+      type: 'estimate_recovery_started',
+      title: 'AI Follow-Up Started',
+      body: customer_name
+        ? `AI is now following up with ${customer_name} over 21 days (texts + calls + voicemails).`
+        : `21-day AI follow-up sequence started for a new estimate.`,
+      data: { customer_name, lead_id, recovery_id },
+    });
+  } catch (err) {
+    console.error("[Notification] notifyEstimateRecoveryStarted failed:", err.message);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+// SCHEDULED CHECKS (existing — unchanged)
+// ─────────────────────────────────────────────────────────
+
 async function checkHungUpRates() {
   try {
     const tenants = await db.query("SELECT id FROM tenants");
@@ -130,9 +292,6 @@ async function checkHungUpRates() {
   }
 }
 
-/**
- * Sends a daily performance summary notification.
- */
 async function sendDailySummary() {
   try {
     const tenants = await db.query("SELECT id FROM tenants");
@@ -159,9 +318,6 @@ async function sendDailySummary() {
   }
 }
 
-/**
- * Checks for usage alerts (80% and 100%) for all tenants.
- */
 async function checkUsageAlerts() {
   try {
     const tenants = await db.query("SELECT id, plan FROM tenants");
@@ -203,7 +359,6 @@ async function checkUsageAlerts() {
       else if (maxPercent >= 80) threshold = 80;
 
       if (threshold > 0) {
-        // Check if we already notified for this threshold this month
         const existing = await db.query(`
           SELECT id FROM notifications 
           WHERE tenant_id = $1 AND type = 'usage_alert' 
@@ -235,5 +390,12 @@ module.exports = {
   markAllAsRead,
   checkHungUpRates,
   sendDailySummary,
-  checkUsageAlerts
+  checkUsageAlerts,
+  // Event-driven notifications
+  notifyRevenueRecovered,
+  notifyNewBooking,
+  notifyNewLead,
+  notifyHotLead,
+  notifyEstimateRecoveryStarted,
+  HOT_LEAD_THRESHOLD_CENTS,
 };

@@ -664,7 +664,7 @@ async function safeUpdateCallSummary(callId, options = {}) {
     const leadId = options.leadId || undefined;
     const markEnded = Boolean(options.markEnded);
 
-    // Notification for spam detection
+   // Notification for spam detection
     if (status === "Spam") {
       try {
         const callRes = await pool.query("SELECT tenant_id, from_number FROM calls WHERE id = $1", [callId]);
@@ -677,6 +677,55 @@ async function safeUpdateCallSummary(callId, options = {}) {
         }
       } catch (e) {
         console.error("Notification error:", e);
+      }
+    }
+
+    // 📞 Missed call notification — fires when a call ends without booking/transfer/spam
+    // Matches the logic in checkHungUpRates: short duration, no transfer, not booked,
+    // not spam. Signals "AI couldn't handle this — a human should follow up."
+    if (markEnded && status !== "Spam") {
+      try {
+        const callRes = await pool.query(
+          `SELECT id, tenant_id, from_number, to_number, duration_minutes,
+                  transfer_to, disposition, status, lead_id
+           FROM calls WHERE id = $1`,
+          [callId]
+        );
+        const call = callRes.rows[0];
+        if (call && call.tenant_id) {
+          const isShort        = (call.duration_minutes == null) || parseFloat(call.duration_minutes) < 1.0;
+          const notTransferred = !call.transfer_to;
+          const notBooked      = !(call.status && /booked/i.test(call.status))
+                               && call.status !== "Estimate Scheduled"
+                               && call.status !== "FollowUp Needed";
+          const notSpamDisp    = !call.disposition || call.disposition !== "spam";
+
+          if (isShort && notTransferred && notBooked && notSpamDisp) {
+            // Dedup per callId — never fire twice for the same call
+            const dup = await pool.query(
+              `SELECT id FROM notifications
+               WHERE tenant_id = $1 AND type = 'missed_call'
+                 AND data->>'callId' = $2 LIMIT 1`,
+              [call.tenant_id, String(callId)]
+            );
+            if (dup.rows.length === 0) {
+              const fromLabel = call.from_number || "Unknown caller";
+              await pool.query(
+                "INSERT INTO notifications (tenant_id, type, title, body, data, created_at) VALUES ($1, $2, $3, $4, $5, now())",
+                [
+                  call.tenant_id,
+                  'missed_call',
+                  'Missed Call — Follow Up',
+                  `${fromLabel} called but AI couldn't book or transfer. Consider a personal callback.`,
+                  JSON.stringify({ callId, from_number: call.from_number, lead_id: call.lead_id }),
+                ]
+              );
+              console.log("[Notification] missed_call fired for callId=%s tenant=%s", callId, call.tenant_id);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("[Notification] missed_call check failed:", e.message);
       }
     }
 

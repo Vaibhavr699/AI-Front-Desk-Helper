@@ -1,6 +1,7 @@
 "use strict";
 
 const db = require("../lib/db");
+const notificationService = require("./notifications");
 
 /** Get or create a lead by phone number or external ID for a tenant */
 async function getOrCreateLead(tenantId, phoneOrId, name = null, leadSource = null) {
@@ -53,7 +54,17 @@ async function getOrCreateLead(tenantId, phoneOrId, name = null, leadSource = nu
        RETURNING *`,
       [tenantId, input, name, leadSource, facebook_id, web_id]
     );
-    return res.rows[0];
+    const newLead = res.rows[0];
+
+    // 🆕 Fire new-lead notification (never blocks lead creation)
+    notificationService.notifyNewLead(tenantId, {
+      customer_name: newLead.name,
+      phone:         newLead.phone,
+      source:        newLead.lead_source,
+      lead_id:       newLead.id,
+    }).catch((e) => console.error("[Leads] notifyNewLead failed:", e.message));
+
+    return newLead;
   } catch (err) {
     // Handle race condition: retry lookup
     if (err.code === '23505') {

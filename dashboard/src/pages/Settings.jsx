@@ -1472,8 +1472,6 @@ export default function Settings({ tenantId }) {
                 </div>
               )}
                 </div>
-              </div>
-            </div>
           )}
 
           {activeTab === "hours" && (

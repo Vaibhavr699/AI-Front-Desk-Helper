@@ -43,6 +43,8 @@ import {
   ExternalLink,
   Zap,
   X,
+  ArrowRight,
+  Copy as CopyIcon,
   TrendingUp,
   DollarSign,
   BookOpen,
@@ -2600,6 +2602,8 @@ Thanks!`;
                       </div>
                     </div>
                   </div>  
+                </div>
+              </div>
                   
               {/* Google Calendar */}
               <div className="pt-6 border-t border-gray-100">

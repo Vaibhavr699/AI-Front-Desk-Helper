@@ -4085,10 +4085,8 @@ cron.schedule("*/5 * * * *", () => {
   estimateRecoveryService.processDueRecoveries().catch((e) => console.error("Recovery cron:", e));
 });
 
-// -------------------- Cron: Sales Engine follow-up every 10 min --------------------
-cron.schedule("*/10 * * * *", () => {
-  salesEngine.runEstimateFollowUps().catch((e) => console.error("Sales Engine cron:", e));
-});
+// Removed 2026-04-17: duplicated estimateRecoveryService.processDueRecoveries.
+// See services/salesEngine.js deprecation notes.
 
 cron.schedule("*/10 * * * *", () => {
   nurturingService.processDueNurturing().catch((e) => console.error("Nurturing cron:", e));

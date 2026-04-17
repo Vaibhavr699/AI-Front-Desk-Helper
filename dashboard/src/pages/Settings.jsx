@@ -1851,63 +1851,143 @@ export default function Settings({ tenantId }) {
                   </p>
                 </div>
 
-                {/* Platform-Specific Guides */}
+                {/* Send to Developer — PRIMARY install path */}
                 <div className="mb-6">
                   <h3 className="text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-                    <BookOpen className="w-4 h-4 text-primary" />
-                    2. Install on your platform
+                    <Mail className="w-4 h-4 text-primary" />
+                    2. Send everything to your web developer
                   </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="p-6 bg-gradient-to-br from-primary/5 to-primary/10 border-2 border-primary/20 rounded-2xl">
+                    <p className="text-sm text-gray-700 leading-relaxed mb-4">
+                      Don't install it yourself? This button copies a ready-to-forward email to your clipboard. It includes <strong>the chat widget script AND the Click-to-Text button snippet</strong>, platform-specific install steps, and clear instructions for your developer.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Derive the primary AI phone number (Twilio-provisioned, preferred)
+                        const aiPhoneNumber =
+                          phoneNumbers.find((p) => p.twilio_sid && p.is_primary)?.phone ||
+                          phoneNumbers.find((p) => p.twilio_sid)?.phone ||
+                          null;
+
+                        const scriptTag = `<script src="${import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}/chat-widget.js" data-tenant-id="${tenant?.id}" async></script>`;
+
+                        const clickToTextSnippet = aiPhoneNumber
+                          ? `<a href="sms:${aiPhoneNumber}?&body=Hi%2C%20I%27d%20like%20to%20book%20an%20estimate" style="display:inline-block;padding:14px 28px;background:#10b981;color:#fff;font-weight:700;text-decoration:none;border-radius:12px;font-family:system-ui,sans-serif;box-shadow:0 4px 12px rgba(16,185,129,0.3);">💬 Text Us to Book</a>`
+                          : `<!-- Add an AI phone number in Settings \u2192 Phone & Voice first to generate your Click-to-Text snippet -->`;
+
+                        const companyName = tenant?.company_name || tenant?.name || "our business";
+
+                        const emailBody = `Subject: Install our new AI chat widget + Click-to-Text button
+
+Hi,
+
+We just signed up for an AI assistant that handles customer questions, quotes, and bookings 24/7 on our website. I need you to install two things:
+
+=== PART 1: CHAT WIDGET (bottom-right bubble on every page) ===
+
+Please add this script tag to every page of ${companyName}'s website, inserted just before the closing </body> tag:
+
+${scriptTag}
+
+Alternative: the script can also go inside the <head> tag \u2014 the "async" attribute prevents it from blocking page load either way.
+
+Platform-specific install paths:
+\u2022 Webflow \u2192 Project Settings \u2192 Custom Code \u2192 Footer Code \u2192 Save & Publish
+\u2022 WordPress \u2192 "Insert Headers and Footers" plugin \u2192 Footer \u2192 Save
+\u2022 Wix \u2192 Settings \u2192 Custom Code \u2192 Add New Code \u2192 Apply to All Pages \u2192 Body End
+\u2022 Shopify \u2192 Online Store \u2192 Themes \u2192 Edit Code \u2192 theme.liquid \u2192 before </body>
+\u2022 Squarespace \u2192 Settings \u2192 Advanced \u2192 Code Injection \u2192 Footer \u2192 Save
+\u2022 Custom HTML \u2192 paste before </body> on every page
+
+Once installed, a chat bubble should appear in the bottom-right corner of every page.
+
+=== PART 2: CLICK-TO-TEXT BUTTON (mobile-first book-by-text CTA) ===
+
+${aiPhoneNumber ? `Please add this "Text Us to Book" button to our homepage (and any other pages where you'd like customers to book via SMS). It's mobile-optimized \u2014 when tapped on a phone, it opens the customer's messaging app pre-filled with a booking inquiry that routes directly to our AI.` : `This section requires an AI phone number setup first. Skip for now \u2014 we'll add this once that's configured.`}
+
+${clickToTextSnippet}
+
+You can style or resize it to match the site \u2014 the key attribute is the href value.
+
+=== VERIFICATION ===
+
+Once both are installed, please let me know so I can test from my end:
+1. Chat bubble appears in bottom-right on every page
+2. "Text Us to Book" button opens SMS app with correct number when tapped on mobile
+3. Messages sent to either channel trigger an AI response
+
+Thanks!`;
+
+                        navigator.clipboard.writeText(emailBody);
+                        success("Developer email copied to clipboard \u2014 paste it into your email app!");
+                      }}
+                      className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-primary text-white rounded-xl font-black text-xs uppercase tracking-widest shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all active:scale-95"
+                    >
+                      <Mail className="w-4 h-4" />
+                      Copy Email for Developer
+                    </button>
+                    <p className="text-[10px] text-gray-500 italic mt-3 text-center">
+                      The email contains both installs, platform-specific paths, and verification steps.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Platform-Specific Guides \u2014 collapsed by default */}
+                <details className="mb-6 group">
+                  <summary className="cursor-pointer list-none flex items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-2xl hover:border-gray-300 transition-all">
+                    <div className="flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-gray-500" />
+                      <span className="text-sm font-bold text-gray-700">Installing it yourself? Platform-specific instructions</span>
+                    </div>
+                    <ChevronDown className="w-4 h-4 text-gray-400 group-open:rotate-180 transition-transform" />
+                  </summary>
+                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 hover:shadow-md transition-all">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="w-7 h-7 rounded-md bg-blue-500 text-white flex items-center justify-center text-xs font-black">W</div>
                         <span className="text-sm font-bold text-gray-900">Webflow</span>
                       </div>
                       <p className="text-xs text-gray-600 leading-relaxed">
-                        Project Settings → <strong>Custom Code</strong> → Paste in <strong>Footer Code</strong> → Save & Publish.
+                        Project Settings \u2192 <strong>Custom Code</strong> \u2192 Paste in <strong>Footer Code</strong> \u2192 Save & Publish.
                       </p>
                     </div>
-
                     <div className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 hover:shadow-md transition-all">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="w-7 h-7 rounded-md bg-slate-700 text-white flex items-center justify-center text-xs font-black">W</div>
                         <span className="text-sm font-bold text-gray-900">WordPress</span>
                       </div>
                       <p className="text-xs text-gray-600 leading-relaxed">
-                        Install the <strong>"Insert Headers and Footers"</strong> plugin → Paste in <strong>Footer</strong> → Save.
+                        Install the <strong>"Insert Headers and Footers"</strong> plugin \u2192 Paste in <strong>Footer</strong> \u2192 Save.
                       </p>
                     </div>
-
                     <div className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 hover:shadow-md transition-all">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="w-7 h-7 rounded-md bg-black text-white flex items-center justify-center text-xs font-black">W</div>
                         <span className="text-sm font-bold text-gray-900">Wix</span>
                       </div>
                       <p className="text-xs text-gray-600 leading-relaxed">
-                        Settings → <strong>Custom Code</strong> → Add New Code → Paste → Apply to All Pages → <strong>Place Code in Body - End</strong>.
+                        Settings \u2192 <strong>Custom Code</strong> \u2192 Add New Code \u2192 Paste \u2192 Apply to All Pages \u2192 <strong>Place Code in Body - End</strong>.
                       </p>
                     </div>
-
                     <div className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 hover:shadow-md transition-all">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="w-7 h-7 rounded-md bg-emerald-600 text-white flex items-center justify-center text-xs font-black">S</div>
                         <span className="text-sm font-bold text-gray-900">Shopify</span>
                       </div>
                       <p className="text-xs text-gray-600 leading-relaxed">
-                        Online Store → Themes → <strong>Edit Code</strong> → <code className="bg-gray-100 px-1 rounded text-[10px]">theme.liquid</code> → Paste before <code className="bg-gray-100 px-1 rounded text-[10px]">&lt;/body&gt;</code>.
+                        Online Store \u2192 Themes \u2192 <strong>Edit Code</strong> \u2192 <code className="bg-gray-100 px-1 rounded text-[10px]">theme.liquid</code> \u2192 Paste before <code className="bg-gray-100 px-1 rounded text-[10px]">&lt;/body&gt;</code>.
                       </p>
                     </div>
-
                     <div className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 hover:shadow-md transition-all">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="w-7 h-7 rounded-md bg-slate-900 text-white flex items-center justify-center text-xs font-black">S</div>
                         <span className="text-sm font-bold text-gray-900">Squarespace</span>
                       </div>
                       <p className="text-xs text-gray-600 leading-relaxed">
-                        Settings → Advanced → <strong>Code Injection</strong> → Paste in <strong>Footer</strong> → Save.
+                        Settings \u2192 Advanced \u2192 <strong>Code Injection</strong> \u2192 Paste in <strong>Footer</strong> \u2192 Save.
                       </p>
                     </div>
-
                     <div className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 hover:shadow-md transition-all">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="w-7 h-7 rounded-md bg-gradient-to-br from-orange-500 to-red-500 text-white flex items-center justify-center text-xs font-black">&lt;/&gt;</div>
@@ -1918,7 +1998,7 @@ export default function Settings({ tenantId }) {
                       </p>
                     </div>
                   </div>
-                </div>
+                </details>
 
                 {/* Verification */}
                 <div className="mb-6 p-5 bg-emerald-50/50 border border-emerald-100 rounded-2xl">
@@ -1927,49 +2007,88 @@ export default function Settings({ tenantId }) {
                     3. Verify it's working
                   </h3>
                   <p className="text-xs text-emerald-800/80 leading-relaxed mb-3">
-                    Open your website in a new tab after pasting the script. You should see a chat bubble appear in the bottom-right corner within 2–3 seconds. Click it to test a message — the AI should respond using your tenant's settings.
+                    Open your website in a new tab after your developer finishes the install. You should see a chat bubble in the bottom-right corner within 2\u20133 seconds. Click it to test a message \u2014 the AI should respond using your tenant's settings. On mobile, tapping the "Text Us to Book" button should open your messaging app with the AI line pre-filled.
                   </p>
                   <p className="text-[11px] text-emerald-700/70 italic leading-relaxed">
-                    💡 Troubleshooting: if the widget doesn't appear, check your browser console for errors (F12). Most issues are caused by aggressive ad-blockers or a missing HTTPS connection on your site.
+                    \ud83d\udca1 Troubleshooting: if the widget doesn't appear, check the browser console for errors (F12). Most issues are caused by aggressive ad-blockers, HTTPS misconfigurations, or a missing <code className="bg-white/60 px-1 rounded">async</code> attribute.
                   </p>
                 </div>
 
-                {/* SMS Shortcut */}
-                <div className="bg-white rounded-2xl p-6 border-2 border-dashed border-gray-100">
+                {/* Click-to-Text Button \u2014 PROMOTED from "Bonus" to co-equal section */}
+                <div className="bg-gradient-to-br from-emerald-50 to-emerald-50/30 border-2 border-emerald-200 rounded-2xl p-6">
                   <div className="flex items-center gap-3 mb-4">
-                    <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
+                    <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
                       <Phone className="w-5 h-5 text-emerald-600" />
                     </div>
                     <div>
-                      <h4 className="font-bold text-gray-900">Bonus: "Click-to-Text" shortcut</h4>
-                      <p className="text-xs text-gray-500 font-medium">Optional standalone button that opens the customer's SMS app.</p>
+                      <h4 className="font-bold text-emerald-900 flex items-center gap-2">
+                        Click-to-Text Button
+                        <span className="px-2 py-0.5 bg-emerald-600 text-white text-[9px] font-black uppercase tracking-widest rounded-md">Mobile-First</span>
+                      </h4>
+                      <p className="text-xs text-emerald-800/70 font-medium">Website button that opens SMS app \u2192 messages route to your AI.</p>
                     </div>
                   </div>
 
-                  <div className="space-y-3">
-                    <div className="flex flex-col gap-2">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest pl-1">HTML Example</label>
-                      <div className="relative">
-                        <code className="block p-3 bg-gray-50 rounded-xl text-[11px] font-mono text-gray-600 border border-gray-100 pr-16">
-                          {`<a href="sms:${tenant?.twilio_phone_number || "+1234567890"}" class="text-us-button">
-  Text Us to Book
-</a>`}
-                        </code>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const snippet = `<a href="sms:${tenant?.twilio_phone_number || "+1234567890"}" class="text-us-button">\n  Text Us to Book\n</a>`;
-                            navigator.clipboard.writeText(snippet);
-                            success("SMS shortcut copied!");
-                          }}
-                          className="absolute top-2 right-2 px-2 py-1 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded text-[9px] font-bold transition-colors"
-                        >
-                          COPY
-                        </button>
-                      </div>
-                    </div>
-                    <p className="text-[10px] text-gray-400 font-medium italic">
-                      * On mobile, this opens the phone's native messaging app with your business number pre-filled.
+                  <p className="text-sm text-gray-700 leading-relaxed mb-4">
+                    Add a "Text Us to Book" button to your site. When a customer taps it on their phone, their messaging app opens pre-filled with a booking inquiry <strong>sent directly to your AI</strong>. The AI replies instantly, books appointments, and captures leads \u2014 just like the chat widget, but via SMS.
+                  </p>
+
+                  {/* How it works */}
+                  <div className="mb-5 p-4 bg-white/70 border border-emerald-100 rounded-xl">
+                    <p className="text-[10px] font-black text-emerald-700 uppercase tracking-widest mb-2">How it works</p>
+                    <ol className="space-y-1.5 text-xs text-emerald-900">
+                      <li className="flex gap-2"><span className="font-black text-emerald-600">1.</span> Customer taps "Text Us to Book" on your site (mobile)</li>
+                      <li className="flex gap-2"><span className="font-black text-emerald-600">2.</span> Their messaging app opens with your AI's number pre-filled</li>
+                      <li className="flex gap-2"><span className="font-black text-emerald-600">3.</span> The AI replies instantly and starts qualifying the lead</li>
+                      <li className="flex gap-2"><span className="font-black text-emerald-600">4.</span> Conversation logs under Inbox \u2192 SMS in your dashboard</li>
+                    </ol>
+                  </div>
+
+                  {/* Code snippet */}
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-black text-emerald-700 uppercase tracking-widest">HTML snippet for your website</p>
+                    {(() => {
+                      const aiPhoneNumber =
+                        phoneNumbers.find((p) => p.twilio_sid && p.is_primary)?.phone ||
+                        phoneNumbers.find((p) => p.twilio_sid)?.phone ||
+                        null;
+
+                      if (!aiPhoneNumber) {
+                        return (
+                          <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                            <div className="flex items-start gap-2">
+                              <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+                              <div>
+                                <p className="text-xs font-bold text-amber-900 mb-1">AI phone number required</p>
+                                <p className="text-[11px] text-amber-800 leading-relaxed">Set up an AI-provisioned phone line in the <strong>Phone & voice</strong> tab first. The Click-to-Text snippet will appear here automatically once your AI line is live.</p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      const snippet = `<a href="sms:${aiPhoneNumber}?&body=Hi%2C%20I%27d%20like%20to%20book%20an%20estimate" style="display:inline-block;padding:14px 28px;background:#10b981;color:#fff;font-weight:700;text-decoration:none;border-radius:12px;font-family:system-ui,sans-serif;box-shadow:0 4px 12px rgba(16,185,129,0.3);">\ud83d\udcac Text Us to Book</a>`;
+
+                      return (
+                        <div className="relative">
+                          <code className="block p-4 pr-20 bg-white border border-emerald-100 rounded-xl text-[11px] font-mono text-gray-700 leading-relaxed break-all select-all">
+                            {snippet}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(snippet);
+                              success("Click-to-Text snippet copied!");
+                            }}
+                            className="absolute top-3 right-3 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest shadow-md transition-all active:scale-95"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      );
+                    })()}
+                    <p className="text-[10px] text-gray-500 italic leading-relaxed pt-1">
+                      \ud83d\udca1 The AI phone number is pulled from your primary AI line. Change it in the <strong>Phone & voice</strong> tab. Your developer can style or resize the button to match the site \u2014 the <code className="bg-gray-100 px-1 rounded text-[9px]">href</code> is the key.
                     </p>
                   </div>
                 </div>

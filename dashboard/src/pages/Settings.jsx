@@ -42,6 +42,7 @@ import {
   ChevronRight,
   ExternalLink,
   Zap,
+  X,
   TrendingUp,
   DollarSign,
   BookOpen,
@@ -61,6 +62,204 @@ import {
   Mic2,
   Volume2
 } from "lucide-react";
+
+// ═══════════════════════════════════════════════════════════════════
+// WebhookGuideDrawer — reusable "How to connect" walkthrough
+// Slides in from the right, shows field mapping + mock Zapier flow
+// ═══════════════════════════════════════════════════════════════════
+function WebhookGuideDrawer({ isOpen, onClose, webhook, onCopy }) {
+  if (!webhook) return null;
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        className={`fixed inset-0 bg-black/50 backdrop-blur-sm z-40 transition-opacity duration-300 ${
+          isOpen ? "opacity-100" : "opacity-0 pointer-events-none"
+        }`}
+      />
+
+      {/* Drawer */}
+      <div
+        className={`fixed top-0 right-0 h-full w-full max-w-xl bg-white shadow-2xl z-50 transform transition-transform duration-300 overflow-y-auto ${
+          isOpen ? "translate-x-0" : "translate-x-full"
+        }`}
+      >
+        {/* Header */}
+        <div className={`sticky top-0 z-10 px-6 py-5 ${webhook.headerBg} border-b border-white/10 flex items-center justify-between`}>
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">{webhook.icon}</span>
+            <div>
+              <h2 className="text-lg font-black text-white tracking-tight">{webhook.title}</h2>
+              <p className="text-xs text-white/70 font-medium">{webhook.subtitle}</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 bg-white/10 hover:bg-white/20 rounded-xl text-white transition-colors"
+            aria-label="Close"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-6 space-y-6">
+          {/* What this does */}
+          <section>
+            <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+              🎯 What this Zap does
+            </h3>
+            <p className="text-sm text-gray-700 leading-relaxed">{webhook.purpose}</p>
+          </section>
+
+          {/* Fields to map */}
+          <section>
+            <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+              📋 Fields to map in Zapier
+            </h3>
+            <p className="text-xs text-gray-500 mb-4 leading-relaxed">
+              In your Zapier "Webhooks by Zapier" action, map these exact field names in the JSON body to the DripJobs data (or your CRM's equivalent).
+            </p>
+            <div className="overflow-hidden rounded-xl border border-gray-200">
+              <table className="w-full text-sm">
+                <thead className={`${webhook.tableHeaderBg}`}>
+                  <tr>
+                    <th className="px-4 py-2.5 text-left text-[10px] font-black text-white uppercase tracking-widest">Field Name</th>
+                    <th className="px-4 py-2.5 text-left text-[10px] font-black text-white uppercase tracking-widest">Map From</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {webhook.fields.map((f, idx) => (
+                    <tr key={idx} className={idx % 2 === 0 ? "bg-gray-50" : "bg-white"}>
+                      <td className="px-4 py-3 font-mono text-xs font-bold text-gray-900">
+                        "{f.name}"
+                        {f.required && <span className="ml-1.5 text-[9px] font-black text-red-500 uppercase tracking-widest">Required</span>}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-600">{f.mapsFrom}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {/* Visual mockup of final Zap */}
+          <section>
+            <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+              ✅ What a working Zap looks like
+            </h3>
+            <div className="p-5 bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl">
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center mb-4">Your Zapier Flow</p>
+
+              {/* Step 1 - Trigger */}
+              <div className="flex items-stretch gap-3 mb-2">
+                <div className="w-8 h-8 rounded-full bg-orange-500 text-white flex items-center justify-center text-xs font-black shrink-0">1</div>
+                <div className="flex-1 p-3 bg-white border-2 border-orange-200 rounded-xl">
+                  <p className="text-[10px] font-black text-orange-700 uppercase tracking-widest mb-1">Trigger</p>
+                  <p className="text-sm font-bold text-gray-900">{webhook.mockup.trigger.app}</p>
+                  <p className="text-xs text-gray-600">{webhook.mockup.trigger.event}</p>
+                </div>
+              </div>
+
+              {/* Arrow down */}
+              <div className="flex justify-center py-1">
+                <ArrowRight className="w-5 h-5 text-gray-300 rotate-90" />
+              </div>
+
+              {/* Step 2 - Action */}
+              <div className="flex items-stretch gap-3 mb-2">
+                <div className="w-8 h-8 rounded-full bg-purple-500 text-white flex items-center justify-center text-xs font-black shrink-0">2</div>
+                <div className="flex-1 p-3 bg-white border-2 border-purple-200 rounded-xl">
+                  <p className="text-[10px] font-black text-purple-700 uppercase tracking-widest mb-1">Action</p>
+                  <p className="text-sm font-bold text-gray-900">Webhooks by Zapier</p>
+                  <p className="text-xs text-gray-600">POST → {webhook.url}</p>
+                </div>
+              </div>
+
+              {/* Arrow down */}
+              <div className="flex justify-center py-1">
+                <ArrowRight className="w-5 h-5 text-gray-300 rotate-90" />
+              </div>
+
+              {/* Step 3 - Success */}
+              <div className="flex items-stretch gap-3">
+                <div className="w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs font-black shrink-0">3</div>
+                <div className="flex-1 p-3 bg-emerald-50 border-2 border-emerald-200 rounded-xl">
+                  <p className="text-[10px] font-black text-emerald-700 uppercase tracking-widest mb-1">Expected Result</p>
+                  <p className="text-sm font-bold text-emerald-900">✓ 200 OK — {webhook.mockup.outcome}</p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Gotchas */}
+          <section>
+            <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+              ⚠️ Common gotchas
+            </h3>
+            <ul className="space-y-2">
+              {webhook.gotchas.map((g, idx) => (
+                <li key={idx} className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-100 rounded-xl">
+                  <span className="text-amber-500 shrink-0 mt-0.5">•</span>
+                  <span className="text-xs text-amber-900 leading-relaxed">{g}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          {/* Quick access */}
+          <section className="pt-4 border-t border-gray-100 space-y-2">
+            <button
+              type="button"
+              onClick={() => onCopy(webhook.url, "Endpoint URL copied!")}
+              className="w-full flex items-center justify-between p-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl transition-colors text-left"
+            >
+              <div>
+                <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Endpoint URL</p>
+                <p className="text-[11px] font-mono text-gray-700 break-all">{webhook.url}</p>
+              </div>
+              <CopyIcon className="w-4 h-4 text-gray-500 shrink-0 ml-3" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onCopy(webhook.apiKey, "API key copied!")}
+              className="w-full flex items-center justify-between p-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl transition-colors text-left"
+            >
+              <div>
+                <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">API Key</p>
+                <p className="text-[11px] font-mono text-gray-700 break-all">{webhook.apiKey || "Loading..."}</p>
+              </div>
+              <CopyIcon className="w-4 h-4 text-gray-500 shrink-0 ml-3" />
+            </button>
+          </section>
+
+          {/* Close footer */}
+          <div className="pt-4 border-t border-gray-100 flex gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-3 bg-gray-900 text-white rounded-xl font-black text-xs uppercase tracking-widest hover:bg-gray-800 transition-colors"
+            >
+              Got It
+            </button>
+            
+              href="https://zapier.com/app/dashboard"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 py-3 bg-white border-2 border-gray-200 text-gray-700 rounded-xl font-black text-xs uppercase tracking-widest hover:border-gray-300 transition-colors flex items-center justify-center gap-2"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              Open Zapier
+            </a>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
 
 const TENANT_STORAGE_KEY = "tenantId";
 
@@ -132,6 +331,9 @@ export default function Settings({ tenantId }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [activeTab, setActiveTab] = useState("numbers");
+
+  // Webhook guide drawer state — null | "job-completed" | "estimate-sent"
+  const [openGuide, setOpenGuide] = useState(null);
 
   // Form states
   const [form, setForm] = useState({
@@ -387,6 +589,68 @@ export default function Settings({ tenantId }) {
 
   const handleManualAddPhone = () => {
     handleAddPhone({ is_owned: false, is_purchasable: false }); // Manual entry is always external or "owned elsewhere"
+  };
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Webhook guide configurations — reused by WebhookGuideDrawer
+  // ═══════════════════════════════════════════════════════════════════
+  const webhookGuides = {
+    "job-completed": {
+      title: "Revenue Pipeline",
+      subtitle: "Job Won / Completed → Revenue Tracking",
+      icon: "💰",
+      headerBg: "bg-gradient-to-r from-emerald-600 to-emerald-700",
+      tableHeaderBg: "bg-emerald-600",
+      purpose: "When DripJobs marks a job as Won or Completed, this Zap sends us the revenue so it lands on your Confirmed Revenue tile. Any active AI recovery sequence for that contact is marked converted, and post-service nurturing (review requests, seasonal campaigns) kicks off automatically.",
+      url: `${import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}/webhooks/crm/job-completed`.replace(/\/+$/, ""),
+      apiKey: tenant?.api_key,
+      authMethod: "header",
+      fields: [
+        { name: "api_key", mapsFrom: "Your API key (set in Authorization header as 'Bearer <key>')", required: true },
+        { name: "contact_phone", mapsFrom: "Job → Contact → Phone", required: true },
+        { name: "contact_name", mapsFrom: "Job → Contact → Full Name", required: false },
+        { name: "grand_total", mapsFrom: "Job → Grand Total (in dollars, e.g. 4500.00)", required: true },
+        { name: "job_completed_at", mapsFrom: "Job → Won Date or Completed Date", required: false },
+      ],
+      mockup: {
+        trigger: { app: "DripJobs", event: "Trigger: Job Won (or Job Completed)" },
+        outcome: "Revenue appears on dashboard within 30 seconds",
+      },
+      gotchas: [
+        "If Confirmed Revenue shows $0 → check that grand_total maps to a dollar value (e.g. 4500.00), NOT cents (450000). The system also accepts actual_revenue_cents if you prefer integer cents.",
+        "If nothing fires at all → verify the Zap is toggled ON in Zapier, and that the DripJobs trigger filter matches the job status you actually use (some tenants customize 'Won' vs 'Completed').",
+        "If duplicate revenue appears → make sure you're only using ONE of Job Won OR Job Completed as the trigger, not both.",
+        "If 401 Unauthorized → the API key rotated. Copy the fresh key from this drawer and update your Zapier Authorization header.",
+      ],
+    },
+    "estimate-sent": {
+      title: "AI Sales Recovery",
+      subtitle: "Estimate Sent → 21-Day Follow-Up",
+      icon: "🤖",
+      headerBg: "bg-gradient-to-r from-purple-600 to-purple-700",
+      tableHeaderBg: "bg-purple-600",
+      purpose: "When you send a proposal in DripJobs, this Zap kicks off a 21-day AI follow-up sequence. The AI texts, calls, and leaves voicemails at scientifically-spaced intervals (days 0, 1, 3, 5, 7, 10, 14, 17, 21) to recover the estimate if the prospect goes cold. If they book elsewhere or convert, the sequence auto-stops.",
+      url: `${import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}/webhooks/crm/estimate-sent`.replace(/\/+$/, ""),
+      apiKey: tenant?.api_key,
+      authMethod: "body",
+      fields: [
+        { name: "api_key", mapsFrom: "Your API key (inside JSON body, not header)", required: true },
+        { name: "contact_phone", mapsFrom: "Job → Contact → Phone", required: true },
+        { name: "contact_name", mapsFrom: "Job → Contact → Full Name", required: false },
+        { name: "contact_email", mapsFrom: "Job → Contact → Email", required: false },
+        { name: "grand_total", mapsFrom: "Job → Estimate Amount (optional, informational only)", required: false },
+      ],
+      mockup: {
+        trigger: { app: "DripJobs", event: "Trigger: Proposal Sent / Estimate Created" },
+        outcome: "AI recovery sequence starts within 2 minutes",
+      },
+      gotchas: [
+        "API key goes in the JSON BODY (not the Authorization header) for this endpoint. This is different from the Revenue Pipeline Zap — easy to mix up.",
+        "Phone number MUST be a valid US number in E.164 format (+14025551234). Zapier Formatter can convert dashed numbers if needed.",
+        "If the sequence doesn't start → check your Conversations tab for the contact. A sequence already in progress for that number won't duplicate.",
+        "To manually cancel a sequence → mark the estimate as converted or declined in DripJobs, and set up a complementary Zap pointing to /webhooks/sales/stop to cleanly close it.",
+      ],
+    },
   };
 
   const handleUpdateForm = (field, value) => {
@@ -2540,6 +2804,18 @@ Thanks!`;
         </main>
       </div>
 
+      {/* Webhook Guide Drawer — renders over everything when openGuide is set */}
+      <WebhookGuideDrawer
+        isOpen={!!openGuide}
+        onClose={() => setOpenGuide(null)}
+        webhook={openGuide ? webhookGuides[openGuide] : null}
+        onCopy={(value, msg) => {
+          if (!value) return;
+          navigator.clipboard.writeText(value);
+          success(msg || "Copied!");
+        }}
+      />
+      
       <ConfirmationModal
         isOpen={confirmModal.isOpen}
         onClose={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}

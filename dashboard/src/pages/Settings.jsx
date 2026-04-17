@@ -1811,7 +1811,7 @@ export default function Settings({ tenantId }) {
                     Website Chat Widget
                   </h2>
                   {tenant?.id && (
-                    
+                    <a
                       href="https://www.gladiatorspainting.com/?widget_test=1"
                       target="_blank"
                       rel="noopener noreferrer"

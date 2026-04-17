@@ -714,12 +714,29 @@ router.get("/metrics", async (req, res) => {
           (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND created_at >= now() - interval '24 hours') as booked`,
         [tenantIds]
       ),
+      // ── FIX (Apr 17, 2026): actual_revenue now sums from BOTH bookings AND leads tables,
+      //     because /webhooks/crm/job-won writes revenue to leads.actual_revenue_cents,
+      //     while earlier flows write to bookings.actual_revenue_cents.
+      //     The NOT IN subquery prevents double-counting when a lead has both a revenue
+      //     value AND an associated booking row that also has revenue.
+      //     Also updated confirmed_jobs count to include leads with revenue (not just bookings),
+      //     so the "confirmed jobs" tile matches reality.
       db.query(`
         SELECT
           (SELECT COUNT(*) FROM leads WHERE tenant_id = ANY($1) AND status NOT IN ('Closed', 'Lost')) as open_leads,
           (SELECT COUNT(*) FROM leads WHERE tenant_id = ANY($1) AND status = 'New') as leads_needing_followup,
           (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND LOWER(status) IN ('booked', 'confirmed', 'scheduled')) as jobs_scheduled,
-          (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND (LOWER(status) IN ('completed') OR actual_revenue_cents > 0)) as confirmed_jobs,
+          (
+            (SELECT COUNT(*) FROM bookings WHERE tenant_id = ANY($1) AND (LOWER(status) IN ('completed') OR actual_revenue_cents > 0))
+            +
+            (SELECT COUNT(*) FROM leads WHERE tenant_id = ANY($1) 
+               AND (LOWER(status) = 'won' OR actual_revenue_cents > 0)
+               AND id NOT IN (
+                 SELECT lead_id FROM bookings
+                 WHERE lead_id IS NOT NULL
+                   AND (LOWER(status) IN ('completed') OR actual_revenue_cents > 0)
+               ))
+          ) as confirmed_jobs,
           COALESCE(
             (SELECT SUM(estimated_revenue_cents) FROM leads WHERE tenant_id = ANY($1) AND status NOT IN ('Closed', 'Lost') AND estimated_revenue_cents > 0),
             0
@@ -728,11 +745,30 @@ router.get("/metrics", async (req, res) => {
             0
           ) as estimated_revenue,
           (SELECT SUM(estimated_revenue_cents) FROM bookings WHERE tenant_id = ANY($1) AND LOWER(status) IN ('cancelled', 'lost', 'rejected', 'lost lead')) as lost_revenue,
-          COALESCE(
-            (SELECT SUM(actual_revenue_cents)
-             FROM bookings WHERE tenant_id = ANY($1) 
-             AND actual_revenue_cents IS NOT NULL AND actual_revenue_cents > 0),
-            0
+          (
+            COALESCE(
+              (SELECT SUM(actual_revenue_cents)
+               FROM bookings 
+               WHERE tenant_id = ANY($1) 
+                 AND actual_revenue_cents IS NOT NULL 
+                 AND actual_revenue_cents > 0),
+              0
+            )
+            +
+            COALESCE(
+              (SELECT SUM(actual_revenue_cents)
+               FROM leads 
+               WHERE tenant_id = ANY($1) 
+                 AND actual_revenue_cents IS NOT NULL 
+                 AND actual_revenue_cents > 0
+                 AND id NOT IN (
+                   SELECT lead_id FROM bookings 
+                   WHERE lead_id IS NOT NULL 
+                     AND actual_revenue_cents IS NOT NULL 
+                     AND actual_revenue_cents > 0
+                 )),
+              0
+            )
           ) as actual_revenue`,
         [tenantIds]
       ),
@@ -742,15 +778,35 @@ router.get("/metrics", async (req, res) => {
           (SELECT COUNT(*) FROM referral_leads WHERE tenant_id = ANY($1) AND created_at > $2) as referrals_generated`,
         [tenantIds, currentWindow]
       ),
+      // ── FIX (Apr 17, 2026): location rollup total_revenue now also adds per-tenant
+      //     revenue from the leads table (with NOT IN dedup against bookings), so HQ
+      //     rollups match the single-tenant Confirmed Revenue tile.
       isRollup ? db.query(`
         SELECT 
           t.id, t.name, t.city, t.state, t.business_type,
           (SELECT COUNT(*) FROM calls c WHERE c.tenant_id = t.id AND c.started_at > $2) as total_calls,
           (SELECT COUNT(*) FROM bookings b WHERE b.tenant_id = t.id AND b.created_at > $2) as total_bookings,
-          COALESCE(
-            (SELECT SUM(COALESCE(b.actual_revenue_cents, b.estimated_revenue_cents, 0))
-             FROM bookings b WHERE b.tenant_id = t.id AND b.created_at > $2 AND LOWER(b.status) NOT IN ('cancelled','lost','rejected')),
-            0
+          (
+            COALESCE(
+              (SELECT SUM(COALESCE(b.actual_revenue_cents, b.estimated_revenue_cents, 0))
+               FROM bookings b WHERE b.tenant_id = t.id AND b.created_at > $2 AND LOWER(b.status) NOT IN ('cancelled','lost','rejected')),
+              0
+            )
+            +
+            COALESCE(
+              (SELECT SUM(l.actual_revenue_cents)
+               FROM leads l 
+               WHERE l.tenant_id = t.id 
+                 AND l.actual_revenue_cents IS NOT NULL 
+                 AND l.actual_revenue_cents > 0
+                 AND l.id NOT IN (
+                   SELECT lead_id FROM bookings 
+                   WHERE lead_id IS NOT NULL 
+                     AND actual_revenue_cents IS NOT NULL 
+                     AND actual_revenue_cents > 0
+                 )),
+              0
+            )
           ) as total_revenue,
           (SELECT COUNT(*) FROM leads l WHERE l.tenant_id = t.id AND l.status NOT IN ('Closed', 'Lost')) as open_leads
          FROM tenants t

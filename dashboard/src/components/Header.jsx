@@ -3,16 +3,23 @@ import { Link, useNavigate } from "react-router-dom";
 import { getUser, logout } from "../api";
 import LocationSwitcher from "./LocationSwitcher";
 import NotificationBell from "./NotificationBell";
+import { useBrand } from "../contexts/BrandContext";
 
 /**
  * App header: logo, sidebar toggle (mobile), business selector, user menu.
  * Nav links live in the Sidebar.
+ *
+ * Branding: left-side logo + company name come from useBrand() (tenant's
+ * logo_url and company_name, with AI Front Desk Helper defaults as fallback).
+ * Right-side avatar continues to use its existing prop-derived logic for
+ * the account switcher — unchanged from before.
  */
 export default function Header({ tenantId, tenants, onTenantChange, onMenuClick }) {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef(null);
   const user = getUser();
   const navigate = useNavigate();
+  const { companyName, logoUrl, isDefault } = useBrand();
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -56,12 +63,42 @@ export default function Header({ tenantId, tenants, onTenantChange, onMenuClick 
               to={user?.role === 'staff' ? "/bookings" : "/dashboard"}
               className="flex items-center gap-2 shrink-0 group transition-all"
             >
+              {/* ── Brand logo ────────────────────────────────────────────
+                  - Tenant with logo_url set → their logo
+                  - Default branding → AI Front Desk Helper favicon
+                  ──────────────────────────────────────────────────────── */}
               <div className="flex items-center justify-center w-9 h-9 rounded-xl bg-white border border-stone-200 shadow-lg group-hover:scale-105 transition-transform duration-200 overflow-hidden p-1">
-                <img src="/favicon.png" alt="Logo" className="w-full h-full object-contain" />
+                {logoUrl ? (
+                  <img
+                    src={logoUrl}
+                    alt={companyName}
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
+                  <img
+                    src="/favicon.png"
+                    alt="AI Front Desk Helper"
+                    className="w-full h-full object-contain"
+                  />
+                )}
               </div>
+              {/* ── Brand text ────────────────────────────────────────────
+                  - Default branding → "AI Front Desk" + "HELPER" subtext
+                    (preserves existing two-line layout for our own brand)
+                  - White-labeled tenant → single-line company name, no
+                    subtext (tenants don't want "HELPER" under their name)
+                  ──────────────────────────────────────────────────────── */}
               <div className="flex flex-col">
-                <span className="text-sm font-bold text-stone-900 leading-none">AI Front Desk</span>
-                <span className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider mt-0.5">Helper</span>
+                {isDefault ? (
+                  <>
+                    <span className="text-sm font-bold text-stone-900 leading-none">AI Front Desk</span>
+                    <span className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider mt-0.5">Helper</span>
+                  </>
+                ) : (
+                  <span className="text-sm font-bold text-stone-900 leading-none truncate max-w-[180px]" title={companyName}>
+                    {companyName}
+                  </span>
+                )}
               </div>
             </Link>
           </div>

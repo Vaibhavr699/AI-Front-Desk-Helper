@@ -3793,25 +3793,65 @@ app.post("/webhooks/sales/stop", async (req, res) => {
 });
 
 // -------------------- Webhook: CRM Job Completed (DripJobs → Zapier → here) --------------------
+// -------------------- Webhook: CRM Job Completed (DripJobs → Zapier → here) --------------------
+// Handles DripJobs-style "job completed" events. When revenue is present,
+// writes revenue to both the lead and the booking, marks lead status=Won,
+// schedules post-service nurturing (referral/maintenance/reengagement live
+// in services/nurturing.js and also fire), and converts any active estimate
+// recovery. When revenue is absent or zero, only touches last_service_date —
+// no status flip, no nurturing, no recovery conversion. This keeps
+// warranty/touch-up/refund "completions" from triggering review/referral asks.
+// If no lead exists for the incoming phone, one is auto-created so no real job
+// is dropped. If no booking exists, one is created so the dashboard can surface
+// the revenue through the bookings table.
 app.post("/webhooks/crm/job-completed", async (req, res) => {
-  console.log("[CRM Webhook] Received job-completed for phone=%s", req.body?.phone || req.body?.contact_phone);
-  const phone = normalizePhone(req.body?.phone || req.body?.contact_phone);
-  const contactName = req.body?.contact_name || null;
+  const rawPhone = req.body?.phone || req.body?.contact_phone;
+  console.log("[CRM Webhook] Received job-completed for phone=%s", rawPhone);
+
+  const phone = normalizePhone(rawPhone);
+  const contactName = req.body?.contact_name || req.body?.full_name || null;
   const serviceDate = req.body?.service_date || new Date().toISOString().slice(0, 10);
   const jobType = req.body?.job_type || null;
+  const jobIdRaw = req.body?.job_id || req.body?.crm_id || null;
   let tenantId = req.body?.tenant_id || null;
+
+  // Accept revenue as: actual_revenue_cents (int), grand_total (dollars),
+  // amount (dollars), total (dollars). Normalize to integer cents.
+  let revenueCents = null;
+  const rawCents = req.body?.actual_revenue_cents;
+  const rawDollars = req.body?.grand_total ?? req.body?.amount ?? req.body?.total;
+
+  if (rawCents !== undefined && rawCents !== null && rawCents !== "") {
+    const s = String(rawCents).replace(/[^0-9.-]/g, "");
+    if (s.includes(".")) {
+      const f = parseFloat(s);
+      if (!isNaN(f)) revenueCents = Math.round(f * 100);
+    } else {
+      const i = parseInt(s, 10);
+      if (!isNaN(i)) revenueCents = i;
+    }
+  } else if (rawDollars !== undefined && rawDollars !== null && rawDollars !== "") {
+    const s = String(rawDollars).replace(/[^0-9.-]/g, "");
+    const f = parseFloat(s);
+    if (!isNaN(f)) revenueCents = Math.round(f * 100);
+  }
+
+  const hasRevenue = revenueCents !== null && revenueCents > 0;
 
   if (!phone) {
     return res.status(400).json({ ok: false, error: "Missing phone or contact_phone" });
   }
 
-  // Auth: Bearer <api_key> → look up tenant by api_key
-  const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
-  if (authHeader) {
+  // Auth: Bearer <api_key> OR body.api_key OR x-api-key header → look up tenant
+  let apiKey = (req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+  if (!apiKey) apiKey = req.headers["x-api-key"] || req.body?.api_key || "";
+  apiKey = String(apiKey).trim();
+
+  if (apiKey) {
     try {
       const tenantRow = await db.query(
         "SELECT id FROM tenants WHERE api_key = $1 LIMIT 1",
-        [authHeader]
+        [apiKey]
       );
       if (tenantRow.rows.length > 0) {
         tenantId = tenantRow.rows[0].id;
@@ -3822,86 +3862,149 @@ app.post("/webhooks/crm/job-completed", async (req, res) => {
   }
 
   if (!tenantId) {
-    return res.status(401).json({ ok: false, error: "Could not identify tenant. Provide Authorization: Bearer <api_key> or tenant_id in body." });
+    return res.status(401).json({ ok: false, error: "Could not identify tenant. Provide Authorization: Bearer <api_key>, x-api-key header, api_key in body, or tenant_id in body." });
   }
 
   try {
-    // 1. Find the lead by phone + tenant
-    const leadResult = await db.query(
-      "SELECT id, name FROM leads WHERE tenant_id = $1 AND phone = $2 LIMIT 1",
+    // 1. Find the lead by phone + tenant. If missing, auto-create so no job is lost.
+    let leadResult = await db.query(
+      "SELECT id, name, status FROM leads WHERE tenant_id = $1 AND phone = $2 LIMIT 1",
       [tenantId, phone]
     );
-    if (leadResult.rows.length === 0) {
-      console.log("[CRM Webhook] No lead found for phone=%s tenantId=%s", phone, tenantId);
-      return res.status(404).json({ ok: false, error: "No lead found for this phone number" });
+    let lead = leadResult.rows[0] || null;
+
+    if (!lead) {
+      console.log("[CRM Webhook] No lead for phone=%s tenantId=%s — auto-creating from job-completed payload", phone, tenantId);
+      const initialStatus = hasRevenue ? "Won" : "New";
+      const insertRes = await db.query(
+        `INSERT INTO leads (tenant_id, phone, name, status, lead_source, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'crm_job_completed', now(), now())
+         RETURNING id, name, status`,
+        [tenantId, phone, contactName || "CRM Lead", initialStatus]
+      );
+      lead = insertRes.rows[0];
     }
-    const lead = leadResult.rows[0];
 
-    // 2. Update last_service_date on the lead
+    // 2. Update the lead. Always touch last_service_date. Only flip status to
+    //    Won and write revenue if the payload actually included revenue —
+    //    warranty/touch-up/refund "completions" with $0 leave status untouched.
+    const leadUpdates = ["last_service_date = $2::date", "updated_at = now()"];
+    const leadParams = [lead.id, serviceDate];
+
+    if (hasRevenue) {
+      leadUpdates.push("status = 'Won'");
+      leadParams.push(revenueCents);
+      leadUpdates.push(`actual_revenue_cents = $${leadParams.length}`);
+    }
+    if (contactName && !lead.name) {
+      leadParams.push(contactName);
+      leadUpdates.push(`name = $${leadParams.length}`);
+    }
+
     await db.query(
-      "UPDATE leads SET last_service_date = $1::date, updated_at = now() WHERE id = $2",
-      [serviceDate, lead.id]
+      `UPDATE leads SET ${leadUpdates.join(", ")} WHERE id = $1`,
+      leadParams
     );
-    console.log("[CRM Webhook] Updated last_service_date=%s for leadId=%s", serviceDate, lead.id);
+    console.log("[CRM Webhook] Lead updated leadId=%s status=%s revenue_cents=%s last_service_date=%s",
+      lead.id, hasRevenue ? "Won" : lead.status, hasRevenue ? revenueCents : "n/a", serviceDate);
 
-    // 3. Find the latest booking for this lead and mark it Completed (if not already)
+    // 3. Find the latest booking for this lead. If one exists, mark Completed
+    //    and write revenue when present. If none exists AND we have revenue,
+    //    create a minimal booking so the dashboard can see it through the
+    //    bookings table. If no revenue, skip booking creation — we don't want
+    //    empty rows piling up for warranty/touch-up pings.
     const bookingResult = await db.query(
       "SELECT id, status, lead_id, tenant_id, preferred_date FROM bookings WHERE tenant_id = $1 AND lead_id = $2 ORDER BY created_at DESC LIMIT 1",
       [tenantId, lead.id]
     );
     let booking = bookingResult.rows[0] || null;
-    if (booking && booking.status !== "Completed") {
-      await db.query(
-        "UPDATE bookings SET status = 'Completed', updated_at = now() WHERE id = $1",
-        [booking.id]
-      );
-      console.log("[CRM Webhook] Marked booking=%s as Completed", booking.id);
-    }
 
-    // 4. Schedule post-service nurturing campaigns (same as PATCH /api/bookings/:id)
     if (booking) {
-      nurturingService.schedulePostServiceCampaigns(tenantId, booking).catch((e) =>
-        console.error("[CRM Webhook] Schedule nurturing campaigns:", e)
+      const bookingUpdates = ["status = 'Completed'", "updated_at = now()"];
+      const bookingParams = [booking.id];
+      if (hasRevenue) {
+        bookingParams.push(revenueCents);
+        bookingUpdates.push(`actual_revenue_cents = $${bookingParams.length}`);
+      }
+      if (jobIdRaw) {
+        bookingParams.push(String(jobIdRaw).slice(0, 255));
+        bookingUpdates.push(`crm_id = COALESCE(crm_id, $${bookingParams.length})`);
+      }
+      await db.query(
+        `UPDATE bookings SET ${bookingUpdates.join(", ")} WHERE id = $1`,
+        bookingParams
       );
+      console.log("[CRM Webhook] Booking updated bookingId=%s status=Completed revenue_cents=%s",
+        booking.id, hasRevenue ? revenueCents : "n/a");
+    } else if (hasRevenue) {
+      const insertBooking = await db.query(
+        `INSERT INTO bookings (tenant_id, lead_id, contact_name, contact_phone,
+                               status, state, preferred_date,
+                               actual_revenue_cents, lead_source, crm_id,
+                               created_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'Completed', 'Confirmed', $5::date,
+                 $6, 'crm_job_completed', $7,
+                 now(), now())
+         RETURNING id, lead_id, status, preferred_date`,
+        [
+          tenantId,
+          lead.id,
+          contactName || lead.name || "CRM Lead",
+          phone,
+          serviceDate,
+          revenueCents,
+          jobIdRaw ? String(jobIdRaw).slice(0, 255) : null,
+        ]
+      );
+      booking = insertBooking.rows[0];
+      console.log("[CRM Webhook] Booking CREATED bookingId=%s revenue_cents=%s",
+        booking.id, revenueCents);
     } else {
-      // No booking found — create a minimal one so nurturing can still work
-      console.log("[CRM Webhook] No booking found for lead=%s, scheduling nurturing directly", lead.id);
-      nurturingService.schedulePostServiceCampaigns(tenantId, {
-        id: null,
-        lead_id: lead.id,
-        preferred_date: serviceDate,
-      }).catch((e) =>
-        console.error("[CRM Webhook] Schedule nurturing campaigns (no booking):", e)
-      );
+      console.log("[CRM Webhook] No booking and no revenue — skipping booking creation for leadId=%s", lead.id);
     }
 
-    // 5. Mark any active estimate recovery as CONVERTED
-    try {
-      // Find active recovery in estimate_recoveries
-      const activeRecovery = await db.query(
-        "SELECT id FROM estimate_recoveries WHERE tenant_id = $1 AND contact_phone = $2 AND status IN ('active', 'paused', 'dormant') LIMIT 1",
-        [tenantId, phone]
+    // 4. Schedule post-service nurturing campaigns — ONLY if revenue was
+    //    recorded. Zero-dollar "completions" (warranty, refund, touch-up)
+    //    don't trigger nurturing to avoid awkward referral/review asks on
+    //    unpaid work.
+    if (hasRevenue && booking) {
+      nurturingService.schedulePostServiceCampaigns(tenantId, booking).catch((e) =>
+        console.error("[CRM Webhook] Schedule nurturing campaigns:", e.message)
       );
-      if (activeRecovery.rows.length > 0) {
-        await estimateRecoveryService.markConverted(activeRecovery.rows[0].id);
-        console.log("[CRM Webhook] Converted estimate_recovery id=%s", activeRecovery.rows[0].id);
+    } else if (!hasRevenue) {
+      console.log("[CRM Webhook] Skipped nurturing schedule (no revenue recorded) leadId=%s", lead.id);
+    }
+
+    // 5. Mark any active estimate recovery as CONVERTED — only when revenue
+    //    actually came in. Otherwise we'd inflate conversion metrics on
+    //    zero-dollar completions.
+    if (hasRevenue) {
+      try {
+        const activeRecovery = await db.query(
+          "SELECT id FROM estimate_recoveries WHERE tenant_id = $1 AND contact_phone = $2 AND status IN ('active', 'paused', 'dormant') LIMIT 1",
+          [tenantId, phone]
+        );
+        if (activeRecovery.rows.length > 0) {
+          await estimateRecoveryService.markConverted(activeRecovery.rows[0].id);
+          console.log("[CRM Webhook] Converted estimate_recovery id=%s", activeRecovery.rows[0].id);
+        }
+        await salesEngine.stopEstimateFollowUp(phone, 'converted');
+      } catch (e) {
+        console.error("[CRM Webhook] Recovery conversion error:", e.message);
       }
-      
-      // Also stop any sales engine follow-up
-      await salesEngine.stopEstimateFollowUp(phone, 'converted');
-    } catch (e) {
-      console.error("[CRM Webhook] Recovery conversion error:", e.message);
     }
 
     res.json({
       ok: true,
       lead_id: lead.id,
       booking_id: booking?.id || null,
+      revenue_cents_written: hasRevenue ? revenueCents : null,
       last_service_date: serviceDate,
-      nurturing_scheduled: true,
+      status: hasRevenue ? 'Won' : lead.status,
+      nurturing_scheduled: hasRevenue && !!booking,
     });
   } catch (error) {
-    console.error("[CRM Webhook] job-completed error:", error.message);
+    console.error("[CRM Webhook] job-completed error:", error.stack || error.message);
     res.status(500).json({ ok: false, error: "Internal server error" });
   }
 });

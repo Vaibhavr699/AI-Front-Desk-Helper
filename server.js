@@ -263,7 +263,7 @@ app.post("/api/widget/start-sms", async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, consent_given_at`,
       [tenantId, phone, consentText || "Consent given via widget", source || "widget_sms_popup", req.ip, req.headers["user-agent"], pageUrl, sessionId]
     );
-    const consent = consentRes.rows[0];
+    const consentRow = consentRes.rows[0];
 
     // 2. Find or Create Lead
     let lead = await db.query("SELECT id FROM leads WHERE tenant_id = $1 AND phone = $2", [tenantId, phone]).then(r => r.rows[0]);
@@ -278,8 +278,8 @@ app.post("/api/widget/start-sms", async (req, res) => {
     // 3. Link Consent to Lead
     await leadsService.updateLeadInfo(lead.id, {
       has_sms_consent: true,
-      last_consent_at: consent.consent_given_at,
-      last_consent_id: consent.id
+      last_consent_at: consentRow.consent_given_at,
+      last_consent_id: consentRow.id
     }).catch(e => console.error("[SMS Opt-in] Failed to update lead consent status:", e.message));
 
     // 3. Send Initial SMS
@@ -4025,6 +4025,11 @@ app.post("/webhooks/crm/job-completed", async (req, res) => {
       status: hasRevenue ? 'Won' : lead.status,
       nurturing_scheduled: hasRevenue && !!booking,
     });
+} catch (err) {
+    console.error("[CRM Webhook] /webhooks/crm/job-completed error:", err);
+    res.status(500).json({ ok: false, error: "Server error handling job-completed" });
+  }
+});
 
 // -------------------- Cron: estimate recovery every 5 min --------------------
 cron.schedule("*/5 * * * *", () => {

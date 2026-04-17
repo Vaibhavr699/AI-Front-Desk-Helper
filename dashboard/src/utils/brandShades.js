@@ -1,10 +1,10 @@
 /**
  * Brand shade generator
- * 
+ *
  * Converts a single hex color into an 11-step Tailwind-compatible scale
  * (50 → 950) by interpolating HSL lightness. Designed to feed CSS variables
  * consumed by the brand-* Tailwind color scale.
- * 
+ *
  * Returns RGB triplets as "R G B" strings (space-separated) because that's
  * what Tailwind's <alpha-value> placeholder requires. Do NOT change to
  * comma-separated or opacity modifiers silently break across the entire app.
@@ -96,15 +96,13 @@ function hslToRgb({ h, s, l }) {
 
 /**
  * Target lightness values for each shade (0-1 scale).
- * 
+ *
  * Calibrated against Tailwind's default color palettes (orange, blue, green,
- * etc.) to match the perceived contrast jumps of the stock scales. These are
- * the "right" values — changing them risks making mid-tones muddy or highs
- * blown out. Tweak only after visual QA on 5+ different hues.
- * 
- * Shade 600 intentionally uses the INPUT color's lightness (not a fixed
- * value) so that "brand-600" always returns something close to the color
- * the user picked. This is what most people expect when they pick a color.
+ * etc.) to match the perceived contrast jumps of the stock scales.
+ *
+ * Shade 600 is clamped to a [0.35, 0.55] range (see BRAND_600_LIGHTNESS_*
+ * constants) regardless of input lightness. This keeps the active-state
+ * color visible for both very dark (#03222a) and very light brand inputs.
  */
 const TARGET_LIGHTNESS = {
   50:  0.97,
@@ -113,7 +111,7 @@ const TARGET_LIGHTNESS = {
   300: 0.74,
   400: 0.61,
   500: 0.52,
-  // 600 uses input lightness (set dynamically)
+  // 600 is computed dynamically — see clampBrand600Lightness()
   700: 0.38,
   800: 0.30,
   900: 0.24,
@@ -136,6 +134,26 @@ const SATURATION_MULTIPLIER = {
   950: 0.75,
 };
 
+// Shade 600 (primary interactive color) must stay within this range so
+// that active nav states, buttons, and links are always visibly colored
+// and have sufficient contrast against backgrounds.
+//
+// 0.35 lower bound → a #03222a input (lightness 0.09) becomes a visibly
+//   colored dark teal at brand-600 instead of near-black.
+// 0.55 upper bound → a very pale brand input still produces a visibly
+//   saturated brand-600 that's darker than its brand-400 sibling.
+const BRAND_600_LIGHTNESS_MIN = 0.35;
+const BRAND_600_LIGHTNESS_MAX = 0.55;
+
+// Pale shades (50-200) floor saturation at a minimum so they register as
+// "tinted" rather than off-white, even when the input color is very dark
+// and has lost most of its effective saturation at high lightness.
+const PALE_SHADE_MIN_SATURATION = {
+  50:  0.25,
+  100: 0.40,
+  200: 0.55,
+};
+
 const DEFAULT_SCALE = {
   50:  "254 247 238",
   100: "253 237 214",
@@ -150,12 +168,33 @@ const DEFAULT_SCALE = {
   950: "63 21 8",
 };
 
+/** Clamp input lightness into the [0.35, 0.55] band for shade 600. */
+function clampBrand600Lightness(inputL) {
+  if (inputL < BRAND_600_LIGHTNESS_MIN) return BRAND_600_LIGHTNESS_MIN;
+  if (inputL > BRAND_600_LIGHTNESS_MAX) return BRAND_600_LIGHTNESS_MAX;
+  return inputL;
+}
+
+/**
+ * Compute effective saturation for a given shade.
+ * Applies the standard multiplier, then floors to the pale-shade minimum
+ * (if applicable) so 50/100/200 are always visibly tinted.
+ */
+function effectiveSaturation(shade, inputSat) {
+  const multiplied = Math.min(1, inputSat * SATURATION_MULTIPLIER[shade]);
+  const floor = PALE_SHADE_MIN_SATURATION[shade];
+  if (floor !== undefined) {
+    return Math.max(multiplied, floor);
+  }
+  return multiplied;
+}
+
 /**
  * Generate an 11-shade brand scale from a single hex color.
- * 
+ *
  * @param {string} hex - Hex color (with or without #, 3 or 6 chars)
  * @returns {Object} Map of shade number → "R G B" string
- * 
+ *
  * Returns the AI Front Desk Helper default scale if input is invalid/null,
  * so callers don't need to null-check.
  */
@@ -166,16 +205,16 @@ export function generateBrandScale(hex) {
   const hsl = rgbToHsl(rgb);
   const scale = {};
 
-  // Shade 600 is special — use the input color's own lightness so the
-  // picked color stays recognizable at the "primary" shade.
   const shades = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
 
   for (const shade of shades) {
-    const targetL = shade === 600 ? hsl.l : TARGET_LIGHTNESS[shade];
-    const satMult = SATURATION_MULTIPLIER[shade];
+    const targetL = shade === 600
+      ? clampBrand600Lightness(hsl.l)
+      : TARGET_LIGHTNESS[shade];
+    const targetS = effectiveSaturation(shade, hsl.s);
     const shadeRgb = hslToRgb({
       h: hsl.h,
-      s: Math.min(1, hsl.s * satMult),
+      s: targetS,
       l: targetL,
     });
     scale[shade] = `${shadeRgb.r} ${shadeRgb.g} ${shadeRgb.b}`;
@@ -187,7 +226,7 @@ export function generateBrandScale(hex) {
 /**
  * Apply a generated scale to the document root as CSS variables.
  * Pass null/undefined to reset to AI Front Desk Helper defaults.
- * 
+ *
  * Safe to call from useEffect — only touches the 11 --brand-* variables.
  */
 export function applyBrandScale(scale) {

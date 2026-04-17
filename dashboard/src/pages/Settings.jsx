@@ -235,7 +235,6 @@ function WebhookGuideDrawer({ isOpen, onClose, webhook, onCopy }) {
               <CopyIcon className="w-4 h-4 text-gray-500 shrink-0 ml-3" />
             </button>
           </section>
-<a
           {/* Close footer */}
           <div className="pt-4 border-t border-gray-100 flex gap-3">
             <button

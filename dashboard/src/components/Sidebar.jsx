@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { getUser } from "../api";
+import { useBrand } from "../contexts/BrandContext";
 
 // ── Condensed nav — 9 items max ────────────────────────────────────────────
 //
@@ -164,6 +165,7 @@ function SettingsIcon({ className }) {
 export default function Sidebar({ closeMobile, activeTenant }) {
   const [isHovered, setIsHovered] = useState(false);
   const location = useLocation();
+  const { companyName, logoUrl, isDefault } = useBrand();
 
   function handleLinkClick() {
     if (closeMobile) closeMobile();
@@ -214,6 +216,12 @@ export default function Sidebar({ closeMobile, activeTenant }) {
           );
         })}
       </nav>
-    </aside>
-  );
-}
+
+      {/* ── Brand footer ──────────────────────────────────────────────
+          Shows tenant logo (or FD fallback for default branding) plus
+          a company-name label that fades in when sidebar is hovered.
+          Sits at the bottom so it doesn't fight with the nav items.
+          ──────────────────────────────────────────────────────────── */}
+      <div className="shrink-0 px-3 py-3 border-t border-stone-100">
+        <div
+          className="fl

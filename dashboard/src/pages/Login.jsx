@@ -210,11 +210,13 @@ export default function Login({ onLogin }) {
                       <div
                         onClick={() => setShowPassword(!showPassword)}
                         className="absolute right-3 cursor-pointer p-1"
+                        role="button"
+                        aria-label={showPassword ? "Hide password" : "Show password"}
                       >
                         {showPassword ? (
-                          <Eye className="w-4 h-4 text-stone-400 hover:text-stone-800 transition-colors" />
-                        ) : (
                           <EyeClosed className="w-4 h-4 text-stone-400 hover:text-stone-800 transition-colors" />
+                        ) : (
+                          <Eye className="w-4 h-4 text-stone-400 hover:text-stone-800 transition-colors" />
                         )}
                       </div>
                     </div>
@@ -278,7 +280,7 @@ export default function Login({ onLogin }) {
                   {isSignup ? "Already have an account?" : "Don't have an account?"}{' '}
                   <button
                     type="button"
-                    onClick={() => { setMode(isSignup ? "login" : "signup"); setError(""); }}
+                    onClick={() => setMode(isSignup ? "login" : "signup")}
                     className="relative inline-block font-medium text-stone-900 hover:text-stone-700 transition-colors group/link"
                   >
                     <span className="relative z-10">

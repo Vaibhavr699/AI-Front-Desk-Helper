@@ -42,7 +42,6 @@ const followUpService = require("./services/followUp");
 const nurturingService = require("./services/nurturing");
 const estimateRecoveryService = require("./services/estimateRecovery");
 const twilioLib = require("./lib/twilio");
-const salesEngine = require("./services/salesEngine");
 const leadsService = require("./services/leads");
 const messagesService = require("./services/messages");
 const emailService = require("./services/email");
@@ -3198,15 +3197,6 @@ sendToOpenAI(sessionUpdate);
                 leadsService.updateLeadStatus(leadId, 'Booked').catch(e => console.error("Lead status update error:", e));
               }
 
-              // 4. Trigger estimate follow-up engine
-              salesEngine.createEstimateFollowUp({
-                full_name: args.contact_name || args.full_name,
-                phone: args.contact_phone || args.phone,
-                project_details: args.notes || args.project_details || args.scope
-              }, tenant.id).catch(err => {
-                console.error("[Sales-Engine] Trigger error:", err.message);
-              });
-
               // 5. Mark any active estimate recovery as CONVERTED (Sales Win)
               const bookingPhone = args.contact_phone || args.phone;
               if (bookingPhone) {
@@ -3219,8 +3209,6 @@ sendToOpenAI(sessionUpdate);
                     await estimateRecoveryService.markConverted(activeRecovery.rows[0].id);
                     console.log("[AI-Desk] Recovery CONVERTED (via booking) id=%s 🎉", activeRecovery.rows[0].id);
                   }
-                  // Also stop any sales engine follow-up
-                  await salesEngine.stopEstimateFollowUp(normalizePhone(bookingPhone), 'converted');
                 } catch (e) {
                   console.error("[AI-Desk] Recovery conversion error:", e.message);
                 }
@@ -3827,21 +3815,39 @@ if (SERVE_DASHBOARD) {
 
 app.post("/webhooks/sales/stop", async (req, res) => {
   const phone = normalizePhone(req.body?.phone || req.body?.contact_phone);
-  const status = req.body?.status || "converted"; // 'converted' or 'cancelled'
+  const status = req.body?.status || "converted";
 
   if (!phone) {
     return res.status(400).json({ ok: false, error: "Missing phone number" });
   }
 
   try {
-    const result = await salesEngine.stopEstimateFollowUp(phone, status);
-    res.json(result);
+    // Look up any active recovery for this phone and mark it converted/cancelled.
+    // Replaces the deprecated salesEngine.stopEstimateFollowUp flow.
+    const recoveryRes = await db.query(
+      "SELECT id FROM estimate_recoveries WHERE contact_phone = $1 AND status IN ('active', 'paused', 'dormant') LIMIT 1",
+      [phone]
+    );
+
+    if (recoveryRes.rows.length === 0) {
+      return res.json({ ok: true, message: "No active recovery found to stop" });
+    }
+
+    const recoveryId = recoveryRes.rows[0].id;
+    if (status === "converted") {
+      await estimateRecoveryService.markConverted(recoveryId);
+    } else if (status === "cancelled") {
+      await estimateRecoveryService.markCancelled(recoveryId);
+    } else {
+      await estimateRecoveryService.markPaused(recoveryId);
+    }
+
+    res.json({ ok: true, recovery_id: recoveryId, status });
   } catch (error) {
     console.error("Stop follow-up error:", error.message);
     res.status(500).json({ ok: false, error: "Internal server error" });
   }
 });
-
 // -------------------- Webhook: CRM Job Completed (DripJobs → Zapier → here) --------------------
 // -------------------- Webhook: CRM Job Completed (DripJobs → Zapier → here) --------------------
 // Handles DripJobs-style "job completed" events. When revenue is present,
@@ -4038,7 +4044,6 @@ app.post("/webhooks/crm/job-completed", async (req, res) => {
           await estimateRecoveryService.markConverted(activeRecovery.rows[0].id);
           console.log("[CRM Webhook] Converted estimate_recovery id=%s", activeRecovery.rows[0].id);
         }
-        await salesEngine.stopEstimateFollowUp(phone, 'converted');
       } catch (e) {
         console.error("[CRM Webhook] Recovery conversion error:", e.message);
       }

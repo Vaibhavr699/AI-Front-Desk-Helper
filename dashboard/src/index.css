@@ -4,6 +4,30 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─────────────────────────────────────────────────────────
+   Brand color scale (CSS variables, RGB triplet format)
+
+   Default values = the AI Front Desk Helper orange.
+   BrandProvider overrides these at runtime for white-labeled tenants.
+
+   Format note: Tailwind's <alpha-value> requires "R G B"
+   (space-separated, no commas, no parens). Changing this format
+   silently breaks every opacity modifier like bg-brand-600/50.
+   ───────────────────────────────────────────────────────── */
+:root {
+  --brand-50:  254 247 238;
+  --brand-100: 253 237 214;
+  --brand-200: 249 215 172;
+  --brand-300: 244 186 119;
+  --brand-400: 238 146 64;
+  --brand-500: 234 117 26;
+  --brand-600: 219 90 16;
+  --brand-700: 181 67 16;
+  --brand-800: 144 54 21;
+  --brand-900: 116 47 20;
+  --brand-950: 63 21 8;
+}
+
 @layer base {
   body {
     @apply bg-stone-100 text-stone-800 antialiased;

@@ -3995,6 +3995,27 @@ app.post("/webhooks/crm/job-completed", async (req, res) => {
       }
     }
 
+// 💰 Revenue recovered notification
+    if (hasRevenue) {
+      notificationsService.notifyRevenueRecovered(tenantId, {
+        amount_cents:  revenueCents,
+        customer_name: lead.name || contactName,
+        lead_id:       lead.id,
+        booking_id:    booking?.id || null,
+      }).catch((e) => console.error("[CRM Webhook] notifyRevenueRecovered failed:", e.message));
+    }
+
+    // 📅 New booking notification — only when we auto-created a booking here
+    if (hasRevenue && booking && bookingResult.rows.length === 0) {
+      notificationsService.notifyNewBooking(tenantId, {
+        customer_name: lead.name || contactName,
+        service_date:  serviceDate,
+        booking_id:    booking.id,
+        lead_id:       lead.id,
+        source:        'crm_job_completed',
+      }).catch((e) => console.error("[CRM Webhook] notifyNewBooking failed:", e.message));
+    }
+
     res.json({
       ok: true,
       lead_id: lead.id,
@@ -4004,11 +4025,6 @@ app.post("/webhooks/crm/job-completed", async (req, res) => {
       status: hasRevenue ? 'Won' : lead.status,
       nurturing_scheduled: hasRevenue && !!booking,
     });
-  } catch (error) {
-    console.error("[CRM Webhook] job-completed error:", error.stack || error.message);
-    res.status(500).json({ ok: false, error: "Internal server error" });
-  }
-});
 
 // -------------------- Cron: estimate recovery every 5 min --------------------
 cron.schedule("*/5 * * * *", () => {

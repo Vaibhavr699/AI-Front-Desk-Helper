@@ -224,4 +224,40 @@ export default function Sidebar({ closeMobile, activeTenant }) {
           ──────────────────────────────────────────────────────────── */}
       <div className="shrink-0 px-3 py-3 border-t border-stone-100">
         <div
-          className="fl
+          className="flex items-center gap-3 px-2 py-1.5"
+          title={!isExpanded ? companyName : undefined}
+        >
+          <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-stone-100 flex items-center justify-center ring-1 ring-stone-200">
+            {logoUrl ? (
+              <img
+                src={logoUrl}
+                alt={companyName}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="w-full h-full bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center text-white font-black text-xs tracking-tight">
+                FD
+              </div>
+            )}
+          </div>
+          <div
+            className={`flex flex-col min-w-0 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] origin-left ${
+              isExpanded
+                ? "opacity-100 translate-x-0"
+                : "opacity-0 -translate-x-4 pointer-events-none w-0"
+            }`}
+          >
+            <span className="text-xs font-black text-stone-900 truncate leading-tight">
+              {companyName}
+            </span>
+            {isDefault && (
+              <span className="text-[9px] font-bold text-stone-400 uppercase tracking-widest leading-tight mt-0.5">
+                Helper
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+}

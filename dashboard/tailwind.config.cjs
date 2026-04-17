@@ -11,18 +11,20 @@ module.exports = {
         serif: ["Source Serif 4", "Georgia", "serif"],
       },
       colors: {
+        // Brand scale — reads from CSS variables set by BrandProvider.
+        // Defaults (AI Front Desk Helper orange) are defined in index.css :root
         brand: {
-          50: "#fef7ee",
-          100: "#fdedd6",
-          200: "#f9d7ac",
-          300: "#f4ba77",
-          400: "#ee9240",
-          500: "#ea751a",
-          600: "#db5a10",
-          700: "#b54310",
-          800: "#903615",
-          900: "#742f14",
-          950: "#3f1508",
+          50:  "rgb(var(--brand-50)  / <alpha-value>)",
+          100: "rgb(var(--brand-100) / <alpha-value>)",
+          200: "rgb(var(--brand-200) / <alpha-value>)",
+          300: "rgb(var(--brand-300) / <alpha-value>)",
+          400: "rgb(var(--brand-400) / <alpha-value>)",
+          500: "rgb(var(--brand-500) / <alpha-value>)",
+          600: "rgb(var(--brand-600) / <alpha-value>)",
+          700: "rgb(var(--brand-700) / <alpha-value>)",
+          800: "rgb(var(--brand-800) / <alpha-value>)",
+          900: "rgb(var(--brand-900) / <alpha-value>)",
+          950: "rgb(var(--brand-950) / <alpha-value>)",
         },
       },
       animation: {

@@ -612,6 +612,51 @@ async function markConverted(recoveryId) {
     [recoveryId]
   );
   console.log("[Recovery] Converted id=%s", recoveryId);
+
+  // 🚀 Owner SMS notification (migrated from salesEngine.notifyOwnerOfConversion)
+  // Best-effort — never blocks conversion.
+  try {
+    const res = await db.query(
+      `SELECT er.contact_name, t.company_name, t.transfer_numbers
+       FROM estimate_recoveries er
+       JOIN tenants t ON t.id = er.tenant_id
+       WHERE er.id = $1 LIMIT 1`,
+      [recoveryId]
+    );
+    const row = res.rows[0];
+    if (!row) return;
+
+    const ownerPhone = (row.transfer_numbers && row.transfer_numbers[0]) || null;
+    if (!ownerPhone) {
+      console.log("[Recovery] No owner phone for recovery=%s, skipping SMS notification", recoveryId);
+      return;
+    }
+
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken  = process.env.TWILIO_AUTH_TOKEN;
+    const from       = process.env.TWILIO_PHONE_NUMBER;
+    if (!accountSid || !authToken || !from) {
+      console.log("[Recovery] Twilio creds missing, skipping owner SMS for recovery=%s", recoveryId);
+      return;
+    }
+
+    const fetch = require("node-fetch");
+    const auth  = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
+    const url   = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+    const msg   = `🚀 SALES WIN! ${row.contact_name || "A customer"} just accepted their estimate for ${row.company_name}. Great job!`;
+
+    await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ To: ownerPhone, From: from, Body: msg }),
+    });
+    console.log("[Recovery] Owner SMS sent for recovery=%s to=%s", recoveryId, ownerPhone);
+  } catch (err) {
+    console.error("[Recovery] Owner SMS notification failed:", err.message);
+  }
 }
 
 /**

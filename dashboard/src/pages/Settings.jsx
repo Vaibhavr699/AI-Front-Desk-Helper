@@ -44,6 +44,7 @@ import {
   Zap,
   X,
   ArrowRight,
+  Crown
   Copy as CopyIcon,
   TrendingUp,
   DollarSign,
@@ -1735,36 +1736,68 @@ export default function Settings({ tenantId }) {
                 </div>
               </section>
 
-              {/* ── Custom domain (Phase 2 preview) ─────────────────────── */}
+      {/* ── Custom domain (Phase 2 preview) ─────────────────────── */}
               <section className="pt-8 border-t border-gray-100">
                 <h3 className="text-sm font-black text-gray-500 uppercase tracking-widest flex items-center gap-2 mb-4">
                   <Globe className="w-3.5 h-3.5" />
                   Custom domain
                 </h3>
-                <div className="p-5 bg-slate-50/60 border-2 border-dashed border-slate-200 rounded-2xl flex items-start gap-4">
-                  <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center shrink-0">
-                    <Globe className="w-5 h-5 text-slate-400" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <h4 className="text-sm font-black text-gray-700">Use your own domain</h4>
-                      <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[9px] font-black uppercase tracking-widest rounded-md border border-amber-200">
-                        Coming Soon
-                      </span>
+                {tenant?.brand_mode === "white_label" ? (
+                  /* ─── White-label tenant: feature preview, no upsell ─── */
+                  <div className="p-5 bg-slate-50/60 border-2 border-dashed border-slate-200 rounded-2xl flex items-start gap-4">
+                    <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center shrink-0">
+                      <Globe className="w-5 h-5 text-slate-400" />
                     </div>
-                    <p className="text-xs text-gray-500 leading-relaxed mb-3">
-                      Host your dashboard on your own domain (e.g. <span className="font-mono bg-white px-1.5 py-0.5 rounded">app.yourcompany.com</span>) so your team and customers never see "aifrontdeskhelper.com". Includes a branded login page.
-                    </p>
-                    <input
-                      type="text"
-                      value=""
-                      disabled
-                      placeholder="app.yourcompany.com"
-                      className="w-full md:max-w-sm px-4 py-2.5 bg-white/50 border border-slate-200 rounded-xl font-mono text-xs placeholder:text-slate-400 cursor-not-allowed opacity-60"
-                    />
-                    <p className="text-[11px] text-slate-400 mt-2 italic">Available as an add-on when we roll out Phase 2. We'll email you when it's live.</p>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <h4 className="text-sm font-black text-gray-700">Use your own domain</h4>
+                        <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[9px] font-black uppercase tracking-widest rounded-md border border-amber-200">
+                          Coming Soon
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 leading-relaxed mb-3">
+                        Host your dashboard on your own domain (e.g. <span className="font-mono bg-white px-1.5 py-0.5 rounded">app.{form.company_name ? form.company_name.toLowerCase().replace(/[^a-z0-9]/g, "") : "yourcompany"}.com</span>) so your team and customers interact with a fully branded experience. Includes a branded login page.
+                      </p>
+                      <input
+                        type="text"
+                        value=""
+                        disabled
+                        placeholder={`app.${form.company_name ? form.company_name.toLowerCase().replace(/[^a-z0-9]/g, "") : "yourcompany"}.com`}
+                        className="w-full md:max-w-sm px-4 py-2.5 bg-white/50 border border-slate-200 rounded-xl font-mono text-xs placeholder:text-slate-400 cursor-not-allowed opacity-60"
+                      />
+                      <p className="text-[11px] text-slate-400 mt-2 italic">Included with your plan. We'll email you when it's live and walk you through the DNS setup.</p>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  /* ─── ai_branded tenant (Basic/Pro): Elite upsell ─── */
+                  <div className="relative overflow-hidden p-5 bg-gradient-to-br from-amber-50 via-white to-amber-50/30 border-2 border-amber-200 rounded-2xl flex items-start gap-4">
+                    <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-amber-400 blur-[80px] opacity-20 rounded-full pointer-events-none"></div>
+                    <div className="relative z-10 w-10 h-10 rounded-xl bg-white border border-amber-200 flex items-center justify-center shrink-0 shadow-sm">
+                      <Globe className="w-5 h-5 text-amber-600" />
+                    </div>
+                    <div className="relative z-10 flex-1">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <h4 className="text-sm font-black text-gray-800">Use your own domain</h4>
+                        <span className="px-2 py-0.5 bg-amber-600 text-white text-[9px] font-black uppercase tracking-widest rounded-md shadow-sm">
+                          Elite Feature
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-600 leading-relaxed mb-3">
+                        Host your dashboard on your own domain (e.g. <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-amber-100">app.yourcompany.com</span>) and remove all third-party branding from your team and customer experience. Includes a fully branded login page.
+                      </p>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <Link
+                          to="/plans"
+                          className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-amber-700 shadow-md shadow-amber-600/20 transition-all"
+                        >
+                          <Crown className="w-3.5 h-3.5" />
+                          Upgrade to Elite
+                        </Link>
+                        <span className="text-[11px] text-amber-800/70 italic">Full white-label branding + custom domain included</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </section>
             </div>
           )}

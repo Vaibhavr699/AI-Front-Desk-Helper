@@ -53,18 +53,16 @@ export default function Tenants() {
   const getChildren = (parentId) => tenants.filter(t => t.parent_id === parentId);
 
   // --- Edit form state ---
+  // Note: brand_mode is intentionally NOT in this form anymore (as of Apr 19, 2026).
+  // Branding mode is a superadmin-only setting that lives at /admin/tenants.
+  // Tenants cannot self-upgrade to white_label from this page — the toggle
+  // was removed so Pro customers can't skip the $29/mo add-on, and Basic
+  // customers can't hide the AFDH marketing surface. The WL pill on the
+  // card is kept as a read-only visual indicator.
   const [form, setForm] = useState(null);
   useEffect(() => {
-    if (editTenant) {
-      // Normalize brand_mode so the toggle always has a concrete value,
-      // even for legacy rows that somehow slipped past the DB default.
-      setForm({
-        ...editTenant,
-        brand_mode: editTenant.brand_mode === "white_label" ? "white_label" : "ai_branded",
-      });
-    } else {
-      setForm(null);
-    }
+    if (editTenant) setForm({ ...editTenant });
+    else setForm(null);
   }, [editTenant]);
 
   const setField = (key, value) => setForm((prev) => (prev ? { ...prev, [key]: value } : null));
@@ -84,7 +82,6 @@ export default function Tenants() {
         welcome_message: form.welcome_message,
         tone_of_voice: form.tone_of_voice,
         instructions: form.instructions,
-        brand_mode: form.brand_mode === "white_label" ? "white_label" : "ai_branded",
       });
       setEditTenant(null);
       await fetchTenants();
@@ -199,39 +196,6 @@ export default function Tenants() {
                   <option value="Europe/London">Europe/London (GMT)</option>
                 </select>
               </div>
-            </div>
-          </div>
-
-          {/* ── Branding & plan (superadmin) ───────────────────────────────
-            * Controls the per-tenant brand_mode flag introduced Apr 19.
-            * - ai_branded: dashboard chrome shows AI Front Desk Helper
-            *   branding (default, free marketing surface for Basic tier).
-            * - white_label: dashboard chrome shows the tenant's own brand
-            *   (Pro $29/mo add-on, included on Elite, always on for Reseller).
-            * Flipping this flag takes effect on the tenant's next page load.
-            * Any logo/color fields they've uploaded are preserved on the row
-            * regardless of mode, so flipping back picks up right where they
-            * left off.
-            */}
-          <div className="pt-6 border-t border-stone-100">
-            <h3 className="text-sm font-semibold text-stone-700 mb-4 flex items-center gap-2">
-              <Palette size={16} className="text-stone-500" /> Branding mode
-            </h3>
-            <div className="space-y-2">
-              <BrandModeOption
-                selected={form.brand_mode === "ai_branded"}
-                onSelect={() => setField("brand_mode", "ai_branded")}
-                title="AI Front Desk Branded"
-                badge="Default"
-                description="Dashboard shows AI Front Desk Helper branding. Included free on Basic tier — free marketing surface on every login."
-              />
-              <BrandModeOption
-                selected={form.brand_mode === "white_label"}
-                onSelect={() => setField("brand_mode", "white_label")}
-                title="White Label"
-                badge="Pro add-on · Elite incl."
-                description="Dashboard shows the tenant's own logo, colors, and company name. $29/mo add-on on Pro, included free on Elite, always on for Reseller accounts."
-              />
             </div>
           </div>
 
@@ -394,6 +358,9 @@ export default function Tenants() {
 
 function TenantCard({ tenant, isParent, isChild, childCount, parentName, onEdit, onSelect }) {
   const phone = tenant.phones?.find(p => p.is_primary)?.phone || tenant.phones?.[0]?.phone;
+  // Read-only visual indicator. Tenants can see whether their own dashboard
+  // is white-labeled, but they can't flip the switch from here — that lives
+  // at /admin/tenants and is superadmin-gated.
   const isWhiteLabel = tenant.brand_mode === "white_label";
 
   return (
@@ -514,43 +481,5 @@ function IntegrationBadge({ active, icon, name }) {
       <span>{name}</span>
       {active && <CheckCircle2 size={12} className="text-green-600" />}
     </div>
-  );
-}
-
-// ── Brand mode radio card (superadmin) ───────────────────────────────────
-// Rich radio option for the brand_mode toggle. Unlike a segmented control,
-// this gives room to explain what each mode does — important because the
-// difference drives pricing tiers and what end-users actually see.
-function BrandModeOption({ selected, onSelect, title, badge, description }) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={`w-full text-left p-4 rounded-xl border-2 transition-all ${
-        selected
-          ? "border-stone-900 bg-stone-50 shadow-sm"
-          : "border-stone-200 bg-white hover:border-stone-300 hover:bg-stone-50/50"
-      }`}
-    >
-      <div className="flex items-start gap-3">
-        {/* Radio dot */}
-        <div className={`mt-0.5 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-all ${
-          selected ? "border-stone-900 bg-stone-900" : "border-stone-300 bg-white"
-        }`}>
-          {selected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap mb-1">
-            <span className="text-sm font-bold text-stone-900">{title}</span>
-            {badge && (
-              <span className="px-1.5 py-0.5 bg-stone-100 border border-stone-200 text-stone-600 text-[10px] font-bold uppercase tracking-wider rounded">
-                {badge}
-              </span>
-            )}
-          </div>
-          <p className="text-xs text-stone-500 leading-relaxed">{description}</p>
-        </div>
-      </div>
-    </button>
   );
 }

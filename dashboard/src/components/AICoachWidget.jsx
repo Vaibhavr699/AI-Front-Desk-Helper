@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { getMetrics, getLeadsByTenant, api } from "../api";
+import { useBrand } from "../contexts/BrandContext";
 
 // ── API base URL — matches api.js logic exactly ────────────────────────────
 let API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
@@ -62,7 +63,10 @@ function saveSession(tenantId, session) {
 }
 
 // ── Nurture system prompt ──────────────────────────────────────────────────
-// FIX: accepts tenant data so AI drafts use real company name / owner / phone
+// Note: This prompt lives server-adjacent (it's only sent to OpenAI, never
+// rendered to the tenant), so the "AI Front Desk Helper" mention here is
+// internal context only — it helps the model understand what product it's
+// embedded in, and never surfaces to the end user.
 function buildNurturePrompt(contact, memory, tenant) {
   const companyName = tenant?.company_name || tenant?.name || "our company";
   const ownerName   = tenant?.owner_name   || "";
@@ -76,7 +80,7 @@ Business: ${companyName}${ownerName ? ` | Owner: ${ownerName}` : ""}${phone ? ` 
     ? `\n\nSession memory:\n${memory.map(m => `- ${m}`).join("\n")}`
     : "";
 
-  return `You are an AI contact nurturing specialist for home service contractors inside AI Front Desk Helper.
+  return `You are an AI contact nurturing specialist for home service contractors.
 ${tenantCtx}
 ${contact
   ? `\nActive contact: ${contact.name} | Stage: ${contact.stage} | Est. Value: ${contact.value} | Days since contact: ${contact.days} | Lead source: ${contact.source}`
@@ -159,6 +163,12 @@ async function callAI(messages, systemPrompt, onChunk) {
 
 // ── Main Widget ────────────────────────────────────────────────────────────
 export default function AICoachWidget({ tenantId }) {
+  // Brand state — used for header logo and "Powered by" attribution.
+  // When tenant is white-labeled (isDefault === false), the "Powered by"
+  // footer is hidden entirely (Option A). AI Front Desk Helper branding
+  // only shows for tenants who haven't customized their brand.
+  const { companyName, isDefault } = useBrand();
+
   const [open, setOpen]             = useState(false);
   const [mode, setMode]             = useState("nurture");
   const [coachLevel, setCoachLevel] = useState("Growth");
@@ -169,7 +179,7 @@ export default function AICoachWidget({ tenantId }) {
   const [selectedContact, setSelectedContact] = useState(null);
   const [showContacts, setShowContacts]       = useState(false);
 
-  // FIX: tenant info for real company name / owner in nurture drafts
+  // Tenant info for nurture prompt (real company name / owner / phone)
   const [tenantInfo, setTenantInfo] = useState(null);
 
   // Data bar
@@ -199,7 +209,7 @@ export default function AICoachWidget({ tenantId }) {
     if (tenantId) setHistory(loadHistory(tenantId));
   }, [tenantId]);
 
-  // ── FIX: Fetch tenant info for nurture prompt ────────────────────────
+  // ── Fetch tenant info for nurture prompt ─────────────────────────────
   useEffect(() => {
     if (!tenantId || tenantId === "all") return;
     const token = localStorage.getItem("token");
@@ -287,7 +297,6 @@ export default function AICoachWidget({ tenantId }) {
       if (mode === "coaching") {
         full = await callCoach(userText, messages, tenantId, p => setStreamText(p));
       } else {
-        // FIX: pass tenantInfo so real company name / owner replaces placeholders
         full = await callAI(
           newMessages.map(m => ({ role: m.role, content: m.content })),
           buildNurturePrompt(selectedContact, memory, tenantInfo),
@@ -319,6 +328,14 @@ export default function AICoachWidget({ tenantId }) {
   const stageDot = s =>
     s === "booked" ? "#22c55e" : s === "estimate_sent" ? "#f59e0b" : "#6b7280";
 
+  // ── Header logo label — splits at the first space so we can preserve
+  // the existing "AI Front Desk [Helper]" visual with the second word in
+  // the muted color. For single-word brands, the span is empty. ──
+  const brandLabel = (companyName || "").trim();
+  const firstSpace = brandLabel.indexOf(" ");
+  const brandMain  = firstSpace > 0 ? brandLabel.slice(0, firstSpace) : brandLabel;
+  const brandTail  = firstSpace > 0 ? brandLabel.slice(firstSpace + 1) : "";
+
   return (
     <>
       <style>{`
@@ -334,7 +351,7 @@ export default function AICoachWidget({ tenantId }) {
         .aiw-panel.open{transform:translateY(0);}
         .aiw-hdr{padding:13px 15px 10px;border-bottom:1px solid #1e1e2e;display:flex;flex-direction:column;gap:8px;background:#0d0d14;flex-shrink:0;}
         .aiw-hdr-top{display:flex;align-items:center;justify-content:space-between;}
-        .aiw-logo{font-family:'Syne',sans-serif;font-size:12px;font-weight:800;color:#f59e0b;letter-spacing:.05em;text-transform:uppercase;}
+        .aiw-logo{font-family:'Syne',sans-serif;font-size:12px;font-weight:800;color:#f59e0b;letter-spacing:.05em;text-transform:uppercase;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
         .aiw-logo span{color:#4b5563;font-weight:600;}
         .aiw-hbtns{display:flex;gap:5px;align-items:center;}
         .aiw-ibt{background:#1a1a28;border:1px solid #2a2a3e;border-radius:7px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:12px;color:#9ca3af;transition:border-color .15s,color .15s;}
@@ -492,7 +509,16 @@ export default function AICoachWidget({ tenantId }) {
         {/* Header */}
         <div className="aiw-hdr">
           <div className="aiw-hdr-top">
-            <div className="aiw-logo">AI Front Desk <span>Helper</span></div>
+            {/* Brand-aware header label:
+                - Default tenant: "AI Front Desk Helper" with "Helper" in muted color
+                - White-labeled: first word accent, rest muted (e.g. "Gladiators Painting")
+                - Single-word brand: just the name */}
+            <div className="aiw-logo" title={brandLabel || "AI Front Desk Helper"}>
+              {brandMain || "AI Front Desk"}
+              {brandTail ? " " : ""}
+              {brandTail && <span>{brandTail}</span>}
+              {!brandLabel && <span> Helper</span>}
+            </div>
             <div className="aiw-hbtns">
               <button className="aiw-ibt" title="Session memory" onClick={() => setShowMemory(true)}>🧠</button>
               <button className="aiw-ibt" title="New conversation" onClick={reset}>↺</button>
@@ -667,7 +693,11 @@ export default function AICoachWidget({ tenantId }) {
                 {loading ? "⏳" : "↑"}
               </button>
             </div>
-            <div className="aiw-pw">POWERED BY AI FRONT DESK HELPER · GPT-4o</div>
+            {/* Attribution footer — Option A: only show for non-white-labeled tenants.
+                When tenant has custom branding, hide entirely for a clean white-label look. */}
+            {isDefault && (
+              <div className="aiw-pw">POWERED BY AI FRONT DESK HELPER · GPT-4o</div>
+            )}
             {mode === "coaching" && (
               <div className="aiw-dna">Mello · GaryVee · Hormozi · Jocko · Cardone · Lavley · Michalowicz · Elliott</div>
             )}

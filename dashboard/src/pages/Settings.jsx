@@ -44,7 +44,7 @@ import {
   Zap,
   X,
   ArrowRight,
-  Crown
+  Crown,
   Copy as CopyIcon,
   TrendingUp,
   DollarSign,

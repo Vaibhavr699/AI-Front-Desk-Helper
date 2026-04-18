@@ -62,8 +62,20 @@ import {
   AtSign,
   Mail,
   Mic2,
-  Volume2
+  Volume2,
+  Palette,
+  Image as ImageIcon,
+  Building2,
+  Shield
 } from "lucide-react";
+
+// ═══════════════════════════════════════════════════════════════════
+// Max sizes for uploaded images. Logo is primary branding so gets 1MB.
+// Favicon is tiny by nature (16x16 / 32x32 typical) but we share the
+// same cap for simplicity — no tenant is realistically going to push
+// a favicon near the limit.
+// ═══════════════════════════════════════════════════════════════════
+const MAX_IMAGE_BYTES = 1024 * 1024; // 1MB
 
 // ═══════════════════════════════════════════════════════════════════
 // WebhookGuideDrawer — reusable "How to connect" walkthrough
@@ -246,7 +258,7 @@ function WebhookGuideDrawer({ isOpen, onClose, webhook, onCopy }) {
             >
               Got It
             </button>
-            <a
+            
               href="https://zapier.com/app/dashboard"
               target="_blank"
               rel="noopener noreferrer"
@@ -313,8 +325,13 @@ const GoogleCalendarIcon = ({ className = "w-6 h-6" }) => (
   </svg>
 );
 
+// ═══════════════════════════════════════════════════════════════════
+// Tabs — Phone & voice first, then Branding (new, 2nd), then rest.
+// Nurturing hidden behind tenant.has_nurturing_referral flag below.
+// ═══════════════════════════════════════════════════════════════════
 const TABS = [
  { id: "numbers",      label: "Phone & voice",       icon: Phone      },
+ { id: "branding",     label: "Branding",             icon: Palette    },
  { id: "ai",           label: "AI behavior",          icon: Bot        },
  { id: "knowledge",    label: "Knowledge base",       icon: BookOpen   },
  { id: "hours",        label: "Business hours",       icon: Clock      },
@@ -338,6 +355,14 @@ export default function Settings({ tenantId }) {
 
   // Form states
   const [form, setForm] = useState({
+    // ── Branding (white-label) ────────────────────────────────
+    company_name: "",
+    brand_color: "#E8600A",
+    accent_color: "",
+    logo_url: "",
+    favicon_url: "",
+    support_email: "",
+    // ──────────────────────────────────────────────────────────
     welcome_message: "",
     instructions: "",
     tone_of_voice: "professional",
@@ -411,6 +436,14 @@ export default function Settings({ tenantId }) {
       const t = await getTenant(tenantId);
       setTenant(t);
       setForm({
+        // Branding
+        company_name: t.company_name || t.name || "",
+        brand_color: t.brand_color || "#E8600A",
+        accent_color: t.accent_color || "",
+        logo_url: t.logo_url || "",
+        favicon_url: t.favicon_url || "",
+        support_email: t.support_email || "",
+        // Everything else
         welcome_message: t.welcome_message || "",
         instructions: t.instructions || "",
         tone_of_voice: t.tone_of_voice || "professional",
@@ -452,7 +485,6 @@ export default function Settings({ tenantId }) {
         google_calendar_email: t.google_calendar_email || "",
         faqs: Array.isArray(t.faqs) ? t.faqs : [],
         inbound_voice: t.inbound_voice || "shimmer",
-        brand_color: t.brand_color || "#E8600A",
         outbound_voice: t.outbound_voice || "ash",
         outbound_instructions: t.outbound_instructions || "",
         outbound_agent_name: t.outbound_agent_name || "Alex",
@@ -715,6 +747,26 @@ export default function Settings({ tenantId }) {
     }));
   };
 
+  // ═══════════════════════════════════════════════════════════════════
+  // Image upload handler — shared by Logo and Favicon uploaders.
+  // Reads file → base64 → writes into form field. Validates size/type.
+  // ═══════════════════════════════════════════════════════════════════
+  const handleImageUpload = (field, file) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toastError("Please upload a valid image file.");
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      toastError("Image too large (max 1MB). Try compressing it first.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => handleUpdateForm(field, reader.result || "");
+    reader.onerror = () => toastError("Failed to read image file.");
+    reader.readAsDataURL(file);
+  };
+
   const handleAddPhone = async () => {
     setPhoneError("");
     if (!newPhone) return;
@@ -802,7 +854,23 @@ export default function Settings({ tenantId }) {
       .filter(Boolean)
       .map((s) => (s.startsWith("+") ? s : `+1${s.replace(/\D/g, "").slice(-10)}`));
 
+    // Basic email validation for support_email — only sent if non-empty.
+    const supportEmailTrimmed = form.support_email.trim();
+    if (supportEmailTrimmed && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmailTrimmed)) {
+      toastError("Support email doesn't look valid. Leave blank to use the default.");
+      setSaving(false);
+      return;
+    }
+
     const payload = {
+      // Branding
+      company_name: form.company_name.trim() || null,
+      brand_color: form.brand_color || "#E8600A",
+      accent_color: form.accent_color.trim() || null,
+      logo_url: form.logo_url || null,
+      favicon_url: form.favicon_url || null,
+      support_email: supportEmailTrimmed || null,
+      // Everything else
       welcome_message: form.welcome_message || null,
       instructions: form.instructions || null,
       tone_of_voice: form.tone_of_voice,
@@ -818,7 +886,6 @@ export default function Settings({ tenantId }) {
       facebook_page_id: form.facebook_page_id.trim() || null,
       faqs: form.faqs.filter(f => f.question.trim() && f.answer.trim()),
       inbound_voice: form.inbound_voice || "shimmer",
-      brand_color: form.brand_color || "#E8600A",
       outbound_voice: form.outbound_voice || "ash",
       outbound_instructions: form.outbound_instructions || null,
       outbound_agent_name: form.outbound_agent_name || "Alex",
@@ -844,8 +911,13 @@ export default function Settings({ tenantId }) {
       setMessage("Settings saved successfully.");
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e) {
-      toastError(`Save failed: ${e.message}`);
-      setError(e.message);
+      if (e.message && /413/i.test(e.message)) {
+        toastError("Image too large. Please upload a smaller logo or favicon.");
+        setError("Image too large. Please upload a smaller logo or favicon.");
+      } else {
+        toastError(`Save failed: ${e.message}`);
+        setError(e.message);
+      }
     } finally {
       setSaving(false);
     }
@@ -1410,7 +1482,7 @@ export default function Settings({ tenantId }) {
                       {phoneNumbers.some(pn => pn.twilio_sid) && (
                         <div className="mt-10 p-8 bg-slate-900 rounded-[2rem] text-white shadow-2xl shadow-slate-900/20 relative overflow-hidden group">
                           <div className="absolute top-0 right-0 p-8 text-white/5 group-hover:text-white/10 transition-colors">
-                            <Zap size={120} weight="fill" />
+                            <Zap size={120} />
                           </div>
 
                           <div className="relative z-10">
@@ -1454,6 +1526,249 @@ export default function Settings({ tenantId }) {
             </div>
           )}
 
+          {activeTab === "branding" && (
+            <div className="space-y-10 max-w-4xl">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 mb-1 flex items-center gap-2">
+                  <Palette className="text-primary w-5 h-5" />
+                  Branding
+                </h2>
+                <p className="text-sm text-gray-500 mb-6 leading-relaxed">
+                  Make this dashboard look like your business. Your logo, company name, and brand color appear in the sidebar, header, browser tab, and emails sent to your customers.
+                </p>
+              </div>
+
+              {/* ── Company identity ────────────────────────────────────── */}
+              <section className="space-y-6">
+                <h3 className="text-sm font-black text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                  <Building2 className="w-3.5 h-3.5" />
+                  Company identity
+                </h3>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Company name</label>
+                  <input
+                    type="text"
+                    value={form.company_name}
+                    onChange={(e) => handleUpdateForm("company_name", e.target.value)}
+                    placeholder="e.g. Gladiators Painting"
+                    className="w-full md:max-w-md px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm focus:ring-4 focus:ring-primary/5 transition-all outline-none placeholder:text-slate-500"
+                  />
+                  <p className="text-xs text-gray-500 mt-2">Appears in the sidebar, header, browser tab, and in emails sent to your customers.</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Support email</label>
+                  <input
+                    type="email"
+                    value={form.support_email}
+                    onChange={(e) => handleUpdateForm("support_email", e.target.value)}
+                    placeholder="support@yourcompany.com"
+                    className="w-full md:max-w-md px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-sm focus:ring-4 focus:ring-primary/5 transition-all outline-none placeholder:text-slate-500"
+                  />
+                  <p className="text-xs text-gray-500 mt-2">Used in email footers ("Reply to this email or contact..."). Leave blank to use the AI Front Desk Helper default.</p>
+                </div>
+              </section>
+
+              {/* ── Visual assets ───────────────────────────────────────── */}
+              <section className="space-y-6 pt-8 border-t border-gray-100">
+                <h3 className="text-sm font-black text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                  <ImageIcon className="w-3.5 h-3.5" />
+                  Visual assets
+                </h3>
+
+                {/* Logo uploader */}
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Logo</label>
+                  <div className="flex items-center gap-4">
+                    <div className="relative shrink-0">
+                      <div className="w-20 h-20 rounded-2xl bg-slate-100 border-2 border-slate-200 overflow-hidden flex items-center justify-center">
+                        {form.logo_url ? (
+                          <img src={form.logo_url} alt="Logo" className="w-full h-full object-contain" />
+                        ) : (
+                          <Building2 className="w-8 h-8 text-slate-400" />
+                        )}
+                      </div>
+                      {form.logo_url && (
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateForm("logo_url", "")}
+                          className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-slate-800 text-white flex items-center justify-center hover:bg-slate-700 shadow transition-colors"
+                          title="Remove logo"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    <div>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        id="branding-logo-upload"
+                        className="hidden"
+                        onChange={(e) => {
+                          handleImageUpload("logo_url", e.target?.files?.[0]);
+                          e.target.value = "";
+                        }}
+                      />
+                      <label
+                        htmlFor="branding-logo-upload"
+                        className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-bold text-white bg-slate-900 hover:bg-black rounded-xl cursor-pointer shadow-sm transition-colors"
+                      >
+                        {form.logo_url ? "Change logo" : "Upload logo"}
+                      </label>
+                      <p className="text-xs text-gray-500 mt-2">PNG or SVG recommended. Max 1MB.</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Favicon uploader */}
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Favicon</label>
+                  <div className="flex items-center gap-4">
+                    <div className="relative shrink-0">
+                      <div className="w-12 h-12 rounded-lg bg-slate-100 border-2 border-slate-200 overflow-hidden flex items-center justify-center">
+                        {form.favicon_url ? (
+                          <img src={form.favicon_url} alt="Favicon" className="w-full h-full object-contain" />
+                        ) : (
+                          <Globe className="w-5 h-5 text-slate-400" />
+                        )}
+                      </div>
+                      {form.favicon_url && (
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateForm("favicon_url", "")}
+                          className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-slate-800 text-white flex items-center justify-center hover:bg-slate-700 shadow transition-colors"
+                          title="Remove favicon"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                    <div>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        id="branding-favicon-upload"
+                        className="hidden"
+                        onChange={(e) => {
+                          handleImageUpload("favicon_url", e.target?.files?.[0]);
+                          e.target.value = "";
+                        }}
+                      />
+                      <label
+                        htmlFor="branding-favicon-upload"
+                        className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-bold text-white bg-slate-900 hover:bg-black rounded-xl cursor-pointer shadow-sm transition-colors"
+                      >
+                        {form.favicon_url ? "Change favicon" : "Upload favicon"}
+                      </label>
+                      <p className="text-xs text-gray-500 mt-2">Tiny icon in the browser tab. Square PNG, 32×32 or 64×64. Max 1MB.</p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {/* ── Colors ──────────────────────────────────────────────── */}
+              <section className="space-y-6 pt-8 border-t border-gray-100">
+                <h3 className="text-sm font-black text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                  <Palette className="w-3.5 h-3.5" />
+                  Colors
+                </h3>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Brand color</label>
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <input
+                      type="color"
+                      value={form.brand_color || "#E8600A"}
+                      onChange={(e) => handleUpdateForm("brand_color", e.target.value)}
+                      className="w-12 h-10 rounded-lg border border-slate-200 cursor-pointer p-1"
+                    />
+                    <input
+                      type="text"
+                      value={form.brand_color || "#E8600A"}
+                      onChange={(e) => handleUpdateForm("brand_color", e.target.value)}
+                      placeholder="#E8600A"
+                      className="w-36 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:ring-4 focus:ring-primary/5 transition-all outline-none"
+                    />
+                    <div
+                      className="w-10 h-10 rounded-xl border border-slate-200 shadow-sm"
+                      style={{ background: form.brand_color || "#E8600A" }}
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">Primary color used across the dashboard — sidebar active states, buttons, the chat widget on your website, and branded accents throughout the app.</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Accent color <span className="text-gray-400 font-medium normal-case ml-1">(optional)</span></label>
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <input
+                      type="color"
+                      value={form.accent_color || form.brand_color || "#E8600A"}
+                      onChange={(e) => handleUpdateForm("accent_color", e.target.value)}
+                      className="w-12 h-10 rounded-lg border border-slate-200 cursor-pointer p-1"
+                    />
+                    <input
+                      type="text"
+                      value={form.accent_color}
+                      onChange={(e) => handleUpdateForm("accent_color", e.target.value)}
+                      placeholder="Leave blank to use brand color"
+                      className="w-64 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:ring-4 focus:ring-primary/5 transition-all outline-none placeholder:text-slate-500"
+                    />
+                    {form.accent_color && (
+                      <>
+                        <div
+                          className="w-10 h-10 rounded-xl border border-slate-200 shadow-sm"
+                          style={{ background: form.accent_color }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateForm("accent_color", "")}
+                          className="text-xs font-bold text-gray-500 hover:text-gray-800 transition-colors"
+                        >
+                          Clear
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">Secondary color for links and hover states. If left blank, we derive a shade from your brand color automatically.</p>
+                </div>
+              </section>
+
+              {/* ── Custom domain (Phase 2 preview) ─────────────────────── */}
+              <section className="pt-8 border-t border-gray-100">
+                <h3 className="text-sm font-black text-gray-500 uppercase tracking-widest flex items-center gap-2 mb-4">
+                  <Globe className="w-3.5 h-3.5" />
+                  Custom domain
+                </h3>
+                <div className="p-5 bg-slate-50/60 border-2 border-dashed border-slate-200 rounded-2xl flex items-start gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center shrink-0">
+                    <Globe className="w-5 h-5 text-slate-400" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <h4 className="text-sm font-black text-gray-700">Use your own domain</h4>
+                      <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[9px] font-black uppercase tracking-widest rounded-md border border-amber-200">
+                        Coming Soon
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 leading-relaxed mb-3">
+                      Host your dashboard on your own domain (e.g. <span className="font-mono bg-white px-1.5 py-0.5 rounded">app.yourcompany.com</span>) so your team and customers never see "aifrontdeskhelper.com". Includes a branded login page.
+                    </p>
+                    <input
+                      type="text"
+                      value=""
+                      disabled
+                      placeholder="app.yourcompany.com"
+                      className="w-full md:max-w-sm px-4 py-2.5 bg-white/50 border border-slate-200 rounded-xl font-mono text-xs placeholder:text-slate-400 cursor-not-allowed opacity-60"
+                    />
+                    <p className="text-[11px] text-slate-400 mt-2 italic">Available as an add-on when we roll out Phase 2. We'll email you when it's live.</p>
+                  </div>
+                </div>
+              </section>
+            </div>
+          )}
+
           {activeTab === "ai" && (
             <div className="space-y-8 max-w-4xl">
               <div>
@@ -1461,32 +1776,10 @@ export default function Settings({ tenantId }) {
                   <Bot className="text-primary w-5 h-5" />
                   AI Receptionist Behavior
                 </h2>
+                <p className="text-sm text-gray-500 mb-6 italic">
+                  Brand appearance settings (logo, colors, company name) have moved to the <strong>Branding</strong> tab for easier access.
+                </p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="col-span-2 mb-2">
-  <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">
-    Brand Color
-  </label>
-  <div className="flex items-center gap-4">
-    <input
-      type="color"
-      value={form.brand_color || "#E8600A"}
-      onChange={(e) => handleUpdateForm("brand_color", e.target.value)}
-      className="w-12 h-10 rounded-lg border border-slate-200 cursor-pointer p-1"
-    />
-    <input
-      type="text"
-      value={form.brand_color || "#E8600A"}
-      onChange={(e) => handleUpdateForm("brand_color", e.target.value)}
-      placeholder="#E8600A"
-      className="w-36 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:ring-4 focus:ring-primary/5 transition-all outline-none"
-    />
-    <div
-      className="w-10 h-10 rounded-xl border border-slate-200 shadow-sm"
-      style={{ background: form.brand_color || "#E8600A" }}
-    />
-    <p className="text-xs text-gray-400">Used for the chat widget on your website</p>
-  </div>
-</div>
                   <div className="col-span-1">
                     <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Tone of Voice</label>
                     <select
@@ -2076,7 +2369,7 @@ export default function Settings({ tenantId }) {
                     Website Chat Widget
                   </h2>
                   {tenant?.id && (
-                    <a
+                    
                       href="https://www.gladiatorspainting.com/?widget_test=1"
                       target="_blank"
                       rel="noopener noreferrer"
@@ -2129,7 +2422,6 @@ export default function Settings({ tenantId }) {
                     <button
                       type="button"
                       onClick={() => {
-                        // Derive the primary AI phone number (Twilio-provisioned, preferred)
                         const aiPhoneNumber =
                           phoneNumbers.find((p) => p.twilio_sid && p.is_primary)?.phone ||
                           phoneNumbers.find((p) => p.twilio_sid)?.phone ||
@@ -2198,7 +2490,7 @@ Thanks!`;
                   </div>
                 </div>
 
-                {/* Platform-Specific Guides \u2014 collapsed by default */}
+                {/* Platform-Specific Guides — collapsed by default */}
                 <details className="mb-6 group">
                   <summary className="cursor-pointer list-none flex items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-2xl hover:border-gray-300 transition-all">
                     <div className="flex items-center gap-2">
@@ -2214,7 +2506,7 @@ Thanks!`;
                         <span className="text-sm font-bold text-gray-900">Webflow</span>
                       </div>
                       <p className="text-xs text-gray-600 leading-relaxed">
-                        Project Settings \u2192 <strong>Custom Code</strong> \u2192 Paste in <strong>Footer Code</strong> \u2192 Save & Publish.
+                        Project Settings → <strong>Custom Code</strong> → Paste in <strong>Footer Code</strong> → Save & Publish.
                       </p>
                     </div>
                     <div className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 hover:shadow-md transition-all">
@@ -2223,7 +2515,7 @@ Thanks!`;
                         <span className="text-sm font-bold text-gray-900">WordPress</span>
                       </div>
                       <p className="text-xs text-gray-600 leading-relaxed">
-                        Install the <strong>"Insert Headers and Footers"</strong> plugin \u2192 Paste in <strong>Footer</strong> \u2192 Save.
+                        Install the <strong>"Insert Headers and Footers"</strong> plugin → Paste in <strong>Footer</strong> → Save.
                       </p>
                     </div>
                     <div className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 hover:shadow-md transition-all">
@@ -2232,7 +2524,7 @@ Thanks!`;
                         <span className="text-sm font-bold text-gray-900">Wix</span>
                       </div>
                       <p className="text-xs text-gray-600 leading-relaxed">
-                        Settings \u2192 <strong>Custom Code</strong> \u2192 Add New Code \u2192 Paste \u2192 Apply to All Pages \u2192 <strong>Place Code in Body - End</strong>.
+                        Settings → <strong>Custom Code</strong> → Add New Code → Paste → Apply to All Pages → <strong>Place Code in Body - End</strong>.
                       </p>
                     </div>
                     <div className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 hover:shadow-md transition-all">
@@ -2241,7 +2533,7 @@ Thanks!`;
                         <span className="text-sm font-bold text-gray-900">Shopify</span>
                       </div>
                       <p className="text-xs text-gray-600 leading-relaxed">
-                        Online Store \u2192 Themes \u2192 <strong>Edit Code</strong> \u2192 <code className="bg-gray-100 px-1 rounded text-[10px]">theme.liquid</code> \u2192 Paste before <code className="bg-gray-100 px-1 rounded text-[10px]">&lt;/body&gt;</code>.
+                        Online Store → Themes → <strong>Edit Code</strong> → <code className="bg-gray-100 px-1 rounded text-[10px]">theme.liquid</code> → Paste before <code className="bg-gray-100 px-1 rounded text-[10px]">&lt;/body&gt;</code>.
                       </p>
                     </div>
                     <div className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 hover:shadow-md transition-all">
@@ -2250,7 +2542,7 @@ Thanks!`;
                         <span className="text-sm font-bold text-gray-900">Squarespace</span>
                       </div>
                       <p className="text-xs text-gray-600 leading-relaxed">
-                        Settings \u2192 Advanced \u2192 <strong>Code Injection</strong> \u2192 Paste in <strong>Footer</strong> \u2192 Save.
+                        Settings → Advanced → <strong>Code Injection</strong> → Paste in <strong>Footer</strong> → Save.
                       </p>
                     </div>
                     <div className="p-4 bg-white border border-gray-200 rounded-xl hover:border-primary/40 hover:shadow-md transition-all">
@@ -2272,14 +2564,14 @@ Thanks!`;
                     3. Verify it's working
                   </h3>
                   <p className="text-xs text-emerald-800/80 leading-relaxed mb-3">
-                    Open your website in a new tab after your developer finishes the install. You should see a chat bubble in the bottom-right corner within 2\u20133 seconds. Click it to test a message \u2014 the AI should respond using your tenant's settings. On mobile, tapping the "Text Us to Book" button should open your messaging app with the AI line pre-filled.
+                    Open your website in a new tab after your developer finishes the install. You should see a chat bubble in the bottom-right corner within 2–3 seconds. Click it to test a message — the AI should respond using your tenant's settings. On mobile, tapping the "Text Us to Book" button should open your messaging app with the AI line pre-filled.
                   </p>
                   <p className="text-[11px] text-emerald-700/70 italic leading-relaxed">
-                    \ud83d\udca1 Troubleshooting: if the widget doesn't appear, check the browser console for errors (F12). Most issues are caused by aggressive ad-blockers, HTTPS misconfigurations, or a missing <code className="bg-white/60 px-1 rounded">async</code> attribute.
+                    💡 Troubleshooting: if the widget doesn't appear, check the browser console for errors (F12). Most issues are caused by aggressive ad-blockers, HTTPS misconfigurations, or a missing <code className="bg-white/60 px-1 rounded">async</code> attribute.
                   </p>
                 </div>
 
-                {/* Click-to-Text Button \u2014 PROMOTED from "Bonus" to co-equal section */}
+                {/* Click-to-Text Button — PROMOTED from "Bonus" to co-equal section */}
                 <div className="bg-gradient-to-br from-emerald-50 to-emerald-50/30 border-2 border-emerald-200 rounded-2xl p-6">
                   <div className="flex items-center gap-3 mb-4">
                     <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
@@ -2290,12 +2582,12 @@ Thanks!`;
                         Click-to-Text Button
                         <span className="px-2 py-0.5 bg-emerald-600 text-white text-[9px] font-black uppercase tracking-widest rounded-md">Mobile-First</span>
                       </h4>
-                      <p className="text-xs text-emerald-800/70 font-medium">Website button that opens SMS app \u2192 messages route to your AI.</p>
+                      <p className="text-xs text-emerald-800/70 font-medium">Website button that opens SMS app → messages route to your AI.</p>
                     </div>
                   </div>
 
                   <p className="text-sm text-gray-700 leading-relaxed mb-4">
-                    Add a "Text Us to Book" button to your site. When a customer taps it on their phone, their messaging app opens pre-filled with a booking inquiry <strong>sent directly to your AI</strong>. The AI replies instantly, books appointments, and captures leads \u2014 just like the chat widget, but via SMS.
+                    Add a "Text Us to Book" button to your site. When a customer taps it on their phone, their messaging app opens pre-filled with a booking inquiry <strong>sent directly to your AI</strong>. The AI replies instantly, books appointments, and captures leads — just like the chat widget, but via SMS.
                   </p>
 
                   {/* How it works */}
@@ -2305,7 +2597,7 @@ Thanks!`;
                       <li className="flex gap-2"><span className="font-black text-emerald-600">1.</span> Customer taps "Text Us to Book" on your site (mobile)</li>
                       <li className="flex gap-2"><span className="font-black text-emerald-600">2.</span> Their messaging app opens with your AI's number pre-filled</li>
                       <li className="flex gap-2"><span className="font-black text-emerald-600">3.</span> The AI replies instantly and starts qualifying the lead</li>
-                      <li className="flex gap-2"><span className="font-black text-emerald-600">4.</span> Conversation logs under Inbox \u2192 SMS in your dashboard</li>
+                      <li className="flex gap-2"><span className="font-black text-emerald-600">4.</span> Conversation logs under Inbox → SMS in your dashboard</li>
                     </ol>
                   </div>
 
@@ -2332,7 +2624,7 @@ Thanks!`;
                         );
                       }
 
-                      const snippet = `<a href="sms:${aiPhoneNumber}?&body=Hi%2C%20I%27d%20like%20to%20book%20an%20estimate" style="display:inline-block;padding:14px 28px;background:#10b981;color:#fff;font-weight:700;text-decoration:none;border-radius:12px;font-family:system-ui,sans-serif;box-shadow:0 4px 12px rgba(16,185,129,0.3);">\ud83d\udcac Text Us to Book</a>`;
+                      const snippet = `<a href="sms:${aiPhoneNumber}?&body=Hi%2C%20I%27d%20like%20to%20book%20an%20estimate" style="display:inline-block;padding:14px 28px;background:#10b981;color:#fff;font-weight:700;text-decoration:none;border-radius:12px;font-family:system-ui,sans-serif;box-shadow:0 4px 12px rgba(16,185,129,0.3);">💬 Text Us to Book</a>`;
 
                       return (
                         <div className="relative">
@@ -2353,7 +2645,7 @@ Thanks!`;
                       );
                     })()}
                     <p className="text-[10px] text-gray-500 italic leading-relaxed pt-1">
-                      \ud83d\udca1 The AI phone number is pulled from your primary AI line. Change it in the <strong>Phone & voice</strong> tab. Your developer can style or resize the button to match the site \u2014 the <code className="bg-gray-100 px-1 rounded text-[9px]">href</code> is the key.
+                      💡 The AI phone number is pulled from your primary AI line. Change it in the <strong>Phone & voice</strong> tab. Your developer can style or resize the button to match the site — the <code className="bg-gray-100 px-1 rounded text-[9px]">href</code> is the key.
                     </p>
                   </div>
                 </div>

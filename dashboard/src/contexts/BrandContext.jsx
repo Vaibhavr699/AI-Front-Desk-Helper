@@ -3,16 +3,33 @@ import { generateBrandScale, applyBrandScale, resetBrandScale, DEFAULT_SCALE } f
 
 /**
  * BrandContext — per-tenant branding for white-labeled dashboards.
- * 
+ *
  * Data source: the active tenant object (already fetched by DashboardLayout).
  * We deliberately do NOT fetch anything here — the tenant row contains all
  * brand fields, so context just derives from what's already in memory.
- * 
+ *
+ * ── Brand modes (as of Apr 19, 2026) ──────────────────────────────────────
+ * Every tenant has a `brand_mode` column with two possible values:
+ *
+ *   "ai_branded"  (default) — tenant sees AI Front Desk Helper branding in
+ *                             dashboard chrome. Free marketing surface on
+ *                             every Basic-tier dashboard. Any custom fields
+ *                             on the tenant row (logo, colors) are IGNORED
+ *                             while in this mode.
+ *
+ *   "white_label" — tenant sees their own branding. Pro add-on ($29/mo),
+ *                   included free on Elite, always on for Reseller accounts.
+ *                   Custom fields on the tenant row are applied.
+ *
+ * The `isDefault` flag is the single source of truth downstream consumers
+ * (Sidebar footer, Header logo, AICoachWidget "POWERED BY", page title) use
+ * to decide which branding to render. It now derives from brand_mode only.
+ *
  * Side effects (via useEffect):
  *   - Writes --brand-* CSS variables on <html> for the Tailwind brand-* scale
  *   - Writes document.title
  *   - Writes favicon href
- * 
+ *
  * Fallbacks: Any field missing on the tenant falls back to AI Front Desk
  * Helper defaults. Callers using useBrand() never have to null-check.
  */
@@ -27,6 +44,7 @@ const DEFAULT_BRAND = {
   faviconUrl: "/favicon.ico",   // existing favicon in public/
   supportEmail: "support@aifrontdeskhelper.com",
   customDomain: null,           // Phase 2 stub
+  brandMode: "ai_branded",      // "ai_branded" | "white_label"
   isDefault: true,              // true when rendering AI Front Desk Helper branding
 };
 
@@ -37,9 +55,9 @@ const BrandContext = createContext(DEFAULT_BRAND);
 /**
  * Hook for consuming brand data.
  * Always returns a fully-populated object — never null, never undefined.
- * 
+ *
  * Usage:
- *   const { companyName, logoUrl, brandColor } = useBrand();
+ *   const { companyName, logoUrl, brandColor, isDefault } = useBrand();
  */
 export function useBrand() {
   return useContext(BrandContext);
@@ -50,6 +68,13 @@ export function useBrand() {
 /**
  * Extract brand fields from a tenant row with defaults.
  * Accepts null (logged out / no tenant loaded yet) and returns defaults.
+ *
+ * Brand mode semantics:
+ *   - "white_label" → tenant's custom fields apply, isDefault = false
+ *   - anything else (including "ai_branded", null, undefined) → AFDH
+ *     branding wins, isDefault = true. Custom fields are ignored for
+ *     display but still preserved on the tenant row so a future flip
+ *     to white_label picks up where they left off.
  */
 function deriveBrand(tenant) {
   if (!tenant || tenant.id === "all") {
@@ -58,17 +83,26 @@ function deriveBrand(tenant) {
     return DEFAULT_BRAND;
   }
 
-  // A tenant counts as "default branded" only if they've set NOTHING custom.
-  // Once they set even one field, isDefault = false so downstream components
-  // know to treat this as a white-labeled experience.
-  const hasCustomBrand = Boolean(
-    tenant.brand_color ||
-    tenant.logo_url ||
-    tenant.company_name ||
-    tenant.accent_color ||
-    tenant.favicon_url
-  );
+  const brandMode = tenant.brand_mode === "white_label" ? "white_label" : "ai_branded";
+  const isWhiteLabel = brandMode === "white_label";
 
+  // In ai_branded mode, force AFDH defaults regardless of what custom
+  // fields the tenant has set. This is the free-marketing surface — we
+  // don't want a half-customized tenant leaking their colors over it.
+  if (!isWhiteLabel) {
+    return {
+      ...DEFAULT_BRAND,
+      // Keep companyName for places that address the tenant by name
+      // (e.g. "Welcome back, Gladiators") even while chrome stays AFDH.
+      // If you'd rather hide tenant name entirely in ai_branded mode,
+      // swap the next line for: companyName: DEFAULT_BRAND.companyName,
+      companyName: tenant.company_name || tenant.name || DEFAULT_BRAND.companyName,
+      brandMode: "ai_branded",
+      isDefault: true,
+    };
+  }
+
+  // White-label mode — tenant's custom fields apply.
   return {
     companyName: tenant.company_name || tenant.name || DEFAULT_BRAND.companyName,
     logoUrl: tenant.logo_url || null,
@@ -77,7 +111,8 @@ function deriveBrand(tenant) {
     faviconUrl: tenant.favicon_url || DEFAULT_BRAND.faviconUrl,
     supportEmail: tenant.support_email || DEFAULT_BRAND.supportEmail,
     customDomain: tenant.custom_domain || null,
-    isDefault: !hasCustomBrand,
+    brandMode: "white_label",
+    isDefault: false,
   };
 }
 
@@ -103,7 +138,7 @@ function setFavicon(href) {
 /**
  * Wraps the authenticated dashboard. Must be mounted inside the tree that
  * owns the active tenant (typically DashboardLayout, below tenant fetch).
- * 
+ *
  * Props:
  *   - tenant: the active tenant object, or null if none loaded yet
  *   - children: the subtree that will consume useBrand()
@@ -128,9 +163,8 @@ export function BrandProvider({ tenant, children }) {
     };
   }, [brand.brandColor, brand.isDefault]);
 
-  // Apply document.title. We append "· AI Front Desk Helper" only for the
-  // default (non-white-labeled) case, so white-labeled tenants don't leak
-  // our brand name into their browser tabs.
+  // Apply document.title. Default (ai_branded) tenants get the AFDH title
+  // so we don't leak a tenant name into browser tabs on their free tier.
   useEffect(() => {
     document.title = brand.isDefault
       ? "AI Front Desk Helper"

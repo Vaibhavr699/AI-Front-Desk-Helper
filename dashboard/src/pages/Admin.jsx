@@ -5,6 +5,7 @@ import {
   updateTenantPricing,
   removeTenantPricing,
   suspendTenant,
+  updateTenantBranding,
 } from "../api";
 import * as api from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
@@ -33,6 +34,7 @@ import {
   UserPlus,
   Mail,
   UserCheck,
+  Palette,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -74,6 +76,9 @@ export default function Admin({ view: initialView = "tenants" }) {
   const [suspensionConfirm, setSuspensionConfirm] = useState(null);
   const [removalConfirm, setRemovalConfirm] = useState(null);
   const [alertConfig, setAlertConfig] = useState(null);
+  // Brand-mode flip tracking — separate from the pricing form so a flip
+  // saves instantly instead of piggybacking on the pricing "Save" button.
+  const [brandSaving, setBrandSaving] = useState(false);
   const ROWS_PER_PAGE = 10;
 
   const [overrideForm, setOverrideForm] = useState({
@@ -241,6 +246,31 @@ export default function Admin({ view: initialView = "tenants" }) {
       setSaveMessage(`Error: ${err.message}`);
     } finally {
       setSaveLoading(false);
+    }
+  }
+
+  // Brand-mode flip. Instant save — no "Save" button needed. Updates the
+  // drawer's tenant snapshot optimistically so the UI feels responsive.
+  async function handleBrandModeChange(newMode) {
+    if (!selectedTenant) return;
+    if (selectedTenant.brand_mode === newMode) return;
+    setBrandSaving(true);
+    setSaveMessage("");
+    try {
+      await updateTenantBranding(selectedTenant.id, newMode);
+      // Optimistically update the selected tenant + list so the radio
+      // reflects the new state immediately without waiting for reload.
+      setSelectedTenant((prev) => ({ ...prev, brand_mode: newMode }));
+      setTenants((list) =>
+        list.map((t) => (t.id === selectedTenant.id ? { ...t, brand_mode: newMode } : t))
+      );
+      setSaveMessage(`Branding mode updated to ${newMode === "white_label" ? "White Label" : "AI Branded"}.`);
+      // Background refresh to stay consistent with server.
+      loadData();
+    } catch (err) {
+      setSaveMessage(`Error: ${err.message}`);
+    } finally {
+      setBrandSaving(false);
     }
   }
 
@@ -436,6 +466,7 @@ export default function Admin({ view: initialView = "tenants" }) {
                       <tr className="border-b border-slate-100 bg-slate-50/50">
                         <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Business</th>
                         <th className="px-4 py-4 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Plan</th>
+                        <th className="px-4 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Brand</th>
                         <th className="px-4 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">Monthly</th>
                         <th className="px-4 py-4 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">Status</th>
                         <th className="px-4 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">Usage</th>
@@ -445,6 +476,7 @@ export default function Admin({ view: initialView = "tenants" }) {
                     <tbody className="divide-y divide-slate-50">
                       {paginatedTenants.map((t, i) => {
                         const pc = PLAN_COLORS[t.plan] || PLAN_COLORS.basic;
+                        const isWL = t.brand_mode === "white_label";
                         return (
                           <motion.tr
                             key={t.id}
@@ -475,6 +507,19 @@ export default function Admin({ view: initialView = "tenants" }) {
                               >
                                 {t.plan || "basic"}
                               </span>
+                            </td>
+                            {/* Brand column — pill shows current mode at a glance.
+                                WL = indigo, AFDH = slate. Click row → drawer to flip. */}
+                            <td className="px-4 py-4 text-center">
+                              {isWL ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                  <Palette size={10} /> WL
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-slate-50 text-slate-500 border border-slate-200">
+                                  AFDH
+                                </span>
+                              )}
                             </td>
                             <td className="px-4 py-4 text-right">
                               <div className="text-sm font-black text-slate-900">{centsToDisplay(t.effective_monthly)}</div>
@@ -647,7 +692,7 @@ export default function Admin({ view: initialView = "tenants" }) {
                       <Crown size={20} className="text-amber-400" />
                     </div>
                     <div>
-                      <h2 className="text-lg font-black tracking-tight">Pricing Override</h2>
+                      <h2 className="text-lg font-black tracking-tight">Tenant Settings</h2>
                       <p className="text-xs text-gray-400 font-medium">{selectedTenant.company_name || selectedTenant.name}</p>
                     </div>
                   </div>
@@ -668,6 +713,38 @@ export default function Admin({ view: initialView = "tenants" }) {
               </div>
 
               <div className="flex-1 overflow-y-auto p-6">
+
+                {/* ── Branding Mode (superadmin-only, instant save) ──
+                    Flipping this changes what the TENANT sees in their
+                    dashboard chrome. Saves immediately on click — no form
+                    submit needed. Lives ABOVE pricing because it's a feature
+                    flag, not a billing setting. */}
+                <div className="mb-6 p-4 bg-indigo-50/40 border border-indigo-100 rounded-2xl">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Palette size={14} className="text-indigo-600" />
+                    <div className="text-[10px] font-black text-indigo-900 uppercase tracking-widest">Branding Mode</div>
+                    {brandSaving && <LumaSpin className="w-3 h-3 border-indigo-600" />}
+                  </div>
+                  <div className="space-y-2">
+                    <BrandModeOption
+                      selected={(selectedTenant.brand_mode || "ai_branded") === "ai_branded"}
+                      onSelect={() => handleBrandModeChange("ai_branded")}
+                      disabled={brandSaving}
+                      title="AI Front Desk Branded"
+                      badge="Default"
+                      description="Dashboard shows AFDH branding. Free marketing surface on Basic tier."
+                    />
+                    <BrandModeOption
+                      selected={selectedTenant.brand_mode === "white_label"}
+                      onSelect={() => handleBrandModeChange("white_label")}
+                      disabled={brandSaving}
+                      title="White Label"
+                      badge="Pro add-on · Elite incl."
+                      description="Dashboard shows tenant's logo, colors, and company name."
+                    />
+                  </div>
+                </div>
+
                 <form id="override-form" onSubmit={handleSaveOverride} className="space-y-5">
                   <div className="space-y-4">
                     <FormGroup label="Active Plan" hint="The base plan for this tenant">
@@ -851,14 +928,14 @@ export default function Admin({ view: initialView = "tenants" }) {
                     className="flex-1 bg-gray-900 hover:bg-black text-white py-3 rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-lg shadow-gray-900/10 disabled:opacity-50 flex items-center justify-center gap-2"
                   >
                     {saveLoading && <LumaSpin className="w-4 h-4 border-white" />}
-                    Save Override
+                    Save Pricing
                   </button>
                   <button
                     type="button"
                     onClick={() => setSelectedTenant(null)}
                     className="px-5 py-3 bg-white border border-gray-200 text-gray-600 rounded-xl text-xs font-black uppercase tracking-wider hover:bg-gray-50 transition-all"
                   >
-                    Cancel
+                    Close
                   </button>
                 </div>
               </div>
@@ -997,6 +1074,42 @@ function StatusBadge({ status }) {
     >
       {s.label}
     </span>
+  );
+}
+
+// Compact radio for the brand-mode flip. Instant save on click — parent
+// handles the PATCH. Disabled state prevents double-clicks during save.
+function BrandModeOption({ selected, onSelect, disabled, title, badge, description }) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      disabled={disabled}
+      className={`w-full text-left p-3 rounded-xl border-2 transition-all disabled:opacity-60 ${
+        selected
+          ? "border-indigo-600 bg-white shadow-sm"
+          : "border-gray-200 bg-white hover:border-gray-300"
+      }`}
+    >
+      <div className="flex items-start gap-2.5">
+        <div className={`mt-0.5 w-4 h-4 rounded-full border-2 shrink-0 flex items-center justify-center transition-all ${
+          selected ? "border-indigo-600 bg-indigo-600" : "border-gray-300 bg-white"
+        }`}>
+          {selected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <span className="text-xs font-black text-gray-900">{title}</span>
+            {badge && (
+              <span className="px-1.5 py-0.5 bg-slate-100 border border-slate-200 text-slate-600 text-[9px] font-black uppercase tracking-wider rounded">
+                {badge}
+              </span>
+            )}
+          </div>
+          <p className="text-[11px] text-gray-500 leading-relaxed">{description}</p>
+        </div>
+      </div>
+    </button>
   );
 }
 

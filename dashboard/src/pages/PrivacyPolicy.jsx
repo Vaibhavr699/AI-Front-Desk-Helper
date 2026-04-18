@@ -11,7 +11,7 @@ export default function PrivacyPolicy() {
             <h1 className="font-serif text-3xl sm:text-4xl font-bold text-stone-900 tracking-tight">
               AIFrontDeskHelper Messaging, Privacy &amp; Communication Policy
             </h1>
-            <p className="mt-3 text-stone-500 text-sm">Effective Date: March 30, 2026</p>
+            <p className="mt-3 text-stone-500 text-sm">Effective Date: April 19, 2026</p>
           </header>
 
           <div className="font-sans text-stone-700 leading-relaxed space-y-10">
@@ -62,9 +62,14 @@ export default function PrivacyPolicy() {
                 Message frequency may vary depending on your interaction with the business
                 using AIFrontDeskHelper.
               </p>
-              <p>
+              <p className="mb-4">
                 Consent to receive messages is not required as a condition of purchasing goods
                 or services.
+              </p>
+              <p>
+                Mobile phone numbers and SMS consent are not shared with third parties or
+                affiliates for marketing purposes. Message frequency may vary. Message and
+                data rates may apply. Reply <strong>STOP</strong> to opt out, <strong>HELP</strong> for help.
               </p>
             </section>
 
@@ -163,7 +168,12 @@ export default function PrivacyPolicy() {
               </ul>
               <p className="mb-6">
                 AIFrontDeskHelper does not sell, rent, or share personal data with third
-                parties for marketing purposes.
+                parties for marketing purposes. Specifically, mobile phone numbers and SMS
+                opt-in consent are not shared with third parties or affiliates for marketing
+                or promotional purposes. Mobile phone numbers collected through our platform
+                are used solely for the communication purposes described in this policy
+                (appointment confirmations, follow-ups, service notifications, and customer
+                service replies).
               </p>
 
               <h3 className="font-serif text-lg font-semibold text-stone-800 mt-6 mb-3">
@@ -172,12 +182,14 @@ export default function PrivacyPolicy() {
               <p className="mb-4">Information may be shared only with:</p>
               <ul className="list-disc pl-6 space-y-2 mb-4">
                 <li>The business you contacted</li>
-                <li>Service providers that support platform functionality</li>
+                <li>Service providers that support platform functionality (such as Twilio for SMS delivery)</li>
                 <li>Legal authorities when required by law</li>
               </ul>
               <p className="mb-6">
                 All service providers are required to maintain confidentiality and data
-                protection standards.
+                protection standards. Mobile phone numbers and SMS opt-in data are never
+                shared with third parties or affiliates for marketing or promotional purposes
+                under any circumstances.
               </p>
 
               <h3 className="font-serif text-lg font-semibold text-stone-800 mt-6 mb-3">
@@ -222,7 +234,7 @@ export default function PrivacyPolicy() {
                 we collect, request deletion of their data, and opt out of the sale of personal
                 information. AIFrontDeskHelper does not sell personal information. To exercise
                 your California privacy rights, contact us at{" "}
-                <a
+                
                   href="mailto:drew@aifrontdeskhelper.com"
                   className="text-stone-900 underline hover:no-underline"
                 >
@@ -277,7 +289,7 @@ export default function PrivacyPolicy() {
               <p className="mb-1"><strong>AIFrontDeskHelper Support</strong></p>
               <p className="mb-1">
                 Email:{" "}
-                <a
+                
                   href="mailto:drew@aifrontdeskhelper.com"
                   className="text-stone-900 underline hover:no-underline"
                 >
@@ -286,7 +298,7 @@ export default function PrivacyPolicy() {
               </p>
               <p>
                 Website:{" "}
-                <a
+                
                   href="https://www.aifrontdeskhelper.com"
                   target="_blank"
                   rel="noopener noreferrer"
@@ -300,20 +312,34 @@ export default function PrivacyPolicy() {
             <section className="mt-10 pt-8 border-t border-stone-200">
               <p className="text-stone-500 text-sm">
                 This Privacy Policy is incorporated into and subject to our{" "}
-                <a
+                
                   href="/terms"
                   className="text-stone-900 underline hover:no-underline font-medium"
                 >
                   Terms of Service
                 </a>
                 . You may also review our{" "}
-                <a
+                
                   href="/cookie-policy"
                   className="text-stone-900 underline hover:no-underline font-medium"
                 >
                   Cookie Policy
                 </a>
-                . By using our platform you agree to all three documents.
+                . You can also review our{" "}
+                
+                  href="/sms-terms"
+                  className="text-stone-900 underline hover:no-underline font-medium"
+                >
+                  SMS Terms
+                </a>{" "}
+                and{" "}
+                
+                  href="/sms-consent"
+                  className="text-stone-900 underline hover:no-underline font-medium"
+                >
+                  SMS Consent Documentation
+                </a>
+                . By using our platform you agree to these documents.
               </p>
             </section>
 

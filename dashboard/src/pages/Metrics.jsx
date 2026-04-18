@@ -171,7 +171,7 @@ export default function Metrics({ tenantId }) {
                   {metrics.location_breakdown?.map((l, i) => (
                     <tr key={l.id} className="hover:bg-gray-50/30 transition-colors group">
                       <td className="px-6 py-4 flex items-center gap-3">
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-[10px] ${i%2===0?'bg-blue-50 text-blue-600':'bg-orange-50 text-orange-600'}`}>{l.name.substring(0,2)}</div>
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-[10px] ${i%2===0?'bg-blue-50 text-blue-600':'bg-brand-50 text-brand-700'}`}>{l.name.substring(0,2)}</div>
                         <span className="font-bold text-gray-700">{l.name}</span>
                       </td>
                       <td className="px-4 py-4 text-right font-mono font-medium">{l.calls} calls</td>
@@ -192,7 +192,7 @@ export default function Metrics({ tenantId }) {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
           <ModernKpiCard label="Calls Answered" value={callsHandled.toLocaleString()} trendValue={`${Math.abs(callsHandled - callsHandledPrev)}`} trendLabel="vs last month" trendDirection={(callsHandled - callsHandledPrev) >= 0 ? 'up' : 'down'} topBadge="+18%" />
           <ModernKpiCard label="Booking Rate" value={`${bookingRate}%`} trendLabel="Industry avg 25%" trendDirection="neutral" topBadge="+6pts" />
-          <ModernKpiCard label="Est. Acceptance Rate" value={`${pipeline.close_rate || 0}%`} trendLabel="Target 60%" trendDirection="neutral" topBadge="Target 60%" topBadgeColor="text-orange-700 bg-orange-50 border-orange-100" />
+          <ModernKpiCard label="Est. Acceptance Rate" value={`${pipeline.close_rate || 0}%`} trendLabel="Target 60%" trendDirection="neutral" topBadge="Target 60%" topBadgeColor="text-amber-700 bg-amber-50 border-amber-100" />
           <ModernKpiCard label="Active Follow-ups" value={pipeline.open_estimates || 34} trendLabel="AI working background" topBadge="Active" topBadgeColor="text-blue-700 bg-blue-50 border-blue-100" />
           <ModernKpiCard label="No-show Rate" value="7%" trendLabel="Target under 10%" topBadge="Great" topBadgeColor="text-emerald-700 bg-emerald-50 border-emerald-100" />
         </div>
@@ -217,7 +217,7 @@ export default function Metrics({ tenantId }) {
             </div>
             <div className="p-6 space-y-5">
               <OutcomeBar dotColor="bg-emerald-500" color="bg-emerald-500" label="Booked" count={booked} pct={Math.round((booked/Math.max(callsHandled,1))*100)} trend={getTrend(booked, callsHandled, aiPrev.calls_booked||0, callsHandledPrev)} subtext="appointments" />
-              <OutcomeBar dotColor="bg-orange-500" color="bg-orange-500" label="Follow-up needed" count={followup} pct={Math.round((followup/Math.max(callsHandled,1))*100)} trend="0%" />
+              <OutcomeBar dotColor="bg-amber-500" color="bg-amber-500" label="Follow-up needed" count={followup} pct={Math.round((followup/Math.max(callsHandled,1))*100)} trend="0%" />
               <OutcomeBar dotColor="bg-blue-500" color="bg-blue-500" label="Transferred" count={transferred} pct={Math.round((transferred/Math.max(callsHandled,1))*100)} trend="0%" />
             </div>
           </div>
@@ -242,7 +242,7 @@ export default function Metrics({ tenantId }) {
               headers={["Trigger phrase detected", "Count", "Resolved?"]}
               rows={[
                 ["\"Can you repeat that?\"", ai.confused_repeat || 0, { text: "Yes", color: "bg-emerald-50 text-emerald-600 border border-emerald-100" }],
-                ["\"I don't understand\"", ai.confused_understand || 0, { text: "Partial", color: "bg-orange-50 text-orange-600 border border-orange-100" }],
+                ["\"I don't understand\"", ai.confused_understand || 0, { text: "Partial", color: "bg-amber-50 text-amber-600 border border-amber-100" }],
                 ["\"What did you say?\"", ai.confused_what_say || 0, { text: "Yes", color: "bg-emerald-50 text-emerald-600 border border-emerald-100" }],
                 ["\"Huh?\" / \"What?\"", ai.confused_huh || 0, { text: "No", color: "bg-rose-50 text-rose-600 border border-rose-100" }]
               ]}
@@ -278,7 +278,7 @@ export default function Metrics({ tenantId }) {
                       booked: found ? found.booked : 0, 
                       rate: `${found ? found.rate : 0}%`, 
                       revenue: found ? formatPrice(found.revenue) : "$0",
-                      dotColor: ['bg-blue-500', 'bg-emerald-500', 'bg-orange-500', 'bg-indigo-500', 'bg-rose-500', 'bg-gray-400', 'bg-sky-500', 'bg-emerald-400', 'bg-amber-500', 'bg-purple-500', 'bg-pink-500', 'bg-slate-500', 'bg-cyan-500', 'bg-teal-500', 'bg-rose-400', 'bg-gray-300'][i % 16]
+                      dotColor: ['bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-indigo-500', 'bg-rose-500', 'bg-gray-400', 'bg-sky-500', 'bg-emerald-400', 'bg-yellow-500', 'bg-purple-500', 'bg-pink-500', 'bg-slate-500', 'bg-cyan-500', 'bg-teal-500', 'bg-rose-400', 'bg-gray-300'][i % 16]
                     };
                   });
                 })()} 
@@ -371,7 +371,7 @@ export default function Metrics({ tenantId }) {
 function SectionTitle({ title }) {
   return (
     <div className="flex items-center gap-3 py-1">
-      <div className="w-1 h-3.5 bg-orange-500 rounded-full shadow-sm"></div>
+      <div className="w-1 h-3.5 bg-brand-600 rounded-full shadow-sm"></div>
       <h2 className="text-xs font-bold text-gray-900 uppercase tracking-widest leading-none">{title}</h2>
     </div>
   );
@@ -379,7 +379,7 @@ function SectionTitle({ title }) {
 
 function PerformanceCard({ label, value, sub, color }) {
   return (
-    <div className="bg-white border border-gray-200/60 rounded-xl p-6 shadow-sm flex flex-col justify-between h-36 border-t-4 border-t-gray-100 hover:border-t-orange-500 transition-all duration-300 group">
+    <div className="bg-white border border-gray-200/60 rounded-xl p-6 shadow-sm flex flex-col justify-between h-36 border-t-4 border-t-gray-100 hover:border-t-brand-600 transition-all duration-300 group">
       <div>
         <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">{label}</div>
         <div className={`text-3xl font-bold ${color} tracking-tighter leading-none mb-1 group-hover:scale-[1.02] origin-left transition-transform`}>{value}</div>
@@ -417,12 +417,12 @@ function RevRow({ label, color, value }) {
 
 function OpsCard({ label, value, subText, badge, badgeColor, trend, icon: Icon }) {
   return (
-    <div className="bg-white border border-gray-200/60 rounded-xl p-6 shadow-sm flex flex-col justify-between min-h-[140px] hover:border-orange-200 hover:shadow-md transition-all group">
+    <div className="bg-white border border-gray-200/60 rounded-xl p-6 shadow-sm flex flex-col justify-between min-h-[140px] hover:border-brand-200 hover:shadow-md transition-all group">
       <div>
         <div className="flex items-center justify-between mb-2">
           {badge && <div className={`px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider border ${badgeColor}`}>{badge}</div>}
-          {trend && <div className="text-[10px] font-bold text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded-md border border-orange-100">{trend}</div>}
-          {Icon && !badge && !trend && <Icon size={14} className="text-gray-300 group-hover:text-orange-500 transition-colors" />}
+          {trend && <div className="text-[10px] font-bold text-brand-700 bg-brand-50 px-1.5 py-0.5 rounded-md border border-brand-100">{trend}</div>}
+          {Icon && !badge && !trend && <Icon size={14} className="text-gray-300 group-hover:text-brand-600 transition-colors" />}
         </div>
         <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">{label}</div>
         <div className="text-3xl font-bold text-gray-900 tracking-tighter leading-none mb-1.5">{value}</div>
@@ -461,7 +461,7 @@ function SourceTable({ headers, rows }) {
             </td>
             <td className="py-4 text-right font-bold text-gray-900">{r.leads}</td>
             <td className="py-4 text-right font-bold text-gray-600">{r.booked}</td>
-            <td className={`py-4 text-right font-bold ${parseInt(r.rate) > 50 ? 'text-emerald-500' : 'text-orange-500'}`}>{r.rate}</td>
+            <td className={`py-4 text-right font-bold ${parseInt(r.rate) > 50 ? 'text-emerald-500' : 'text-amber-500'}`}>{r.rate}</td>
             <td className="py-4 text-right font-bold text-gray-900 font-mono">{r.revenue !== "$0" ? r.revenue : '—'}</td>
           </tr>
         ))}

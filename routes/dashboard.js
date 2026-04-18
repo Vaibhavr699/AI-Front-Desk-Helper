@@ -1071,7 +1071,7 @@ function maskFacebookToken(token) {
 }
 
 const TENANT_SELECT_TWILIO = `t.twilio_account_sid, t.twilio_auth_token`;
-const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.plan, t.facebook_page_id, t.facebook_page_access_token, t.tone_of_voice, t.objection_handling_config, t.business_hours, t.afterhours_behavior, t.google_calendar_linked, t.google_calendar_id, t.google_calendar_email, t.zapier_webhook_url, t.api_key, t.website, t.voice_model, t.faqs, t.plan_overrides, t.promo_label, t.logo_url, t.nurturing_enabled, t.referral_enabled, t.seasonal_campaigns_enabled, t.maintenance_reminder_months, t.reengagement_reminder_months, t.referral_request_days_after_service, t.nurturing_campaign_calendar, t.maintenance_touchpoints, t.reengagement_touchpoints, t.parent_id, t.business_type, t.default_lead_source, t.brand_color`;
+const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.plan, t.facebook_page_id, t.facebook_page_access_token, t.tone_of_voice, t.objection_handling_config, t.business_hours, t.afterhours_behavior, t.google_calendar_linked, t.google_calendar_id, t.google_calendar_email, t.zapier_webhook_url, t.api_key, t.website, t.voice_model, t.faqs, t.plan_overrides, t.promo_label, t.logo_url, t.nurturing_enabled, t.referral_enabled, t.seasonal_campaigns_enabled, t.maintenance_reminder_months, t.reengagement_reminder_months, t.referral_request_days_after_service, t.nurturing_campaign_calendar, t.maintenance_touchpoints, t.reengagement_touchpoints, t.parent_id, t.business_type, t.default_lead_source, t.brand_color, t.brand_mode`;
 const TENANT_SELECT_BASE_LEGACY = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.parent_id, t.business_type`;
 
 router.get("/tenants/:id", async (req, res) => {
@@ -1316,7 +1316,7 @@ router.patch("/tenants/:id", async (req, res) => {
       }
     }
 
-    let allowed = [
+   let allowed = [
       "name", "company_name", "timezone", "website", "logo_url",
       "welcome_message", "instructions", "transfer_numbers", "transfer_sms_brief", 
       "crm_webhook_url", "crm_type", "follow_up_enabled", "plan", 
@@ -1324,11 +1324,11 @@ router.patch("/tenants/:id", async (req, res) => {
       "tone_of_voice", "objection_handling_config", "business_hours", "afterhours_behavior", 
       "google_calendar_linked", "google_calendar_id", "zapier_webhook_url",
       "voice_model", "faqs", "inbound_voice", "outbound_voice", "outbound_agent_name", "outbound_instructions",
-      "brand_color","nurturing_enabled", "referral_enabled", "seasonal_campaigns_enabled",
+      "brand_color", "brand_mode", "nurturing_enabled", "referral_enabled", "seasonal_campaigns_enabled",
       "maintenance_reminder_months", "reengagement_reminder_months", "referral_request_days_after_service",
       "nurturing_campaign_calendar",
       "maintenance_touchpoints", "reengagement_touchpoints"
-    ];
+    ]; 
     try {
       await db.query("SELECT twilio_account_sid FROM tenants WHERE id = $1 LIMIT 1", [id]);
     } catch (colErr) {
@@ -1343,12 +1343,24 @@ router.patch("/tenants/:id", async (req, res) => {
         updates[key] = normalizeTransferNumbers(req.body[key]);
       } else if (key === "twilio_auth_token") {
         updates[key] = req.body[key] === "" ? null : req.body[key];
-      } else if (key === "plan") {
+   } else if (key === "plan") {
         const p = (req.body[key] || "").toLowerCase();
         if (!["basic", "pro", "elite"].includes(p)) {
           return res.status(400).json({ error: "plan must be basic, pro, or elite" });
         }
         updates[key] = p;
+      } else if (key === "brand_mode") {
+        // Whitelist matches the DB CHECK constraint added Apr 19. Anything
+        // outside these two values would fail the constraint anyway, but
+        // validating here gives a clean 400 instead of a Postgres 500.
+        // TODO: when Pro customers go live, gate this behind
+        // req.user.is_super_admin so tenants can't self-upgrade to white_label
+        // without paying the $29/mo add-on.
+        const m = (req.body[key] || "").toString();
+        if (!["ai_branded", "white_label"].includes(m)) {
+          return res.status(400).json({ error: "brand_mode must be ai_branded or white_label" });
+        }
+        updates[key] = m;
       } else {
         updates[key] = req.body[key];
       }

@@ -61,6 +61,7 @@ const outboundRoutes = require("./routes/outbound");
 const { startOutboundEngine } = require("./services/outboundEngine");
 const { authMiddleware, requireSuperAdmin } = require("./lib/auth");
 const notificationsService = require("./services/notifications");
+const metricAlerts = require("./services/metricAlerts");
 const auditLogsRouter = require("./routes/auditLogs");
 
 const WEBSITE_CONTEXT_URL = process.env.WEBSITE_CONTEXT_URL || "https://www.gladiatorspainting.com";
@@ -4114,6 +4115,33 @@ cron.schedule("0 */4 * * *", () => {
   notificationsService.checkUsageAlerts().catch((e) => console.error("Usage alert notification failed:", e));
 });
 
+// ═══════════════════════════════════════════════════════════════
+// METRIC ALERTS — Added April 17, 2026
+// Runs 10 different anomaly checks on staggered cron schedules.
+// 4 critical alerts also email drew@aifrontdeskhelper.com.
+// ═══════════════════════════════════════════════════════════════
+
+// Every 30 minutes — fast-moving platform alerts (negative reviews, OpenAI errors)
+cron.schedule("*/30 * * * *", () => {
+  metricAlerts.runHalfHourlyChecks().catch((e) => console.error("[Cron] MetricAlerts 30-min failed:", e.message));
+});
+
+// Every hour — Twilio failures + spam surges
+cron.schedule("0 * * * *", () => {
+  metricAlerts.runHourlyChecks().catch((e) => console.error("[Cron] MetricAlerts hourly failed:", e.message));
+});
+
+// Every 6 hours — conversion drop + call pattern anomalies
+cron.schedule("0 */6 * * *", () => {
+  metricAlerts.runSixHourlyChecks().catch((e) => console.error("[Cron] MetricAlerts 6-hourly failed:", e.message));
+});
+
+// Daily at 6 AM UTC (1 AM Central) — slow-moving business health metrics
+cron.schedule("0 6 * * *", () => {
+  metricAlerts.runDailyChecks().catch((e) => console.error("[Cron] MetricAlerts daily failed:", e.message));
+});
+
+console.log("[Cron] MetricAlerts registered: 30min, hourly, 6-hourly, daily");
 // Auto-fetch Google reviews nightly + notify on new reviews needing approval
 const { startReviewScheduler } = require("./services/reviewScheduler");
 startReviewScheduler();

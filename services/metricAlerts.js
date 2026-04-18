@@ -10,13 +10,74 @@
  * Dedup strategy: Uses `notifications` table — skips firing if same type
  * fired for same tenant within the configured window (default 24h).
  *
- * All alerts surface via the notification bell (no SMS/email escalation).
+ * Operator escalation: 4 platform-level alerts (openai_errors, webhook_failures,
+ * call_volume_anomaly drops, call_duration_anomaly) also email drew@aifrontdeskhelper.com
+ * so Drew can intervene on system-wide issues before tenants notice.
  *
  * Added: April 17, 2026
  */
 
 const db = require("../lib/db");
 const { createNotification } = require("./notifications");
+const emailService = require("./email");
+
+// ═══════════════════════════════════════════════════════════════
+// OPERATOR ESCALATION — Drew gets emails for platform-level issues
+// ═══════════════════════════════════════════════════════════════
+const OPERATOR_EMAIL = "drew@aifrontdeskhelper.com";
+
+/**
+ * Send an operator alert email to Drew for platform/system-level issues.
+ * Non-fatal — if email fails, we still fire the bell notification.
+ */
+async function notifyOperator(tenantId, alertType, title, body) {
+  try {
+    // Look up tenant name for context
+    const tenantRes = await db.query(
+      `SELECT name, company_name FROM tenants WHERE id = $1 LIMIT 1`,
+      [tenantId]
+    );
+    const t = tenantRes.rows[0];
+    const tenantLabel = t
+      ? (t.company_name || t.name || `Tenant ${tenantId}`)
+      : `Tenant ${tenantId}`;
+
+    const subject = `[AFDH Platform Alert] ${title} — ${tenantLabel}`;
+    const html = `
+      <div style="font-family: system-ui, -apple-system, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: #dc2626; color: white; padding: 20px; border-radius: 12px 12px 0 0;">
+          <h1 style="margin: 0; font-size: 20px; font-weight: 800;">⚠️ Platform Alert</h1>
+          <p style="margin: 4px 0 0; opacity: 0.9; font-size: 13px;">${alertType}</p>
+        </div>
+        <div style="background: #fff; border: 1px solid #e5e7eb; border-top: none; padding: 24px; border-radius: 0 0 12px 12px;">
+          <p style="margin: 0 0 8px; color: #6b7280; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">Tenant</p>
+          <p style="margin: 0 0 20px; color: #111827; font-size: 16px; font-weight: 700;">${tenantLabel}</p>
+          <p style="margin: 0 0 8px; color: #6b7280; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">Alert</p>
+          <p style="margin: 0 0 12px; color: #111827; font-size: 16px; font-weight: 700;">${title}</p>
+          <p style="margin: 0 0 20px; color: #374151; font-size: 14px; line-height: 1.6;">${body}</p>
+          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;" />
+          <p style="margin: 0; color: #9ca3af; font-size: 11px;">Tenant ID: ${tenantId}<br/>Fired at: ${new Date().toISOString()}</p>
+        </div>
+      </div>
+    `;
+    const text = `PLATFORM ALERT: ${title}\n\nTenant: ${tenantLabel} (${tenantId})\nAlert Type: ${alertType}\n\n${body}\n\nFired at: ${new Date().toISOString()}`;
+
+    const result = await emailService.sendEmail({
+      to: OPERATOR_EMAIL,
+      subject,
+      html,
+      text,
+    });
+
+    if (result?.ok) {
+      console.log(`[MetricAlerts] Operator email sent: ${alertType} for tenant ${tenantLabel}`);
+    } else {
+      console.warn(`[MetricAlerts] Operator email failed: ${alertType}`, result?.error);
+    }
+  } catch (err) {
+    console.error(`[MetricAlerts] notifyOperator failed (${alertType}):`, err.message);
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // CONFIG — Thresholds per alert. Tune after real-world data arrives.
@@ -36,7 +97,7 @@ const CONFIG = {
     min_leads_prior: 5,
     dedup_hours: 24,
   },
-  // 3. Negative review: any 1-2 star review in last 30 min
+  // 3. Negative review: any 1-2 star review in last lookback window
   negative_review: {
     lookback_minutes: 35,     // slightly > cron interval to catch all
     max_rating: 2,
@@ -66,13 +127,13 @@ const CONFIG = {
     min_sample_size: 10,
     dedup_hours: 24,
   },
-  // 7. Webhook failures: ≥5 failures in 1 hour (requires twilio_error_log table; graceful fallback if missing)
+  // 7. Webhook failures: ≥5 failed calls in 1 hour
   webhook_failures: {
     lookback_hours: 1,
     min_failures: 5,
     dedup_hours: 3,
   },
-  // 8. OpenAI errors: ≥20% error rate over 30 min (graceful fallback if no error log exists)
+  // 8. OpenAI errors: ≥20% ultra-short calls in 30 min (proxy for API failures)
   openai_errors: {
     lookback_minutes: 30,
     max_error_rate_pct: 20,
@@ -116,6 +177,7 @@ async function getActiveTenants() {
 
 // ═══════════════════════════════════════════════════════════════
 // 1. REVENUE STALL — "🚨 Zero revenue in X days"
+// Bell only — tenant's business issue, not platform
 // ═══════════════════════════════════════════════════════════════
 
 async function checkRevenueStall() {
@@ -165,6 +227,7 @@ async function checkRevenueStall() {
 
 // ═══════════════════════════════════════════════════════════════
 // 2. CONVERSION DROP — "📉 Bookings dropped 30%+ week-over-week"
+// Bell only — tenant's sales process
 // ═══════════════════════════════════════════════════════════════
 
 async function checkConversionDrop() {
@@ -216,6 +279,7 @@ async function checkConversionDrop() {
 
 // ═══════════════════════════════════════════════════════════════
 // 3. NEGATIVE REVIEW — "⭐ New 1-2 star Google review"
+// Bell only — tenant's reputation
 // ═══════════════════════════════════════════════════════════════
 
 async function checkNegativeReview() {
@@ -247,7 +311,9 @@ async function checkNegativeReview() {
         );
         if (existing.rows.length > 0) continue;
 
-        const preview = rev.review_text ? rev.review_text.substring(0, 100) + (rev.review_text.length > 100 ? '...' : '') : '(no text)';
+        const preview = rev.review_text
+          ? rev.review_text.substring(0, 100) + (rev.review_text.length > 100 ? '...' : '')
+          : '(no text)';
         await createNotification(rev.tenant_id, {
           type: 'negative_review',
           title: `⭐ ${rev.rating}-Star Google Review`,
@@ -265,6 +331,7 @@ async function checkNegativeReview() {
 
 // ═══════════════════════════════════════════════════════════════
 // 4. RECOVERY FAILURE — "📨 AI recovery converting <5%"
+// Bell only — tenant's scripts/leads quality
 // ═══════════════════════════════════════════════════════════════
 
 async function checkRecoveryFailure() {
@@ -307,6 +374,7 @@ async function checkRecoveryFailure() {
 
 // ═══════════════════════════════════════════════════════════════
 // 5. CALL VOLUME ANOMALY — "📞 Calls dropped/spiked vs 7d avg"
+// Bell + EMAIL Drew on DROPS (could indicate platform outage)
 // ═══════════════════════════════════════════════════════════════
 
 async function checkCallVolumeAnomaly() {
@@ -346,12 +414,18 @@ async function checkCallVolumeAnomaly() {
         }
 
         if (alertType) {
+          const notifTitle = alertType === 'drop' ? `📞 Call Volume Dropped` : `📞 Call Volume Spike`;
           await createNotification(t.id, {
             type: 'call_volume_anomaly',
-            title: alertType === 'drop' ? `📞 Call Volume Dropped` : `📞 Call Volume Spike`,
+            title: notifTitle,
             body,
             data: { anomaly_type: alertType, recent, expected: Math.round(expected), ratio },
           });
+          // Operator email ONLY on drops (could indicate platform outage).
+          // Spikes are usually marketing/spam events — bell is enough.
+          if (alertType === 'drop') {
+            await notifyOperator(t.id, 'call_volume_anomaly', notifTitle, body);
+          }
         }
       } catch (err) {
         console.error(`[MetricAlerts] call_volume_anomaly tenant=${t.id}:`, err.message);
@@ -364,6 +438,7 @@ async function checkCallVolumeAnomaly() {
 
 // ═══════════════════════════════════════════════════════════════
 // 6. CALL DURATION ANOMALY — "⏱️ Avg call duration 2x baseline"
+// Bell + EMAIL Drew (AI may be malfunctioning platform-wide)
 // ═══════════════════════════════════════════════════════════════
 
 async function checkCallDurationAnomaly() {
@@ -397,12 +472,15 @@ async function checkCallDurationAnomaly() {
 
         const multiplier = recentAvg / baselineAvg;
         if (multiplier >= cfg.spike_multiplier) {
+          const durTitle = `⏱️ Avg Call Duration Spiked`;
+          const durBody = `Avg call duration in last ${cfg.lookback_hours}h: ${recentAvg.toFixed(1)} min vs baseline ${baselineAvg.toFixed(1)} min (${multiplier.toFixed(1)}x). AI may be stuck or confused on a new question pattern.`;
           await createNotification(t.id, {
             type: 'call_duration_anomaly',
-            title: `⏱️ Avg Call Duration Spiked`,
-            body: `Avg call duration in last ${cfg.lookback_hours}h: ${recentAvg.toFixed(1)} min vs baseline ${baselineAvg.toFixed(1)} min (${multiplier.toFixed(1)}x). AI may be stuck or confused on a new question pattern.`,
+            title: durTitle,
+            body: durBody,
             data: { recent_avg_min: recentAvg, baseline_avg_min: baselineAvg, multiplier },
           });
+          await notifyOperator(t.id, 'call_duration_anomaly', durTitle, durBody);
         }
       } catch (err) {
         console.error(`[MetricAlerts] call_duration_anomaly tenant=${t.id}:`, err.message);
@@ -414,8 +492,8 @@ async function checkCallDurationAnomaly() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 7. WEBHOOK FAILURES — "🔧 Twilio errors"
-// Uses calls table with status='failed' as proxy (no error log table)
+// 7. WEBHOOK FAILURES — "🔧 Twilio errors piling up"
+// Bell + EMAIL Drew (platform/infrastructure issue)
 // ═══════════════════════════════════════════════════════════════
 
 async function checkWebhookFailures() {
@@ -436,12 +514,15 @@ async function checkWebhookFailures() {
 
         const failed = parseInt(res.rows[0].failed, 10);
         if (failed >= cfg.min_failures) {
+          const whTitle = `🔧 ${failed} Failed Calls in ${cfg.lookback_hours}h`;
+          const whBody = `Twilio reports ${failed} failed or errored calls in the last ${cfg.lookback_hours} hour(s). Could indicate Render/network outage or code bug. Check recent deploy logs.`;
           await createNotification(t.id, {
             type: 'webhook_failures',
-            title: `🔧 ${failed} Failed Calls in ${cfg.lookback_hours}h`,
-            body: `Twilio reports ${failed} failed or errored calls in the last ${cfg.lookback_hours} hour(s). Could indicate Render/network outage or code bug. Check recent deploy logs.`,
+            title: whTitle,
+            body: whBody,
             data: { failed_count: failed, lookback_hours: cfg.lookback_hours },
           });
+          await notifyOperator(t.id, 'webhook_failures', whTitle, whBody);
         }
       } catch (err) {
         console.error(`[MetricAlerts] webhook_failures tenant=${t.id}:`, err.message);
@@ -453,8 +534,9 @@ async function checkWebhookFailures() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 8. OPENAI ERRORS — "🤖 OpenAI API failing"
-// Graceful: uses very short calls as proxy for AI session failures
+// 8. OPENAI ERRORS — "🤖 AI session errors spike"
+// Bell + EMAIL Drew (OpenAI API/account issue)
+// Proxy: ultra-short calls (<6 seconds) suggest AI session crashed
 // ═══════════════════════════════════════════════════════════════
 
 async function checkOpenAIErrors() {
@@ -481,12 +563,15 @@ async function checkOpenAIErrors() {
 
         const errorRate = (ultraShort / total) * 100;
         if (errorRate >= cfg.max_error_rate_pct) {
+          const oaiTitle = `🤖 AI Session Errors Spike`;
+          const oaiBody = `${Math.round(errorRate)}% of recent calls ended in <6 seconds (${ultraShort} of ${total}). Could indicate OpenAI Realtime API errors, quota issue, or account problem.`;
           await createNotification(t.id, {
             type: 'openai_errors',
-            title: `🤖 AI Session Errors Spike`,
-            body: `${Math.round(errorRate)}% of recent calls ended in <6 seconds (${ultraShort} of ${total}). Could indicate OpenAI Realtime API errors, quota issue, or account problem.`,
+            title: oaiTitle,
+            body: oaiBody,
             data: { error_rate_pct: errorRate, ultra_short: ultraShort, total },
           });
+          await notifyOperator(t.id, 'openai_errors', oaiTitle, oaiBody);
         }
       } catch (err) {
         console.error(`[MetricAlerts] openai_errors tenant=${t.id}:`, err.message);
@@ -499,6 +584,7 @@ async function checkOpenAIErrors() {
 
 // ═══════════════════════════════════════════════════════════════
 // 9. BOOKING → WON CONVERSION DROP — "💸 Bookings converting <40%"
+// Bell only — tenant's sales process
 // ═══════════════════════════════════════════════════════════════
 
 async function checkBookingConversionDrop() {
@@ -542,6 +628,7 @@ async function checkBookingConversionDrop() {
 
 // ═══════════════════════════════════════════════════════════════
 // 10. SPAM CALL SURGE — "🚫 Spam call burst"
+// Bell only — AI is handling it correctly, informational
 // ═══════════════════════════════════════════════════════════════
 
 async function checkSpamCallSurge() {
@@ -629,5 +716,7 @@ module.exports = {
   runSixHourlyChecks,
   runHourlyChecks,
   runHalfHourlyChecks,
+  // Helper exposed for manual testing
+  notifyOperator,
   CONFIG,
 };

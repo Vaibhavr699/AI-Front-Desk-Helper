@@ -70,7 +70,7 @@ export default function SmsTerms() {
             color: '#888',
             margin: '0'
           }}>
-            AI Front Desk Helper · Effective Date: March 15, 2026
+            AI Front Desk Helper · Effective Date: April 18, 2026
           </p>
         </div>
 
@@ -217,7 +217,9 @@ export default function SmsTerms() {
               Privacy & Messaging Policy
             </a>
             . We do not sell, rent, or share personal data with third parties 
-            for marketing purposes.
+            for marketing purposes. Mobile phone numbers and SMS opt-in consent 
+            are never shared with third parties or affiliates for marketing or 
+            promotional purposes.
           </p>
         </section>
 

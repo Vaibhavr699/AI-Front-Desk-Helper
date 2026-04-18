@@ -107,4 +107,9 @@ export const MetricHero = ({ revPerCall, callsHandled, confirmedRevenue, lostWit
           <div className={`text-3xl font-bold ${theme.lostColor} leading-none tracking-tight`}>
             ${formatK(lostWithoutAi)}
           </div>
-          <div cl
+          <div className={theme.statLabel}>Lost without AI</div>
+        </div>
+      </div>
+    </div>
+  );
+};

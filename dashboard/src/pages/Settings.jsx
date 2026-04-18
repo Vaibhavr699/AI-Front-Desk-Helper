@@ -258,7 +258,7 @@ function WebhookGuideDrawer({ isOpen, onClose, webhook, onCopy }) {
             >
               Got It
             </button>
-            
+            <a
               href="https://zapier.com/app/dashboard"
               target="_blank"
               rel="noopener noreferrer"
@@ -2369,7 +2369,7 @@ export default function Settings({ tenantId }) {
                     Website Chat Widget
                   </h2>
                   {tenant?.id && (
-                    
+                    <a
                       href="https://www.gladiatorspainting.com/?widget_test=1"
                       target="_blank"
                       rel="noopener noreferrer"

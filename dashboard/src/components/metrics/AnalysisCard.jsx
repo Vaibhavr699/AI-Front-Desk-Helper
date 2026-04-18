@@ -1,12 +1,20 @@
 import React from "react";
 import { AlertCircle, Lightbulb } from "lucide-react";
 
+/**
+ * AnalysisCard — the "Hung-up call analysis" and "Confused call triggers"
+ * tables on the Metrics page. The header icon, footer strip, and insight
+ * copy were all hardcoded orange; those are decorative brand surface, so
+ * they swap to brand tokens. (Rose/emerald badges inside the table rows
+ * stay as-is — those are status meaning colors, not brand.)
+ */
 export const AnalysisCard = ({ title, question, headers, rows, insightText, icon: Icon }) => {
   return (
     <div className="bg-white border border-gray-200/60 rounded-xl shadow-sm overflow-hidden flex flex-col h-full hover:shadow-md transition-shadow">
       <div className="px-6 py-5 border-b border-gray-100 bg-gray-50/20">
         <div className="flex items-center gap-2 mb-1">
-          {Icon && <Icon className="w-4 h-4 text-orange-500" />}
+          {/* Header icon now picks up brand color instead of hardcoded orange. */}
+          {Icon && <Icon className="w-4 h-4 text-brand-500" />}
           <h3 className="text-[11px] font-bold text-gray-900 uppercase tracking-widest">{title}</h3>
         </div>
         <p className="text-sm font-medium text-gray-500">{question}</p>
@@ -42,11 +50,12 @@ export const AnalysisCard = ({ title, question, headers, rows, insightText, icon
           </tbody>
         </table>
       </div>
-
-      <div className="p-4 bg-orange-50/30 border-t border-orange-100/50">
+      {/* Footer insight strip — all four hardcoded orange-* classes swap to brand-*.
+          Opacity + shade choices preserved so visual weight matches the original. */}
+      <div className="p-4 bg-brand-50/30 border-t border-brand-100/50">
         <div className="flex gap-3">
-          <Lightbulb className="w-4 h-4 text-orange-500 shrink-0 mt-0.5" />
-          <p className="text-[11px] font-medium text-orange-800 leading-relaxed italic">
+          <Lightbulb className="w-4 h-4 text-brand-500 shrink-0 mt-0.5" />
+          <p className="text-[11px] font-medium text-brand-800 leading-relaxed italic">
             {insightText}
           </p>
         </div>

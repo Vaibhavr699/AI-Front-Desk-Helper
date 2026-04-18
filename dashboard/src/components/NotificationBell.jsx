@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Bell, Check, X, Calendar, PhoneMissed, TrendingUp, BarChart, UserPlus, PhoneForwarded, ShieldAlert, AlertCircle } from "lucide-react";
+import { Bell, Check, X, Calendar, PhoneMissed, TrendingUp, TrendingDown, BarChart, UserPlus, PhoneForwarded, ShieldAlert, AlertCircle, DollarSign, Flame, Mail, Star, Wrench, Bot, Activity, Clock, Shield } from "lucide-react";
 import { getNotifications, markNotificationRead, markAllNotificationsRead } from "../api";
 import { formatDistanceToNow } from "date-fns";
 
@@ -58,8 +58,9 @@ export default function NotificationBell({ tenantId }) {
     }
   };
 
-  const getIcon = (type) => {
+const getIcon = (type) => {
     switch (type) {
+      // ─── Existing event-driven notifications ───
       case 'booking_created': return <Calendar className="text-emerald-500" size={16} />;
       case 'missed_call': return <PhoneMissed className="text-amber-500" size={16} />;
       case 'follow_up_converted': return <TrendingUp className="text-blue-500" size={16} />;
@@ -69,6 +70,26 @@ export default function NotificationBell({ tenantId }) {
       case 'transfer_requested': return <PhoneForwarded className="text-amber-500" size={16} />;
       case 'spam_detected': return <ShieldAlert className="text-stone-400" size={16} />;
       case 'usage_alert': return <AlertCircle className="text-red-500" size={16} />;
+      case 'revenue_recovered': return <DollarSign className="text-emerald-500" size={16} />;
+      case 'hot_lead': return <Flame className="text-orange-500" size={16} />;
+      case 'estimate_recovery_started': return <Mail className="text-blue-500" size={16} />;
+      case 'new_reviews_pending': return <Star className="text-amber-500" size={16} />;
+
+      // ─── NEW: Metric Alerts (Apr 17, 2026) ───
+      // Critical (red) — business bleeding or platform broken
+      case 'revenue_stall': return <AlertCircle className="text-red-500" size={16} />;
+      case 'negative_review': return <Star className="text-red-500" size={16} />;
+      case 'webhook_failures': return <Wrench className="text-red-500" size={16} />;
+      case 'openai_errors': return <Bot className="text-red-500" size={16} />;
+      // Warning (amber) — investigate soon
+      case 'conversion_drop': return <TrendingDown className="text-amber-500" size={16} />;
+      case 'recovery_failure': return <Mail className="text-amber-500" size={16} />;
+      case 'call_volume_anomaly': return <Activity className="text-amber-500" size={16} />;
+      case 'call_duration_anomaly': return <Clock className="text-amber-500" size={16} />;
+      case 'booking_conversion_drop': return <DollarSign className="text-amber-500" size={16} />;
+      // Info (blue) — AI handling correctly, informational
+      case 'spam_call_surge': return <Shield className="text-blue-500" size={16} />;
+
       default: return <Bell className="text-stone-400" size={16} />;
     }
   };

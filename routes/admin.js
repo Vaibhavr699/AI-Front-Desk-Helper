@@ -71,6 +71,8 @@ router.get("/stats", async (req, res) => {
 
 router.get("/tenants", async (req, res) => {
   try {
+    // brand_mode added Apr 19, 2026 so the admin console can show each
+    // tenant's current branding state (AFDH vs White Label) at a glance.
     const r = await db.query(
       `SELECT
         t.id, t.name, t.slug, t.company_name, t.plan, t.logo_url,
@@ -78,6 +80,7 @@ router.get("/tenants", async (req, res) => {
         t.plan_overrides,
         t.promo_label, t.promo_expires_at, t.promo_notes,
         t.is_suspended, t.suspended_reason,
+        t.brand_mode,
         t.created_at,
         (SELECT COUNT(*) FROM calls WHERE tenant_id = t.id) as total_calls,
         (SELECT COUNT(*) FROM bookings WHERE tenant_id = t.id) as total_bookings,
@@ -188,6 +191,54 @@ router.patch("/tenants/:id/suspend", async (req, res) => {
     res.json({ success: true });
   } catch (e) {
     console.error("[Admin] Suspend update error:", e.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// -------------------- Update Tenant Branding Mode --------------------
+//
+// Added Apr 19, 2026. Dedicated endpoint for flipping a tenant between
+// ai_branded (sees AI Front Desk Helper chrome) and white_label (sees
+// their own logo/colors). Kept separate from /pricing on purpose — this
+// is a feature flag, not a billing action, and shouldn't be coupled to
+// pricing drawer behavior (e.g. Stripe sync).
+//
+// Gated at the router level by requireSuperAdmin (see server.js mount of
+// /api/admin), so only platform admins can flip this. Tenants cannot
+// self-upgrade to white_label.
+router.patch("/tenants/:id/branding", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { brand_mode } = req.body || {};
+
+    // Whitelist matches the DB CHECK constraint added Apr 19.
+    if (!["ai_branded", "white_label"].includes(brand_mode)) {
+      return res.status(400).json({ error: "brand_mode must be ai_branded or white_label" });
+    }
+
+    const result = await db.query(
+      `UPDATE tenants SET
+        brand_mode = $1,
+        updated_at = now()
+       WHERE id = $2
+       RETURNING id, brand_mode`,
+      [brand_mode, id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Tenant not found" });
+    }
+
+    console.log(
+      "[Admin] Tenant brand_mode updated tenantId=%s brand_mode=%s by=%s",
+      id,
+      brand_mode,
+      req.user.email
+    );
+
+    res.json({ success: true, tenant: result.rows[0] });
+  } catch (e) {
+    console.error("[Admin] Branding update error:", e.message);
     res.status(500).json({ error: "Server error" });
   }
 });

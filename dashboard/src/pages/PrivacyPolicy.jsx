@@ -239,7 +239,8 @@ export default function PrivacyPolicy() {
                   className="text-stone-900 underline hover:no-underline"
                 >
                   drew@aifrontdeskhelper.com
-                </a>.
+                </a>
+                .
               </p>
             </section>
 
@@ -331,8 +332,8 @@ export default function PrivacyPolicy() {
                   className="text-stone-900 underline hover:no-underline font-medium"
                 >
                   SMS Terms
-                </a>{" "}
-                and{" "}
+                </a>
+                {" "}and{" "}
                 
                   href="/sms-consent"
                   className="text-stone-900 underline hover:no-underline font-medium"

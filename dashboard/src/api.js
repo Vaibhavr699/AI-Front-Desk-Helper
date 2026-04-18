@@ -379,6 +379,13 @@ export function updateTenantPricing(id, data) {
   });
 }
 
+export function updateTenantBranding(id, brandMode) {
+  return api(`/api/admin/tenants/${id}/branding`, {
+    method: "PATCH",
+    body: JSON.stringify({ brand_mode: brandMode }),
+  });
+}
+
 export function removeTenantPricing(id) {
   return api(`/api/admin/tenants/${id}/pricing`, { method: "DELETE" });
 }

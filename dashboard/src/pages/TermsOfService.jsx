@@ -11,7 +11,7 @@ export default function TermsOfService() {
             <h1 className="font-serif text-3xl sm:text-4xl font-bold text-stone-900 tracking-tight">
               AIFrontDeskHelper Terms of Service
             </h1>
-            <p className="mt-3 text-stone-500 text-sm">Effective Date: March 30, 2026</p>
+            <p className="mt-3 text-stone-500 text-sm">Effective Date: April 18, 2026</p>
             <p className="mt-4 text-stone-600 text-sm leading-relaxed">
               Welcome to AIFrontDeskHelper. These Terms of Service ("Terms") govern your access
               to and use of the AIFrontDeskHelper platform, website, and services. By accessing
@@ -34,16 +34,22 @@ export default function TermsOfService() {
               <p className="mb-4">Services may include:</p>
               <ul className="list-disc pl-6 space-y-2 mb-4">
                 <li>AI website chat automation</li>
-                <li>SMS messaging responses</li>
-                <li>Automated call responses or missed-call follow-ups</li>
-                <li>Facebook or messaging platform automation</li>
-                <li>Lead capture and customer communication tools</li>
-                <li>Appointment scheduling assistance</li>
-                <li>Automated follow-up messaging</li>
+                <li>AI-powered inbound and outbound voice calls</li>
+                <li>SMS messaging and automated reply responses</li>
+                <li>Missed-call follow-up automation</li>
+                <li>Facebook and messaging platform automation</li>
+                <li>Lead capture, nurturing, and customer communication tools</li>
+                <li>Appointment scheduling and booking management</li>
+                <li>Google Business reviews response automation</li>
+                <li>Multi-location and franchise management tools</li>
+                <li>White-label branding for qualifying plans</li>
+                <li>Customer referral and re-engagement messaging sequences</li>
+                <li>Dashboard analytics and reporting</li>
+                <li>CRM integrations and automated follow-up messaging</li>
               </ul>
               <p>
-                The platform is designed to help businesses improve response times and
-                communication with their customers.
+                The platform is designed to help businesses improve response times, capture
+                more revenue from existing leads, and scale communication with their customers.
               </p>
             </section>
 
@@ -147,14 +153,19 @@ export default function TermsOfService() {
 
             <section>
               <h2 className="font-serif text-xl font-semibold text-stone-900 mb-4">
-                5. Customer Communications
+                5. Customer Communications and AI Responses
               </h2>
-              <p>
+              <p className="mb-4">
                 AIFrontDeskHelper uses artificial intelligence to assist in responding to
-                customer inquiries. While the platform strives to provide helpful responses,
-                AI-generated replies may not always fully address complex or unique situations.
+                customer inquiries across voice, SMS, chat, and messaging channels. While the
+                platform strives to provide helpful and accurate responses, AI-generated
+                replies may not always fully address complex or unique situations.
+              </p>
+              <p>
                 Businesses remain responsible for ensuring the accuracy of information provided
-                to customers.
+                to their customers, including pricing, availability, service descriptions, and
+                scheduling details. AIFrontDeskHelper recommends that businesses review AI
+                responses and maintain appropriate human oversight for sensitive interactions.
               </p>
             </section>
 
@@ -217,15 +228,19 @@ export default function TermsOfService() {
               </h2>
               <p>
                 AIFrontDeskHelper may integrate with third-party platforms including messaging
-                providers, hosting services, or communication tools. Use of these services may
-                be subject to the terms and policies of those third parties. AIFrontDeskHelper
-                is not responsible for the policies or actions of third-party service providers.
+                providers (such as Twilio), payment processors (such as Stripe), AI language
+                model providers (such as OpenAI), cloud infrastructure providers, calendar and
+                scheduling services, CRM platforms, and review platforms (such as Google). Use
+                of these integrations may be subject to the terms and policies of those third
+                parties. AIFrontDeskHelper is not responsible for the policies, uptime, pricing
+                changes, or actions of third-party service providers, and reserves the right
+                to change third-party providers at its discretion.
               </p>
             </section>
 
             <section>
               <h2 className="font-serif text-xl font-semibold text-stone-900 mb-4">
-                10. Intellectual Property
+                10. Intellectual Property and Data Ownership
               </h2>
               <p className="mb-4">
                 All software, technology, branding, and platform content associated with
@@ -237,7 +252,52 @@ export default function TermsOfService() {
                 <li>Reverse engineer the platform</li>
                 <li>Reproduce platform features without authorization</li>
               </ul>
-              <p>Businesses retain ownership of their own customer data.</p>
+
+              <h3 className="font-serif text-lg font-semibold text-stone-800 mt-6 mb-3">
+                Customer Data Ownership
+              </h3>
+              <p className="mb-4">
+                Businesses retain full ownership of their own customer data, including contact
+                information, call recordings, message transcripts, appointment records, and
+                CRM entries generated through platform use. AIFrontDeskHelper acts as a data
+                processor for this information and uses it solely to provide the contracted
+                services.
+              </p>
+              <p className="mb-4">
+                Customers may request an export of their business data at any time by
+                contacting support. AIFrontDeskHelper will provide a reasonable export of
+                customer-generated data within 14 business days of a written request.
+              </p>
+
+              <h3 className="font-serif text-lg font-semibold text-stone-800 mt-6 mb-3">
+                AI-Generated Output
+              </h3>
+              <p className="mb-4">
+                AI-generated responses sent on behalf of a business (such as SMS replies, AI
+                voice responses, and review replies) are the business's property to use as they
+                see fit. AIFrontDeskHelper does not claim ownership over communications sent
+                through the platform on behalf of a business.
+              </p>
+
+              <h3 className="font-serif text-lg font-semibold text-stone-800 mt-6 mb-3">
+                Training Data
+              </h3>
+              <p className="mb-4">
+                AIFrontDeskHelper does not use customer conversation data, call recordings, or
+                message transcripts to train foundation AI models. Tenant data is used only
+                to provide the contracted services and, in aggregate and de-identified form,
+                to improve platform performance and reliability.
+              </p>
+
+              <h3 className="font-serif text-lg font-semibold text-stone-800 mt-6 mb-3">
+                Data Retention After Cancellation
+              </h3>
+              <p>
+                Upon cancellation of a business account, customer data will be retained for up
+                to 30 days during which the account holder may request an export. After this
+                30-day window, customer data will be permanently deleted from production
+                systems, subject to any legal retention requirements.
+              </p>
             </section>
 
             <section>
@@ -256,6 +316,7 @@ export default function TermsOfService() {
                 <li>Lost profits or lost business opportunities</li>
                 <li>Communication errors caused by external services</li>
                 <li>Carrier or messaging delivery issues</li>
+                <li>Inaccurate AI-generated responses when a business has failed to maintain appropriate oversight</li>
               </ul>
             </section>
 
@@ -270,6 +331,7 @@ export default function TermsOfService() {
                 <li>Violate these Terms</li>
                 <li>Engage in prohibited messaging practices</li>
                 <li>Use the platform for unlawful purposes</li>
+                <li>Fail to pay subscription or add-on fees when due</li>
               </ul>
               <p>
                 Accounts may also be suspended to protect system security or comply with legal
@@ -312,7 +374,7 @@ export default function TermsOfService() {
               <p className="mb-1"><strong>AIFrontDeskHelper Support</strong></p>
               <p className="mb-1">
                 Email:{" "}
-                <a
+                
                   href="mailto:drew@aifrontdeskhelper.com"
                   className="text-stone-900 underline hover:no-underline"
                 >
@@ -321,7 +383,7 @@ export default function TermsOfService() {
               </p>
               <p>
                 Website:{" "}
-                <a
+                
                   href="https://www.aifrontdeskhelper.com"
                   target="_blank"
                   rel="noopener noreferrer"
@@ -334,7 +396,7 @@ export default function TermsOfService() {
 
             <section>
               <h2 className="font-serif text-xl font-semibold text-stone-900 mb-4">
-                16. Refund Policy
+                16. Billing and Refund Policy
               </h2>
 
               <h3 className="font-serif text-lg font-semibold text-stone-800 mt-4 mb-3">
@@ -343,7 +405,7 @@ export default function TermsOfService() {
               <p className="mb-4">
                 All setup fees are non-refundable. Setup fees cover the cost of account
                 configuration, onboarding, system integration, and initial platform setup. By
-                paying the setup fee and proceeding with onboarding the customer acknowledges
+                paying the setup fee and proceeding with onboarding, the customer acknowledges
                 that setup services have been rendered and no refund will be issued.
               </p>
 
@@ -352,9 +414,50 @@ export default function TermsOfService() {
               </h3>
               <p className="mb-4">
                 Monthly subscription fees are non-refundable once a billing cycle has begun.
-                If a customer cancels their subscription mid-cycle the account will remain
+                If a customer cancels their subscription mid-cycle, the account will remain
                 active until the end of the current billing period. No partial month refunds
                 will be issued.
+              </p>
+
+              <h3 className="font-serif text-lg font-semibold text-stone-800 mt-4 mb-3">
+                Annual Subscription Fees
+              </h3>
+              <p className="mb-4">
+                Annual subscriptions are billed in advance for the full 12-month term. Annual
+                subscriptions may be refunded on a prorated basis within 7 days of purchase,
+                less any setup fees and less a reasonable administrative processing fee. After
+                7 days, annual subscriptions are non-refundable. Cancellation of an annual
+                subscription mid-term will stop auto-renewal at the end of the paid term but
+                does not entitle the customer to a refund of fees already paid for that term.
+              </p>
+
+              <h3 className="font-serif text-lg font-semibold text-stone-800 mt-4 mb-3">
+                Add-On Features
+              </h3>
+              <p className="mb-4">
+                Add-on features (such as Google Reviews automation, Customer Nurturing and
+                Referral messaging, additional outbound calling capacity, or other optional
+                add-ons) are billed separately from the base subscription. Add-ons may be
+                cancelled at any time and will remain active through the end of the current
+                billing cycle. No prorated refunds are issued for unused add-on time within a
+                billing cycle. Some add-ons may include a minimum commitment period as
+                disclosed at the time of purchase.
+              </p>
+
+              <h3 className="font-serif text-lg font-semibold text-stone-800 mt-4 mb-3">
+                Multi-Location and Franchise Billing
+              </h3>
+              <p className="mb-4">
+                For businesses operating multiple locations under a single AIFrontDeskHelper
+                account, additional locations beyond the primary location are billed at a
+                recurring monthly rate equal to 50% of the parent account's effective monthly
+                rate at the time the location is added. Adding a new location does not incur
+                a separate setup fee. Rate changes to existing locations require 30 days
+                written notice. Removal of a location takes effect at the end of the current
+                billing cycle, with no prorated refund issued. Data belonging to a removed
+                location will be retained for 30 days for export purposes before permanent
+                deletion. The primary HQ or parent location cannot be removed while secondary
+                locations remain active.
               </p>
 
               <h3 className="font-serif text-lg font-semibold text-stone-800 mt-4 mb-3">
@@ -362,8 +465,21 @@ export default function TermsOfService() {
               </h3>
               <p className="mb-4">
                 Purchased minute and SMS bundles are non-refundable. Unused bundle minutes
-                roll over for 90 days from the date of purchase. After 90 days unused bundle
+                roll over for 90 days from the date of purchase. After 90 days, unused bundle
                 minutes expire with no refund or credit issued.
+              </p>
+
+              <h3 className="font-serif text-lg font-semibold text-stone-800 mt-4 mb-3">
+                White Label Service
+              </h3>
+              <p className="mb-4">
+                White label branding is included with qualifying plans and available as a
+                paid add-on to other plans. White label service allows a business to present
+                the AIFrontDeskHelper dashboard under their own brand. White label status may
+                be changed by AIFrontDeskHelper based on plan changes, add-on cancellation, or
+                account standing. Upon loss of white label eligibility, the dashboard will
+                revert to standard AIFrontDeskHelper branding at the start of the next billing
+                cycle.
               </p>
 
               <h3 className="font-serif text-lg font-semibold text-stone-800 mt-4 mb-3">
@@ -374,7 +490,7 @@ export default function TermsOfService() {
                 in cases of documented platform failure or service outage that prevents normal
                 platform use for more than 72 consecutive hours. Refund requests must be
                 submitted in writing to{" "}
-                <a
+                
                   href="mailto:drew@aifrontdeskhelper.com"
                   className="text-stone-900 underline hover:no-underline"
                 >
@@ -407,7 +523,7 @@ export default function TermsOfService() {
               <p className="mb-4">
                 Before initiating any formal dispute process, both parties agree to attempt to
                 resolve any dispute informally by contacting AIFrontDeskHelper support at{" "}
-                <a
+                
                   href="mailto:drew@aifrontdeskhelper.com"
                   className="text-stone-900 underline hover:no-underline"
                 >
@@ -460,21 +576,27 @@ export default function TermsOfService() {
             <section className="mt-10 pt-8 border-t border-stone-200">
               <p className="text-stone-500 text-sm">
                 These Terms of Service should be read alongside our{" "}
-                <a
+                
                   href="/privacy-policy"
                   className="text-stone-900 underline hover:no-underline font-medium"
                 >
                   Privacy &amp; Messaging Policy
-                </a>{" "}
-                and{" "}
-                <a
+                </a>
+                ,{" "}
+                
+                  href="/sms-terms"
+                  className="text-stone-900 underline hover:no-underline font-medium"
+                >
+                  SMS Terms
+                </a>
+                , and{" "}
+                
                   href="/cookie-policy"
                   className="text-stone-900 underline hover:no-underline font-medium"
                 >
                   Cookie Policy
                 </a>
-                . Together these three documents govern your use of the AIFrontDeskHelper
-                platform.
+                . Together these documents govern your use of the AIFrontDeskHelper platform.
               </p>
             </section>
 

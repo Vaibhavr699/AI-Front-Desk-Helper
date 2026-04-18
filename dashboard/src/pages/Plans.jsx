@@ -51,9 +51,9 @@ export default function Plans({ tenantId }) {
       .then((res) => setPlans(res.plans || []))
       .catch(() => {
         setPlans([
-          { id: "basic", name: "Basic", tagline: "AI Front Desk Starter", whoItIsFor: "Small ops", voiceMinutes: 500, smsLimit: 500, priceMonthly: 297, setupFee: 197, priceLabel: "/month", includes: ["24/7 Call Answering", "Custom AI Voice Agent", "Basic Call Forwarding"], excludes: ["CRM Integration", "Advanced Analytics"] },
-          { id: "pro",   name: "Pro",   tagline: "AI Booking Assistant",  whoItIsFor: "Growing teams", voiceMinutes: 1200, smsLimit: 1500, priceMonthly: 497, setupFee: 297, priceLabel: "/month", includes: ["Everything in Basic", "Calendar Integration", "Lead Qualifying", "CRM Webhooks"], excludes: ["Follow-Up Sequences"] },
-          { id: "elite", name: "Elite", tagline: "AI Sales & Follow-Up Engine", whoItIsFor: "Scaling companies", voiceMinutes: 3000, smsLimit: 4000, priceMonthly: 997, setupFee: 497, priceLabel: "/month", includes: ["Everything in Pro", "Customer Nurturing Add-on FREE", "Dedicated Account Manager", "Priority Support"], excludes: [] },
+          { id: "basic", name: "Basic", tagline: "AI Front Desk Starter", whoItIsFor: "Small ops", voiceMinutes: 500, smsLimit: 500, priceMonthly: 297, setupFee: 197, priceLabel: "/month", includes: ["24/7 Call Answering", "Custom AI Voice Agent", "Basic Call Forwarding"], excludes: ["CRM Integration", "Advanced Analytics", "White Label Branding"] },
+          { id: "pro",   name: "Pro",   tagline: "AI Booking Assistant",  whoItIsFor: "Growing teams", voiceMinutes: 1200, smsLimit: 1500, priceMonthly: 497, setupFee: 297, priceLabel: "/month", includes: ["Everything in Basic", "Calendar Integration", "Lead Qualifying", "CRM Webhooks"], excludes: ["Follow-Up Sequences", "White Label Branding"] },
+          { id: "elite", name: "Elite", tagline: "AI Sales & Follow-Up Engine", whoItIsFor: "Scaling companies", voiceMinutes: 3000, smsLimit: 4000, priceMonthly: 997, setupFee: 497, priceLabel: "/month", includes: ["Everything in Pro", "Customer Nurturing Add-on FREE", "White Label Branding", "Dedicated Account Manager", "Priority Support"], excludes: [] },
         ]);
       })
       .finally(() => setLoading(false));
@@ -332,7 +332,7 @@ export default function Plans({ tenantId }) {
                 </div>
 
                 <p className="text-sm text-stone-500 min-h-[3.5rem] mb-5 leading-relaxed">
-                  {plan.tagline || (plan.id === "basic" ? "Essential AI receptionist to handle missed calls." : plan.id === "pro" ? "Growth engine to qualify leads and book appointments." : "Complete autonomous sales engine with nurturing.")}
+                  {plan.tagline || (plan.id === "basic" ? "Essential AI receptionist to handle missed calls." : plan.id === "pro" ? "Growth engine to qualify leads and book appointments." : "Complete autonomous sales engine with nurturing and white-label branding.")}
                 </p>
 
                 {tenant?.promo_label && (hasMonthlyOverride || hasSetupOverride) && (
@@ -426,14 +426,17 @@ export default function Plans({ tenantId }) {
                   {isPlanElite ? "Everything in Pro, plus:" : isPro ? "Everything in Basic, plus:" : "Includes:"}
                 </p>
                 <ul className="space-y-3 text-sm">
-                  {(plan.includes || ["24/7 AI Receptionist", "Call Transferring", "SMS Responses", "Web Dashboard"]).map((item, i) => (
-                    <li key={i} className="flex gap-2.5 text-stone-600 leading-snug">
-                      <div className="shrink-0 mt-0.5 bg-emerald-100 text-emerald-600 w-5 h-5 rounded-full flex items-center justify-center">
-                        <Check className="w-3 h-3" strokeWidth={3} />
-                      </div>
-                      <span className={item.includes("Customer Nurturing") ? "font-bold text-stone-900" : ""}>{item}</span>
-                    </li>
-                  ))}
+                  {(plan.includes || ["24/7 AI Receptionist", "Call Transferring", "SMS Responses", "Web Dashboard"]).map((item, i) => {
+                    const isHighlight = item.includes("Customer Nurturing") || item.includes("White Label");
+                    return (
+                      <li key={i} className="flex gap-2.5 text-stone-600 leading-snug">
+                        <div className="shrink-0 mt-0.5 bg-emerald-100 text-emerald-600 w-5 h-5 rounded-full flex items-center justify-center">
+                          <Check className="w-3 h-3" strokeWidth={3} />
+                        </div>
+                        <span className={isHighlight ? "font-bold text-stone-900" : ""}>{item}</span>
+                      </li>
+                    );
+                  })}
                   {(plan.excludes || []).map((item, i) => (
                     <li key={`ex-${i}`} className="flex gap-2.5 text-stone-400 leading-snug opacity-75">
                       <div className="shrink-0 mt-0.5 text-stone-300 w-5 h-5 rounded-full flex items-center justify-center">

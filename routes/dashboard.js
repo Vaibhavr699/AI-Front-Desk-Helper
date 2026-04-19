@@ -14,6 +14,7 @@ const emailService = require("../services/email");
 const nurturingService = require("../services/nurturing");
 const notificationsService = require("../services/notifications");
 const { logAction } = require("../lib/auditLogger");
+ const locationBilling = require("../lib/locationBilling");
 const {
   sendLocationAddedEmail,
   sendFranchiseeInviteEmail,

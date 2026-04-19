@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { useNavigate, useOutletContext } from "react-router-dom";
 import { getTenant } from "../api";
 import { listLocations } from "../api/locations";
 import { useToast } from "../components/ui/Toast";
@@ -12,10 +13,18 @@ import ResendInviteDialog from "../components/locations/ResendInviteDialog";
  * Locations roster page.
  *
  * F4 ✓ — Edit, Remove, Resend Invite all wired.
- * Only F5 left (public franchisee invite acceptance page).
+ * Apr 20, 2026 — Added View + Settings wiring: clicking View switches the
+ * active tenant context via onTenantChange (same mechanism LocationSwitcher
+ * uses) then navigates to /dashboard. Settings does the same but navigates
+ * to /settings. Brings the "jump into any location from the roster" UX
+ * promised by the Apr 19 night decision to go with Option A (two pages,
+ * Locations = operational hub including access).
  */
 export default function Locations({ tenantId }) {
   const toast = useToast();
+  const navigate = useNavigate();
+  const { onTenantChange } = useOutletContext() || {};
+
   const [parentTenant, setParentTenant] = useState(null);
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -76,6 +85,33 @@ export default function Locations({ tenantId }) {
   const handleResent = () => {
     toast?.show?.("Invite resent", { type: "success" });
     load();
+  };
+
+  // View: switch tenant context, then navigate to the location's dashboard.
+  // Uses the same onTenantChange prop that LocationSwitcher uses, so the
+  // header dropdown stays in sync. Navigate happens on next tick so the
+  // state update is queued before routing.
+  const handleView = (loc) => {
+    if (!loc?.id) return;
+    if (loc.location_removed_at) {
+      toast?.show?.("Can't view a removed location", { type: "warning" });
+      return;
+    }
+    if (typeof onTenantChange === "function") {
+      onTenantChange(loc.id);
+    }
+    navigate("/dashboard");
+  };
+
+  // Settings: same pattern as View, but navigates to /settings. Available
+  // on all three states (active, pending, removed) so superadmins can audit
+  // archived locations before the 30-day retention clock runs out.
+  const handleSettings = (loc) => {
+    if (!loc?.id) return;
+    if (typeof onTenantChange === "function") {
+      onTenantChange(loc.id);
+    }
+    navigate("/settings");
   };
 
   // ── Rollup view ────────────────────────────────────────────────────────
@@ -224,6 +260,8 @@ export default function Locations({ tenantId }) {
                 onEdit={handleEdit}
                 onRemove={handleRemove}
                 onResendInvite={handleResendInvite}
+                onView={handleView}
+                onSettings={handleSettings}
               />
             ))}
           </div>

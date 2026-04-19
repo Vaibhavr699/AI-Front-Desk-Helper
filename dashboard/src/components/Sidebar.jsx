@@ -21,6 +21,22 @@ const baseNavItems = [
   { to: "/reviews",    label: "Reviews",   icon: ReviewsIcon },
 ];
 
+// ── Plan + parent-mode helpers (mirrors lib/plans.js canAddLocations) ─────
+// Locations nav item is visible only when this returns true. Matches the
+// backend gate enforced by routes/dashboard.js — Pro+ for operating_hq,
+// any HQ tier (hq_starter/hq_growth/hq_enterprise) for rollup_only.
+const HQ_PLAN_IDS = ["hq_starter", "hq_growth", "hq_enterprise"];
+const MULTI_LOCATION_PLAN_IDS = ["pro", "elite", ...HQ_PLAN_IDS];
+
+function canTenantAddLocations(activeTenant) {
+  if (!activeTenant) return false;
+  // rollup_only parents (franchise brand corporate) always can — they exist for this purpose
+  if (activeTenant.parent_mode === "rollup_only") return true;
+  // operating_hq (default) requires Pro+ plan
+  const planId = (activeTenant.plan || "basic").toLowerCase();
+  return MULTI_LOCATION_PLAN_IDS.includes(planId);
+}
+
 // ── Role-based nav builder ─────────────────────────────────────────────────
 function getNavItems(activeTenant) {
   const user = getUser();
@@ -54,7 +70,15 @@ function getNavItems(activeTenant) {
     user?.tenant_business_type === "parent" ||
     activeTenant?.business_type === "parent";
 
+  // Locations nav: gated by plan + parent_mode (Pro+ for operating_hq, any HQ tier for rollup_only)
+  // Superadmin always sees it for visibility into the system, even on Basic tenants.
+  const showLocations = canTenantAddLocations(activeTenant) || user?.is_super_admin;
+
   const items = [...baseNavItems];
+
+  if (showLocations) {
+    items.push({ to: "/locations", label: "Locations", icon: LocationsIcon });
+  }
 
   if (isHQ) {
     items.push({ to: "/team",     label: "Team",       icon: TeamIcon       });
@@ -116,6 +140,15 @@ function ReviewsIcon({ className }) {
   return (
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+    </svg>
+  );
+}
+
+// ── Locations icon — building cluster (matches Heroicons style) ───────────
+function LocationsIcon({ className }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21V9l4-3 4 3v12M3 21h8M3 21H1m10 0h2m0 0V11l5-3 5 3v10m-10 0h10m0 0h2M9 9h.01M7 13h.01M9 17h.01M19 13h.01M19 17h.01" />
     </svg>
   );
 }

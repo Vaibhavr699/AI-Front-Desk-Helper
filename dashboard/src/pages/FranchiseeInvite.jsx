@@ -45,7 +45,7 @@ export default function FranchiseeInvite() {
 
   const [loading, setLoading] = useState(true);
   const [invite, setInvite] = useState(null);
-  const [errorState, setErrorState] = useState(null); // { code, message }
+  const [errorState, setErrorState] = useState(null);
 
   const [selectedPlan, setSelectedPlan] = useState("pro");
   const [interval, setInterval] = useState("monthly");
@@ -83,7 +83,6 @@ export default function FranchiseeInvite() {
         }),
       });
       if (data?.checkout_url) {
-        // Hard redirect to Stripe
         window.location.href = data.checkout_url;
       } else {
         throw new Error("No checkout URL returned");
@@ -95,7 +94,6 @@ export default function FranchiseeInvite() {
     }
   };
 
-  // ── Loading state ─────────────────────────────────────────────────────
   if (loading) {
     return (
       <Shell>
@@ -110,7 +108,6 @@ export default function FranchiseeInvite() {
     );
   }
 
-  // ── Error states ──────────────────────────────────────────────────────
   if (errorState) {
     return <ErrorView code={errorState.code} message={errorState.message} />;
   }
@@ -119,14 +116,13 @@ export default function FranchiseeInvite() {
     return <ErrorView code="UNKNOWN" message="Couldn't load invite" />;
   }
 
-  // ── Loaded ────────────────────────────────────────────────────────────
   const { franchisor, location, plans } = invite;
   const brandColor = franchisor?.brand_color || "#1c1917";
   const accentColor = franchisor?.accent_color || brandColor;
+  const supportEmail = franchisor?.support_email || "";
 
   return (
     <Shell franchisor={franchisor}>
-      {/* Header */}
       <div className="text-center mb-10">
         <div className="text-xs font-bold text-stone-500 uppercase tracking-widest mb-3">
           You're invited to join
@@ -139,28 +135,18 @@ export default function FranchiseeInvite() {
         </p>
       </div>
 
-      {/* What you're getting */}
       <div className="rounded-2xl bg-stone-50 border border-stone-200 p-6 mb-8">
         <div className="text-xs font-bold text-stone-700 uppercase tracking-wider mb-4">
           What you're getting
         </div>
         <div className="space-y-3">
-          <Feature
-            text="Your own AI front desk that answers calls 24/7, captures leads, and books estimates"
-          />
-          <Feature
-            text="Your own dashboard with calls, leads, bookings, and metrics for your location"
-          />
-          <Feature
-            text={`Branded under ${franchisor?.company_name || franchisor?.name} — your customers see consistent franchise identity`}
-          />
-          <Feature
-            text="You're billed directly — your franchisor doesn't pay for or have access to your subscription"
-          />
+          <Feature text="Your own AI front desk that answers calls 24/7, captures leads, and books estimates" />
+          <Feature text="Your own dashboard with calls, leads, bookings, and metrics for your location" />
+          <Feature text={`Branded under ${franchisor?.company_name || franchisor?.name} — your customers see consistent franchise identity`} />
+          <Feature text="You're billed directly — your franchisor doesn't pay for or have access to your subscription" />
         </div>
       </div>
 
-      {/* Plan picker */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -192,7 +178,6 @@ export default function FranchiseeInvite() {
         </div>
       )}
 
-      {/* CTA */}
       <button
         type="button"
         onClick={handleCheckout}
@@ -213,22 +198,15 @@ export default function FranchiseeInvite() {
         Secure checkout powered by Stripe · Cancel anytime
       </p>
 
-      {franchisor?.support_email && (
+      {supportEmail && (
         <p className="text-center text-xs text-stone-400 mt-6">
-          Questions? Contact{" "}
-          
-            href={`mailto:${franchisor.support_email}`}
-            className="font-semibold text-stone-600 hover:text-stone-900"
-          >
-            {franchisor.support_email}
-          </a>
+          Questions? Contact <a href={`mailto:${supportEmail}`} className="font-semibold text-stone-600 hover:text-stone-900">{supportEmail}</a>
         </p>
       )}
     </Shell>
   );
 }
 
-// ── Layout shell with optional franchisor branding bar ─────────────────────
 function Shell({ children, franchisor }) {
   return (
     <div className="min-h-screen bg-stone-50">
@@ -358,7 +336,6 @@ function PlanCard({ plan, interval, selected, onSelect, accentColor }) {
   );
 }
 
-// ── Error views (mapped per error code from backend) ───────────────────────
 function ErrorView({ code, message }) {
   const config =
     {

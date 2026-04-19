@@ -5,8 +5,7 @@ import { DashboardLayout } from "./layouts";
 import SmsTerms from "./pages/SmsTerms";
 import SmsConsent from "./pages/SmsConsent";
 import Contact from "./pages/Contact";
-import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, Outbound, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy, AddLocation, Team, Locations } from "./pages";
-import MetricsPage from "./pages/MetricsPage";
+import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, Outbound, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy, AddLocation, Team, Locations, FranchiseeInvite, Welcome } from "./pages";
 import { ToastProvider } from "./components/ui/Toast";
 import "./App.css";
 import Reviews from "./pages/Reviews";
@@ -86,6 +85,8 @@ export default function App() {
           <Route path="/login" element={<LoginRoute />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/franchisee-invite/:token" element={<FranchiseeInvite />} />
+          <Route path="/welcome" element={<Welcome />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/sms-terms" element={<SmsTerms />} />
           <Route path="/sms-consent" element={<SmsConsent />} />

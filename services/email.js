@@ -17,6 +17,10 @@ if (!resend) {
 // Home page contact form and website chat notifications go here (sent via Resend).
 const CONTACT_EMAIL = process.env.CONTACT_EMAIL || "drew@aifrontdeskhelper.com";
 
+// Default fallback support address used in location-billing emails when a
+// tenant doesn't have a tenant.support_email configured.
+const SUPPORT_EMAIL_DEFAULT = "support@aifrontdeskhelper.com";
+
 async function sendEmail({ to, subject, html, text, bcc, replyTo }) {
   if (!resend) {
     console.warn("[Email] Not sending – Resend not configured (check RESEND_API_KEY and EMAIL_FROM).");
@@ -566,6 +570,353 @@ async function sendUsageAlertEmail(email, tenantName, percent, limits, current) 
   });
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// LOCATION BILLING EMAILS (Apr 19, 2026)
+// Sent on add/remove/rate-change events for child locations under a parent
+// tenant. All four go to the parent's primary user + any users with role
+// in ('owner', 'admin') on the parent. For franchisee_invite emails, sent
+// to the email address provided by the franchisor when they invited.
+// ═════════════════════════════════════════════════════════════════════════
+
+/** Format cents → human "$X,XXX.XX". Used in all 4 location billing emails. */
+function formatMoneyCents(cents) {
+  if (cents == null || isNaN(cents)) return "$0.00";
+  const dollars = cents / 100;
+  return `$${dollars.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** Format ISO date → "April 28, 2026". Used in all 4 location billing emails. */
+function formatLocationBillingDate(isoString) {
+  if (!isoString) return "";
+  try {
+    return new Date(isoString).toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Get all email recipients for a parent tenant — owners and admins. Returns
+ * an array of email strings (deduped, lowercased). If empty, caller should
+ * skip sending and log a warning.
+ */
+async function getParentBillingRecipients(parentTenantId) {
+  try {
+    const r = await db.query(
+      `SELECT DISTINCT LOWER(email) AS email
+         FROM dashboard_users
+        WHERE tenant_id = $1
+          AND role IN ('owner', 'admin')
+          AND email IS NOT NULL
+          AND email != ''`,
+      [parentTenantId]
+    );
+    return r.rows.map((row) => row.email);
+  } catch (err) {
+    console.error("[Email] getParentBillingRecipients failed for tenant %s:", parentTenantId, err.message);
+    return [];
+  }
+}
+
+/**
+ * 1. LOCATION ADDED — sent when a parent_pays location is successfully
+ * added to the parent's subscription.
+ *
+ * @param {object} params
+ * @param {object} params.parentTenant - Parent row
+ * @param {object} params.newLocation - Newly created child row
+ * @param {number} params.proratedTodayCents - Charged immediately
+ * @param {number} params.locationRateCents - Recurring monthly cost
+ * @param {string} params.nextChargeDate - ISO string of next full charge
+ * @param {number} params.newRecurringMonthlyCents - Parent's NEW total /mo
+ */
+async function sendLocationAddedEmail({
+  parentTenant,
+  newLocation,
+  proratedTodayCents,
+  locationRateCents,
+  nextChargeDate,
+  newRecurringMonthlyCents,
+}) {
+  const recipients = await getParentBillingRecipients(parentTenant.id);
+  if (recipients.length === 0) {
+    console.warn("[Email] sendLocationAddedEmail: no recipients for parent %s", parentTenant.id);
+    return { ok: false, reason: "no_recipients" };
+  }
+
+  const parentName = parentTenant.company_name || parentTenant.name || "Your account";
+  const locationName = newLocation.company_name || newLocation.name || "New Location";
+  const supportEmail = parentTenant.support_email || SUPPORT_EMAIL_DEFAULT;
+
+  const subject = `New location added: ${locationName}`;
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 580px; margin: 0 auto; color: #1a1a1a;">
+      <h2 style="font-size: 20px; font-weight: 700; margin-bottom: 8px;">New location added to your account</h2>
+      <p style="font-size: 14px; line-height: 1.6; color: #555;">
+        <strong>${escapeHtml(locationName)}</strong> has been added under ${escapeHtml(parentName)}.
+        Here's the billing summary for your records.
+      </p>
+
+      <table style="width: 100%; border-collapse: collapse; margin: 24px 0; background: #f8f7f2; border-radius: 12px; overflow: hidden;">
+        <tr>
+          <td style="padding: 14px 20px; font-size: 13px; color: #555; border-bottom: 1px solid #e8e6dc;">Location</td>
+          <td style="padding: 14px 20px; font-size: 14px; font-weight: 600; text-align: right; border-bottom: 1px solid #e8e6dc;">${escapeHtml(locationName)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 14px 20px; font-size: 13px; color: #555; border-bottom: 1px solid #e8e6dc;">Charged today (prorated)</td>
+          <td style="padding: 14px 20px; font-size: 14px; font-weight: 600; text-align: right; border-bottom: 1px solid #e8e6dc;">${formatMoneyCents(proratedTodayCents)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 14px 20px; font-size: 13px; color: #555; border-bottom: 1px solid #e8e6dc;">Recurring location cost</td>
+          <td style="padding: 14px 20px; font-size: 14px; font-weight: 600; text-align: right; border-bottom: 1px solid #e8e6dc;">${formatMoneyCents(locationRateCents)} /mo</td>
+        </tr>
+        <tr>
+          <td style="padding: 14px 20px; font-size: 13px; color: #555; border-bottom: 1px solid #e8e6dc;">Next charge date</td>
+          <td style="padding: 14px 20px; font-size: 14px; font-weight: 600; text-align: right; border-bottom: 1px solid #e8e6dc;">${formatLocationBillingDate(nextChargeDate)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 14px 20px; font-size: 13px; color: #555;">Your new total recurring</td>
+          <td style="padding: 14px 20px; font-size: 14px; font-weight: 700; text-align: right; color: #1a1a1a;">${formatMoneyCents(newRecurringMonthlyCents)} /mo</td>
+        </tr>
+      </table>
+
+      <p style="font-size: 13px; line-height: 1.6; color: #777;">
+        The new location is now active. Sign in to configure its phone number, AI behavior, business hours, and team.
+      </p>
+      <p style="font-size: 13px; line-height: 1.6; color: #777;">
+        Questions about your bill? Reply to this email or contact ${escapeHtml(supportEmail)}.
+      </p>
+    </div>
+  `;
+
+  const result = await Promise.all(
+    recipients.map((email) => sendEmail({ to: email, subject, html }))
+  );
+  const okCount = result.filter((r) => r.ok).length;
+  console.log("[Email] sendLocationAddedEmail parent=%s child=%s sent=%d/%d", parentTenant.id, newLocation.id, okCount, recipients.length);
+  return { ok: okCount > 0, sent: okCount, total: recipients.length };
+}
+
+/**
+ * 2. FRANCHISEE INVITE — sent to the franchisee's email when a rollup_only
+ * HQ adds a self_pays location. Contains the invite link with token.
+ *
+ * @param {object} params
+ * @param {object} params.parentTenant - Franchisor HQ row
+ * @param {object} params.newLocation - Pending franchisee tenant row
+ * @param {string} params.franchiseeEmail - Where to send the invite
+ * @param {string} params.inviteUrl - Full URL like https://app.aifrontdeskhelper.com/franchisee-invite/{token}
+ * @param {string} params.expiresAt - ISO string when invite expires
+ */
+async function sendFranchiseeInviteEmail({
+  parentTenant,
+  newLocation,
+  franchiseeEmail,
+  inviteUrl,
+  expiresAt,
+}) {
+  if (!franchiseeEmail) {
+    console.warn("[Email] sendFranchiseeInviteEmail: no franchiseeEmail provided");
+    return { ok: false, reason: "no_recipient" };
+  }
+
+  const parentName = parentTenant.company_name || parentTenant.name || "Your franchisor";
+  const locationName = newLocation.company_name || newLocation.name || "your location";
+  const supportEmail = parentTenant.support_email || SUPPORT_EMAIL_DEFAULT;
+
+  const subject = `${parentName} invited you to set up your AI Front Desk`;
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 580px; margin: 0 auto; color: #1a1a1a;">
+      <h2 style="font-size: 22px; font-weight: 700; margin-bottom: 8px;">You're invited 👋</h2>
+      <p style="font-size: 15px; line-height: 1.6; color: #333;">
+        <strong>${escapeHtml(parentName)}</strong> has set up an AI Front Desk account for <strong>${escapeHtml(locationName)}</strong>.
+        Click the button below to choose your plan and complete setup. You'll be billed directly — your franchisor does not pay for your subscription.
+      </p>
+
+      <div style="text-align: center; margin: 32px 0;">
+        <a href="${escapeHtml(inviteUrl)}" style="display: inline-block; padding: 14px 32px; background: #1a1a1a; color: #ffffff; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 14px;">
+          Set Up My Account
+        </a>
+      </div>
+
+      <p style="font-size: 13px; line-height: 1.6; color: #777;">
+        This invite expires on <strong>${formatLocationBillingDate(expiresAt)}</strong>. If you need a fresh link, ask your franchisor to resend.
+      </p>
+      <p style="font-size: 13px; line-height: 1.6; color: #777;">
+        Once you complete checkout, your dashboard will be live immediately. You'll get your own login, your own phone number, and your own AI configuration — all branded under ${escapeHtml(parentName)}.
+      </p>
+      <p style="font-size: 13px; line-height: 1.6; color: #777; margin-top: 24px;">
+        Questions? Contact ${escapeHtml(supportEmail)}.
+      </p>
+    </div>
+  `;
+
+  const result = await sendEmail({ to: franchiseeEmail, subject, html });
+  console.log("[Email] sendFranchiseeInviteEmail parent=%s child=%s to=%s ok=%s", parentTenant.id, newLocation.id, franchiseeEmail, result.ok);
+  return result;
+}
+
+/**
+ * 3. LOCATION REMOVAL CONFIRMATION — sent when a child location is removed
+ * from a parent. Per Apr 19 spec: immediate deactivation, no refund, 30-day
+ * data retention before hard delete.
+ *
+ * @param {object} params
+ * @param {object} params.parentTenant
+ * @param {object} params.removedLocation
+ * @param {string} params.dataRetentionUntil - ISO string when data is hard-deleted
+ */
+async function sendLocationRemovalConfirmationEmail({
+  parentTenant,
+  removedLocation,
+  dataRetentionUntil,
+}) {
+  const recipients = await getParentBillingRecipients(parentTenant.id);
+  if (recipients.length === 0) {
+    console.warn("[Email] sendLocationRemovalConfirmationEmail: no recipients for parent %s", parentTenant.id);
+    return { ok: false, reason: "no_recipients" };
+  }
+
+  const parentName = parentTenant.company_name || parentTenant.name || "Your account";
+  const locationName = removedLocation.company_name || removedLocation.name || "Location";
+  const supportEmail = parentTenant.support_email || SUPPORT_EMAIL_DEFAULT;
+
+  const subject = `Location removed: ${locationName}`;
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 580px; margin: 0 auto; color: #1a1a1a;">
+      <h2 style="font-size: 20px; font-weight: 700; margin-bottom: 8px;">Location removed</h2>
+      <p style="font-size: 14px; line-height: 1.6; color: #555;">
+        <strong>${escapeHtml(locationName)}</strong> has been removed from ${escapeHtml(parentName)}. Here's what happens next.
+      </p>
+
+      <table style="width: 100%; border-collapse: collapse; margin: 24px 0; background: #fef9f4; border-radius: 12px; overflow: hidden; border: 1px solid #f5e6d3;">
+        <tr>
+          <td style="padding: 14px 20px; font-size: 13px; color: #555; border-bottom: 1px solid #f5e6d3;">Status</td>
+          <td style="padding: 14px 20px; font-size: 14px; font-weight: 600; text-align: right; border-bottom: 1px solid #f5e6d3; color: #c2410c;">Deactivated immediately</td>
+        </tr>
+        <tr>
+          <td style="padding: 14px 20px; font-size: 13px; color: #555; border-bottom: 1px solid #f5e6d3;">Refund for remaining period</td>
+          <td style="padding: 14px 20px; font-size: 14px; font-weight: 600; text-align: right; border-bottom: 1px solid #f5e6d3;">None — billed period stays active</td>
+        </tr>
+        <tr>
+          <td style="padding: 14px 20px; font-size: 13px; color: #555;">Data retention until</td>
+          <td style="padding: 14px 20px; font-size: 14px; font-weight: 700; text-align: right;">${formatLocationBillingDate(dataRetentionUntil)}</td>
+        </tr>
+      </table>
+
+      <p style="font-size: 13px; line-height: 1.6; color: #777;">
+        Calls, leads, bookings, and message history for this location are retained for 30 days, then permanently deleted. If you need to export the data, contact us before ${formatLocationBillingDate(dataRetentionUntil)}.
+      </p>
+      <p style="font-size: 13px; line-height: 1.6; color: #777;">
+        If this removal was a mistake, contact ${escapeHtml(supportEmail)} immediately — we can restore the location at any time during the 30-day retention window.
+      </p>
+    </div>
+  `;
+
+  const result = await Promise.all(
+    recipients.map((email) => sendEmail({ to: email, subject, html }))
+  );
+  const okCount = result.filter((r) => r.ok).length;
+  console.log("[Email] sendLocationRemovalConfirmationEmail parent=%s child=%s sent=%d/%d", parentTenant.id, removedLocation.id, okCount, recipients.length);
+  return { ok: okCount > 0, sent: okCount, total: recipients.length };
+}
+
+/**
+ * 4. LOCATION RATE CHANGED — sent when a superadmin or plan upgrade changes
+ * the per-location rate. Per Apr 19 spec, increases require 30-day notice;
+ * decreases (rare) take effect on next bill cycle. Caller computes the
+ * effective date and passes it in.
+ *
+ * @param {object} params
+ * @param {object} params.parentTenant
+ * @param {object} params.location
+ * @param {number} params.oldRateCents - previous monthly rate
+ * @param {number} params.newRateCents - new monthly rate
+ * @param {string} params.effectiveDate - ISO string when new rate kicks in
+ * @param {string} params.reason - "plan_upgrade" | "admin_override" | "annual_renewal"
+ */
+async function sendLocationRateChangeNoticeEmail({
+  parentTenant,
+  location,
+  oldRateCents,
+  newRateCents,
+  effectiveDate,
+  reason,
+}) {
+  const recipients = await getParentBillingRecipients(parentTenant.id);
+  if (recipients.length === 0) {
+    console.warn("[Email] sendLocationRateChangeNoticeEmail: no recipients for parent %s", parentTenant.id);
+    return { ok: false, reason: "no_recipients" };
+  }
+
+  const parentName = parentTenant.company_name || parentTenant.name || "Your account";
+  const locationName = location.company_name || location.name || "Location";
+  const supportEmail = parentTenant.support_email || SUPPORT_EMAIL_DEFAULT;
+  const isIncrease = newRateCents > oldRateCents;
+  const reasonLabel = ({
+    plan_upgrade: "Your plan was upgraded, which changes the per-location rate.",
+    admin_override: "Your account administrator updated the rate for this location.",
+    annual_renewal: "Your annual subscription is renewing at a new rate.",
+  })[reason] || "Your per-location rate has been updated.";
+
+  const subject = isIncrease
+    ? `Notice: rate change for ${locationName}`
+    : `Rate decrease confirmed for ${locationName}`;
+  const accentColor = isIncrease ? "#c2410c" : "#15803d";
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 580px; margin: 0 auto; color: #1a1a1a;">
+      <h2 style="font-size: 20px; font-weight: 700; margin-bottom: 8px;">Per-location rate ${isIncrease ? "change" : "decrease"} for ${escapeHtml(locationName)}</h2>
+      <p style="font-size: 14px; line-height: 1.6; color: #555;">
+        ${escapeHtml(reasonLabel)} Here are the details for ${escapeHtml(parentName)}.
+      </p>
+
+      <table style="width: 100%; border-collapse: collapse; margin: 24px 0; background: #f8f7f2; border-radius: 12px; overflow: hidden;">
+        <tr>
+          <td style="padding: 14px 20px; font-size: 13px; color: #555; border-bottom: 1px solid #e8e6dc;">Location</td>
+          <td style="padding: 14px 20px; font-size: 14px; font-weight: 600; text-align: right; border-bottom: 1px solid #e8e6dc;">${escapeHtml(locationName)}</td>
+        </tr>
+        <tr>
+          <td style="padding: 14px 20px; font-size: 13px; color: #555; border-bottom: 1px solid #e8e6dc;">Previous rate</td>
+          <td style="padding: 14px 20px; font-size: 14px; font-weight: 600; text-align: right; border-bottom: 1px solid #e8e6dc; text-decoration: line-through; color: #888;">${formatMoneyCents(oldRateCents)} /mo</td>
+        </tr>
+        <tr>
+          <td style="padding: 14px 20px; font-size: 13px; color: #555; border-bottom: 1px solid #e8e6dc;">New rate</td>
+          <td style="padding: 14px 20px; font-size: 14px; font-weight: 700; text-align: right; border-bottom: 1px solid #e8e6dc; color: ${accentColor};">${formatMoneyCents(newRateCents)} /mo</td>
+        </tr>
+        <tr>
+          <td style="padding: 14px 20px; font-size: 13px; color: #555;">Effective date</td>
+          <td style="padding: 14px 20px; font-size: 14px; font-weight: 700; text-align: right;">${formatLocationBillingDate(effectiveDate)}</td>
+        </tr>
+      </table>
+
+      ${isIncrease ? `
+        <p style="font-size: 13px; line-height: 1.6; color: #777;">
+          Per our terms, rate increases take effect at least 30 days from notice. If you'd prefer to remove this location before the new rate kicks in, you can do so from the Locations page in your dashboard.
+        </p>
+      ` : `
+        <p style="font-size: 13px; line-height: 1.6; color: #777;">
+          The new lower rate takes effect on your next billing cycle. No action needed.
+        </p>
+      `}
+      <p style="font-size: 13px; line-height: 1.6; color: #777;">
+        Questions? Contact ${escapeHtml(supportEmail)}.
+      </p>
+    </div>
+  `;
+
+  const result = await Promise.all(
+    recipients.map((email) => sendEmail({ to: email, subject, html }))
+  );
+  const okCount = result.filter((r) => r.ok).length;
+  console.log("[Email] sendLocationRateChangeNoticeEmail parent=%s child=%s old=%d new=%d sent=%d/%d", parentTenant.id, location.id, oldRateCents, newRateCents, okCount, recipients.length);
+  return { ok: okCount > 0, sent: okCount, total: recipients.length };
+}
+
 function escapeHtml(s) {
   if (s == null) return "";
   return String(s)
@@ -593,4 +944,8 @@ module.exports = {
   sendAdminInvitationEmail,
   sendTeamInviteEmail,
   sendUsageAlertEmail,
+  sendLocationAddedEmail,
+  sendFranchiseeInviteEmail,
+  sendLocationRemovalConfirmationEmail,
+  sendLocationRateChangeNoticeEmail,
 };

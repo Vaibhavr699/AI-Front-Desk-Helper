@@ -2487,6 +2487,27 @@ router.get("/tenants/:parentId/locations", async (req, res) => {
     const enriched = children.map((child) => ({
       ...child,
       location_cost_monthly_cents: locationBilling.getChildLocationCostCents(parent, child, "monthly"),
-      location_cost_annu
-        
+      location_cost_annual_cents:
+        locationBilling.getChildLocationCostCents(parent, child, "annual") * 12,
+    }));
+
+    res.json({
+      ok: true,
+      parent: {
+        id: parent.id,
+        name: parent.name,
+        company_name: parent.company_name,
+        parent_mode: parent.parent_mode,
+        plan: parent.plan,
+      },
+      locations: enriched,
+      count: enriched.length,
+      location_limit: null,
+    });
+  } catch (e) {
+    console.error("[Locations] List error:", e);
+    res.status(e.statusCode || 500).json({ error: e.message || "Server error" });
+  }
+});
+
 module.exports = router;

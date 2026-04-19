@@ -1,0 +1,44 @@
+-- ============================================================================
+-- Migration 039 — Split Welcome Messages (Voice vs Chat)
+-- Apr 21, 2026
+-- ============================================================================
+-- Problem: a single `welcome_message` column was being used for two very
+-- different channels:
+--   1. AI voice calls (spoken aloud, 6-10 words, no emoji)
+--   2. Website chat widget (written, emoji OK, longer, written style)
+--
+-- Forcing both channels to share one copy meant compromising on both. This
+-- migration splits them into dedicated columns, with the old field kept as
+-- a fallback so nothing breaks for tenants who haven't filled in the new
+-- fields yet.
+--
+-- Resolver order (in code):
+--   Voice:  voice_welcome_message → welcome_message → hardcoded WARM_GREETING
+--   Chat:   chat_welcome_message  → welcome_message → hardcoded widget default
+--
+-- Backfill: existing welcome_message values are written-style (emoji, long
+-- form) because they were authored for the chat widget context. We copy
+-- them into chat_welcome_message so the widget experience stays identical
+-- post-migration. Voice gets the fallback path for now; tenants set their
+-- voice greeting via Settings UI.
+-- ============================================================================
+
+ALTER TABLE tenants
+  ADD COLUMN IF NOT EXISTS voice_welcome_message TEXT,
+  ADD COLUMN IF NOT EXISTS chat_welcome_message TEXT;
+
+-- Backfill: copy existing welcome_message into chat_welcome_message.
+-- Only copy where chat_welcome_message is still NULL (idempotent).
+UPDATE tenants
+   SET chat_welcome_message = welcome_message
+ WHERE welcome_message IS NOT NULL
+   AND chat_welcome_message IS NULL;
+
+COMMENT ON COLUMN tenants.voice_welcome_message IS
+  'Greeting spoken by AI at start of inbound voice calls. Injected into OpenAI Realtime instructions (NOT Twilio <Say> TTS) so it uses the natural voice. Falls back to welcome_message then to hardcoded WARM_GREETING if null.';
+
+COMMENT ON COLUMN tenants.chat_welcome_message IS
+  'Opening message shown when website chat widget opens. Read by /api/public-tenant/:id and consumed by chat-widget.js. Falls back to welcome_message then to hardcoded default if null.';
+
+COMMENT ON COLUMN tenants.welcome_message IS
+  'DEPRECATED post-Apr-21 — kept as fallback for voice_welcome_message and chat_welcome_message. New code should read the channel-specific fields. Do not delete — existing tenants may still rely on fallback.';

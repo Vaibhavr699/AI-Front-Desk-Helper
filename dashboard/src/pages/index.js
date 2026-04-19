@@ -24,3 +24,5 @@ export { default as AddLocation } from "./AddLocation";
 export { default as Team } from "./Team";
 export { default as Outbound } from "./Outbound";
 export { default as Locations } from "./Locations";
+export { default as FranchiseeInvite } from "./FranchiseeInvite";
+export { default as Welcome } from "./Welcome";

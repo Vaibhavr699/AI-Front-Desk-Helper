@@ -146,7 +146,7 @@ export default function LocationSwitcher({ tenantId, tenants, onTenantChange }) 
              <button 
                 onClick={() => {
                   setIsOpen(false);
-                  window.location.href = "/add-location";
+                  window.location.href = "/locations";
                 }}
                 className="w-full py-2 px-3 flex items-center justify-center gap-2 text-[11px] font-bold text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-lg transition-all"
              >

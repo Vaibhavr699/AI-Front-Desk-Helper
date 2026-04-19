@@ -3554,6 +3554,147 @@ setInterval(() => {
   });
 }, Math.max(60000, parseInt(process.env.SMS_FOLLOW_UP_CHECK_INTERVAL_MS, 10) || 60000));
 
+// ═════════════════════════════════════════════════════════════════════════
+// LOCATION DATA RETENTION CRON (Apr 19, 2026)
+// Hard-deletes tenant rows + all related data once their 30-day data
+// retention window has expired. Runs every hour and acts on any rows where
+// location_data_retention_until < now().
+//
+// Per Apr 19 spec: removed locations are immediately deactivated, kept in a
+// suspended state for 30 days, then permanently deleted. Restoration during
+// the 30-day window is possible via support (just clear location_removed_at
+// + location_data_retention_until + is_suspended).
+//
+// We run hourly (not daily) so that retention expiries are processed within
+// 1 hour of their target time regardless of server timezone. Cheap query
+// thanks to the partial index idx_tenants_data_retention.
+// ═════════════════════════════════════════════════════════════════════════
+
+const RETENTION_CRON_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
+async function runLocationRetentionCron() {
+  const startedAt = new Date();
+  console.log("[RetentionCron] Starting scan at", startedAt.toISOString());
+
+  try {
+    // Find tenants whose retention window has expired
+    const expired = await db.query(
+      `SELECT id, name, company_name, parent_id, location_removed_at, location_data_retention_until
+         FROM tenants
+        WHERE location_data_retention_until IS NOT NULL
+          AND location_data_retention_until < now()
+        ORDER BY location_data_retention_until ASC
+        LIMIT 100`
+    );
+
+    if (expired.rows.length === 0) {
+      console.log("[RetentionCron] No expired retention windows found.");
+      return { ok: true, deleted: 0 };
+    }
+
+    console.log("[RetentionCron] Found %d tenant(s) past retention. Hard-deleting now.", expired.rows.length);
+
+    let deletedCount = 0;
+    let errorCount = 0;
+
+    for (const tenant of expired.rows) {
+      const tenantId = tenant.id;
+      const label = tenant.company_name || tenant.name || tenantId;
+
+      try {
+        // Cascade delete in dependency order. Wrapped in a transaction so a
+        // partial failure rolls back cleanly and leaves the tenant row alone
+        // for retry next hour.
+        await db.query("BEGIN");
+
+        // Delete child tables that reference tenant_id
+        // (Order matters only if you have FKs without ON DELETE CASCADE;
+        // safest to do explicitly even if cascading is set up)
+        const tables = [
+          "messages",
+          "calls",
+          "leads",
+          "bookings",
+          "recoveries",
+          "notifications",
+          "phone_numbers",
+          "team_members",
+          "technicians",
+          "audit_logs",
+          "outbound_campaigns",
+          "outbound_call_results",
+          "estimate_attempts",
+          "nurturing_history",
+          "dashboard_users",
+        ];
+
+        for (const table of tables) {
+          try {
+            await db.query(`DELETE FROM ${table} WHERE tenant_id = $1`, [tenantId]);
+          } catch (tableErr) {
+            // Some tables may not exist in all environments — log + continue
+            if (tableErr.code === "42P01") {
+              // undefined_table — ignore
+              continue;
+            }
+            throw tableErr;
+          }
+        }
+
+        // Finally delete the tenant row itself
+        await db.query("DELETE FROM tenants WHERE id = $1", [tenantId]);
+
+        await db.query("COMMIT");
+        deletedCount++;
+
+        console.log(
+          "[RetentionCron] Hard-deleted tenant %s (%s). Removed at %s, retention expired %s.",
+          tenantId,
+          label,
+          tenant.location_removed_at,
+          tenant.location_data_retention_until
+        );
+      } catch (err) {
+        await db.query("ROLLBACK").catch(() => {});
+        errorCount++;
+        console.error(
+          "[RetentionCron] FAILED to delete tenant %s (%s): %s",
+          tenantId,
+          label,
+          err.message
+        );
+        // Continue to next tenant — don't abort the whole batch
+      }
+    }
+
+    const elapsed = Date.now() - startedAt.getTime();
+    console.log(
+      "[RetentionCron] Done. Deleted=%d Errors=%d Elapsed=%dms",
+      deletedCount,
+      errorCount,
+      elapsed
+    );
+
+    return { ok: true, deleted: deletedCount, errors: errorCount, elapsedMs: elapsed };
+  } catch (err) {
+    console.error("[RetentionCron] FATAL error during scan:", err);
+    return { ok: false, error: err.message };
+  }
+}
+
+// Kick off the cron loop. First run happens 5 minutes after server start
+// (gives the server time to settle), then every hour after that.
+setTimeout(() => {
+  runLocationRetentionCron().catch((e) =>
+    console.error("[RetentionCron] Initial run failed:", e.message)
+  );
+  setInterval(() => {
+    runLocationRetentionCron().catch((e) =>
+      console.error("[RetentionCron] Scheduled run failed:", e.message)
+    );
+  }, RETENTION_CRON_INTERVAL_MS);
+}, 5 * 60 * 1000); // 5 min after startup
+
 // ── Visitor tracking (chat widget) ──
 app.post("/visitor-event", async (req, res) => {
   try {

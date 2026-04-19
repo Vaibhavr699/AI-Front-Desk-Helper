@@ -4,15 +4,15 @@ import { listLocations } from "../api/locations";
 import { useToast } from "../components/ui/Toast";
 import LocationCard from "../components/locations/LocationCard";
 import AddLocationSheet from "../components/locations/AddLocationSheet";
+import RemoveLocationDialog from "../components/locations/RemoveLocationDialog";
+import EditLocationDialog from "../components/locations/EditLocationDialog";
+import ResendInviteDialog from "../components/locations/ResendInviteDialog";
 
 /**
  * Locations roster page.
  *
- * Lists all active + pending + removed children under the current tenant.
- * Header summary shows total monthly recurring + active count.
- * "Add Location" opens the sheet (F3 ✓).
- *
- * Edit / Remove / Resend wired in F4.
+ * F4 ✓ — Edit, Remove, Resend Invite all wired.
+ * Only F5 left (public franchisee invite acceptance page).
  */
 export default function Locations({ tenantId }) {
   const toast = useToast();
@@ -20,7 +20,12 @@ export default function Locations({ tenantId }) {
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // Dialog/sheet state
   const [addSheetOpen, setAddSheetOpen] = useState(false);
+  const [removeTarget, setRemoveTarget] = useState(null);
+  const [editTarget, setEditTarget] = useState(null);
+  const [resendTarget, setResendTarget] = useState(null);
 
   const load = useCallback(async () => {
     if (!tenantId || tenantId === "all") {
@@ -49,19 +54,28 @@ export default function Locations({ tenantId }) {
   }, [load]);
 
   const handleAdd = () => setAddSheetOpen(true);
-  const handleAdded = () => {
-    // Refetch the roster so the new location shows up
+  const handleAdded = () => load();
+
+  const handleEdit = (loc) => setEditTarget(loc);
+  const handleEdited = () => {
+    toast?.show?.("Location updated", { type: "success" });
     load();
   };
 
-  const handleEdit = (loc) => {
-    toast?.show?.(`Edit ${loc.company_name || loc.name} — coming in F4`, { type: "info" });
+  const handleRemove = (loc) => setRemoveTarget(loc);
+  const handleRemoved = (data) => {
+    if (data?.warning) {
+      toast?.show?.(data.warning, { type: "warning" });
+    } else {
+      toast?.show?.("Location removed", { type: "success" });
+    }
+    load();
   };
-  const handleRemove = (loc) => {
-    toast?.show?.(`Remove ${loc.company_name || loc.name} — coming in F4`, { type: "info" });
-  };
-  const handleResendInvite = (loc) => {
-    toast?.show?.(`Resend invite — coming in F4`, { type: "info" });
+
+  const handleResendInvite = (loc) => setResendTarget(loc);
+  const handleResent = () => {
+    toast?.show?.("Invite resent", { type: "success" });
+    load();
   };
 
   // ── Rollup view ────────────────────────────────────────────────────────
@@ -221,6 +235,38 @@ export default function Locations({ tenantId }) {
         onClose={() => setAddSheetOpen(false)}
         onAdded={handleAdded}
         parentTenant={parentTenant}
+      />
+
+      <RemoveLocationDialog
+        open={!!removeTarget}
+        onClose={() => setRemoveTarget(null)}
+        onRemoved={(data) => {
+          handleRemoved(data);
+          setRemoveTarget(null);
+        }}
+        parentTenant={parentTenant}
+        location={removeTarget}
+      />
+
+      <EditLocationDialog
+        open={!!editTarget}
+        onClose={() => setEditTarget(null)}
+        onUpdated={(data) => {
+          handleEdited(data);
+          setEditTarget(null);
+        }}
+        parentTenant={parentTenant}
+        location={editTarget}
+      />
+
+      <ResendInviteDialog
+        open={!!resendTarget}
+        onClose={() => setResendTarget(null)}
+        onResent={(data) => {
+          handleResent(data);
+          setResendTarget(null);
+        }}
+        location={resendTarget}
       />
     </>
   );

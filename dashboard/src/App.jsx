@@ -5,7 +5,7 @@ import { DashboardLayout } from "./layouts";
 import SmsTerms from "./pages/SmsTerms";
 import SmsConsent from "./pages/SmsConsent";
 import Contact from "./pages/Contact";
-import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, Outbound, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy, AddLocation, Team } from "./pages";
+import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, Outbound, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy, AddLocation, Team, Locations } from "./pages";
 import MetricsPage from "./pages/MetricsPage";
 import { ToastProvider } from "./components/ui/Toast";
 import "./App.css";
@@ -114,6 +114,7 @@ export default function App() {
             <Route path="/admin/tenants" element={<AdminWithContext view="tenants" />} />
             <Route path="/admin/admins" element={<AdminWithContext view="admins" />} />
             <Route path="/add-location" element={<AddLocation />} />
+            <Route path="/locations" element={<LocationsWithContext />} />
             <Route path="/team" element={<Team />} />
             <Route path="/reviews" element={<ReviewsWithContext />} />
           </Route>
@@ -192,4 +193,9 @@ function AdminWithContext({ view }) {
 function ReviewsWithContext() {
   const { tenantId } = useOutletContext();
   return <Reviews tenantId={tenantId} />;
+}
+
+function LocationsWithContext() {
+  const { tenantId } = useOutletContext();
+  return <Locations tenantId={tenantId} />;
 }

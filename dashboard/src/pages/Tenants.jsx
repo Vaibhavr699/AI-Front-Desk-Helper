@@ -260,7 +260,7 @@ export default function Tenants() {
           <p className="text-stone-500 mt-1 text-sm">Your business locations and hierarchy.</p>
         </div>
         <button
-          onClick={() => navigate("/add-location")}
+          onClick={() => navigate("/locations")}
           className="flex items-center gap-2 px-4 py-2.5 bg-stone-900 text-white text-sm font-bold rounded-xl hover:bg-stone-800 shadow-sm hover:shadow-md transition-all"
         >
           <Plus className="w-4 h-4" />
@@ -310,7 +310,7 @@ export default function Tenants() {
                   ))}
                   {/* Add child button */}
                   <button
-                    onClick={() => navigate("/add-location")}
+                    onClick={() => navigate("/locations")}
                     className="w-full border-2 border-dashed border-stone-200 rounded-xl py-3 px-4 flex items-center justify-center gap-2 text-sm font-medium text-stone-400 hover:text-stone-600 hover:border-stone-300 hover:bg-stone-50 transition-all"
                   >
                     <Plus className="w-4 h-4" />

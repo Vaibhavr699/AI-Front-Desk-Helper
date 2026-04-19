@@ -14,6 +14,13 @@ const emailService = require("../services/email");
 const nurturingService = require("../services/nurturing");
 const notificationsService = require("../services/notifications");
 const { logAction } = require("../lib/auditLogger");
+const {
+  sendLocationAddedEmail,
+  sendFranchiseeInviteEmail,
+  sendLocationRemovalConfirmationEmail,
+  sendLocationRateChangeNoticeEmail,
+} = require("../services/email");
+const crypto = require("crypto");
 const { getTenantIdFromQuery, getTargetTenantIds, requireRole, ROLES } = require("../lib/auth");
 
 /** Normalize a US phone to E.164 (+1XXXXXXXXXX). Returns null if invalid. */
@@ -1862,4 +1869,624 @@ router.post("/notifications/mark-all-read", async (req, res) => {
   }
 });
 
+// ═════════════════════════════════════════════════════════════════════════
+// LOCATION BILLING ENDPOINTS (Apr 19, 2026)
+// Multi-location support for parent tenants. Four endpoints:
+//   POST   /tenants/:parentId/locations/preview  — modal preview math
+//   POST   /tenants/:parentId/locations          — create new child location
+//   DELETE /tenants/:parentId/locations/:childId — remove child (immediate
+//                                                  deactivation, 30-day data
+//                                                  retention, no refund)
+//   PATCH  /tenants/:parentId/locations/:childId — update child name/phone
+//                                                  (or rate override if super)
+//
+// Auth model:
+//   - Caller must be member of the PARENT tenant with role owner/admin,
+//     OR be super-admin
+//   - HQ removal blocked (childId === parentId)
+//   - rate override edits (locations_*_rate_cents, plan_*_override_cents)
+//     restricted to super-admin
+// ═════════════════════════════════════════════════════════════════════════
+
+/** Verify the caller can manage this parent's locations. Throws 403 if not. */
+function ensureCanManageLocations(req, parentTenantId) {
+  if (req.user?.is_super_admin) return true;
+  if (req.user?.tenant_id !== parentTenantId) {
+    const err = new Error("You don't have access to this parent tenant");
+    err.statusCode = 403;
+    throw err;
+  }
+  if (!["owner", "admin"].includes(req.user?.role)) {
+    const err = new Error("Only owners and admins can manage locations");
+    err.statusCode = 403;
+    throw err;
+  }
+  return true;
+}
+
+/** Generate a URL-safe random invite token (43 chars, ~256 bits of entropy). */
+function generateInviteToken() {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+/**
+ * POST /tenants/:parentId/locations/preview
+ * Body: { billing_responsibility?: 'parent_pays' | 'self_pays', plan?: string }
+ * Returns prorated preview math. Used by the "Add Location" modal so the
+ * parent sees what they'll be charged BEFORE confirming.
+ *
+ * No writes. Safe to call repeatedly.
+ */
+router.post("/tenants/:parentId/locations/preview", async (req, res) => {
+  try {
+    const parentId = req.params.parentId;
+    ensureCanManageLocations(req, parentId);
+
+    const parentResult = await db.query("SELECT * FROM tenants WHERE id = $1", [parentId]);
+    const parent = parentResult.rows[0];
+    if (!parent) return res.status(404).json({ error: "Parent tenant not found" });
+
+    // Validate the parent CAN add a location at all (plan tier, HQ tier limit, sub status)
+    try {
+      await locationBilling.enforceCanAddLocation(parent);
+    } catch (err) {
+      return res.status(err.statusCode || 400).json({ error: err.message });
+    }
+
+    const billingResponsibility = req.body?.billing_responsibility || "parent_pays";
+    if (!["parent_pays", "self_pays"].includes(billingResponsibility)) {
+      return res.status(400).json({ error: "billing_responsibility must be parent_pays or self_pays" });
+    }
+
+    // self_pays only allowed on rollup_only parents (franchise model)
+    if (billingResponsibility === "self_pays" && parent.parent_mode !== "rollup_only") {
+      return res.status(400).json({
+        error: "self_pays is only available on rollup_only parent tenants. Contact support to convert your account.",
+      });
+    }
+
+    const childPlan = req.body?.plan || "pro";
+
+    const preview = await locationBilling.calculateProratedPreview(
+      parent,
+      billingResponsibility,
+      childPlan
+    );
+
+    res.json({
+      ok: true,
+      parent: {
+        id: parent.id,
+        name: parent.name,
+        company_name: parent.company_name,
+        parent_mode: parent.parent_mode,
+        plan: parent.plan,
+        billing_interval: parent.billing_interval || "monthly",
+      },
+      preview,
+    });
+  } catch (e) {
+    console.error("[Locations] Preview error:", e);
+    res.status(e.statusCode || 500).json({ error: e.message || "Server error" });
+  }
+});
+
+/**
+ * POST /tenants/:parentId/locations
+ * Body: {
+ *   name: string,                             (required)
+ *   company_name?: string,
+ *   slug?: string,
+ *   billing_responsibility?: 'parent_pays' | 'self_pays',
+ *   plan?: 'basic' | 'pro' | 'elite',         (required for self_pays; default 'pro')
+ *   franchisee_email?: string,                (required for self_pays — invite goes here)
+ *   timezone?: string,
+ * }
+ *
+ * For parent_pays: creates child tenant immediately, syncs to parent's
+ * Stripe subscription as a new line item, sends confirmation email.
+ *
+ * For self_pays: creates child tenant in PENDING state (is_suspended=true,
+ * no subscription), generates invite token + 14-day expiry, emails
+ * franchisee. Tenant activates on franchisee checkout completion.
+ */
+router.post("/tenants/:parentId/locations", async (req, res) => {
+  try {
+    const parentId = req.params.parentId;
+    ensureCanManageLocations(req, parentId);
+
+    const parentResult = await db.query("SELECT * FROM tenants WHERE id = $1", [parentId]);
+    const parent = parentResult.rows[0];
+    if (!parent) return res.status(404).json({ error: "Parent tenant not found" });
+
+    try {
+      await locationBilling.enforceCanAddLocation(parent);
+    } catch (err) {
+      return res.status(err.statusCode || 400).json({ error: err.message });
+    }
+
+    const body = req.body || {};
+    const name = (body.name || "").trim();
+    const companyName = (body.company_name || name || "").trim();
+    if (!name && !companyName) {
+      return res.status(400).json({ error: "Location name is required" });
+    }
+    const finalName = name || companyName;
+    const finalCompany = companyName || name;
+
+    const billingResponsibility = body.billing_responsibility || "parent_pays";
+    if (!["parent_pays", "self_pays"].includes(billingResponsibility)) {
+      return res.status(400).json({ error: "billing_responsibility must be parent_pays or self_pays" });
+    }
+
+    if (billingResponsibility === "self_pays" && parent.parent_mode !== "rollup_only") {
+      return res.status(400).json({
+        error: "self_pays is only available on rollup_only parent tenants",
+      });
+    }
+
+    const childPlan = (body.plan || "pro").toLowerCase();
+    if (!["basic", "pro", "elite"].includes(childPlan)) {
+      return res.status(400).json({ error: "plan must be basic, pro, or elite" });
+    }
+
+    let franchiseeEmail = null;
+    if (billingResponsibility === "self_pays") {
+      franchiseeEmail = (body.franchisee_email || "").trim().toLowerCase();
+      if (!franchiseeEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(franchiseeEmail)) {
+        return res.status(400).json({
+          error: "franchisee_email is required for self_pays locations and must be a valid email",
+        });
+      }
+    }
+
+    // Generate a unique slug from the name
+    let baseSlug = (body.slug || finalName).toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9-]/g, "");
+    if (!baseSlug) baseSlug = `location-${Date.now()}`;
+
+    let slug = baseSlug;
+    let attempt = 1;
+    while (attempt < 20) {
+      const existing = await db.query("SELECT id FROM tenants WHERE slug = $1", [slug]);
+      if (existing.rows.length === 0) break;
+      slug = `${baseSlug}-${attempt}`;
+      attempt++;
+    }
+    if (attempt >= 20) {
+      return res.status(409).json({ error: "Could not generate a unique slug. Try a different name." });
+    }
+
+    const timezone = body.timezone || parent.timezone || "America/Chicago";
+
+    // Create the child tenant row
+    // - parent_pays: active immediately (is_suspended=false)
+    // - self_pays: pending until franchisee completes checkout (is_suspended=true)
+    const isSelfPays = billingResponsibility === "self_pays";
+    const isSuspended = isSelfPays;
+
+    let inviteToken = null;
+    let inviteExpiresAt = null;
+    if (isSelfPays) {
+      inviteToken = generateInviteToken();
+      const expires = new Date();
+      expires.setDate(expires.getDate() + 14);
+      inviteExpiresAt = expires.toISOString();
+    }
+
+    const insertResult = await db.query(
+      `INSERT INTO tenants (
+         name, slug, company_name, business_type, parent_id,
+         billing_responsibility, plan, timezone,
+         is_suspended, brand_mode,
+         franchisee_invite_token, franchisee_invite_expires_at,
+         created_at, updated_at
+       )
+       VALUES ($1, $2, $3, 'location', $4, $5, $6, $7, $8, $9, $10, $11, now(), now())
+       RETURNING id, name, slug, company_name, business_type, parent_id,
+                 billing_responsibility, plan, timezone, is_suspended, brand_mode,
+                 franchisee_invite_token, franchisee_invite_expires_at`,
+      [
+        finalName,
+        slug,
+        finalCompany,
+        parentId,
+        billingResponsibility,
+        childPlan,
+        timezone,
+        isSuspended,
+        // Inherit parent's brand_mode (white_label HQ → white_label child)
+        parent.brand_mode || "ai_branded",
+        inviteToken,
+        inviteExpiresAt,
+      ]
+    );
+    const newLocation = insertResult.rows[0];
+
+    // Audit log the creation (use parent_id for org scope)
+    await logAction({
+      organization_id: String(parentId),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "location_created",
+      entity_type: "tenant",
+      entity_id: String(newLocation.id),
+      new_value: {
+        name: finalName,
+        slug,
+        billing_responsibility: billingResponsibility,
+        plan: childPlan,
+      },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
+
+    // ─── parent_pays branch: Stripe sync + confirmation email ────────────
+    if (!isSelfPays) {
+      const stripeResult = await locationBilling.addChildToParentSubscription(parent, newLocation);
+      if (!stripeResult.ok) {
+        console.error(
+          "[Locations] Stripe sync FAILED for new location %s under parent %s: %s",
+          newLocation.id,
+          parentId,
+          stripeResult.reason || stripeResult.error
+        );
+        // Don't 500 — child is created, parent can manually sync later
+        // But return a clear warning so the UI can show it
+        return res.status(201).json({
+          ok: true,
+          location: newLocation,
+          warning: `Location created but Stripe sync failed: ${stripeResult.reason || stripeResult.error}. Contact support if billing isn't right.`,
+        });
+      }
+
+      // Re-read the child row to get the new parent_location_stripe_item_id
+      const updatedChildResult = await db.query("SELECT * FROM tenants WHERE id = $1", [newLocation.id]);
+      const updatedChild = updatedChildResult.rows[0];
+
+      // Calculate the actual preview values for the confirmation email
+      const preview = await locationBilling.calculateProratedPreview(parent, "parent_pays", childPlan);
+
+      // Send confirmation email to parent's owners/admins (fire-and-forget)
+      sendLocationAddedEmail({
+        parentTenant: parent,
+        newLocation: updatedChild,
+        proratedTodayCents: preview.proratedTodayCents,
+        locationRateCents: preview.locationRateCents,
+        nextChargeDate: preview.nextChargeDate,
+        newRecurringMonthlyCents: preview.newRecurringMonthlyCents,
+      }).catch((e) =>
+        console.error("[Locations] sendLocationAddedEmail failed:", e.message)
+      );
+
+      return res.status(201).json({
+        ok: true,
+        location: updatedChild,
+        preview,
+        stripe: {
+          subscription_item_id: stripeResult.subscriptionItemId,
+          price_id: stripeResult.priceId,
+        },
+      });
+    }
+
+    // ─── self_pays branch: send franchisee invite email ──────────────────
+    const frontendBase = (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/+$/, "");
+    const inviteUrl = `${frontendBase}/franchisee-invite/${inviteToken}`;
+
+    sendFranchiseeInviteEmail({
+      parentTenant: parent,
+      newLocation,
+      franchiseeEmail,
+      inviteUrl,
+      expiresAt: inviteExpiresAt,
+    }).catch((e) =>
+      console.error("[Locations] sendFranchiseeInviteEmail failed:", e.message)
+    );
+
+    return res.status(201).json({
+      ok: true,
+      location: newLocation,
+      invite: {
+        url: inviteUrl,
+        sent_to: franchiseeEmail,
+        expires_at: inviteExpiresAt,
+      },
+    });
+  } catch (e) {
+    console.error("[Locations] Create error:", e);
+    res.status(e.statusCode || 500).json({ error: e.message || "Server error" });
+  }
+});
+
+/**
+ * DELETE /tenants/:parentId/locations/:childId
+ * Per Apr 19 spec:
+ *   1. Mark child location_removed_at = now(), is_suspended = true
+ *   2. Set location_data_retention_until = now() + 30 days
+ *   3. Remove from parent's Stripe subscription (no refund)
+ *   4. Send removal confirmation email
+ *   5. HQ removal blocked (childId === parentId returns 400)
+ *
+ * Daily cron at 3 AM hard-deletes tenant + all data once retention expires.
+ */
+router.delete("/tenants/:parentId/locations/:childId", async (req, res) => {
+  try {
+    const parentId = req.params.parentId;
+    const childId = req.params.childId;
+    ensureCanManageLocations(req, parentId);
+
+    if (childId === parentId) {
+      return res.status(400).json({ error: "Cannot remove HQ. Use a different process to close the entire account." });
+    }
+
+    const parentResult = await db.query("SELECT * FROM tenants WHERE id = $1", [parentId]);
+    const parent = parentResult.rows[0];
+    if (!parent) return res.status(404).json({ error: "Parent tenant not found" });
+
+    const childResult = await db.query(
+      "SELECT * FROM tenants WHERE id = $1 AND parent_id = $2",
+      [childId, parentId]
+    );
+    const child = childResult.rows[0];
+    if (!child) return res.status(404).json({ error: "Location not found under this parent" });
+
+    if (child.location_removed_at) {
+      return res.status(409).json({ error: "Location is already pending removal" });
+    }
+
+    // Calculate retention timestamp (30 days from now)
+    const retentionUntil = new Date();
+    retentionUntil.setDate(retentionUntil.getDate() + 30);
+
+    // Mark child as removed + suspended (immediate deactivation per spec)
+    await db.query(
+      `UPDATE tenants
+          SET location_removed_at = now(),
+              location_data_retention_until = $1,
+              is_suspended = true,
+              updated_at = now()
+        WHERE id = $2`,
+      [retentionUntil.toISOString(), childId]
+    );
+
+    // Stripe sync: remove the child's line item from parent's subscription
+    // (parent_pays only — self_pays children have their own subscription)
+    let stripeWarning = null;
+    if (child.billing_responsibility !== "self_pays" && child.parent_location_stripe_item_id) {
+      const stripeResult = await locationBilling.removeChildFromParentSubscription(child);
+      if (!stripeResult.ok) {
+        stripeWarning = `Stripe cleanup failed: ${stripeResult.reason || stripeResult.error}. Bill may need manual adjustment.`;
+        console.error(
+          "[Locations] Stripe removal FAILED for child %s under parent %s: %s",
+          childId, parentId, stripeWarning
+        );
+      }
+    } else if (child.billing_responsibility === "self_pays" && child.stripe_subscription_id) {
+      // For self_pays, we cancel the franchisee's own subscription
+      try {
+        const { stripe } = require("../lib/stripe");
+        if (stripe) {
+          await stripe.subscriptions.cancel(child.stripe_subscription_id, {
+            prorate: false,
+          });
+          console.log("[Locations] Cancelled self_pays subscription %s for child %s", child.stripe_subscription_id, childId);
+        }
+      } catch (err) {
+        stripeWarning = `Failed to cancel franchisee subscription: ${err.message}. Contact support.`;
+        console.error("[Locations] self_pays cancel FAILED for child %s: %s", childId, err.message);
+      }
+    }
+
+    // Audit log
+    await logAction({
+      organization_id: String(parentId),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "location_removed",
+      entity_type: "tenant",
+      entity_id: String(childId),
+      new_value: {
+        location_removed_at: new Date().toISOString(),
+        location_data_retention_until: retentionUntil.toISOString(),
+        billing_responsibility: child.billing_responsibility,
+      },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
+
+    // Send removal confirmation email (fire-and-forget)
+    sendLocationRemovalConfirmationEmail({
+      parentTenant: parent,
+      removedLocation: child,
+      dataRetentionUntil: retentionUntil.toISOString(),
+    }).catch((e) =>
+      console.error("[Locations] sendLocationRemovalConfirmationEmail failed:", e.message)
+    );
+
+    res.json({
+      ok: true,
+      location_id: childId,
+      location_removed_at: new Date().toISOString(),
+      data_retention_until: retentionUntil.toISOString(),
+      warning: stripeWarning,
+    });
+  } catch (e) {
+    console.error("[Locations] Delete error:", e);
+    res.status(e.statusCode || 500).json({ error: e.message || "Server error" });
+  }
+});
+
+/**
+ * PATCH /tenants/:parentId/locations/:childId
+ * Body: { name?, company_name?, plan?,
+ *         locations_monthly_rate_cents?, locations_annual_rate_cents?,
+ *         plan_monthly_override_cents?, plan_annual_override_cents? }
+ *
+ * Standard updates (name, company_name, plan) — any owner/admin
+ * Rate overrides (the *_cents fields) — superadmin only
+ *
+ * If any rate override OR plan changes, syncs to Stripe and sends a
+ * rate-change notice email.
+ */
+router.patch("/tenants/:parentId/locations/:childId", async (req, res) => {
+  try {
+    const parentId = req.params.parentId;
+    const childId = req.params.childId;
+    ensureCanManageLocations(req, parentId);
+
+    const parentResult = await db.query("SELECT * FROM tenants WHERE id = $1", [parentId]);
+    const parent = parentResult.rows[0];
+    if (!parent) return res.status(404).json({ error: "Parent tenant not found" });
+
+    const childResult = await db.query(
+      "SELECT * FROM tenants WHERE id = $1 AND parent_id = $2",
+      [childId, parentId]
+    );
+    const child = childResult.rows[0];
+    if (!child) return res.status(404).json({ error: "Location not found under this parent" });
+
+    if (child.location_removed_at) {
+      return res.status(400).json({ error: "Cannot update a removed location" });
+    }
+
+    const body = req.body || {};
+    const updates = {};
+
+    // Anyone (owner/admin/superadmin) can update these
+    const safeFields = ["name", "company_name", "plan"];
+    for (const key of safeFields) {
+      if (body[key] !== undefined) {
+        if (key === "plan") {
+          const p = String(body[key] || "").toLowerCase();
+          if (!["basic", "pro", "elite"].includes(p)) {
+            return res.status(400).json({ error: "plan must be basic, pro, or elite" });
+          }
+          updates[key] = p;
+        } else {
+          updates[key] = body[key];
+        }
+      }
+    }
+
+    // Rate override fields — SUPERADMIN ONLY
+    const rateOverrideFields = [
+      "locations_monthly_rate_cents",
+      "locations_annual_rate_cents",
+      "plan_monthly_override_cents",
+      "plan_annual_override_cents",
+    ];
+    let hasRateOverrideEdit = false;
+    for (const key of rateOverrideFields) {
+      if (body[key] !== undefined) {
+        if (!req.user?.is_super_admin) {
+          return res.status(403).json({
+            error: `Only super-admin can change ${key}. Contact support for rate adjustments.`,
+          });
+        }
+        const val = body[key];
+        if (val !== null && (typeof val !== "number" || val < 0 || !Number.isInteger(val))) {
+          return res.status(400).json({ error: `${key} must be a non-negative integer (cents) or null` });
+        }
+        updates[key] = val;
+        hasRateOverrideEdit = true;
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: "No allowed fields to update" });
+    }
+
+    // Capture old rates BEFORE update for the rate-change email
+    const oldMonthlyRate = locationBilling.getChildLocationCostCents(parent, child, "monthly");
+
+    const setClause = Object.keys(updates).map((k, i) => `${k} = $${i + 1}`).join(", ");
+    const values = Object.values(updates);
+    values.push(childId);
+    await db.query(
+      `UPDATE tenants SET ${setClause}, updated_at = now() WHERE id = $${values.length}`,
+      values
+    );
+
+    // Re-read child for fresh values
+    const updatedChildResult = await db.query("SELECT * FROM tenants WHERE id = $1", [childId]);
+    const updatedChild = updatedChildResult.rows[0];
+
+    // Audit log
+    await logAction({
+      organization_id: String(parentId),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "location_updated",
+      entity_type: "tenant",
+      entity_id: String(childId),
+      new_value: updates,
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
+
+    // If rate or plan changed AND child is parent_pays AND has Stripe item → re-sync
+    let stripeResult = null;
+    let rateChanged = false;
+    if (
+      (hasRateOverrideEdit || updates.plan) &&
+      updatedChild.billing_responsibility !== "self_pays" &&
+      updatedChild.parent_location_stripe_item_id
+    ) {
+      stripeResult = await locationBilling.updateChildSubscriptionRate(parent, updatedChild);
+
+      const newMonthlyRate = locationBilling.getChildLocationCostCents(parent, updatedChild, "monthly");
+      if (newMonthlyRate !== oldMonthlyRate) {
+        rateChanged = true;
+        // Send rate change notice (30-day notice on increase, immediate on decrease)
+        const isIncrease = newMonthlyRate > oldMonthlyRate;
+        const effectiveDate = new Date();
+        if (isIncrease) {
+          // 30-day notice for increases
+          effectiveDate.setDate(effectiveDate.getDate() + 30);
+        }
+        sendLocationRateChangeNoticeEmail({
+          parentTenant: parent,
+          location: updatedChild,
+          oldRateCents: oldMonthlyRate,
+          newRateCents: newMonthlyRate,
+          effectiveDate: effectiveDate.toISOString(),
+          reason: hasRateOverrideEdit ? "admin_override" : "plan_upgrade",
+        }).catch((e) =>
+          console.error("[Locations] sendLocationRateChangeNoticeEmail failed:", e.message)
+        );
+      }
+    }
+
+    res.json({
+      ok: true,
+      location: updatedChild,
+      rate_changed: rateChanged,
+      stripe: stripeResult,
+    });
+  } catch (e) {
+    console.error("[Locations] Update error:", e);
+    res.status(e.statusCode || 500).json({ error: e.message || "Server error" });
+  }
+});
+
+/**
+ * GET /tenants/:parentId/locations
+ * Lists all active (non-removed) child locations under a parent. Returns
+ * each child's calculated location rate alongside its row, so the UI can
+ * display "What this location costs you" without recalculating client-side.
+ */
+router.get("/tenants/:parentId/locations", async (req, res) => {
+  try {
+    const parentId = req.params.parentId;
+    ensureCanManageLocations(req, parentId);
+
+    const parentResult = await db.query("SELECT * FROM tenants WHERE id = $1", [parentId]);
+    const parent = parentResult.rows[0];
+    if (!parent) return res.status(404).json({ error: "Parent tenant not found" });
+
+    const children = await locationBilling.listActiveLocations(parentId);
+    const enriched = children.map((child) => ({
+      ...child,
+      location_cost_monthly_cents: locationBilling.getChildLocationCostCents(parent, child, "monthly"),
+      location_cost_annu
+        
 module.exports = router;

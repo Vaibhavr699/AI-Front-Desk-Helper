@@ -2118,9 +2118,6 @@ router.post("/tenants/:parentId/locations", async (req, res) => {
 
     // Audit log the creation (use parent_id for org scope)
     await logAction({
-
-    // Audit log the creation (use parent_id for org scope)
-    await logAction({
       organization_id: String(parentId),
       user_id: req.user?.sub ? String(req.user.sub) : null,
       action: "location_created",

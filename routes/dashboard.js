@@ -2522,4 +2522,285 @@ router.get("/tenants/:parentId/locations", async (req, res) => {
   }
 });
 
+/**
+ * GET /tenants/:parentId/rollup
+ * Apr 20, 2026 — Businesses page rollup dashboard.
+ *
+ * Returns everything the Businesses page needs in ONE request:
+ *   - Parent HQ summary (plan, parent_mode, brand_mode, etc.)
+ *   - Aggregated totals across ALL locations (including HQ if operating_hq)
+ *     for the last 30 days: calls, bookings, revenue, open leads
+ *   - Total MRR that the parent pays for hosting all locations
+ *   - Per-location rows with individual 30d stats + cost-to-HQ + status
+ *     flags (Stripe sync, suspended, pending franchisee invite)
+ *   - Health insights (locations below 40% booking rate, locations with
+ *     40+ open leads, locations with failed Stripe sync)
+ *
+ * Design note: we query ONCE per stat (calls / bookings / revenue) using
+ * `WHERE tenant_id = ANY($1)` with the combined parent+children ID list,
+ * then GROUP BY tenant_id on the server to build the per-location rows.
+ * That's 3 queries total for stats, not N+1.
+ *
+ * Auth: caller must be owner/admin of the parent OR super-admin.
+ */
+router.get("/tenants/:parentId/rollup", async (req, res) => {
+  try {
+    const parentId = req.params.parentId;
+    ensureCanManageLocations(req, parentId);
+
+    // 1. Load parent + active children in parallel
+    const [parentResult, children] = await Promise.all([
+      db.query("SELECT * FROM tenants WHERE id = $1", [parentId]),
+      locationBilling.listActiveLocations(parentId),
+    ]);
+
+    const parent = parentResult.rows[0];
+    if (!parent) return res.status(404).json({ error: "Parent tenant not found" });
+
+    // For operating_hq parents, include HQ itself in the rollup rows.
+    // For rollup_only parents, exclude HQ (it doesn't run jobs).
+    const includeHQInRollup = parent.parent_mode === "operating_hq";
+    const rollupTenants = includeHQInRollup ? [parent, ...children] : [...children];
+    const rollupIds = rollupTenants.map((t) => t.id);
+
+    // 30-day window
+    const windowStart = new Date();
+    windowStart.setDate(windowStart.getDate() - 30);
+
+    // 2. Fire all per-tenant aggregations in parallel
+    //    We query the full scope in one shot and GROUP BY tenant_id so the
+    //    frontend never does N queries.
+    const [
+      callsAgg,
+      bookingsAgg,
+      revenueAgg,
+      openLeadsAgg,
+    ] = rollupIds.length === 0
+      ? [{ rows: [] }, { rows: [] }, { rows: [] }, { rows: [] }]
+      : await Promise.all([
+          // Calls per tenant (last 30d)
+          db.query(
+            `SELECT tenant_id,
+                    COUNT(*) AS total_calls,
+                    SUM(CASE WHEN disposition = 'booked' OR status ILIKE '%booked%' OR status = 'Estimate Scheduled' THEN 1 ELSE 0 END) AS calls_booked
+               FROM calls
+              WHERE tenant_id = ANY($1) AND started_at > $2
+              GROUP BY tenant_id`,
+            [rollupIds, windowStart]
+          ),
+          // Bookings per tenant (last 30d)
+          db.query(
+            `SELECT tenant_id, COUNT(*) AS total_bookings
+               FROM bookings
+              WHERE tenant_id = ANY($1) AND created_at > $2
+              GROUP BY tenant_id`,
+            [rollupIds, windowStart]
+          ),
+          // Revenue per tenant — mirrors the Dashboard Confirmed Revenue
+          // formula (bookings.actual_revenue_cents + leads.actual_revenue_cents
+          // with NOT IN dedup). Using the SAME formula means the Businesses
+          // page numbers match the dashboard tile exactly.
+          db.query(
+            `SELECT t.id AS tenant_id,
+                    (
+                      COALESCE(
+                        (SELECT SUM(actual_revenue_cents)
+                           FROM bookings
+                          WHERE tenant_id = t.id
+                            AND actual_revenue_cents IS NOT NULL
+                            AND actual_revenue_cents > 0),
+                        0
+                      )
+                      +
+                      COALESCE(
+                        (SELECT SUM(actual_revenue_cents)
+                           FROM leads
+                          WHERE tenant_id = t.id
+                            AND actual_revenue_cents IS NOT NULL
+                            AND actual_revenue_cents > 0
+                            AND id NOT IN (
+                              SELECT lead_id FROM bookings
+                              WHERE lead_id IS NOT NULL
+                                AND actual_revenue_cents IS NOT NULL
+                                AND actual_revenue_cents > 0
+                            )),
+                        0
+                      )
+                    ) AS confirmed_revenue_cents
+               FROM tenants t
+              WHERE t.id = ANY($1)`,
+            [rollupIds]
+          ),
+          // Open leads per tenant (all time, not windowed — matches Dashboard)
+          db.query(
+            `SELECT tenant_id, COUNT(*) AS open_leads
+               FROM leads
+              WHERE tenant_id = ANY($1)
+                AND status NOT IN ('Closed', 'Lost')
+              GROUP BY tenant_id`,
+            [rollupIds]
+          ),
+        ]);
+
+    // Index query results by tenant_id for O(1) lookup
+    const callsByTenant = new Map(
+      callsAgg.rows.map((r) => [r.tenant_id, {
+        calls: parseInt(r.total_calls, 10) || 0,
+        calls_booked: parseInt(r.calls_booked, 10) || 0,
+      }])
+    );
+    const bookingsByTenant = new Map(
+      bookingsAgg.rows.map((r) => [r.tenant_id, parseInt(r.total_bookings, 10) || 0])
+    );
+    const revenueByTenant = new Map(
+      revenueAgg.rows.map((r) => [r.tenant_id, parseInt(r.confirmed_revenue_cents, 10) || 0])
+    );
+    const openLeadsByTenant = new Map(
+      openLeadsAgg.rows.map((r) => [r.tenant_id, parseInt(r.open_leads, 10) || 0])
+    );
+
+    // 3. Build per-location rows
+    const locations = rollupTenants.map((t) => {
+      const callStats = callsByTenant.get(t.id) || { calls: 0, calls_booked: 0 };
+      const bookings = bookingsByTenant.get(t.id) || 0;
+      const revenue = revenueByTenant.get(t.id) || 0;
+      const openLeads = openLeadsByTenant.get(t.id) || 0;
+      const bookingRate = callStats.calls > 0
+        ? Math.round((callStats.calls_booked / callStats.calls) * 100)
+        : 0;
+
+      const isHQ = t.id === parent.id;
+      const costMonthlyCents = isHQ
+        ? 0  // HQ pays its own plan, not a location fee
+        : locationBilling.getChildLocationCostCents(parent, t, "monthly");
+
+      // Pending franchisee invite = self_pays + is_suspended + has invite token
+      const isPendingInvite = !!(
+        t.billing_responsibility === "self_pays" &&
+        t.is_suspended &&
+        t.franchisee_invite_token
+      );
+
+      // Stripe sync failed = parent_pays child with no stripe item ID set
+      // (this catches the Lincoln-style orphans from the Apr 19 bug)
+      const stripeSyncFailed = !isHQ
+        && t.billing_responsibility !== "self_pays"
+        && !t.is_suspended
+        && !t.parent_location_stripe_item_id;
+
+      return {
+        id: t.id,
+        name: t.name,
+        company_name: t.company_name,
+        slug: t.slug,
+        logo_url: t.logo_url,
+        website: t.website,
+        business_type: t.business_type,
+        is_hq: isHQ,
+        plan: t.plan,
+        brand_mode: t.brand_mode,
+        billing_responsibility: t.billing_responsibility || (isHQ ? "parent_pays" : null),
+        is_suspended: !!t.is_suspended,
+        is_pending_invite: isPendingInvite,
+        stripe_sync_failed: stripeSyncFailed,
+        cost_monthly_cents: costMonthlyCents,
+        stats_30d: {
+          calls: callStats.calls,
+          bookings,
+          revenue_cents: revenue,
+          open_leads: openLeads,
+          booking_rate: bookingRate,
+        },
+      };
+    });
+
+    // 4. Calculate HQ summary aggregates
+    const totalLocationsCount = children.length; // excludes HQ itself
+    const totalMrrToHqCents = locations.reduce((sum, loc) => sum + loc.cost_monthly_cents, 0);
+    const totalCalls30d = locations.reduce((sum, loc) => sum + loc.stats_30d.calls, 0);
+    const totalBookings30d = locations.reduce((sum, loc) => sum + loc.stats_30d.bookings, 0);
+    const totalRevenue30dCents = locations.reduce((sum, loc) => sum + loc.stats_30d.revenue_cents, 0);
+    const totalOpenLeads = locations.reduce((sum, loc) => sum + loc.stats_30d.open_leads, 0);
+    const combinedBookingRate = totalCalls30d > 0
+      ? Math.round((totalBookings30d / totalCalls30d) * 100)
+      : 0;
+
+    // 5. Build health insights — actionable flags a franchisor cares about
+    const insights = [];
+    for (const loc of locations) {
+      // Low booking rate (needs >10 calls to avoid noise from new locations)
+      if (loc.stats_30d.booking_rate < 40 && loc.stats_30d.calls >= 10) {
+        insights.push({
+          id: `low-rate-${loc.id}`,
+          severity: "warning",
+          text: `${loc.name} — booking rate ${loc.stats_30d.booking_rate}% (target 40%+)`,
+          location_id: loc.id,
+          action: "review_ai",
+        });
+      }
+      // Follow-up backlog
+      if (loc.stats_30d.open_leads >= 40) {
+        insights.push({
+          id: `high-leads-${loc.id}`,
+          severity: "warning",
+          text: `${loc.name} — ${loc.stats_30d.open_leads} open leads need follow-up`,
+          location_id: loc.id,
+          action: "trigger_followup",
+        });
+      }
+      // Stripe sync failed — the Apr 19 latent bug we flagged
+      if (loc.stripe_sync_failed) {
+        insights.push({
+          id: `stripe-fail-${loc.id}`,
+          severity: "error",
+          text: `${loc.name} — Stripe billing sync failed. Remove and re-add to fix.`,
+          location_id: loc.id,
+          action: "resync_stripe",
+        });
+      }
+      // Pending franchisee invite — not an error, just informational
+      if (loc.is_pending_invite) {
+        insights.push({
+          id: `pending-${loc.id}`,
+          severity: "info",
+          text: `${loc.name} — waiting on franchisee to complete signup`,
+          location_id: loc.id,
+          action: "resend_invite",
+        });
+      }
+    }
+
+    res.json({
+      ok: true,
+      parent: {
+        id: parent.id,
+        name: parent.name,
+        company_name: parent.company_name,
+        slug: parent.slug,
+        logo_url: parent.logo_url,
+        plan: parent.plan,
+        parent_mode: parent.parent_mode,
+        brand_mode: parent.brand_mode,
+        billing_interval: parent.billing_interval || "monthly",
+        subscription_status: parent.subscription_status,
+      },
+      summary: {
+        total_locations: totalLocationsCount,
+        include_hq_in_rollup: includeHQInRollup,
+        total_mrr_to_hq_cents: totalMrrToHqCents,
+        total_calls_30d: totalCalls30d,
+        total_bookings_30d: totalBookings30d,
+        total_revenue_30d_cents: totalRevenue30dCents,
+        total_open_leads: totalOpenLeads,
+        combined_booking_rate: combinedBookingRate,
+      },
+      locations,
+      insights,
+    });
+  } catch (e) {
+    console.error("[Rollup] Error:", e);
+    res.status(e.statusCode || 500).json({ error: e.message || "Server error" });
+  }
+});
+
 module.exports = router;

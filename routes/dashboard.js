@@ -2103,7 +2103,21 @@ router.post("/tenants/:parentId/locations", async (req, res) => {
         inviteExpiresAt,
       ]
     );
-    const newLocation = insertResult.rows[0];
+  const newLocation = insertResult.rows[0];
+
+    // Promote parent to business_type='parent' on first location add.
+    // Idempotent — the WHERE clause no-ops if already 'parent'. This gates
+    // the LocationSwitcher "All Locations" rollup option on the frontend
+    // (tenants.some(t => t.business_type === 'parent')), so without this
+    // update any standalone customer adding their first location would
+    // have a broken dropdown.
+    await db.query(
+      "UPDATE tenants SET business_type = 'parent', updated_at = now() WHERE id = $1 AND business_type != 'parent'",
+      [parentId]
+    );
+
+    // Audit log the creation (use parent_id for org scope)
+    await logAction({
 
     // Audit log the creation (use parent_id for org scope)
     await logAction({

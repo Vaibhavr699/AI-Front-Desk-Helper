@@ -37,7 +37,9 @@ import {
   Palette,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import CreateResellerModal from "../components/CreateResellerModal";
 
+const [isCreateResellerOpen, setIsCreateResellerOpen] = useState(false);
 const PLAN_COLORS = {
   basic: { bg: "rgba(156,163,175,0.1)", text: "#6b7280", border: "rgba(156,163,175,0.2)", dot: "#9ca3af", gradient: "from-gray-400 to-gray-500" },
   pro: { bg: "rgba(59,130,246,0.08)", text: "#2563eb", border: "rgba(59,130,246,0.15)", dot: "#3b82f6", gradient: "from-blue-500 to-blue-600" },

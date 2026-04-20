@@ -1,0 +1,143 @@
+-- ============================================================================
+-- Migration 037: Reseller Account Type (Phase 2 White Label)
+-- ============================================================================
+-- Adds:
+--   1. account_type classifier ('customer' | 'reseller' | 'parent_hq')
+--   2. Reseller-specific fields (tier, code, customer limit, wholesale rate)
+--   3. Customer-under-reseller fields (reseller_id FK, billing_owner)
+--   4. Constraints + indexes
+--
+-- Safe to re-run: all ALTERs use IF NOT EXISTS pattern where supported.
+-- Backfill: existing tenants with parent_mode set → account_type='parent_hq'.
+--           All others stay 'customer' (default).
+-- ============================================================================
+
+BEGIN;
+
+-- ----------------------------------------------------------------------------
+-- 1. account_type — primary classifier
+-- ----------------------------------------------------------------------------
+ALTER TABLE tenants
+  ADD COLUMN IF NOT EXISTS account_type TEXT NOT NULL DEFAULT 'customer';
+
+-- Drop constraint if re-running, then add
+ALTER TABLE tenants DROP CONSTRAINT IF EXISTS tenants_account_type_check;
+ALTER TABLE tenants
+  ADD CONSTRAINT tenants_account_type_check
+  CHECK (account_type IN ('customer', 'reseller', 'parent_hq'));
+
+-- Backfill: existing parents → 'parent_hq'
+UPDATE tenants
+SET account_type = 'parent_hq'
+WHERE parent_mode IS NOT NULL
+  AND account_type = 'customer';
+
+-- ----------------------------------------------------------------------------
+-- 2. Reseller-specific fields (NULL unless account_type = 'reseller')
+-- ----------------------------------------------------------------------------
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS reseller_tier TEXT;
+ALTER TABLE tenants DROP CONSTRAINT IF EXISTS tenants_reseller_tier_check;
+ALTER TABLE tenants
+  ADD CONSTRAINT tenants_reseller_tier_check
+  CHECK (reseller_tier IS NULL OR reseller_tier IN ('starter', 'growth', 'scale'));
+
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS reseller_code TEXT UNIQUE;
+-- Used in public signup URL: /reseller/:code/signup
+
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS reseller_customer_limit INTEGER;
+-- NULL = unlimited (scale tier). 10 = starter, 50 = growth.
+
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS reseller_wholesale_rate_cents INTEGER;
+-- Per-customer-location wholesale rate in cents.
+-- Starter: 9900 ($99), Growth: 7900 ($79), Scale: 5900 ($59).
+-- Cached on row for cheap billing calc (no tier lookup per invoice).
+
+-- ----------------------------------------------------------------------------
+-- 3. Customer-under-reseller fields
+-- ----------------------------------------------------------------------------
+ALTER TABLE tenants
+  ADD COLUMN IF NOT EXISTS reseller_id UUID REFERENCES tenants(id) ON DELETE SET NULL;
+-- FK target is a tenant with account_type='reseller'.
+-- ON DELETE SET NULL: if reseller record deleted, customers auto-orphan
+-- (churn handler in Step 6 flips billing_owner to 'direct' + creates direct Stripe sub).
+
+ALTER TABLE tenants
+  ADD COLUMN IF NOT EXISTS billing_owner TEXT NOT NULL DEFAULT 'direct';
+
+ALTER TABLE tenants DROP CONSTRAINT IF EXISTS tenants_billing_owner_check;
+ALTER TABLE tenants
+  ADD CONSTRAINT tenants_billing_owner_check
+  CHECK (billing_owner IN ('direct', 'reseller'));
+
+-- ----------------------------------------------------------------------------
+-- 4. Cross-field consistency constraints
+-- ----------------------------------------------------------------------------
+
+-- A. If account_type='reseller', tier + code must be set; wholesale/limit must
+--    be set (or limit NULL for scale). If account_type != 'reseller',
+--    ALL reseller-specific fields must be NULL.
+ALTER TABLE tenants DROP CONSTRAINT IF EXISTS tenants_reseller_fields_consistency;
+ALTER TABLE tenants
+  ADD CONSTRAINT tenants_reseller_fields_consistency CHECK (
+    (account_type = 'reseller'
+      AND reseller_tier IS NOT NULL
+      AND reseller_code IS NOT NULL
+      AND reseller_wholesale_rate_cents IS NOT NULL)
+    OR
+    (account_type <> 'reseller'
+      AND reseller_tier IS NULL
+      AND reseller_code IS NULL
+      AND reseller_customer_limit IS NULL
+      AND reseller_wholesale_rate_cents IS NULL)
+  );
+
+-- B. reseller_id and billing_owner must be consistent:
+--    reseller_id IS NULL  ⇒ billing_owner='direct'
+--    reseller_id IS NOT NULL ⇒ billing_owner='reseller'
+--    This is the core churn-safety invariant.
+ALTER TABLE tenants DROP CONSTRAINT IF EXISTS tenants_reseller_billing_consistency;
+ALTER TABLE tenants
+  ADD CONSTRAINT tenants_reseller_billing_consistency CHECK (
+    (reseller_id IS NULL AND billing_owner = 'direct')
+    OR
+    (reseller_id IS NOT NULL AND billing_owner = 'reseller')
+  );
+
+-- C. A reseller cannot be under another reseller (no nesting).
+--    A reseller cannot be a parent_hq (account_type mutually exclusive already covers this).
+ALTER TABLE tenants DROP CONSTRAINT IF EXISTS tenants_reseller_not_nested;
+ALTER TABLE tenants
+  ADD CONSTRAINT tenants_reseller_not_nested CHECK (
+    NOT (account_type = 'reseller' AND reseller_id IS NOT NULL)
+  );
+
+-- ----------------------------------------------------------------------------
+-- 5. Indexes
+-- ----------------------------------------------------------------------------
+CREATE INDEX IF NOT EXISTS idx_tenants_account_type
+  ON tenants(account_type);
+
+CREATE INDEX IF NOT EXISTS idx_tenants_reseller_id
+  ON tenants(reseller_id)
+  WHERE reseller_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_tenants_reseller_code
+  ON tenants(reseller_code)
+  WHERE reseller_code IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_tenants_billing_owner
+  ON tenants(billing_owner);
+
+-- ----------------------------------------------------------------------------
+-- 6. Verification queries (run these after commit to confirm)
+-- ----------------------------------------------------------------------------
+-- SELECT account_type, COUNT(*) FROM tenants GROUP BY account_type;
+--   Expected: 'customer' = most, 'parent_hq' = Gladiators + any other parents,
+--             'reseller' = 0 (none yet).
+--
+-- SELECT id, name, account_type, parent_mode
+-- FROM tenants
+-- WHERE id = 'a2942de5-5bfd-4cb1-8071-9207fe290a4b';
+--   Expected: account_type = 'parent_hq' (Gladiators backfilled correctly).
+
+COMMIT;

@@ -493,17 +493,35 @@ router.post("/tenants/reseller", async (req, res) => {
     //   their billing comes from reseller-specific Stripe prices)
     // - subscription_status left NULL — flips to 'active' via Stripe webhook
     //   when reseller completes checkout
-   const tenantResult = await db.query(
+  // Generate URL-safe slug from name, with collision suffix if needed
+function toSlug(s) {
+  return String(s)
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 50) || "reseller";
+}
+let slug = toSlug(trimmedName);
+for (let i = 0; i < 5; i++) {
+  const { rows } = await db.query("SELECT id FROM tenants WHERE slug = $1", [slug]);
+  if (rows.length === 0) break;
+  // Collision — append short random suffix and retry
+  slug = `${toSlug(trimmedName)}-${crypto.randomBytes(2).toString("hex")}`;
+}
+
+const tenantResult = await db.query(
   `INSERT INTO tenants (
-     name, company_name,
+     name, company_name, slug,
      account_type, reseller_tier, reseller_code,
      reseller_customer_limit, reseller_wholesale_rate_cents,
      billing_owner, brand_mode, plan
    )
-   VALUES ($1, $1, 'reseller', $2, $3, $4, $5, 'direct', 'ai_branded', 'basic')
-   RETURNING id, name, reseller_code, reseller_tier, created_at`,
+   VALUES ($1, $1, $2, 'reseller', $3, $4, $5, $6, 'direct', 'ai_branded', 'basic')
+   RETURNING id, name, slug, reseller_code, reseller_tier, created_at`,
   [
     trimmedName,
+    slug,
     tier,
     resellerCode,
     tierDef.customer_limit,

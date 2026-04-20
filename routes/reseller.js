@@ -144,6 +144,8 @@ router.get('/overview', async (req, res) => {
         reseller_code: req.user.tenant.reseller_code,
         brand_mode: req.user.tenant.brand_mode,
         primary_email: req.user.tenant.primary_email,
+        subscription_status: req.user.tenant.subscription_status,
+        stripe_subscription_id: req.user.tenant.stripe_subscription_id,
       },
       tier: tierInfo,
       aggregated_30d: {

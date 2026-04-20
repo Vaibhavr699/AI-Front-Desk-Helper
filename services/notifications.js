@@ -436,6 +436,6 @@ module.exports = {
   notifyNewLead,
   notifyHotLead,
   notifyEstimateRecoveryStarted,
-  notifyStripeSyncFailed
+  notifyStripeSyncFailed,
   HOT_LEAD_THRESHOLD_CENTS,
 };

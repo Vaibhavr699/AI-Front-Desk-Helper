@@ -30,9 +30,10 @@ export default function CreateResellerModal({ isOpen, onClose, onCreated }) {
   }
 
   function handleClose() {
-    reset();
-    onClose?.();
-  }
+  if (result) onCreated?.(result);
+  reset();
+  onClose?.();
+}
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -47,13 +48,14 @@ export default function CreateResellerModal({ isOpen, onClose, onCreated }) {
 
     setLoading(true);
     try {
-      const data = await createResellerTenant({
-        name: form.name.trim(),
-        owner_email: form.owner_email.trim().toLowerCase(),
-        tier: form.tier,
-      });
-      setResult(data);
-      onCreated?.(data);
+     const data = await createResellerTenant({
+  name: form.name.trim(),
+  owner_email: form.owner_email.trim().toLowerCase(),
+  tier: form.tier,
+});
+setResult(data);
+// Don't call onCreated here — it triggers Admin.loadData which sets loading=true
+// and unmounts this modal, wiping the success screen. Fire onCreated on close instead.
     } catch (err) {
       setError(err.message || "Failed to create reseller");
     } finally {

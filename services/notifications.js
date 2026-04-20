@@ -251,6 +251,45 @@ async function notifyEstimateRecoveryStarted(tenantId, { customer_name, lead_id,
   }
 }
 
+/**
+ * Fires when a child location's Stripe sync fails. Apr 20, 2026.
+ * Dedups within a 24-hour window so a single broken location doesn't
+ * spam the bell every time someone hits the retry button or loads
+ * the page. The retry button on Locations.jsx is the action — this
+ * notification just gets eyes on the problem.
+ */
+async function notifyStripeSyncFailed(parentTenantId, { child_tenant_id, child_name, error_message }) {
+  try {
+    if (!parentTenantId || !child_tenant_id) return null;
+
+    const existing = await db.query(
+      `SELECT id FROM notifications
+       WHERE tenant_id = $1
+         AND type = 'stripe_sync_failed'
+         AND data->>'child_tenant_id' = $2
+         AND created_at > now() - interval '24 hours'
+       LIMIT 1`,
+      [parentTenantId, String(child_tenant_id)]
+    );
+    if (existing.rows.length > 0) return null;
+
+    const displayName = child_name || "A location";
+    const errorSnippet = error_message
+      ? (error_message.length > 120 ? error_message.slice(0, 117) + "..." : error_message)
+      : "Stripe rejected the billing item.";
+
+    return await createNotification(parentTenantId, {
+      type: 'stripe_sync_failed',
+      title: 'Location Billing Issue',
+      body: `${displayName} couldn't sync to your Stripe subscription. ${errorSnippet} Open the Locations page to retry.`,
+      data: { child_tenant_id, child_name, error_message },
+    });
+  } catch (err) {
+    console.error("[Notification] notifyStripeSyncFailed failed:", err.message);
+    return null;
+  }
+}
+
 // ─────────────────────────────────────────────────────────
 // SCHEDULED CHECKS (existing — unchanged)
 // ─────────────────────────────────────────────────────────
@@ -397,5 +436,6 @@ module.exports = {
   notifyNewLead,
   notifyHotLead,
   notifyEstimateRecoveryStarted,
+  notifyStripeSyncFailed
   HOT_LEAD_THRESHOLD_CENTS,
 };

@@ -39,7 +39,6 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import CreateResellerModal from "../components/CreateResellerModal";
 
-const [isCreateResellerOpen, setIsCreateResellerOpen] = useState(false);
 const PLAN_COLORS = {
   basic: { bg: "rgba(156,163,175,0.1)", text: "#6b7280", border: "rgba(156,163,175,0.2)", dot: "#9ca3af", gradient: "from-gray-400 to-gray-500" },
   pro: { bg: "rgba(59,130,246,0.08)", text: "#2563eb", border: "rgba(59,130,246,0.15)", dot: "#3b82f6", gradient: "from-blue-500 to-blue-600" },
@@ -59,6 +58,7 @@ function centsToMRR(cents) {
 
 export default function Admin({ view: initialView = "tenants" }) {
   const [activeView, setActiveView] = useState(initialView);
+  const [isCreateResellerOpen, setIsCreateResellerOpen] = useState(false);
   const [stats, setStats] = useState(null);
   const [tenants, setTenants] = useState([]);
   const [admins, setAdmins] = useState([]);
@@ -437,6 +437,12 @@ export default function Admin({ view: initialView = "tenants" }) {
                   <p className="text-xs text-slate-500 font-medium">Manage business accounts and pricing</p>
                 </div>
                 <div className="flex items-center gap-3 w-full md:w-auto">
+                  <button
+            onClick={() => setIsCreateResellerOpen(true)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-[11px] font-black uppercase tracking-wider hover:bg-black transition-all shadow-sm shadow-slate-900/10 whitespace-nowrap"
+          >
+            + Create Reseller
+          </button>
                   <div className="relative flex-1 md:w-72">
                     <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
                     <input
@@ -1054,6 +1060,13 @@ export default function Admin({ view: initialView = "tenants" }) {
           </div>
         )}
       </AnimatePresence>
+      
+      {/* Create Reseller Modal — Step 8 */}
+      <CreateResellerModal
+        isOpen={isCreateResellerOpen}
+        onClose={() => setIsCreateResellerOpen(false)}
+        onCreated={() => loadData()}
+      />
     </div>
   );
 }

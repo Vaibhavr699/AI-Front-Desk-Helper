@@ -27,6 +27,7 @@ import { ModernKpiCard } from "../components/metrics/ModernKpiCard";
 import { OutcomeBar } from "../components/metrics/OutcomeBar";
 import { InsightBar } from "../components/metrics/InsightBar";
 import { AnalysisCard } from "../components/metrics/AnalysisCard";
+import GoalSetting from "./GoalSetting";
 
 // Global Helpers
 const formatPrice = (c) => `$${Math.round(c/100).toLocaleString()}`;
@@ -62,11 +63,13 @@ export default function Metrics({ tenantId }) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [timeRange, setTimeRange] = useState('30d');
+  const [activeTab, setActiveTab] = useState("performance");
 
   useEffect(() => {
     if (!tenantId) return;
+    if (activeTab !== "performance") return;
     loadMetrics();
-  }, [tenantId, timeRange]);
+  }, [tenantId, timeRange, activeTab]);
 
   const loadMetrics = async () => {
     if (metrics) setIsRefreshing(true);
@@ -83,10 +86,71 @@ export default function Metrics({ tenantId }) {
   };
 
   if (!tenantId) return <div className="flex flex-col items-center justify-center h-96 p-10 text-center"><Target className="text-gray-200 mb-4" size={48}/><h2 className="text-lg font-bold text-gray-400 uppercase tracking-widest">Select business center to begin</h2></div>;
-  if (loading) return <div className="flex items-center justify-center h-[70vh]"><LumaSpin /></div>;
-  if (error) return <div className="m-8 p-6 bg-rose-50 border border-rose-100 rounded-xl flex items-center gap-4 text-rose-700 shadow-sm"><AlertCircle /> <div><h3 className="font-bold uppercase text-xs tracking-widest">Failed to load data</h3><p className="text-sm opacity-80">{error}</p></div></div>;
-  if (!metrics) return null;
 
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 py-8 animate-in fade-in duration-500">
+      
+      {/* High-Fidelity Header */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 pb-6 border-b border-gray-100">
+        <div className="flex items-center gap-6 flex-wrap">
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Business Metrics</h1>
+          {/* Tab selector */}
+          <div className="flex items-center gap-1 p-1 bg-gray-100/80 rounded-lg">
+            <button
+              onClick={() => setActiveTab("performance")}
+              className={`px-4 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all ${activeTab === "performance" ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Performance
+            </button>
+            <button
+              onClick={() => setActiveTab("goals")}
+              className={`px-4 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all ${activeTab === "goals" ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Goals
+            </button>
+          </div>
+          {/* Time-range selector — only on Performance tab */}
+          {activeTab === "performance" && (
+            <div className="flex items-center gap-1 p-1 bg-gray-100/80 rounded-lg">
+              {['today', '7d', '30d', '90d', 'all'].map(r => (
+                <button key={r} onClick={() => setTimeRange(r)} className={`px-4 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all ${timeRange === r ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>{r==='all'?'All time':r}</button>
+              ))}
+            </div>
+          )}
+        </div>
+        {activeTab === "performance" && (
+          <div className="flex flex-col items-end gap-1">
+            <div className="px-3 py-1 bg-gray-50 rounded-full border border-gray-100 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+              Updated real-time
+            </div>
+            <div className="text-sm font-bold text-gray-900 pr-2">
+              {metrics?.isRollup ? 'All Locations' : (metrics?.location_breakdown?.[0]?.name || 'Current Branch')}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* GOALS TAB */}
+      {activeTab === "goals" && <GoalSetting tenantId={tenantId} />}
+
+      {/* PERFORMANCE TAB */}
+      {activeTab === "performance" && (
+        <>
+          {loading && <div className="flex items-center justify-center h-[70vh]"><LumaSpin /></div>}
+          {error && (
+            <div className="m-8 p-6 bg-rose-50 border border-rose-100 rounded-xl flex items-center gap-4 text-rose-700 shadow-sm">
+              <AlertCircle /> <div><h3 className="font-bold uppercase text-xs tracking-widest">Failed to load data</h3><p className="text-sm opacity-80">{error}</p></div>
+            </div>
+          )}
+          {!loading && !error && metrics && <PerformanceView metrics={metrics} timeRange={timeRange} />}
+        </>
+      )}
+
+    </div>
+  );
+}
+
+function PerformanceView({ metrics, timeRange }) {
   const ai = metrics.ai || {};
   const aiPrev = metrics.aiPrev || {};
   const pipeline = metrics.pipeline || {};
@@ -108,38 +172,8 @@ export default function Metrics({ tenantId }) {
   const bookingRate = callsHandled > 0 ? Math.round((booked / callsHandled) * 100) : 0;
   const bookingRatePrev = aiPrev.calls_handled > 0 ? Math.round((aiPrev.calls_booked / aiPrev.calls_handled) * 100) : 0;
 
-  const commonProps = {
-    ai, aiPrev, pipeline, dm, 
-    callsHandled, callsHandledPrev,
-    booked, followup, transferred, hungup, confused,
-    bookingRate, bookingRatePrev,
-    actualRev, estimatedRev, lostPotential, timeRange,
-    getTrend, formatPrice
-  };
-
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 py-8 animate-in fade-in duration-500">
-      
-      {/* High-Fidelity Header */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 pb-6 border-b border-gray-100">
-        <div className="flex items-center gap-6">
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Business Metrics</h1>
-          <div className="flex items-center gap-1 p-1 bg-gray-100/80 rounded-lg">
-            {['today', '7d', '30d', '90d', 'all'].map(r => (
-              <button key={r} onClick={() => setTimeRange(r)} className={`px-4 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all ${timeRange === r ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>{r==='all'?'All time':r}</button>
-            ))}
-          </div>
-        </div>
-        <div className="flex flex-col items-end gap-1">
-          <div className="px-3 py-1 bg-gray-50 rounded-full border border-gray-100 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-            Updated real-time
-          </div>
-          <div className="text-sm font-bold text-gray-900 pr-2">
-            {metrics.isRollup ? 'All Locations' : (metrics.location_breakdown?.[0]?.name || 'Current Branch')}
-          </div>
-        </div>
-      </div>
-
+    <>
       <MetricHero revPerCall={revPerCall} callsHandled={callsHandled} confirmedRevenue={actualRev} lostWithoutAi={lostPotential} />
 
       {/* Dynamic Insight Banners */}
@@ -337,7 +371,6 @@ export default function Metrics({ tenantId }) {
             trend="+22%" 
             icon={Activity} 
           />
-          {/* ✅ FIX: removed * 100 — avg_job_value from backend is already in cents */}
           <OpsCard 
             label="Avg Job Value" 
             value={formatPrice(dm.ops?.avg_job_value || 0)} 
@@ -363,8 +396,7 @@ export default function Metrics({ tenantId }) {
           </div>
         </div>
       </div>
-
-    </div>
+    </>
   );
 }
 
@@ -386,19 +418,6 @@ function PerformanceCard({ label, value, sub, color }) {
         <div className="text-[10px] font-medium text-gray-400 uppercase tracking-tight">{sub}</div>
       </div>
       <div className="w-fit px-2 py-0.5 rounded-full bg-gray-50 text-[9px] font-bold text-gray-400 uppercase tracking-widest ring-1 ring-gray-100 font-sans">Analytics Active</div>
-    </div>
-  );
-}
-
-function Funnel_Row({ label, count, total, u, color }) {
-  const pct = total > 0 ? Math.round((count/total)*100) : 0;
-  return (
-    <div className="flex items-center gap-4">
-      <div className="w-24 text-[10px] font-bold text-gray-600 uppercase shrink-0 leading-none">{label}</div>
-      <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden relative">
-        <div className={`h-full ${color || 'bg-gray-900'} transition-all duration-1000`} style={{ width: `${pct}%` }}></div>
-      </div>
-      <div className="text-[11px] font-bold text-gray-900 w-8 text-right font-mono">{pct}%</div>
     </div>
   );
 }

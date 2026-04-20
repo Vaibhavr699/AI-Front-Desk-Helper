@@ -111,7 +111,9 @@ export default function Reseller() {
 
   const tier = overview?.tier;
   const agg = overview?.aggregated_30d || { calls: 0, bookings: 0, open_leads: 0, revenue_cents: 0 };
-  const notSubscribed = overview && (!tier || !tier.tier);
+  const notSubscribed =
+  overview &&
+  (!tier || !tier.tier || overview.reseller?.subscription_status !== "active");
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">

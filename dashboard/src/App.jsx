@@ -10,6 +10,12 @@ import { ToastProvider } from "./components/ui/Toast";
 import "./App.css";
 import Reviews from "./pages/Reviews";
 
+// ── Phase 2 WL Reseller Account Type (Apr 20, 2026) ────────────────────────
+import Reseller from "./pages/Reseller";
+import ResellerPlans from "./pages/ResellerPlans";
+import ResellerWelcome from "./pages/ResellerWelcome";
+import ResellerPublicSignup from "./pages/ResellerPublicSignup";
+
 /** Scroll window to top on every route change so new pages (e.g. policy, login) are not shown at previous scroll position. */
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -86,6 +92,7 @@ export default function App() {
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/franchisee-invite/:token" element={<FranchiseeInvite />} />
+          <Route path="/reseller/:code/signup" element={<ResellerPublicSignup />} />
           <Route path="/welcome" element={<Welcome />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/sms-terms" element={<SmsTerms />} />
@@ -117,6 +124,10 @@ export default function App() {
             <Route path="/locations" element={<LocationsWithContext />} />
             <Route path="/team" element={<Team />} />
             <Route path="/reviews" element={<ReviewsWithContext />} />
+            {/* Reseller (authenticated) — Phase 2 WL */}
+            <Route path="/reseller" element={<Reseller />} />
+            <Route path="/reseller/plans" element={<ResellerPlans />} />
+            <Route path="/reseller/welcome" element={<ResellerWelcome />} />
           </Route>
         </Routes>
       </ToastProvider>

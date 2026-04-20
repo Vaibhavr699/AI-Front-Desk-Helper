@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { getTenant } from "../api";
-import { listLocations } from "../api/locations";
+import { listLocations, retryLocationStripeSync } from "../api/locations";
 import { useToast } from "../components/ui/Toast";
 import LocationCard from "../components/locations/LocationCard";
 import AddLocationSheet from "../components/locations/AddLocationSheet";
@@ -81,10 +81,39 @@ export default function Locations({ tenantId }) {
     load();
   };
 
-  const handleResendInvite = (loc) => setResendTarget(loc);
+ const handleResendInvite = (loc) => setResendTarget(loc);
   const handleResent = () => {
     toast?.show?.("Invite resent", { type: "success" });
     load();
+  };
+
+  // Retry a failed Stripe sync for a parent_pays location. LocationCard
+  // handles its own loading/disabled state; this handler just hits the API,
+  // shows a toast, and refreshes the list. On failure we re-throw so the
+  // card can surface the error message inline (stripe_sync_error column
+  // will also update on the next load).
+  const handleRetrySync = async (loc) => {
+    if (!loc?.id || !tenantId) return;
+    try {
+      const result = await retryLocationStripeSync(tenantId, loc.id);
+      if (result?.ok) {
+        toast?.show?.("Stripe sync restored", { type: "success" });
+        await load();
+      } else {
+        // Backend returned 200 with ok:false (shouldn't happen with current
+        // code — 502 is thrown — but handle defensively)
+        const msg = result?.error || "Stripe sync failed. Try again shortly.";
+        toast?.show?.(msg, { type: "error" });
+        await load();
+        throw new Error(msg);
+      }
+    } catch (err) {
+      // 502 from the backend lands here. Still refresh so the card shows
+      // the fresh stripe_sync_error from the DB.
+      toast?.show?.(err?.message || "Retry failed", { type: "error" });
+      await load();
+      throw err; // re-throw so LocationCard's local error state updates
+    }
   };
 
   // View: switch tenant context, then navigate to the location's dashboard.
@@ -252,7 +281,7 @@ export default function Locations({ tenantId }) {
           />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {sortedLocations.map((loc) => (
+           {sortedLocations.map((loc) => (
               <LocationCard
                 key={loc.id}
                 location={loc}
@@ -262,8 +291,9 @@ export default function Locations({ tenantId }) {
                 onResendInvite={handleResendInvite}
                 onView={handleView}
                 onSettings={handleSettings}
+                onRetrySync={handleRetrySync}
               />
-            ))}
+            ))} 
           </div>
         )}
       </PageShell>

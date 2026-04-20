@@ -153,6 +153,14 @@ export function resetApiKey(id) {
   });
 }
 
+// ── Location rollup (Apr 20, 2026) ──
+// Powers the Businesses page. One-shot endpoint that returns:
+// { parent, summary, locations, insights }
+// See GET /tenants/:parentId/rollup in routes/dashboard.js.
+export function getTenantRollup(parentId) {
+  return api(`/api/tenants/${parentId}/rollup`);
+}
+
 export function getCalls(tenantId, params = {}) {
   const extra = tenantId === 'all' ? { tenant_id: 'all', rollup: 'true', ...params } : { tenant_id: tenantId, ...params };
   const q = new URLSearchParams(extra);

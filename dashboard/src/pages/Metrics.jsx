@@ -27,7 +27,7 @@ import { ModernKpiCard } from "../components/metrics/ModernKpiCard";
 import { OutcomeBar } from "../components/metrics/OutcomeBar";
 import { InsightBar } from "../components/metrics/InsightBar";
 import { AnalysisCard } from "../components/metrics/AnalysisCard";
-import GoalSetting from "./GoalSetting";
+import GoalSetting from "../components/coaching/GoalSetting";
 
 // Global Helpers
 const formatPrice = (c) => `$${Math.round(c/100).toLocaleString()}`;

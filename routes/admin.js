@@ -493,24 +493,23 @@ router.post("/tenants/reseller", async (req, res) => {
     //   their billing comes from reseller-specific Stripe prices)
     // - subscription_status left NULL — flips to 'active' via Stripe webhook
     //   when reseller completes checkout
-    const tenantResult = await db.query(
-      `INSERT INTO tenants (
-         name, company_name, primary_email,
-         account_type, reseller_tier, reseller_code,
-         reseller_customer_limit, reseller_wholesale_rate_cents,
-         billing_owner, brand_mode, plan
-       )
-       VALUES ($1, $1, $2, 'reseller', $3, $4, $5, $6, 'direct', 'ai_branded', 'basic')
-       RETURNING id, name, reseller_code, reseller_tier, primary_email, created_at`,
-      [
-        trimmedName,
-        normalizedEmail,
-        tier,
-        resellerCode,
-        tierDef.customer_limit,
-        tierDef.wholesale_rate_cents,
-      ]
-    );
+   const tenantResult = await db.query(
+  `INSERT INTO tenants (
+     name, company_name,
+     account_type, reseller_tier, reseller_code,
+     reseller_customer_limit, reseller_wholesale_rate_cents,
+     billing_owner, brand_mode, plan
+   )
+   VALUES ($1, $1, 'reseller', $2, $3, $4, $5, 'direct', 'ai_branded', 'basic')
+   RETURNING id, name, reseller_code, reseller_tier, created_at`,
+  [
+    trimmedName,
+    tier,
+    resellerCode,
+    tierDef.customer_limit,
+    tierDef.wholesale_rate_cents,
+  ]
+);
     const tenant = tenantResult.rows[0];
 
     // Create owner dashboard_user (random password, gets set via reset link)

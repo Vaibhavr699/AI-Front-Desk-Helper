@@ -4,18 +4,13 @@
 // routes/reseller-public.js
 // Apr 20, 2026 — Phase 2 WL Reseller Account Type (PUBLIC signup flow)
 // ============================================================================
+// Uses pg Pool (lib/db.js) with raw SQL. No auth required on these routes.
+//
 // Mount in server.js:
 //   app.use('/reseller-public', require('./routes/reseller-public'));
 //
-// Endpoints (NO auth required):
-//   GET  /reseller-public/:code           → branded info for signup page
-//   POST /reseller-public/:code/signup    → customer self-onboards
-//
-// Depends on: migration 037, lib/resellerBilling.js
-//
 // TODO Phase 2 hardening: add express-rate-limit middleware
-// TODO Step 5: wire sendResellerCustomerWelcomeEmail (with password-set link)
-//              and sendResellerNewCustomerNotification into services/email.js
+// TODO Step 6: wire sendResellerCustomerWelcomeEmail + sendResellerNewCustomerNotification
 // ============================================================================
 
 const express = require('express');
@@ -26,7 +21,7 @@ const { auditLog } = require('../lib/auditLogger');
 const { validateCanAddCustomer } = require('../lib/resellerBilling');
 
 // ---------------------------------------------------------------------------
-// Helper: safe audit log (never blocks the main request)
+// Helpers
 // ---------------------------------------------------------------------------
 async function safeAuditLog(payload) {
   try {
@@ -38,52 +33,41 @@ async function safeAuditLog(payload) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Helper: fetch reseller by code (case-insensitive, status-validated)
-// ---------------------------------------------------------------------------
 async function fetchResellerByCode(code) {
   const normalized = (code || '').toLowerCase().trim();
   if (!normalized) return null;
 
-  const { data, error } = await db
-    .from('tenants')
-    .select('*')
-    .eq('reseller_code', normalized)
-    .eq('account_type', 'reseller')
-    .is('deleted_at', null)
-    .maybeSingle();
-
-  if (error) {
-    console.error('[reseller-public] fetchResellerByCode error:', error);
+  try {
+    const { rows } = await db.query(
+      `SELECT * FROM tenants
+        WHERE reseller_code = $1
+          AND account_type = 'reseller'
+          AND deleted_at IS NULL
+        LIMIT 1`,
+      [normalized]
+    );
+    return rows[0] || null;
+  } catch (err) {
+    console.error('[reseller-public] fetchResellerByCode error:', err);
     return null;
   }
-  return data;
 }
 
-// ---------------------------------------------------------------------------
-// Helper: is reseller accepting signups?
-// ---------------------------------------------------------------------------
 function isResellerActive(reseller) {
   if (!reseller) return false;
   if (reseller.deleted_at) return false;
   if (reseller.account_type !== 'reseller') return false;
 
-  // If subscription_status column exists, require active or trialing.
-  // If column doesn't exist (undefined on row), treat as active (grandfather).
   if (reseller.subscription_status !== undefined && reseller.subscription_status !== null) {
-    const ok = ['active', 'trialing'].includes(reseller.subscription_status);
-    if (!ok) return false;
+    if (!['active', 'trialing'].includes(reseller.subscription_status)) return false;
   }
-
-  // Same for is_suspended if present
   if (reseller.is_suspended === true) return false;
-
   return true;
 }
 
 // ===========================================================================
 // GET /reseller-public/:code
-// Public branded info for the signup page
+// Branded info for signup page
 // ===========================================================================
 router.get('/:code', async (req, res) => {
   try {
@@ -97,15 +81,12 @@ router.get('/:code', async (req, res) => {
 
     const active = isResellerActive(reseller);
 
-    // Check cap without throwing
     let atCap = false;
     if (active) {
       try {
         await validateCanAddCustomer(db, reseller);
       } catch (err) {
-        if (err.code === 'RESELLER_AT_CAP') {
-          atCap = true;
-        }
+        if (err.code === 'RESELLER_AT_CAP') atCap = true;
       }
     }
 
@@ -131,21 +112,17 @@ router.get('/:code', async (req, res) => {
 
 // ===========================================================================
 // POST /reseller-public/:code/signup
-// Create a new customer tenant under this reseller (public self-signup)
+// Customer self-onboards under this reseller
 // ===========================================================================
 router.post('/:code/signup', async (req, res) => {
   const { business_name, primary_email, phone } = req.body || {};
 
-  // -------------------------------------------------------------------------
-  // Input validation
-  // -------------------------------------------------------------------------
   if (!business_name || !primary_email) {
     return res.status(400).json({
       error: 'business_name and primary_email are required',
       code: 'MISSING_FIELDS',
     });
   }
-
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(primary_email)) {
     return res.status(400).json({
       error: 'Invalid email format',
@@ -162,7 +139,6 @@ router.post('/:code/signup', async (req, res) => {
   }
 
   try {
-    // 1. Look up reseller
     const reseller = await fetchResellerByCode(req.params.code);
     if (!reseller) {
       return res.status(404).json({
@@ -171,7 +147,6 @@ router.post('/:code/signup', async (req, res) => {
       });
     }
 
-    // 2. Validate reseller active
     if (!isResellerActive(reseller)) {
       return res.status(403).json({
         error: 'This reseller is not currently accepting signups',
@@ -179,46 +154,43 @@ router.post('/:code/signup', async (req, res) => {
       });
     }
 
-    // 3. Validate tier cap
     await validateCanAddCustomer(db, reseller);
 
-    // 4. Duplicate email check
-    const { data: existing, error: dupErr } = await db
-      .from('tenants')
-      .select('id')
-      .eq('primary_email', primary_email)
-      .is('deleted_at', null)
-      .maybeSingle();
-    if (dupErr && dupErr.code !== 'PGRST116') throw dupErr;
-    if (existing) {
+    // Duplicate email check
+    const normalizedEmail = primary_email.toLowerCase().trim();
+    const { rows: existingRows } = await db.query(
+      `SELECT id FROM tenants
+        WHERE primary_email = $1 AND deleted_at IS NULL
+        LIMIT 1`,
+      [normalizedEmail]
+    );
+    if (existingRows.length > 0) {
       return res.status(409).json({
         error: 'An account with this email already exists. Please log in or use a different email.',
         code: 'EMAIL_EXISTS',
       });
     }
 
-    // 5. Create customer tenant
-    const newTenant = {
-      name: trimmedName,
-      primary_email: primary_email.toLowerCase().trim(),
-      phone: phone ? String(phone).trim() : null,
-      plan: 'growth', // TODO: allow reseller to set default_customer_plan
-      account_type: 'customer',
-      reseller_id: reseller.id,
-      billing_owner: 'reseller',
-      brand_mode: reseller.brand_mode || 'default', // cascade reseller brand
-      stripe_customer_id: null,
-      stripe_subscription_id: null,
-    };
+    // Create customer tenant
+    const brandMode = reseller.brand_mode || 'default';
+    const { rows } = await db.query(
+      `INSERT INTO tenants (
+         name, primary_email, phone, plan,
+         account_type, reseller_id, billing_owner, brand_mode,
+         stripe_customer_id, stripe_subscription_id
+       )
+       VALUES ($1, $2, $3, 'growth', 'customer', $4, 'reseller', $5, NULL, NULL)
+       RETURNING id, name, primary_email`,
+      [
+        trimmedName,
+        normalizedEmail,
+        phone ? String(phone).trim() : null,
+        reseller.id,
+        brandMode,
+      ]
+    );
+    const created = rows[0];
 
-    const { data: created, error: insertErr } = await db
-      .from('tenants')
-      .insert(newTenant)
-      .select()
-      .single();
-    if (insertErr) throw insertErr;
-
-    // 6. Audit log
     await safeAuditLog({
       action: 'reseller.customer.self_signup',
       actor_id: null,
@@ -227,7 +199,7 @@ router.post('/:code/signup', async (req, res) => {
       target_id: created.id,
       details: {
         customer_name: trimmedName,
-        customer_email: newTenant.primary_email,
+        customer_email: normalizedEmail,
         via: 'public_signup',
         reseller_code: req.params.code,
         ip: req.ip || req.headers['x-forwarded-for'] || null,
@@ -235,11 +207,11 @@ router.post('/:code/signup', async (req, res) => {
       },
     });
 
-    // 7. TODO Step 5 emails:
-    //    - sendResellerCustomerWelcomeEmail (to customer, with password-set link)
-    //    - sendResellerNewCustomerNotification (to reseller)
+    // TODO Step 6 emails:
+    //   - sendResellerCustomerWelcomeEmail (to customer, with password-set link)
+    //   - sendResellerNewCustomerNotification (to reseller)
     console.log(
-      `[reseller-public/signup] TODO emails: welcome ${newTenant.primary_email}, notify reseller ${reseller.primary_email}`
+      `[reseller-public/signup] TODO emails: welcome ${normalizedEmail}, notify reseller ${reseller.primary_email}`
     );
 
     return res.status(201).json({

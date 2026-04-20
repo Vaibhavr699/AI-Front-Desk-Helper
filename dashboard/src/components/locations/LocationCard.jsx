@@ -1,19 +1,26 @@
-import React from "react";
+import React, { useState } from "react";
 
 /**
- * Single location card. Three visual states:
- *   - active        → green dot, clean white card
+ * Single location card. Four visual states:
+ *   - active         → green dot, clean white card
+ *   - sync_failed    → red dot, red-tinted card, retry button (Apr 20, 2026)
  *   - pending_invite → amber dot, warm cream card (self_pays awaiting franchisee)
- *   - removed       → slate dot, faded card with retention countdown
+ *   - removed        → slate dot, faded card with retention countdown
  *
- * Action buttons fire callback props — parent (Locations.jsx) handles routing
- * to the right modal/sheet/navigation.
+ * sync_failed is an overlay on top of "active" — a location can be active
+ * AND have a failed Stripe sync simultaneously (e.g. rate override made
+ * Stripe reject the item). The retry button calls the backend's
+ * /retry-sync endpoint and refreshes the card on success.
  *
- * UPDATE Apr 20, 2026: Added View + Settings buttons so users can jump directly
- * into any location from the roster. View switches LocationSwitcher + navigates
- * to /dashboard. Settings switches + navigates to /settings. Removed-state
- * locations get a disabled View button (no operational dashboard), but Settings
- * remains accessible so superadmins can inspect archived data.
+ * Action buttons fire callback props — parent (Locations.jsx) handles
+ * routing to the right modal/sheet/navigation AND the retry handler.
+ *
+ * UPDATE Apr 20, 2026 (Stripe retry): Added sync_failed visual state and
+ * onRetrySync callback. When stripe_sync_status === 'failed' on a
+ * parent_pays active child, the card flips red and offers an inline
+ * retry + Remove pair instead of Edit/Remove. The retry error message
+ * (stripe_sync_error column) is shown inline so users can see why it
+ * failed (e.g. "Customer has no active payment method").
  */
 export default function LocationCard({
   location,
@@ -23,8 +30,29 @@ export default function LocationCard({
   onResendInvite,
   onView,
   onSettings,
+  onRetrySync,
 }) {
   const state = getLocationState(location);
+
+  // Local state: track an in-flight retry click so we can disable the button
+  // and show a spinner. Also track the last error locally so the inline
+  // message updates even before a parent-level reload finishes.
+  const [retrying, setRetrying] = useState(false);
+  const [localRetryError, setLocalRetryError] = useState(null);
+
+  const handleRetryClick = async () => {
+    if (retrying || typeof onRetrySync !== "function") return;
+    setRetrying(true);
+    setLocalRetryError(null);
+    try {
+      await onRetrySync(location);
+      // Parent will refetch and re-render; nothing to do here.
+    } catch (err) {
+      setLocalRetryError(err?.message || "Retry failed. Try again in a moment.");
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   const styles = {
     active: {
@@ -33,6 +61,13 @@ export default function LocationCard({
       dotRing: "bg-emerald-500/20",
       label: "Active",
       labelClass: "text-emerald-700",
+    },
+    sync_failed: {
+      card: "bg-red-50/40 border-red-200 hover:border-red-300",
+      dot: "bg-red-500",
+      dotRing: "bg-red-500/20",
+      label: "Billing issue",
+      labelClass: "text-red-700",
     },
     pending_invite: {
       card: "bg-amber-50/40 border-amber-200 hover:border-amber-300",
@@ -58,8 +93,15 @@ export default function LocationCard({
   const createdLabel = formatRelativeDate(location.created_at);
   const inviteExpires = formatExpiryDate(location.franchisee_invite_expires_at);
 
-  // View button is disabled on removed locations — no operational dashboard to load
+  // View button is disabled on removed locations — no operational dashboard
+  // to load. It stays available on sync_failed because the AI front desk
+  // still works; only billing is out of sync.
   const viewDisabled = state === "removed";
+
+  // Error to show in the red banner: prefer the fresh local retry error
+  // (from the most recent click) over the stored column value.
+  const displayedSyncError =
+    localRetryError || location.stripe_sync_error || "Stripe couldn't add this location to your subscription.";
 
   return (
     <div
@@ -84,7 +126,7 @@ export default function LocationCard({
         </div>
 
         <div className="flex items-center gap-1.5">
-          {state === "active" && (
+          {(state === "active" || state === "sync_failed") && (
             <span className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider mr-1">
               {billingLabel}
             </span>
@@ -123,7 +165,7 @@ export default function LocationCard({
         {location.company_name || location.name || "Unnamed location"}
       </h3>
       <p className="text-sm text-stone-500 mb-4">
-        {state === "active" ? (
+        {state === "active" || state === "sync_failed" ? (
           <>
             <span className="font-semibold text-stone-700">{planLabel}</span>{" "}
             <span className="text-stone-400">·</span>{" "}
@@ -143,6 +185,36 @@ export default function LocationCard({
       {/* State-specific body */}
       {state === "active" && (
         <p className="text-xs text-stone-400 mb-5">Added {createdLabel}</p>
+      )}
+
+      {state === "sync_failed" && (
+        <div className="rounded-lg bg-white border border-red-200 px-3 py-2.5 mb-5 text-xs">
+          <div className="flex items-start gap-2">
+            <svg className="w-3.5 h-3.5 text-red-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
+            </svg>
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold text-red-900 mb-0.5">
+                Stripe sync failed
+              </div>
+              <div
+                className="text-stone-600 line-clamp-3 break-words"
+                title={displayedSyncError}
+              >
+                {displayedSyncError}
+              </div>
+              <div className="text-stone-400 mt-1">
+                Your AI front desk still works — this only affects billing for
+                this location.
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {state === "pending_invite" && (
@@ -211,6 +283,47 @@ export default function LocationCard({
           </>
         )}
 
+        {state === "sync_failed" && (
+          <>
+            <button
+              type="button"
+              onClick={handleRetryClick}
+              disabled={retrying}
+              className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-60 disabled:cursor-wait"
+            >
+              {retrying ? (
+                <>
+                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Retrying…
+                </>
+              ) : (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                    />
+                  </svg>
+                  Retry Stripe sync
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => onRemove?.(location)}
+              disabled={retrying}
+              className="flex-1 px-3 py-2 text-xs font-bold text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-lg transition-colors disabled:opacity-60"
+            >
+              Remove
+            </button>
+          </>
+        )}
+
         {state === "pending_invite" && (
           <>
             <button
@@ -247,10 +360,25 @@ export default function LocationCard({
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function getLocationState(location) {
+  // Removed takes precedence — even if sync failed, "removed" is the real
+  // end state for the user (it's on its way to hard-delete).
   if (location.location_removed_at) return "removed";
+
+  // Pending invite — self_pays before franchisee checkout
   if (location.billing_responsibility === "self_pays" && !location.stripe_subscription_id) {
     return "pending_invite";
   }
+
+  // Sync failed — parent_pays child where Stripe rejected the item.
+  // Self-pays children never sync to the parent's subscription, so their
+  // status column is irrelevant here (always 'pending' for them).
+  if (
+    location.billing_responsibility !== "self_pays" &&
+    location.stripe_sync_status === "failed"
+  ) {
+    return "sync_failed";
+  }
+
   return "active";
 }
 

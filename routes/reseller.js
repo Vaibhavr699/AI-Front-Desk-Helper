@@ -5,6 +5,7 @@
 // Apr 20, 2026 — Phase 2 WL Reseller Account Type
 // ============================================================================
 // Authenticated reseller dashboard + subscription management endpoints.
+// Uses pg Pool (lib/db.js) with raw SQL — matches existing routes pattern.
 //
 // Mount in server.js:
 //   app.use('/reseller', require('./routes/reseller'));
@@ -12,24 +13,6 @@
 // All routes require:
 //   - Auth via authMiddleware from lib/auth.js
 //   - req.user.tenant.account_type === 'reseller' (requireReseller below)
-//
-// Endpoints:
-//   Dashboard / customers
-//     GET    /reseller/overview                           — hero + 30d aggregates
-//     GET    /reseller/customers                          — list + per-customer metrics
-//     POST   /reseller/customers/preview                  — cap-check dry run
-//     POST   /reseller/customers                          — add customer
-//     GET    /reseller/customers/:customerId              — customer detail
-//     PATCH  /reseller/customers/:customerId              — edit customer
-//     DELETE /reseller/customers/:customerId              — soft-delete customer
-//     POST   /reseller/customers/:customerId/resend-invite
-//   Subscription
-//     GET    /reseller/tier                               — current tier + all options
-//     POST   /reseller/checkout                           — Stripe checkout (new/upgrade)
-//     POST   /reseller/billing-portal                     — Stripe billing portal
-//
-// Depends on: migration 037, lib/resellerPlans.js, lib/resellerBilling.js,
-//             lib/resellerStripe.js
 // ============================================================================
 
 const express = require('express');
@@ -71,23 +54,19 @@ router.use(authMiddleware);
 router.use(requireReseller);
 
 // ---------------------------------------------------------------------------
-// Helper: fetch customer row scoped to this reseller
+// Helpers
 // ---------------------------------------------------------------------------
 async function fetchCustomerForReseller(customerId, resellerId, columns = '*') {
-  const { data, error } = await db
-    .from('tenants')
-    .select(columns)
-    .eq('id', customerId)
-    .eq('reseller_id', resellerId)
-    .is('deleted_at', null)
-    .maybeSingle();
-  if (error) throw error;
-  return data;
+  const { rows } = await db.query(
+    `SELECT ${columns}
+       FROM tenants
+      WHERE id = $1 AND reseller_id = $2 AND deleted_at IS NULL
+      LIMIT 1`,
+    [customerId, resellerId]
+  );
+  return rows[0] || null;
 }
 
-// ---------------------------------------------------------------------------
-// Helper: safe audit log (never blocks the main request)
-// ---------------------------------------------------------------------------
 async function safeAuditLog(payload) {
   try {
     if (typeof auditLog === 'function') {
@@ -98,27 +77,28 @@ async function safeAuditLog(payload) {
   }
 }
 
+function thirtyDaysAgoISO() {
+  const d = new Date();
+  d.setDate(d.getDate() - 30);
+  return d.toISOString();
+}
+
 // ===========================================================================
 // GET /reseller/overview
-// Hero card: tier info + aggregated 30-day metrics across all customers
+// Hero: tier info + aggregated 30-day metrics across all customers
 // ===========================================================================
 router.get('/overview', async (req, res) => {
   try {
     const tierInfo = await getResellerTierInfo(db, req.user.tenant);
 
-    const { data: customers, error: fetchErr } = await db
-      .from('tenants')
-      .select('id')
-      .eq('reseller_id', req.user.tenant.id)
-      .is('deleted_at', null);
-    if (fetchErr) throw fetchErr;
+    const { rows: customerRows } = await db.query(
+      `SELECT id FROM tenants
+        WHERE reseller_id = $1 AND deleted_at IS NULL`,
+      [req.user.tenant.id]
+    );
+    const customerIds = customerRows.map((r) => r.id);
 
-    const customerIds = (customers || []).map((c) => c.id);
-
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const since = thirtyDaysAgo.toISOString();
-
+    const since = thirtyDaysAgoISO();
     let totalCalls = 0;
     let totalBookings = 0;
     let totalOpenLeads = 0;
@@ -126,36 +106,35 @@ router.get('/overview', async (req, res) => {
 
     if (customerIds.length > 0) {
       const [callsRes, bookingsRes, leadsRes, revenueRes] = await Promise.all([
-        db
-          .from('calls')
-          .select('*', { count: 'exact', head: true })
-          .in('tenant_id', customerIds)
-          .gte('created_at', since),
-        db
-          .from('bookings')
-          .select('*', { count: 'exact', head: true })
-          .in('tenant_id', customerIds)
-          .gte('created_at', since),
-        db
-          .from('leads')
-          .select('*', { count: 'exact', head: true })
-          .in('tenant_id', customerIds)
-          .eq('status', 'open'),
-        db
-          .from('bookings')
-          .select('revenue_cents')
-          .in('tenant_id', customerIds)
-          .gte('created_at', since)
-          .not('revenue_cents', 'is', null),
+        db.query(
+          `SELECT COUNT(*)::int AS count FROM calls
+             WHERE tenant_id = ANY($1::uuid[]) AND created_at >= $2`,
+          [customerIds, since]
+        ),
+        db.query(
+          `SELECT COUNT(*)::int AS count FROM bookings
+             WHERE tenant_id = ANY($1::uuid[]) AND created_at >= $2`,
+          [customerIds, since]
+        ),
+        db.query(
+          `SELECT COUNT(*)::int AS count FROM leads
+             WHERE tenant_id = ANY($1::uuid[]) AND status = 'open'`,
+          [customerIds]
+        ),
+        db.query(
+          `SELECT COALESCE(SUM(revenue_cents), 0)::bigint AS total
+             FROM bookings
+            WHERE tenant_id = ANY($1::uuid[])
+              AND created_at >= $2
+              AND revenue_cents IS NOT NULL`,
+          [customerIds, since]
+        ),
       ]);
 
-      totalCalls = callsRes.count || 0;
-      totalBookings = bookingsRes.count || 0;
-      totalOpenLeads = leadsRes.count || 0;
-      totalRevenueCents = (revenueRes.data || []).reduce(
-        (sum, b) => sum + (b.revenue_cents || 0),
-        0
-      );
+      totalCalls = callsRes.rows[0]?.count || 0;
+      totalBookings = bookingsRes.rows[0]?.count || 0;
+      totalOpenLeads = leadsRes.rows[0]?.count || 0;
+      totalRevenueCents = Number(revenueRes.rows[0]?.total || 0);
     }
 
     return res.json({
@@ -182,49 +161,58 @@ router.get('/overview', async (req, res) => {
 
 // ===========================================================================
 // GET /reseller/customers
-// List all customers under this reseller with per-customer 30d metrics
+// List customers with per-customer 30d metrics (single grouped SQL query)
 // ===========================================================================
 router.get('/customers', async (req, res) => {
   try {
-    const { data: customers, error } = await db
-      .from('tenants')
-      .select(
-        'id, name, plan, primary_email, phone, brand_mode, created_at, stripe_sync_status'
-      )
-      .eq('reseller_id', req.user.tenant.id)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const since = thirtyDaysAgo.toISOString();
-
-    // Parallel per-customer metric fetch. At 50+ customers this is ~100 parallel
-    // queries — acceptable for v1, swap to RPC aggregation if P99 > 800ms.
-    const enriched = await Promise.all(
-      (customers || []).map(async (c) => {
-        const [callsRes, bookingsRes] = await Promise.all([
-          db
-            .from('calls')
-            .select('*', { count: 'exact', head: true })
-            .eq('tenant_id', c.id)
-            .gte('created_at', since),
-          db
-            .from('bookings')
-            .select('*', { count: 'exact', head: true })
-            .eq('tenant_id', c.id)
-            .gte('created_at', since),
-        ]);
-        return {
-          ...c,
-          metrics_30d: {
-            calls: callsRes.count || 0,
-            bookings: bookingsRes.count || 0,
-          },
-        };
-      })
+    const { rows: customers } = await db.query(
+      `SELECT id, name, plan, primary_email, phone, brand_mode,
+              created_at, stripe_sync_status
+         FROM tenants
+        WHERE reseller_id = $1 AND deleted_at IS NULL
+        ORDER BY created_at DESC`,
+      [req.user.tenant.id]
     );
+
+    if (customers.length === 0) {
+      return res.json({ customers: [] });
+    }
+
+    const customerIds = customers.map((c) => c.id);
+    const since = thirtyDaysAgoISO();
+
+    // Single grouped query per metric instead of N parallel queries
+    const [callRes, bookRes] = await Promise.all([
+      db.query(
+        `SELECT tenant_id, COUNT(*)::int AS count
+           FROM calls
+          WHERE tenant_id = ANY($1::uuid[]) AND created_at >= $2
+          GROUP BY tenant_id`,
+        [customerIds, since]
+      ),
+      db.query(
+        `SELECT tenant_id, COUNT(*)::int AS count
+           FROM bookings
+          WHERE tenant_id = ANY($1::uuid[]) AND created_at >= $2
+          GROUP BY tenant_id`,
+        [customerIds, since]
+      ),
+    ]);
+
+    const callsByTenant = Object.fromEntries(
+      callRes.rows.map((r) => [r.tenant_id, r.count])
+    );
+    const bookingsByTenant = Object.fromEntries(
+      bookRes.rows.map((r) => [r.tenant_id, r.count])
+    );
+
+    const enriched = customers.map((c) => ({
+      ...c,
+      metrics_30d: {
+        calls: callsByTenant[c.id] || 0,
+        bookings: bookingsByTenant[c.id] || 0,
+      },
+    }));
 
     return res.json({ customers: enriched });
   } catch (err) {
@@ -235,7 +223,7 @@ router.get('/customers', async (req, res) => {
 
 // ===========================================================================
 // POST /reseller/customers/preview
-// Dry-run preflight for AddCustomerSheet step 1 — checks cap without creating
+// Dry-run cap check for AddCustomerSheet step 1
 // ===========================================================================
 router.post('/customers/preview', async (req, res) => {
   try {
@@ -286,27 +274,28 @@ router.post('/customers', async (req, res) => {
   try {
     await validateCanAddCustomer(db, req.user.tenant);
 
-    const newTenant = {
-      name,
-      primary_email,
-      phone: phone || null,
-      plan,
-      account_type: 'customer',
-      reseller_id: req.user.tenant.id,
-      billing_owner: 'reseller',
-      brand_mode: brand_mode_inherit
-        ? req.user.tenant.brand_mode || 'default'
-        : 'default',
-      stripe_customer_id: null,
-      stripe_subscription_id: null,
-    };
+    const brandMode = brand_mode_inherit
+      ? req.user.tenant.brand_mode || 'default'
+      : 'default';
 
-    const { data: created, error: insertErr } = await db
-      .from('tenants')
-      .insert(newTenant)
-      .select()
-      .single();
-    if (insertErr) throw insertErr;
+    const { rows } = await db.query(
+      `INSERT INTO tenants (
+         name, primary_email, phone, plan,
+         account_type, reseller_id, billing_owner, brand_mode,
+         stripe_customer_id, stripe_subscription_id
+       )
+       VALUES ($1, $2, $3, $4, 'customer', $5, 'reseller', $6, NULL, NULL)
+       RETURNING *`,
+      [
+        name,
+        primary_email,
+        phone || null,
+        plan,
+        req.user.tenant.id,
+        brandMode,
+      ]
+    );
+    const created = rows[0];
 
     await safeAuditLog({
       action: 'reseller.customer.created',
@@ -317,8 +306,7 @@ router.post('/customers', async (req, res) => {
       details: { customer_name: name, plan, brand_mode_inherit },
     });
 
-    // TODO Step 6: sendResellerCustomerWelcomeEmail — needs set-password URL
-    // which requires the set-password endpoint shipping in Step 6.
+    // TODO Step 6: sendResellerCustomerWelcomeEmail (needs set-password URL)
     console.log(
       `[reseller/customers:create] TODO email: welcome ${primary_email} from ${req.user.tenant.name}`
     );
@@ -362,14 +350,19 @@ router.get('/customers/:customerId', async (req, res) => {
 // ===========================================================================
 router.patch('/customers/:customerId', async (req, res) => {
   const ALLOWED = ['name', 'primary_email', 'phone', 'plan', 'brand_mode'];
-  const updates = {};
+  const setClauses = [];
+  const values = [];
+
   for (const key of ALLOWED) {
-    if (req.body[key] !== undefined) updates[key] = req.body[key];
+    if (req.body[key] !== undefined) {
+      values.push(req.body[key]);
+      setClauses.push(`${key} = $${values.length}`); // key from whitelist, safe
+    }
   }
-  if (Object.keys(updates).length === 0) {
+
+  if (setClauses.length === 0) {
     return res.status(400).json({ error: 'No valid fields to update' });
   }
-  updates.updated_at = new Date().toISOString();
 
   try {
     const existing = await fetchCustomerForReseller(
@@ -379,13 +372,15 @@ router.patch('/customers/:customerId', async (req, res) => {
     );
     if (!existing) return res.status(404).json({ error: 'Customer not found' });
 
-    const { data: updated, error: updateErr } = await db
-      .from('tenants')
-      .update(updates)
-      .eq('id', req.params.customerId)
-      .select()
-      .single();
-    if (updateErr) throw updateErr;
+    values.push(req.params.customerId); // $N for WHERE
+    const { rows } = await db.query(
+      `UPDATE tenants
+          SET ${setClauses.join(', ')}, updated_at = now()
+        WHERE id = $${values.length}
+        RETURNING *`,
+      values
+    );
+    const updated = rows[0];
 
     await safeAuditLog({
       action: 'reseller.customer.updated',
@@ -393,7 +388,7 @@ router.patch('/customers/:customerId', async (req, res) => {
       tenant_id: req.user.tenant.id,
       target_type: 'tenant',
       target_id: req.params.customerId,
-      details: { fields: Object.keys(updates).filter((k) => k !== 'updated_at') },
+      details: { fields: ALLOWED.filter((k) => req.body[k] !== undefined) },
     });
 
     return res.json({ customer: updated });
@@ -405,8 +400,7 @@ router.patch('/customers/:customerId', async (req, res) => {
 
 // ===========================================================================
 // DELETE /reseller/customers/:customerId
-// Soft-delete: sets deleted_at, customer loses service.
-// (Reseller-level churn with auto-transfer to direct billing = Step 6.)
+// Soft-delete: customer loses service. (Reseller-level churn = Step 6.)
 // ===========================================================================
 router.delete('/customers/:customerId', async (req, res) => {
   try {
@@ -417,14 +411,12 @@ router.delete('/customers/:customerId', async (req, res) => {
     );
     if (!existing) return res.status(404).json({ error: 'Customer not found' });
 
-    const { error: updateErr } = await db
-      .from('tenants')
-      .update({
-        deleted_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', req.params.customerId);
-    if (updateErr) throw updateErr;
+    await db.query(
+      `UPDATE tenants
+          SET deleted_at = now(), updated_at = now()
+        WHERE id = $1`,
+      [req.params.customerId]
+    );
 
     await safeAuditLog({
       action: 'reseller.customer.deleted',
@@ -435,8 +427,7 @@ router.delete('/customers/:customerId', async (req, res) => {
       details: { customer_name: existing.name },
     });
 
-    // TODO Step 6: sendResellerCustomerRemovedEmail (self-contained, can wire now
-    // if desired — left as TODO for consistency with other email wire-ups)
+    // TODO Step 6: sendResellerCustomerRemovedEmail
     console.log(
       `[reseller/customers:delete] TODO email: removal ${existing.primary_email} from ${req.user.tenant.name}`
     );
@@ -482,7 +473,6 @@ router.post('/customers/:customerId/resend-invite', async (req, res) => {
 
 // ===========================================================================
 // GET /reseller/tier
-// Current tier + all tier options (for upgrade UI)
 // ===========================================================================
 router.get('/tier', async (req, res) => {
   try {
@@ -505,21 +495,16 @@ router.get('/tier', async (req, res) => {
 
 // ===========================================================================
 // POST /reseller/checkout
-// Create a Stripe Checkout Session for initial subscription OR tier change.
-// Body: { tier: 'starter'|'growth'|'scale', interval: 'monthly'|'annual' }
+// Stripe Checkout for initial subscription OR tier change
 // ===========================================================================
 router.post('/checkout', async (req, res) => {
   const { tier, interval = 'monthly' } = req.body || {};
 
   if (!tier || !['starter', 'growth', 'scale'].includes(tier)) {
-    return res.status(400).json({
-      error: 'tier must be starter, growth, or scale',
-    });
+    return res.status(400).json({ error: 'tier must be starter, growth, or scale' });
   }
   if (!['monthly', 'annual'].includes(interval)) {
-    return res.status(400).json({
-      error: 'interval must be monthly or annual',
-    });
+    return res.status(400).json({ error: 'interval must be monthly or annual' });
   }
 
   try {
@@ -541,10 +526,7 @@ router.post('/checkout', async (req, res) => {
       details: { tier, interval, session_id: session.id },
     });
 
-    return res.json({
-      checkout_url: session.url,
-      session_id: session.id,
-    });
+    return res.json({ checkout_url: session.url, session_id: session.id });
   } catch (err) {
     console.error('[reseller/checkout]', err);
     return res.status(500).json({ error: err.message });
@@ -553,7 +535,7 @@ router.post('/checkout', async (req, res) => {
 
 // ===========================================================================
 // POST /reseller/billing-portal
-// Stripe Billing Portal session (cancel, update payment method, change tier)
+// Stripe Billing Portal (cancel, update payment, change tier)
 // ===========================================================================
 router.post('/billing-portal', async (req, res) => {
   try {
@@ -570,9 +552,7 @@ router.post('/billing-portal', async (req, res) => {
       returnUrl: `${appUrl}/reseller/tier`,
     });
 
-    return res.json({
-      portal_url: session.url,
-    });
+    return res.json({ portal_url: session.url });
   } catch (err) {
     console.error('[reseller/billing-portal]', err);
     return res.status(500).json({ error: err.message });

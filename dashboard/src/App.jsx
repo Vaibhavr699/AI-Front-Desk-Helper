@@ -1,6 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useOutletContext, useLocation } from "react-router-dom";
-import { getUser } from "./api";
+import { getUser, getTenant } from "./api";
 import { DashboardLayout } from "./layouts";
 import SmsTerms from "./pages/SmsTerms";
 import SmsConsent from "./pages/SmsConsent";
@@ -52,8 +52,28 @@ function LoginRoute() {
 function AuthenticatedRoot() {
   const user = getUser();
   const { pathname } = useLocation();
-  if (!user) return <Navigate to="/login" replace />;
+  const [activeTenant, setActiveTenant] = useState(null);
+  const [tenantLoaded, setTenantLoaded] = useState(false);
   const isImpersonating = !!localStorage.getItem("impersonate_tenant_id");
+
+  // Fetch active tenant once to drive account_type-based routing.
+  // Resellers don't belong on operational pages (/dashboard, /calls, etc);
+  // this redirects them to /reseller which is their home.
+  useEffect(() => {
+    const impersonatedId = localStorage.getItem("impersonate_tenant_id");
+    const targetId = impersonatedId || user?.tenant_id;
+    if (!targetId) {
+      setTenantLoaded(true);
+      return;
+    }
+    getTenant(targetId)
+      .then((t) => setActiveTenant(t))
+      .catch(() => {})
+      .finally(() => setTenantLoaded(true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.tenant_id]);
+
+  if (!user) return <Navigate to="/login" replace />;
   if (user?.role === 'staff' && pathname === '/dashboard') {
     return <Navigate to="/bookings" replace />;
   }
@@ -63,13 +83,27 @@ function AuthenticatedRoot() {
   if (user && !user.tenant_id && !user.is_super_admin && pathname !== "/create-business") {
     return <Navigate to="/create-business" replace />;
   }
+
+  // Reseller guard: redirect to /reseller unless they're on a reseller-
+  // appropriate page already. Superadmin impersonation bypasses this so
+  // Drew can still view a reseller tenant's perspective from admin.
+  if (
+    tenantLoaded &&
+    activeTenant?.account_type === "reseller" &&
+    !isImpersonating &&
+    !pathname.startsWith("/reseller") &&
+    !pathname.startsWith("/settings") &&
+    !pathname.startsWith("/admin")
+  ) {
+    return <Navigate to="/reseller" replace />;
+  }
+
   return (
     <Protected>
       <DashboardLayout />
     </Protected>
   );
 }
-
 /** Root "/" route: landing page for guests, redirect to /dashboard for logged-in users. */
 function RootElement() {
   const user = getUser();

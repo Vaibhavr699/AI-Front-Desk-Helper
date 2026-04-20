@@ -2,8 +2,10 @@
 
 // ============================================================================
 // routes/reseller.js
-// Apr 20, 2026 — Phase 2 WL Reseller Account Type (authenticated dashboard)
+// Apr 20, 2026 — Phase 2 WL Reseller Account Type
 // ============================================================================
+// Authenticated reseller dashboard + subscription management endpoints.
+//
 // Mount in server.js:
 //   app.use('/reseller', require('./routes/reseller'));
 //
@@ -11,10 +13,23 @@
 //   - Auth via authMiddleware from lib/auth.js
 //   - req.user.tenant.account_type === 'reseller' (requireReseller below)
 //
-// Depends on: migration 037, lib/resellerPlans.js, lib/resellerBilling.js
+// Endpoints:
+//   Dashboard / customers
+//     GET    /reseller/overview                           — hero + 30d aggregates
+//     GET    /reseller/customers                          — list + per-customer metrics
+//     POST   /reseller/customers/preview                  — cap-check dry run
+//     POST   /reseller/customers                          — add customer
+//     GET    /reseller/customers/:customerId              — customer detail
+//     PATCH  /reseller/customers/:customerId              — edit customer
+//     DELETE /reseller/customers/:customerId              — soft-delete customer
+//     POST   /reseller/customers/:customerId/resend-invite
+//   Subscription
+//     GET    /reseller/tier                               — current tier + all options
+//     POST   /reseller/checkout                           — Stripe checkout (new/upgrade)
+//     POST   /reseller/billing-portal                     — Stripe billing portal
 //
-// TODO Step 5: wire sendResellerCustomerWelcomeEmail + sendResellerCustomerRemovedEmail
-//              into services/email.js, replace the console.log placeholders below.
+// Depends on: migration 037, lib/resellerPlans.js, lib/resellerBilling.js,
+//             lib/resellerStripe.js
 // ============================================================================
 
 const express = require('express');
@@ -31,6 +46,10 @@ const {
 const {
   listResellerTiers,
 } = require('../lib/resellerPlans');
+const {
+  createResellerCheckoutSession,
+  createResellerBillingPortalSession,
+} = require('../lib/resellerStripe');
 
 // ---------------------------------------------------------------------------
 // Middleware: requireReseller
@@ -298,7 +317,8 @@ router.post('/customers', async (req, res) => {
       details: { customer_name: name, plan, brand_mode_inherit },
     });
 
-    // TODO Step 5: sendResellerCustomerWelcomeEmail (add to services/email.js)
+    // TODO Step 6: sendResellerCustomerWelcomeEmail — needs set-password URL
+    // which requires the set-password endpoint shipping in Step 6.
     console.log(
       `[reseller/customers:create] TODO email: welcome ${primary_email} from ${req.user.tenant.name}`
     );
@@ -415,7 +435,8 @@ router.delete('/customers/:customerId', async (req, res) => {
       details: { customer_name: existing.name },
     });
 
-    // TODO Step 5: sendResellerCustomerRemovedEmail (add to services/email.js)
+    // TODO Step 6: sendResellerCustomerRemovedEmail (self-contained, can wire now
+    // if desired — left as TODO for consistency with other email wire-ups)
     console.log(
       `[reseller/customers:delete] TODO email: removal ${existing.primary_email} from ${req.user.tenant.name}`
     );
@@ -439,7 +460,7 @@ router.post('/customers/:customerId/resend-invite', async (req, res) => {
     );
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
 
-    // TODO Step 5: sendResellerCustomerWelcomeEmail (add to services/email.js)
+    // TODO Step 6: sendResellerCustomerWelcomeEmail (needs set-password URL)
     console.log(
       `[reseller/customers:resend] TODO email: welcome resend ${customer.primary_email}`
     );
@@ -478,6 +499,82 @@ router.get('/tier', async (req, res) => {
     return res.json({ current, available });
   } catch (err) {
     console.error('[reseller/tier]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ===========================================================================
+// POST /reseller/checkout
+// Create a Stripe Checkout Session for initial subscription OR tier change.
+// Body: { tier: 'starter'|'growth'|'scale', interval: 'monthly'|'annual' }
+// ===========================================================================
+router.post('/checkout', async (req, res) => {
+  const { tier, interval = 'monthly' } = req.body || {};
+
+  if (!tier || !['starter', 'growth', 'scale'].includes(tier)) {
+    return res.status(400).json({
+      error: 'tier must be starter, growth, or scale',
+    });
+  }
+  if (!['monthly', 'annual'].includes(interval)) {
+    return res.status(400).json({
+      error: 'interval must be monthly or annual',
+    });
+  }
+
+  try {
+    const appUrl = process.env.APP_URL || 'https://aifrontdeskhelper.com';
+    const session = await createResellerCheckoutSession({
+      reseller: req.user.tenant,
+      tier,
+      interval,
+      successUrl: `${appUrl}/reseller/welcome?session_id={CHECKOUT_SESSION_ID}`,
+      cancelUrl: `${appUrl}/reseller/plans`,
+    });
+
+    await safeAuditLog({
+      action: 'reseller.checkout.initiated',
+      actor_id: req.user.id,
+      tenant_id: req.user.tenant.id,
+      target_type: 'tenant',
+      target_id: req.user.tenant.id,
+      details: { tier, interval, session_id: session.id },
+    });
+
+    return res.json({
+      checkout_url: session.url,
+      session_id: session.id,
+    });
+  } catch (err) {
+    console.error('[reseller/checkout]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ===========================================================================
+// POST /reseller/billing-portal
+// Stripe Billing Portal session (cancel, update payment method, change tier)
+// ===========================================================================
+router.post('/billing-portal', async (req, res) => {
+  try {
+    if (!req.user.tenant.stripe_customer_id) {
+      return res.status(400).json({
+        error: 'No subscription yet — complete checkout first',
+        code: 'NO_SUBSCRIPTION',
+      });
+    }
+
+    const appUrl = process.env.APP_URL || 'https://aifrontdeskhelper.com';
+    const session = await createResellerBillingPortalSession({
+      reseller: req.user.tenant,
+      returnUrl: `${appUrl}/reseller/tier`,
+    });
+
+    return res.json({
+      portal_url: session.url,
+    });
+  } catch (err) {
+    console.error('[reseller/billing-portal]', err);
     return res.status(500).json({ error: err.message });
   }
 });

@@ -6,6 +6,7 @@ const emailService = require("./email");
 const { getTenantById } = require("../lib/tenant");
 const followUp = require("./followUp");
 const calendar = require("../calendar");
+const notificationService = require("./notifications");
 
 /** Normalize and validate booking payload from AI (handles camelCase, extra fields, bad dates). */
 function normalizeBookingData(data, isUpdate = false) {
@@ -112,6 +113,15 @@ async function createBooking(tenantId, callId, data, leadId = null, leadSource =
   }
   const booking = res.rows[0];
   console.log("[AI-Desk] Booking saved id=%s tenantId=%s contact=%s", booking.id, tenantId, norm.contact_phone);
+
+  // 📅 New booking notification (non-blocking — must never fail the booking)
+  notificationService.notifyNewBooking(tenantId, {
+    customer_name: booking.contact_name,
+    service_date:  booking.preferred_date,
+    booking_id:    booking.id,
+    lead_id:       booking.lead_id,
+    source:        leadSource || "ai",
+  }).catch((e) => console.error("[AI-Desk] notifyNewBooking failed:", e.message));
 
   // ATTRIBUTION: Link success back to Outbound Campaign & Script
   if (callId) {

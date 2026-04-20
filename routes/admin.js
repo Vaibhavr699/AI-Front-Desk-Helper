@@ -6,6 +6,9 @@ const auth = require("../lib/auth");
 const emailService = require("../services/email");
 const stripeService = require("../lib/stripe");
 const { getPlan, listPlans } = require("../lib/plans");
+const crypto = require("crypto");
+const { generateUniqueResellerCode } = require("../lib/resellerBilling");
+const { getResellerTier } = require("../lib/resellerPlans");
 
 const router = express.Router();
 
@@ -434,6 +437,127 @@ router.delete("/admins/:id", async (req, res) => {
   } catch (e) {
     console.error("[Admin] Delete admin error:", e.message);
     res.status(500).json({ error: "Server error" });
+  }
+});
+
+// -------------------- Create Reseller Tenant --------------------
+//
+// Apr 20, 2026 — Phase 2 WL Reseller Account Type.
+// Superadmin-only provisioning flow. Creates a reseller tenant + owner
+// dashboard_user + sends a password-set invite email (reuses the admin
+// invite template for v1 — dedicated reseller welcome email comes in
+// Step 9 alongside churn-handler emails).
+//
+// On success, the returned signup_link is what the reseller will share
+// with their own prospects: /reseller/{code}/signup.
+router.post("/tenants/reseller", async (req, res) => {
+  try {
+    const { name, owner_email, tier } = req.body || {};
+
+    // Validation
+    if (!name || !owner_email || !tier) {
+      return res.status(400).json({
+        error: "name, owner_email, and tier are required",
+      });
+    }
+    if (!["starter", "growth", "scale"].includes(tier)) {
+      return res.status(400).json({
+        error: "tier must be starter, growth, or scale",
+      });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(owner_email)) {
+      return res.status(400).json({ error: "Invalid email format" });
+    }
+
+    const normalizedEmail = owner_email.trim().toLowerCase();
+    const trimmedName = String(name).trim();
+    if (trimmedName.length < 2 || trimmedName.length > 100) {
+      return res.status(400).json({ error: "name must be 2-100 characters" });
+    }
+
+    // Collision check — dashboard_users email must be unique
+    const existingUser = await auth.findUserByEmail(normalizedEmail);
+    if (existingUser) {
+      return res.status(409).json({
+        error: "A user with this email already exists",
+      });
+    }
+
+    // Generate unique reseller_code (URL-safe 8-char, unambiguous alphabet)
+    const resellerCode = await generateUniqueResellerCode(db);
+    const tierDef = getResellerTier(tier);
+
+    // Create tenant row.
+    // - account_type='reseller' triggers migration 037 consistency constraints
+    // - plan='basic' is a harmless placeholder (resellers don't use HQ plans;
+    //   their billing comes from reseller-specific Stripe prices)
+    // - subscription_status left NULL — flips to 'active' via Stripe webhook
+    //   when reseller completes checkout
+    const tenantResult = await db.query(
+      `INSERT INTO tenants (
+         name, company_name, primary_email,
+         account_type, reseller_tier, reseller_code,
+         reseller_customer_limit, reseller_wholesale_rate_cents,
+         billing_owner, brand_mode, plan
+       )
+       VALUES ($1, $1, $2, 'reseller', $3, $4, $5, $6, 'direct', 'ai_branded', 'basic')
+       RETURNING id, name, reseller_code, reseller_tier, primary_email, created_at`,
+      [
+        trimmedName,
+        normalizedEmail,
+        tier,
+        resellerCode,
+        tierDef.customer_limit,
+        tierDef.wholesale_rate_cents,
+      ]
+    );
+    const tenant = tenantResult.rows[0];
+
+    // Create owner dashboard_user (random password, gets set via reset link)
+    const tempPass = crypto.randomBytes(16).toString("hex");
+    const hash = await auth.hashPassword(tempPass);
+    const userResult = await db.query(
+      `INSERT INTO dashboard_users (email, password_hash, tenant_id, role)
+       VALUES ($1, $2, $3, 'owner')
+       RETURNING id, email`,
+      [normalizedEmail, hash, tenant.id]
+    );
+    const user = userResult.rows[0];
+
+    // Generate password-set token (48h expiry — matches admin invite flow)
+    const token = auth.generateResetToken();
+    const expires = new Date(Date.now() + 48 * 3600000);
+    await auth.saveResetToken(user.email, token, expires);
+
+    // Send invite email (non-blocking — token still valid if email fails)
+    const base = (process.env.DASHBOARD_URL || process.env.BASE_URL || "").replace(/\/$/, "");
+    const inviteLink = `${base}/reset-password?token=${token}`;
+    try {
+      await emailService.sendAdminInvitationEmail(user.email, inviteLink);
+    } catch (emailErr) {
+      console.error("[Admin] Reseller invite email failed:", emailErr.message);
+    }
+
+    const signupLink = `${base}/reseller/${tenant.reseller_code}/signup`;
+
+    console.log(
+      "[Admin] Created reseller tenantId=%s tier=%s owner=%s code=%s by=%s",
+      tenant.id,
+      tier,
+      user.email,
+      tenant.reseller_code,
+      req.user.email
+    );
+
+    res.status(201).json({
+      success: true,
+      tenant,
+      signup_link: signupLink,
+      invite_link: inviteLink, // surfaced to admin UI for manual copy if email fails
+    });
+  } catch (e) {
+    console.error("[Admin] Create reseller error:", e.message);
+    res.status(500).json({ error: e.message || "Server error" });
   }
 });
 

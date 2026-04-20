@@ -569,6 +569,14 @@ export async function getResellerPublicInfo(code) {
   return data;
 }
 
+// ── Admin: create reseller tenant (Step 8) ────────────────────────────────
+export function createResellerTenant(body) {
+  return api("/api/admin/tenants/reseller", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 /**
  * Submit public self-signup form.
  * body: { business_name, primary_email, phone }

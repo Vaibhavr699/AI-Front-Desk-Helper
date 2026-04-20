@@ -196,7 +196,7 @@ function FollowUpsWithContext() {
 
 function MetricsWithContext() {
   const { tenantId } = useOutletContext();
-  return <MetricsPage tenantId={tenantId} />;
+  return <Metrics tenantId={tenantId} />;
 }
 
 function SettingsWithContext() {

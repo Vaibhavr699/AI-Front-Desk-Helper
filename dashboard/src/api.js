@@ -458,3 +458,140 @@ export function markAllNotificationsRead(tenantId) {
     method: "POST",
   });
 }
+
+// ── Reseller (authenticated) ── Phase 2 WL Reseller Account Type (Apr 20, 2026)
+// Powers Reseller.jsx dashboard, AddCustomerSheet, ResellerPlans, ResellerWelcome.
+// Backend routes: routes/reseller.js (mounted at /api/reseller).
+
+export function getResellerOverview() {
+  return api("/api/reseller/overview");
+}
+
+export function listResellerCustomers() {
+  return api("/api/reseller/customers");
+}
+
+/**
+ * Preview adding a customer — dry-run cap check.
+ * Returns { can_add, tier, customer_count, customer_limit, slots_remaining }
+ * OR on 402 cap: { can_add: false, code: 'RESELLER_AT_CAP', current, limit, tier, next_tier }
+ *
+ * Uses direct fetch (not api() helper) because the shared helper throws on 402,
+ * but we want the structured cap data so UI can render an upgrade CTA.
+ */
+export async function previewAddResellerCustomer() {
+  const token = getToken();
+  const res = await fetch(`${API_BASE}/api/reseller/customers/preview`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok && res.status !== 402) {
+    throw new Error(data.error || res.statusText);
+  }
+  return data;
+}
+
+export function createResellerCustomer(body) {
+  return api("/api/reseller/customers", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function getResellerCustomer(customerId) {
+  return api(`/api/reseller/customers/${customerId}`);
+}
+
+export function updateResellerCustomer(customerId, body) {
+  return api(`/api/reseller/customers/${customerId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function removeResellerCustomer(customerId) {
+  return api(`/api/reseller/customers/${customerId}`, {
+    method: "DELETE",
+  });
+}
+
+export function resendResellerCustomerInvite(customerId) {
+  return api(`/api/reseller/customers/${customerId}/resend-invite`, {
+    method: "POST",
+  });
+}
+
+export function getResellerTier() {
+  return api("/api/reseller/tier");
+}
+
+/**
+ * Initiate Stripe Checkout for initial subscription or tier change.
+ * Returns { checkout_url, session_id } — redirect window.location to checkout_url.
+ */
+export function createResellerCheckout(tier, interval = "monthly") {
+  return api("/api/reseller/checkout", {
+    method: "POST",
+    body: JSON.stringify({ tier, interval }),
+  });
+}
+
+/**
+ * Open Stripe Billing Portal for payment method / cancel / tier change.
+ * Returns { portal_url }.
+ */
+export function openResellerBillingPortal() {
+  return api("/api/reseller/billing-portal", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+// ── Reseller (PUBLIC — no auth) ──
+// These use direct fetch (NOT the api() helper) so the 401-redirect handler
+// doesn't trigger on the public signup page where the user isn't logged in.
+
+/**
+ * Fetch branded info for the public signup page.
+ * Returns { reseller: {...}, accepting_signups, at_cap, inactive }.
+ */
+export async function getResellerPublicInfo(code) {
+  const res = await fetch(
+    `${API_BASE}/api/reseller-public/${encodeURIComponent(code)}`
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+/**
+ * Submit public self-signup form.
+ * body: { business_name, primary_email, phone }
+ * Returns { success, message, customer: { id, name, primary_email } }.
+ * May throw structured errors with .code set to one of:
+ *   EMAIL_EXISTS, RESELLER_AT_CAP, RESELLER_INACTIVE,
+ *   MISSING_FIELDS, INVALID_EMAIL, INVALID_NAME, RESELLER_NOT_FOUND.
+ */
+export async function submitResellerPublicSignup(code, body) {
+  const res = await fetch(
+    `${API_BASE}/api/reseller-public/${encodeURIComponent(code)}/signup`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || res.statusText);
+    err.code = data.code || null;
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}

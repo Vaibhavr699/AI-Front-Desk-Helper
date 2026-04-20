@@ -2136,6 +2136,13 @@ router.post("/tenants/:parentId/locations", async (req, res) => {
     // ─── parent_pays branch: Stripe sync + confirmation email ────────────
     if (!isSelfPays) {
       const stripeResult = await locationBilling.addChildToParentSubscription(parent, newLocation);
+
+      // Always record the sync outcome so the retry UI + rollup badges
+      // share one source of truth (see migration 036).
+      await locationBilling.recordSyncStatus(newLocation.id, stripeResult).catch((err) =>
+        console.error("[Locations] recordSyncStatus failed post-create:", err.message)
+      );
+
       if (!stripeResult.ok) {
         console.error(
           "[Locations] Stripe sync FAILED for new location %s under parent %s: %s",
@@ -2144,11 +2151,11 @@ router.post("/tenants/:parentId/locations", async (req, res) => {
           stripeResult.reason || stripeResult.error
         );
         // Don't 500 — child is created, parent can manually sync later
-        // But return a clear warning so the UI can show it
+        // via the retry button. Return 201 with a warning so the UI knows.
         return res.status(201).json({
           ok: true,
           location: newLocation,
-          warning: `Location created but Stripe sync failed: ${stripeResult.reason || stripeResult.error}. Contact support if billing isn't right.`,
+          warning: `Location created but Stripe sync failed: ${stripeResult.reason || stripeResult.error}. You can retry from the Locations page.`,
         });
       }
 
@@ -2435,7 +2442,7 @@ router.patch("/tenants/:parentId/locations/:childId", async (req, res) => {
       user_agent: req.get("user-agent") || null,
     }).catch(() => {});
 
-    // If rate or plan changed AND child is parent_pays AND has Stripe item → re-sync
+  // If rate or plan changed AND child is parent_pays AND has Stripe item → re-sync
     let stripeResult = null;
     let rateChanged = false;
     if (
@@ -2444,6 +2451,12 @@ router.patch("/tenants/:parentId/locations/:childId", async (req, res) => {
       updatedChild.parent_location_stripe_item_id
     ) {
       stripeResult = await locationBilling.updateChildSubscriptionRate(parent, updatedChild);
+
+      // Record status so the UI can surface update failures the same way
+      // it surfaces create failures.
+      await locationBilling.recordSyncStatus(updatedChild.id, stripeResult).catch((err) =>
+        console.error("[Locations] recordSyncStatus failed post-update:", err.message)
+      );
 
       const newMonthlyRate = locationBilling.getChildLocationCostCents(parent, updatedChild, "monthly");
       if (newMonthlyRate !== oldMonthlyRate) {
@@ -2476,6 +2489,100 @@ router.patch("/tenants/:parentId/locations/:childId", async (req, res) => {
     });
   } catch (e) {
     console.error("[Locations] Update error:", e);
+    res.status(e.statusCode || 500).json({ error: e.message || "Server error" });
+  }
+});
+
+/**
+ * POST /tenants/:parentId/locations/:childId/retry-sync
+ * Apr 20, 2026 — One-click retry for locations whose Stripe sync previously
+ * failed. Calls updateChildSubscriptionRate which handles both cases:
+ *   - Child has a stripe item ID → updates price/rate
+ *   - Child has no ID           → falls through to addChildToParentSubscription
+ *                                  and creates a fresh item
+ *
+ * Records the outcome via recordSyncStatus so the UI badge flips to synced
+ * (or stays failed with a fresh error message) on return.
+ *
+ * Auth: owner/admin of parent OR super-admin.
+ * Preconditions:
+ *   - Child must exist under this parent
+ *   - Child must not be self_pays (those have their own subscription)
+ *   - Child must not be suspended or pending franchisee invite
+ *   - Child must not be removed
+ */
+router.post("/tenants/:parentId/locations/:childId/retry-sync", async (req, res) => {
+  try {
+    const parentId = req.params.parentId;
+    const childId = req.params.childId;
+    ensureCanManageLocations(req, parentId);
+
+    const [parentResult, childResult] = await Promise.all([
+      db.query("SELECT * FROM tenants WHERE id = $1", [parentId]),
+      db.query("SELECT * FROM tenants WHERE id = $1 AND parent_id = $2", [childId, parentId]),
+    ]);
+    const parent = parentResult.rows[0];
+    const child = childResult.rows[0];
+    if (!parent) return res.status(404).json({ error: "Parent tenant not found" });
+    if (!child) return res.status(404).json({ error: "Location not found under this parent" });
+
+    if (child.location_removed_at) {
+      return res.status(400).json({ error: "Cannot retry sync on a removed location" });
+    }
+    if (child.billing_responsibility === "self_pays") {
+      return res.status(400).json({
+        error: "Self-pays locations have their own subscription and don't sync to HQ's bill.",
+      });
+    }
+
+    // updateChildSubscriptionRate handles both "item exists" and "item missing"
+    // cases internally — safe to call regardless of current sync state.
+    const stripeResult = await locationBilling.updateChildSubscriptionRate(parent, child);
+
+    // Record outcome so the UI badge updates on refresh.
+    await locationBilling.recordSyncStatus(childId, stripeResult).catch((err) =>
+      console.error("[Locations] recordSyncStatus failed post-retry:", err.message)
+    );
+
+    // Audit trail — distinguish retries from other sync attempts so we can
+    // grep for "how often are customers hitting the retry button"
+    await logAction({
+      organization_id: String(parentId),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "location_stripe_retry",
+      entity_type: "tenant",
+      entity_id: String(childId),
+      new_value: {
+        ok: !!stripeResult?.ok,
+        reason: stripeResult?.reason || null,
+        error: stripeResult?.error || null,
+      },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
+
+    if (!stripeResult?.ok) {
+      return res.status(502).json({
+        ok: false,
+        error: stripeResult?.error || stripeResult?.reason || "Stripe sync failed",
+        sync_status: "failed",
+      });
+    }
+
+    // Re-read child to return the fresh row (with updated stripe_sync_status,
+    // stripe_item IDs, etc.) so the UI doesn't need a second round-trip.
+    const updatedChildResult = await db.query("SELECT * FROM tenants WHERE id = $1", [childId]);
+    res.json({
+      ok: true,
+      location: updatedChildResult.rows[0],
+      sync_status: "synced",
+      stripe: {
+        subscription_item_id: stripeResult.subscriptionItemId || null,
+        price_id: stripeResult.priceId || null,
+      },
+    });
+  } catch (e) {
+    console.error("[Locations] Retry sync error:", e);
     res.status(e.statusCode || 500).json({ error: e.message || "Server error" });
   }
 });
@@ -2681,12 +2788,14 @@ router.get("/tenants/:parentId/rollup", async (req, res) => {
         t.franchisee_invite_token
       );
 
-      // Stripe sync failed = parent_pays child with no stripe item ID set
-      // (this catches the Lincoln-style orphans from the Apr 19 bug)
+      // Stripe sync failed — now using the explicit column populated by
+      // recordSyncStatus() in lib/locationBilling.js. HQ and self_pays
+      // locations are never expected to have a parent-sub item, so we
+      // ignore their status. (Migration 036 backfilled existing rows.)
       const stripeSyncFailed = !isHQ
         && t.billing_responsibility !== "self_pays"
         && !t.is_suspended
-        && !t.parent_location_stripe_item_id;
+        && t.stripe_sync_status === "failed";
 
       return {
         id: t.id,

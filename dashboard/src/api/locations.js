@@ -43,3 +43,16 @@ export function resendFranchiseeInvite(childId, franchiseeEmail) {
     body: JSON.stringify({ franchisee_email: franchiseeEmail }),
   });
 }
+
+/**
+ * Retry a failed Stripe sync for a parent_pays child location.
+ * Hits POST /api/tenants/:parentId/locations/:childId/retry-sync
+ * Returns { ok, location, sync_status, stripe } on success,
+ * or { ok: false, error, sync_status: 'failed' } on another failure.
+ * See routes/dashboard.js retry endpoint (Apr 20, 2026).
+ */
+export function retryLocationStripeSync(parentId, childId) {
+  return api(`/api/tenants/${parentId}/locations/${childId}/retry-sync`, {
+    method: "POST",
+  });
+}

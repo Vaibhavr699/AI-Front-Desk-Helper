@@ -1082,7 +1082,7 @@ function maskFacebookToken(token) {
 }
 
 const TENANT_SELECT_TWILIO = `t.twilio_account_sid, t.twilio_auth_token`;
-const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.plan, t.facebook_page_id, t.facebook_page_access_token, t.tone_of_voice, t.objection_handling_config, t.business_hours, t.afterhours_behavior, t.google_calendar_linked, t.google_calendar_id, t.google_calendar_email, t.zapier_webhook_url, t.api_key, t.website, t.voice_model, t.faqs, t.plan_overrides, t.promo_label, t.logo_url, t.nurturing_enabled, t.referral_enabled, t.seasonal_campaigns_enabled, t.maintenance_reminder_months, t.reengagement_reminder_months, t.referral_request_days_after_service, t.nurturing_campaign_calendar, t.maintenance_touchpoints, t.reengagement_touchpoints, t.parent_id, t.business_type, t.default_lead_source, t.brand_color, t.brand_mode, t.inbound_voice, t.outbound_voice, t.outbound_agent_name, t.outbound_instructions, t.accent_color, t.favicon_url, t.support_email, t.account_type, t.parent_mode, t.billing_owner, t.reseller_tier, t.reseller_code, t.reseller_customer_limit, t.reseller_wholesale_rate_cents, t.reseller_id, t.billing_responsibility`;
+const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message,t.voice_welcome_message, t.chat_welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.plan, t.facebook_page_id, t.facebook_page_access_token, t.tone_of_voice, t.objection_handling_config, t.business_hours, t.afterhours_behavior, t.google_calendar_linked, t.google_calendar_id, t.google_calendar_email, t.zapier_webhook_url, t.api_key, t.website, t.voice_model, t.faqs, t.plan_overrides, t.promo_label, t.logo_url, t.nurturing_enabled, t.referral_enabled, t.seasonal_campaigns_enabled, t.maintenance_reminder_months, t.reengagement_reminder_months, t.referral_request_days_after_service, t.nurturing_campaign_calendar, t.maintenance_touchpoints, t.reengagement_touchpoints, t.parent_id, t.business_type, t.default_lead_source, t.brand_color, t.brand_mode, t.inbound_voice, t.outbound_voice, t.outbound_agent_name, t.outbound_instructions, t.accent_color, t.favicon_url, t.support_email, t.account_type, t.parent_mode, t.billing_owner, t.reseller_tier, t.reseller_code, t.reseller_customer_limit, t.reseller_wholesale_rate_cents, t.reseller_id, t.billing_responsibility`;
 const TENANT_SELECT_BASE_LEGACY = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.parent_id, t.business_type`;
 
 router.get("/tenants/:id", async (req, res) => {
@@ -1329,7 +1329,7 @@ router.patch("/tenants/:id", async (req, res) => {
 
    let allowed = [
       "name", "company_name", "timezone", "website", "logo_url",
-      "welcome_message", "instructions", "transfer_numbers", "transfer_sms_brief", 
+      "welcome_message", "voice_welcome_message", "chat_welcome_message", "instructions", "transfer_numbers", "transfer_sms_brief",
       "crm_webhook_url", "crm_type", "follow_up_enabled", "plan", 
       "twilio_account_sid", "twilio_auth_token", "facebook_page_id", "facebook_page_access_token",
       "tone_of_voice", "objection_handling_config", "business_hours", "afterhours_behavior", 

@@ -94,7 +94,11 @@
       if (res.ok) {
         const data = await res.json();
         if (data.company_name || data.name) companyName       = data.company_name || data.name;
-        if (data.welcome_message)           welcomeMessage    = data.welcome_message;
+        // Apr 21, 2026: prefer chat_welcome_message (channel-specific, set in
+        // Settings → AI behavior → "Chat widget greeting"). Falls back to the
+        // legacy welcome_message field, then to the hardcoded default above.
+        if (data.chat_welcome_message)      welcomeMessage    = data.chat_welcome_message;
+        else if (data.welcome_message)      welcomeMessage    = data.welcome_message;
         if (data.brand_color)               brandColor        = data.brand_color;
         if (data.logo_url)                  logoUrl           = data.logo_url;
         if (data.twilio_phone_number)       twilioPhoneNumber = data.twilio_phone_number;

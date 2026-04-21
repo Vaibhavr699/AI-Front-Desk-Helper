@@ -2828,6 +2828,16 @@ wss.on("connection", async (twilioSocket, req) => {
   let greetingTriggered = false;
   let sessionUpdated = false;
   let responseInProgress = false;
+  // Silence hangup — Apr 21, 2026.
+  // Protects against dead-air bills when a caller walks away mid-call.
+  // 15s total silence → "Are you still there?"  30s → goodbye + hangup.
+  // Resets on caller speech AND on response.done (AI finished talking).
+  let silencePromptTimer = null;
+  let silenceHangupTimer = null;
+  let silencePrompted = false;        // flips true after the 15s nudge fires
+  let silenceHangupTriggered = false; // prevents double-fire
+  const SILENCE_PROMPT_MS = 15_000;
+  const SILENCE_HANGUP_MS = 30_000;
 
   function triggerGreetingIfReady() {
     if (openaiReady && streamStarted && !greetingTriggered) {
@@ -2837,17 +2847,52 @@ wss.on("connection", async (twilioSocket, req) => {
         }
       greetingTriggered = true;
       const useRecoveryFlow = isRecovery || isOutbound || (isNurturing && recoveryScript);
-      
+
       console.log("[AI-Desk] triggerGreetingIfReady useRecoveryFlow=%s isOutbound=%s", useRecoveryFlow, isOutbound);
 
       if (!useRecoveryFlow) {
-        console.log("[AI-Desk] Triggering initial INBOUND greeting");
+        // ─────────────────────────────────────────────────────────────────
+        // INBOUND: force verbatim greeting.  Apr 21, 2026.
+        //
+        // Tenants set voice_welcome_message in Settings and expect it said
+        // EXACTLY.  Instructions-based pinning doesn't work — OpenAI Realtime
+        // paraphrases freely ("Thanks for calling X, this is Alex" becomes
+        // "Hello, thank you for calling X" with Alex dropped entirely).
+        //
+        // The fix is to pre-insert an assistant message containing the exact
+        // greeting as if the AI already composed it, then emit response.create
+        // to flush it to speech.  Realtime speaks the pre-composed message
+        // verbatim because it's treated as the AI's own prior output.
+        //
+        // Fallback chain — each candidate is trimmed BEFORE the || check so
+        // whitespace-only values fall through cleanly to the next option:
+        //   voice_welcome_message (trimmed) →
+        //   welcome_message (trimmed) →
+        //   hardcoded default
+        // ─────────────────────────────────────────────────────────────────
+        const verbatimGreeting =
+          (tenant?.voice_welcome_message || "").trim() ||
+          (tenant?.welcome_message || "").trim() ||
+          `Thanks for calling ${tenant?.company_name || "us"}. How can I help you today?`;
+
+        console.log("[AI-Desk] Triggering initial INBOUND greeting (verbatim): \"%s\"", verbatimGreeting);
+
+        // Step 1: inject the greeting as if the assistant already said it.
+        sendToOpenAI({
+          type: "conversation.item.create",
+          item: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "text", text: verbatimGreeting }],
+          },
+        });
+
+        // Step 2: tell Realtime to generate audio from that pre-composed message.
         sendToOpenAI({
           type: "response.create",
           response: {
             modalities: ["audio", "text"],
-            instructions: "Greet the user warmly IN ENGLISH as a professional receptionist for " + (tenant?.company_name || "the business") + ". Ask how you can help them today. DO NOT USE ANY OTHER LANGUAGE."
-          }
+          },
         });
       } else {
         // For OUTBOUND/RECOVERY, initiate response using campaign persona set in session.update

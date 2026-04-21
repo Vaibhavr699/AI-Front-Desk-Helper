@@ -365,6 +365,8 @@ export default function Settings({ tenantId }) {
     support_email: "",
     // ──────────────────────────────────────────────────────────
     welcome_message: "",
+    voice_welcome_message: "",
+    chat_welcome_message: "",
     instructions: "",
     tone_of_voice: "professional",
     transfer_numbers_raw: "",
@@ -446,6 +448,8 @@ export default function Settings({ tenantId }) {
         support_email: t.support_email || "",
         // Everything else
         welcome_message: t.welcome_message || "",
+        voice_welcome_message: t.voice_welcome_message || "",
+        chat_welcome_message: t.chat_welcome_message || "",
         instructions: t.instructions || "",
         tone_of_voice: t.tone_of_voice || "professional",
         transfer_numbers_raw: Array.isArray(t.transfer_numbers) ? t.transfer_numbers.join(", ") : "",
@@ -873,6 +877,8 @@ export default function Settings({ tenantId }) {
       support_email: supportEmailTrimmed || null,
       // Everything else
       welcome_message: form.welcome_message || null,
+      voice_welcome_message: form.voice_welcome_message.trim() || null,
+      chat_welcome_message: form.chat_welcome_message.trim() || null,
       instructions: form.instructions || null,
       tone_of_voice: form.tone_of_voice,
       transfer_numbers,
@@ -1826,15 +1832,73 @@ export default function Settings({ tenantId }) {
                       <option value="authoritative">Direct & Authoritative</option>
                     </select>
                   </div>
-                  <div className="col-span-1">
-                    <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Welcome Message</label>
-                    <textarea
-                      value={form.welcome_message}
-                      onChange={(e) => handleUpdateForm("welcome_message", e.target.value)}
-                      rows={2}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-primary/5 transition-all outline-none font-medium placeholder:text-slate-500"
-                      placeholder="e.g. Thanks for calling Gladiators Painting..."
-                    />
+                 {/* ──────────────────────────────────────────────────────────────────
+                      Welcome messages (voice + chat). Apr 21, 2026: split from a single
+                      field into two channel-specific fields. Voice gets injected into
+                      OpenAI Realtime instructions (no robotic Twilio Polly anymore).
+                      Chat is shown as the opening message in the website widget.
+                     ─────────────────────────────────────────────────────────────────── */}
+                  <div className="col-span-2 space-y-4 p-5 bg-blue-50/30 border border-blue-100/50 rounded-xl">
+                    {/* Section header + AI-voice differentiator callout */}
+                    <div>
+                      <div className="flex items-start gap-3 mb-2">
+                        <div className="shrink-0 w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center">
+                          <MessageSquare className="w-4 h-4 text-blue-600" />
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="text-sm font-black text-gray-700 uppercase tracking-wide">Welcome messages</h3>
+                          <p className="text-xs text-gray-500 leading-relaxed mt-0.5">
+                            Different channels, different greetings. Voice should be short and conversational; the chat widget can be longer with emoji.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 px-3 py-2 bg-white border border-blue-100 rounded-lg">
+                        <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest shrink-0">Powered by your AI voice</span>
+                        <span className="text-[10px] text-gray-500 leading-relaxed">
+                          — greetings are spoken in the natural OpenAI voice you selected, not a robotic Twilio Polly TTS.
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Voice Greeting */}
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 mb-1.5 uppercase tracking-wide flex items-center gap-2">
+                        <Mic2 className="w-3.5 h-3.5 text-primary" />
+                        Voice greeting
+                        <span className="text-[9px] font-medium text-gray-400 normal-case tracking-normal ml-1">spoken by AI on phone calls</span>
+                      </label>
+                      <textarea
+                        value={form.voice_welcome_message}
+                        onChange={(e) => handleUpdateForm("voice_welcome_message", e.target.value)}
+                        rows={2}
+                        maxLength={200}
+                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-primary/5 transition-all outline-none font-medium placeholder:text-slate-500 text-sm"
+                        placeholder="e.g. Thanks for calling Gladiators Painting. How can I help you today?"
+                      />
+                      <p className="text-[10px] text-gray-500 mt-1.5 italic leading-relaxed">
+                        Spoken by the <strong className="text-gray-700 not-italic">AI in your selected voice</strong> (e.g. Ash, Shimmer) — <strong className="text-gray-700 not-italic">not</strong> a robotic Twilio voice. Keep it short, 6 to 12 words. Avoid emoji or formatting. <strong className="text-gray-700 not-italic">Leave blank</strong> if you'd rather the AI greet naturally without a scripted opener.
+                      </p>
+                    </div>
+
+                    {/* Chat Widget Greeting */}
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 mb-1.5 uppercase tracking-wide flex items-center gap-2">
+                        <MessageSquare className="w-3.5 h-3.5 text-primary" />
+                        Chat widget greeting
+                        <span className="text-[9px] font-medium text-gray-400 normal-case tracking-normal ml-1">shown when website chat opens</span>
+                      </label>
+                      <textarea
+                        value={form.chat_welcome_message}
+                        onChange={(e) => handleUpdateForm("chat_welcome_message", e.target.value)}
+                        rows={3}
+                        maxLength={500}
+                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-primary/5 transition-all outline-none font-medium placeholder:text-slate-500 text-sm"
+                        placeholder="e.g. Hi there 👋 Need a quick estimate or have a question? I can help you schedule in seconds."
+                      />
+                      <p className="text-[10px] text-gray-500 mt-1.5 italic leading-relaxed">
+                        Shown when visitors open the chat bubble on your website. Can be longer — emoji and casual tone work great here since it's read, not spoken. <strong className="text-gray-700 not-italic">Leave blank</strong> to use a friendly default greeting.
+                      </p>
+                    </div>
                   </div>
                   <div className="col-span-1">
                     <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Inbound Voice</label>

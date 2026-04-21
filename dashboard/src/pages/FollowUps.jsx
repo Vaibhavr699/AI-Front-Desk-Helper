@@ -5,6 +5,7 @@ import { ConfirmationModal } from "../components";
 import { 
   MessageSquare, 
   PhoneCall, 
+  PhoneOff,
   Clock, 
   CheckCircle2, 
   XCircle, 
@@ -119,6 +120,7 @@ export default function FollowUps({ tenantId }) {
   const counts = {
     all: followups.length,
     recovery: followups.filter(f => f.system_type === 'recovery').length,
+    missed_call: followups.filter(f => f.system_type === 'missed_call').length,
     nurturing: followups.filter(f => f.system_type === 'nurturing').length,
     appointment: followups.filter(f => f.system_type === 'appointment').length,
   };
@@ -215,6 +217,12 @@ export default function FollowUps({ tenantId }) {
       tooltip: "Leads who received estimates but haven't booked yet. AI automatically follows up with SMS and calls to recover potential lost revenue.",
     },
     {
+      key: "missed_call",
+      label: "Missed Calls",
+      icon: PhoneOff,
+      tooltip: "Inbound callers the AI couldn't reach (busy, no-answer, or failed). Immediate 'sorry we missed you' SMS is sent, followed by AI callback attempts at 30 minutes and 24 hours.",
+    },
+    {
       key: "appointment",
       label: "Appointments",
       icon: CalendarCheck,
@@ -306,6 +314,11 @@ export default function FollowUps({ tenantId }) {
                               <CalendarCheck className="w-3 h-3 text-stone-300" />
                               {f.job_type || f.scope || "Appointment"}
                             </>
+                          ) : f.system_type === 'missed_call' ? (
+                            <>
+                              <PhoneOff className="w-3 h-3 text-stone-300" />
+                              Missed Call · {formatSource(f.lead_source)}
+                            </>
                           ) : (
                             <>
                               <History className="w-3 h-3 text-stone-300" />
@@ -353,7 +366,7 @@ export default function FollowUps({ tenantId }) {
                       <DaysBadge days={f.days_waiting} label="old" />
                     </td>
                     <td className="px-6 py-4 text-right">
-                      {f.system_type === 'recovery' && (
+                      {(f.system_type === 'recovery' || f.system_type === 'missed_call') && (
                         <div className="flex items-center justify-end gap-2 transition-all">
                           <button
                             onClick={() => handleSms(f.id)}
@@ -485,6 +498,7 @@ function formatSource(src) {
     'facebook': 'Facebook',
     'phone': 'Phone',
     'inquiry': 'Inquiry',
+    'missed_call': 'Missed Call',
     'sms': 'SMS',
     'website': 'Website',
     'chat': 'Chat Widget',
@@ -507,6 +521,9 @@ function formatStage(step, systemType) {
     'final_attempt': 'Final Attempt',
     'inquiry_thanks': 'Inquiry Thanks',
     'inquiry_call': 'Inquiry Call',
+    // Missed call steps
+    'missed_call_30min': '30-min Callback',
+    'missed_call_24h': '24h Callback',
     // Nurturing steps
     '24h': '24h Reminder',
     'post_service': 'Post Service',
@@ -531,6 +548,15 @@ function formatStage(step, systemType) {
 function getStageStyle(step, systemType) {
   if (systemType === 'appointment' || step === 'pre_appointment') {
     return 'bg-violet-50 text-violet-700 border border-violet-100';
+  }
+
+  if (systemType === 'missed_call') {
+    // Missed-call gets its own orange-ish palette — distinct from amber recovery
+    switch (step) {
+      case 'missed_call_30min': return 'bg-orange-50 text-orange-700 border border-orange-100';
+      case 'missed_call_24h': return 'bg-red-50 text-red-700 border border-red-100';
+      default: return 'bg-orange-50 text-orange-700 border border-orange-100';
+    }
   }
 
   switch (step) {

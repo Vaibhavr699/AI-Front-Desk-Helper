@@ -4,6 +4,7 @@ import {
   getTenants,
   getTenantRollup,
   getRollupActivity,
+  getRollupAlerts,
   updateTenant,
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
@@ -37,6 +38,9 @@ import {
   UserPlus,
   PhoneMissed,
   Star,
+  Clock,
+  TrendingDown,
+  ShieldAlert,
 } from "lucide-react";
 
 const MAX_LOGO_BYTES = 1024 * 1024;
@@ -278,6 +282,17 @@ export default function Tenants() {
           <Activity className="w-3 h-3" />
           Activity
         </button>
+         <button
+          onClick={() => setActiveTab("alerts")}
+          className={`px-4 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all inline-flex items-center gap-1.5 ${
+            activeTab === "alerts"
+              ? "bg-white text-stone-900 shadow-sm"
+              : "text-stone-500 hover:text-stone-700"
+          }`}
+        >
+          <ShieldAlert className="w-3 h-3" />
+          Alerts
+        </button>
       </div>
       {error && (
         <div className="mb-6 bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl flex items-center gap-3 text-sm">
@@ -339,6 +354,13 @@ export default function Tenants() {
 
       {activeTab === "activity" && (
         <ActivityFeedTab
+          parentId={parent.id}
+          locations={locations}
+          onSelect={onSelect}
+        />
+      )}
+     {activeTab === "alerts" && (
+        <AlertsFeedTab
           parentId={parent.id}
           locations={locations}
           onSelect={onSelect}
@@ -1472,3 +1494,234 @@ function formatRelativeTime(iso) {
   if (day < 7) return `${day}d ago`;
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
+
+// ═════════════════════════════════════════════════════════════════════════
+// ALERTS FEED TAB — Apr 22, 2026
+// Health signals from /api/rollup/:parentId/alerts.
+// Four kinds: stalled_lead, missed_call_no_reply, negative_review, high_hangup_rate.
+// Severity-sorted server-side: critical → warn → info. Client filter is
+// location-only (alerts endpoint doesn't take locationId, so we filter in-memory).
+// ═════════════════════════════════════════════════════════════════════════
+
+function AlertsFeedTab({ parentId, locations, onSelect }) {
+  const [alerts, setAlerts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [locationFilter, setLocationFilter] = useState("all");
+
+  useEffect(() => {
+    loadAlerts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function loadAlerts() {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await getRollupAlerts(parentId);
+      setAlerts(data.alerts || []);
+    } catch (e) {
+      setError(e.message || "Failed to load alerts");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Client-side location filter — alerts endpoint doesn't take locationId.
+  const filteredAlerts = useMemo(() => {
+    if (locationFilter === "all") return alerts;
+    return alerts.filter((a) => a.tenantId === locationFilter);
+  }, [alerts, locationFilter]);
+
+  // Severity counts from the filtered set (not the raw set).
+  const counts = useMemo(
+    () => ({
+      critical: filteredAlerts.filter((a) => a.severity === "critical").length,
+      warn: filteredAlerts.filter((a) => a.severity === "warn").length,
+      info: filteredAlerts.filter((a) => a.severity === "info").length,
+    }),
+    [filteredAlerts]
+  );
+
+  const locationOptions = [
+    { value: "all", label: "All locations" },
+    ...locations.map((l) => ({
+      value: l.id,
+      label: l.name + (l.is_hq ? " (HQ)" : ""),
+    })),
+  ];
+
+  return (
+    <div>
+      {/* Filter + severity summary bar */}
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
+        <span className="text-xs font-bold uppercase tracking-wider text-stone-400">
+          Filter
+        </span>
+        <select
+          value={locationFilter}
+          onChange={(e) => setLocationFilter(e.target.value)}
+          className="px-3 py-1.5 bg-white border border-stone-200 rounded-lg text-sm font-medium text-stone-700 hover:border-stone-300 focus:ring-2 focus:ring-stone-500 focus:border-transparent"
+        >
+          {locationOptions.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+
+        {!loading && filteredAlerts.length > 0 && (
+          <div className="flex items-center gap-2 ml-auto flex-wrap">
+            {counts.critical > 0 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider rounded-md">
+                <AlertCircle className="w-2.5 h-2.5" />
+                {counts.critical} critical
+              </span>
+            )}
+            {counts.warn > 0 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold uppercase tracking-wider rounded-md">
+                <AlertTriangle className="w-2.5 h-2.5" />
+                {counts.warn} warning
+              </span>
+            )}
+            {counts.info > 0 && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold uppercase tracking-wider rounded-md">
+                <Info className="w-2.5 h-2.5" />
+                {counts.info} info
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <div className="mb-4 bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl flex items-center gap-3 text-sm">
+          <AlertCircle size={18} />
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-6 h-6 text-stone-400 animate-spin" />
+        </div>
+      ) : filteredAlerts.length === 0 ? (
+        <AlertsEmptyState hasLocationFilter={locationFilter !== "all"} />
+      ) : (
+        <div className="space-y-2">
+          {filteredAlerts.map((alert, i) => (
+            <AlertRow
+              key={`${alert.kind}-${alert.tenantId}-${alert.createdAt}-${i}`}
+              alert={alert}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AlertsEmptyState({ hasLocationFilter }) {
+  return (
+    <div className="bg-white rounded-2xl border-2 border-dashed border-stone-200 p-10 text-center">
+      <div className="w-14 h-14 rounded-2xl bg-emerald-50 flex items-center justify-center mx-auto mb-4">
+        <CheckCircle2 className="w-7 h-7 text-emerald-600" />
+      </div>
+      <h3 className="text-base font-bold text-stone-900 mb-1">
+        {hasLocationFilter ? "No alerts for this location" : "All clear"}
+      </h3>
+      <p className="text-sm text-stone-500 max-w-md mx-auto">
+        {hasLocationFilter
+          ? "This location has no active health signals right now."
+          : "No stalled leads, missed calls, negative reviews, or high-hangup patterns detected across your locations."}
+      </p>
+    </div>
+  );
+}
+
+function AlertRow({ alert, onSelect }) {
+  const sev = SEVERITY_CONFIG[alert.severity] || SEVERITY_CONFIG.info;
+  const cfg = ALERT_CONFIG[alert.kind] || ALERT_CONFIG.default;
+
+  return (
+    <button
+      onClick={() => onSelect && onSelect(alert.tenantId)}
+      className={`w-full bg-white rounded-2xl border shadow-sm hover:shadow-md transition-all text-left px-4 py-3 flex items-start gap-3 group ${sev.borderClass}`}
+    >
+      <div
+        className={`shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${sev.iconWrap}`}
+      >
+        <cfg.Icon className={`w-5 h-5 ${sev.iconColor}`} />
+      </div>
+
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-black text-stone-900">{cfg.title}</span>
+          <span
+            className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${sev.pillClass}`}
+          >
+            {sev.label}
+          </span>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400 px-1.5 py-0.5 bg-stone-100 rounded">
+            {alert.tenantName}
+          </span>
+        </div>
+        <p className="text-xs text-stone-600 mt-0.5 line-clamp-2">
+          {alert.summary}
+        </p>
+      </div>
+
+      <div className="shrink-0 text-[10px] font-medium text-stone-400 whitespace-nowrap pt-1">
+        {formatRelativeTime(alert.createdAt)}
+      </div>
+    </button>
+  );
+}
+
+const ALERT_CONFIG = {
+  stalled_lead: {
+    Icon: Clock,
+    title: "Stalled lead",
+  },
+  missed_call_no_reply: {
+    Icon: PhoneMissed,
+    title: "Missed call — no reply",
+  },
+  negative_review: {
+    Icon: Star,
+    title: "Negative review",
+  },
+  high_hangup_rate: {
+    Icon: TrendingDown,
+    title: "High hangup rate",
+  },
+  default: {
+    Icon: AlertCircle,
+    title: "Alert",
+  },
+};
+
+const SEVERITY_CONFIG = {
+  critical: {
+    iconWrap: "bg-red-50",
+    iconColor: "text-red-600",
+    pillClass: "bg-red-100 text-red-700",
+    borderClass: "border-red-100 hover:border-red-200",
+    label: "Critical",
+  },
+  warn: {
+    iconWrap: "bg-amber-50",
+    iconColor: "text-amber-600",
+    pillClass: "bg-amber-100 text-amber-700",
+    borderClass: "border-amber-100 hover:border-amber-200",
+    label: "Warning",
+  },
+  info: {
+    iconWrap: "bg-blue-50",
+    iconColor: "text-blue-600",
+    pillClass: "bg-blue-100 text-blue-700",
+    borderClass: "border-stone-200 hover:border-stone-300",
+    label: "Info",
+  },
+};

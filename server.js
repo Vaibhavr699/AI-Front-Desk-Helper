@@ -2957,6 +2957,85 @@ wss.on("connection", async (twilioSocket, req) => {
     }
   }
 
+// ─────────────────────────────────────────────────────────────────────
+  // Silence hangup helpers — Apr 21, 2026.
+  //
+  // resetSilenceTimers():  call whenever the caller OR AI just made sound.
+  //                        Wipes both timers, re-arms them from zero.
+  // clearSilenceTimers():  call on terminal events (socket close, hang_up
+  //                        tool) — don't re-arm, just wipe.
+  //
+  // Timer 1 (15s) fires a gentle "are you still there?" prompt via a
+  // response.create with inline instructions.  Paraphrasing is fine here —
+  // we only need the caller to hear SOMETHING that invites a reply.
+  //
+  // Timer 2 (30s) fires a goodbye + hangup.  The goodbye is emitted the
+  // same way: response.create with instructions.  After a 3s buffer to let
+  // the goodbye audio reach the caller, we close the Twilio call via REST.
+  // ─────────────────────────────────────────────────────────────────────
+  function clearSilenceTimers() {
+    if (silencePromptTimer) { clearTimeout(silencePromptTimer); silencePromptTimer = null; }
+    if (silenceHangupTimer) { clearTimeout(silenceHangupTimer); silenceHangupTimer = null; }
+  }
+
+  function resetSilenceTimers() {
+    clearSilenceTimers();
+
+    // Don't arm timers if the call is already wrapping up.
+    if (silenceHangupTriggered || hasScheduledHangup) return;
+    if (twilioSocket.readyState !== WebSocket.OPEN) return;
+
+    silencePrompted = false;
+
+    silencePromptTimer = setTimeout(() => {
+      if (silenceHangupTriggered || twilioSocket.readyState !== WebSocket.OPEN) return;
+      if (responseInProgress) {
+        // AI is still talking — reschedule check in 2s.
+        silencePromptTimer = setTimeout(resetSilenceTimers, 2_000);
+        return;
+      }
+      silencePrompted = true;
+      console.log("[AI-Desk] Silence 15s — prompting 'are you still there?'");
+      sendToOpenAI({
+        type: "response.create",
+        response: {
+          modalities: ["audio", "text"],
+          instructions: "The caller has gone quiet for about 15 seconds. Gently ask if they're still there, in a single short sentence. Do not recap the prior conversation.",
+        },
+      });
+    }, SILENCE_PROMPT_MS);
+
+    silenceHangupTimer = setTimeout(async () => {
+      if (silenceHangupTriggered || twilioSocket.readyState !== WebSocket.OPEN) return;
+      silenceHangupTriggered = true;
+      const companyName = tenant?.company_name || "us";
+      console.log("[AI-Desk] Silence 30s — saying goodbye and hanging up");
+
+      sendToOpenAI({
+        type: "response.create",
+        response: {
+          modalities: ["audio", "text"],
+          instructions: `The caller has been silent for 30 seconds and appears to have walked away. In a warm, brief single sentence, thank them for calling ${companyName} and say goodbye. Do not ask any further questions.`,
+        },
+      });
+
+      // Give the goodbye audio ~3 seconds to reach the caller, then hang up.
+      setTimeout(async () => {
+        try {
+          const client = twilioLib.getClientForTenant(tenant);
+          if (client && callSid) {
+            await client.calls(callSid).update({ status: "completed" });
+            console.log("[AI-Desk] Silence timeout: terminated callSid=%s", callSid);
+          }
+        } catch (e) {
+          console.error("[AI-Desk] Silence timeout hangup failed:", e.message);
+        }
+        if (openaiSocket?.readyState === WebSocket.OPEN) openaiSocket.close();
+        if (twilioSocket.readyState === WebSocket.OPEN) twilioSocket.close();
+      }, 3_000);
+    }, SILENCE_HANGUP_MS);
+  }
+  
   function connectOpenAI(modelIndex) {
     let model = (tenant && tenant.voice_model) ? tenant.voice_model : (openaiModelCandidates[modelIndex] || openaiModelCandidates[0]);
     
@@ -3108,6 +3187,7 @@ sendToOpenAI(sessionUpdate);
       }
 
       if (data.type === "input_audio_buffer.speech_started") {
+         resetSilenceTimers(); // caller spoke → reset silence clock
         if (shouldIgnoreSpeech) {
           console.log("[AI-Desk] Ignoring user speech during finalization");
           return;
@@ -3330,6 +3410,7 @@ sendToOpenAI(sessionUpdate);
               }
             } else if (name === "hang_up" && callSid) {
               console.log("[AI-Desk] Realtime hang_up trigger callSid=%s", callSid);
+              clearSilenceTimers(); // AI is hanging up — don't fight it with silence nudges
               output = JSON.stringify({ success: true, message: "Call ending." });
               
               // Give AI a moment to finish speaking if needed, then terminate
@@ -3384,6 +3465,7 @@ sendToOpenAI(sessionUpdate);
       }
 
       if (data.type === "response.done") {
+          resetSilenceTimers(); // AI finished speaking → restart silence clock
         const response = data.response;
         if (response && response.output) {
           response.output.forEach(item => {
@@ -3585,6 +3667,7 @@ sendToOpenAI(sessionUpdate);
   };
 
   twilioSocket.on("close", async () => {
+    clearSilenceTimers();
     if (openaiSocket?.readyState === WebSocket.OPEN) {
       openaiSocket.close();
     }

@@ -4,7 +4,7 @@ const express = require("express");
 const { getTenantByPhone, getTenantById, getTenantBySlug } = require("../lib/tenant");
 const callsService = require("../services/calls");
 const recordingService = require("../services/recording");
-const { updateCallByTwilioSid } = require("../services/calls");
+const { updateCallByTwilioSid, getCallByTwilioSid } = require("../services/calls");
 
 const router = express.Router();
 const BASE_URL = process.env.BASE_URL;
@@ -153,6 +153,18 @@ router.get("/transfer-dial", async (req, res) => {
   `);
 });
 
+// ─────────────────────────────────────────────────────────
+// Call status callback — fires when Twilio sees call end
+//
+// Updates the call row's status. For missed inbound calls (busy/failed/no-answer),
+// triggers the Option B missed-call recovery flow:
+//   1. Creates a lead with source='missed_call' (fires new-lead bell notification)
+//   2. Sends IMMEDIATE SMS: "Sorry we missed your call..."
+//   3. Fires startMissedCallRecovery → AI callback at 30 min + 24h
+//
+// Deduped per phone number over 24h so a caller who keeps trying only gets one
+// recovery flow, not five.
+// ─────────────────────────────────────────────────────────
 router.post("/status", (req, res) => {
   const twiml = '<?xml version="1.0" encoding="UTF-8"?><Response/>';
   res.writeHead(200, {
@@ -163,6 +175,9 @@ router.post("/status", (req, res) => {
 
   const CallSid    = req.body && req.body.CallSid;
   const CallStatus = req.body && req.body.CallStatus;
+  const From       = req.body && req.body.From;
+
+  // ── Update call row with final status (existing behavior) ─────────────
   if (CallSid && (CallStatus === "completed" || CallStatus === "busy" || CallStatus === "failed" || CallStatus === "no-answer")) {
     const endedAt = new Date().toISOString();
     updateCallByTwilioSid(CallSid, {
@@ -170,6 +185,92 @@ router.post("/status", (req, res) => {
       ended_at:         endedAt,
       duration_minutes: req.body?.CallDuration ? parseFloat(req.body.CallDuration) / 60 : null,
     }).catch(() => {});
+  }
+
+  // ── 🆕 MISSED-CALL RECOVERY (Option B) ─────────────────────────────────
+  // Triggered when the AI didn't answer the inbound call. Runs async so
+  // Twilio's status callback isn't blocked. Flow:
+  //   - Immediate SMS to caller ("sorry we missed your call")
+  //   - 30-min AI callback (if they haven't replied by then)
+  //   - 24h second AI callback
+  if (CallSid && ["busy", "failed", "no-answer"].includes(CallStatus) && From) {
+    setImmediate(async () => {
+      try {
+        const db                  = require("../lib/db");
+        const twilioLib           = require("../lib/twilio");
+        const { getOrCreateLead } = require("../services/leads");
+        const estimateRecovery    = require("../services/estimateRecovery");
+
+        // Get the call row to find tenant_id and verify it's inbound
+        const call = await getCallByTwilioSid(CallSid);
+        if (!call?.tenant_id) {
+          console.log("[Missed-call] No tenant_id for CallSid=%s, skipping recovery", CallSid);
+          return;
+        }
+
+        // Only trigger for inbound calls — a failed outbound call isn't
+        // a "missed call" from a caller's perspective
+        if (call.direction !== "inbound") {
+          return;
+        }
+
+        // Dedupe: if this phone already has ANY active recovery, skip.
+        // Handled inside startMissedCallRecovery but we also check here
+        // to avoid creating duplicate leads unnecessarily.
+        const recent = await db.query(
+          `SELECT 1 FROM estimate_recoveries
+           WHERE tenant_id = $1 AND contact_phone = $2
+             AND status = 'active'
+             AND created_at > now() - interval '24 hours' LIMIT 1`,
+          [call.tenant_id, From]
+        );
+        if (recent.rows.length > 0) {
+          console.log("[Missed-call] Dedupe hit for %s tenant=%s — active recovery exists", From, call.tenant_id);
+          return;
+        }
+
+        // Fetch tenant info for immediate SMS
+        const tenantRow = await db.query(
+          `SELECT t.*,
+                  (SELECT pn.phone FROM phone_numbers pn WHERE pn.tenant_id = t.id ORDER BY pn.is_primary DESC NULLS LAST LIMIT 1) as matched_phone
+           FROM tenants t WHERE t.id = $1`,
+          [call.tenant_id]
+        ).then((r) => r.rows[0]);
+        if (!tenantRow) return;
+
+        // Get or create the lead — fires notifyNewLead bell automatically
+        const lead = await getOrCreateLead(call.tenant_id, From, null, "missed_call");
+        if (!lead) return;
+
+        // 1️⃣  IMMEDIATE "sorry we missed you" SMS
+        const client = twilioLib.getClientForTenant(tenantRow);
+        if (client && tenantRow.matched_phone) {
+          const companyName = tenantRow.company_name || tenantRow.name || "us";
+          const immediateMsg = `Hi! This is ${companyName}. Sorry we missed your call — we'll text or call you back shortly. If you have a specific question, just reply here and we'll help right away.`;
+          try {
+            await client.messages.create({
+              to:   From,
+              from: tenantRow.matched_phone,
+              body: immediateMsg,
+            });
+            console.log("[Missed-call] Immediate SMS sent to %s tenant=%s", From, call.tenant_id);
+          } catch (smsErr) {
+            console.error("[Missed-call] Immediate SMS failed:", smsErr.message);
+          }
+        }
+
+        // 2️⃣  Fire the Option B missed-call recovery sequence
+        //    30 min later: first AI callback (voicemail detected → scripted VM)
+        //    24h later:    second AI callback
+        await estimateRecovery.startMissedCallRecovery(call.tenant_id, lead, {
+          call_id: call.id,
+        });
+
+        console.log("[Missed-call] Recovery triggered for %s tenant=%s lead_id=%s", From, call.tenant_id, lead.id);
+      } catch (err) {
+        console.error("[Missed-call] Recovery failed:", err.message);
+      }
+    });
   }
 });
 

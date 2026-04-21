@@ -14,11 +14,12 @@ export async function api(path, options = {}) {
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (res.status === 401) {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
     const isAuthAttempt = path === "/api/auth/login" || path === "/api/auth/signup";
-    if (!isAuthAttempt) {
-      window.location.href = "/";
+     if (!isAuthAttempt) {
+      console.warn(`[auth] 401 bounce triggered by ${path}`, { status: res.status }); 
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+       window.location.href = "/";
     }
     throw new Error("Unauthorized");
   }

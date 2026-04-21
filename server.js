@@ -423,6 +423,7 @@ app.use("/api/ai-coach", authMiddleware, require("./routes/aicoach"));
 app.use("/api/reviews", require("./routes/reviews"));
 app.use('/api/reseller', require('./routes/reseller'));
 app.use('/api/reseller-public', require('./routes/reseller-public'));
+app.use('/churn', require('./routes/churnPublic'));
 
 // Serve dashboard static assets early so JS/CSS/images load,
 // but do NOT register the wildcard catch-all here — it goes at the very end
@@ -4284,6 +4285,81 @@ cron.schedule("0 */6 * * *", () => {
 cron.schedule("0 6 * * *", () => {
   metricAlerts.runDailyChecks().catch((e) => console.error("[Cron] MetricAlerts daily failed:", e.message));
 });
+
+// ═══════════════════════════════════════════════════════════════
+// CHURN GRACE EXPIRATION CRON — Added Apr 21, 2026 (Step 9)
+// Daily at 3 AM Central. Suspends tenants whose 30-day direct-billing
+// grace window has passed without completion. Matches the retention
+// cron's "3 AM nightly" pattern.
+//
+// Suspension rationale (not soft-delete): transferred customers did
+// nothing wrong — their reseller churned. Suspension gates product
+// access until they call support or complete direct billing. The
+// authMiddleware still allows /api/billing + /api/auth/me while
+// suspended, so they can finish setup AFTER the grace expires.
+// ═══════════════════════════════════════════════════════════════
+cron.schedule("0 3 * * *", async () => {
+  console.log("[ChurnGraceCron] Starting grace-expiration scan");
+  try {
+    const { rows } = await db.query(
+      `SELECT id, name, primary_email, churn_grace_expires_at,
+              churn_grace_originated_reseller_id
+         FROM tenants
+        WHERE churn_grace_token IS NOT NULL
+          AND churn_grace_expires_at IS NOT NULL
+          AND churn_grace_expires_at < now()
+          AND (is_suspended IS NULL OR is_suspended = false)
+          AND deleted_at IS NULL
+        LIMIT 100`
+    );
+
+    if (rows.length === 0) {
+      console.log("[ChurnGraceCron] No expired grace windows found.");
+      return;
+    }
+
+    console.log("[ChurnGraceCron] Found %d tenant(s) to suspend", rows.length);
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const tenant of rows) {
+      try {
+        await db.query(
+          `UPDATE tenants
+              SET is_suspended = true,
+                  suspended_reason = 'churn_grace_expired',
+                  churn_grace_token = NULL,
+                  updated_at = now()
+            WHERE id = $1`,
+          [tenant.id]
+        );
+        successCount++;
+        console.log(
+          "[ChurnGraceCron] Suspended tenant=%s (%s) — grace expired %s",
+          tenant.id,
+          tenant.primary_email || "(no email)",
+          tenant.churn_grace_expires_at
+        );
+      } catch (err) {
+        errorCount++;
+        console.error(
+          "[ChurnGraceCron] Failed to suspend tenant=%s: %s",
+          tenant.id,
+          err.message
+        );
+      }
+    }
+
+    console.log(
+      "[ChurnGraceCron] Done. Suspended=%d Errors=%d",
+      successCount,
+      errorCount
+    );
+  } catch (err) {
+    console.error("[ChurnGraceCron] Fatal scan error:", err.message);
+  }
+});
+console.log("[Cron] ChurnGraceCron registered: daily 3 AM");
 
 console.log("[Cron] MetricAlerts registered: 30min, hourly, 6-hourly, daily");
 // Auto-fetch Google reviews nightly + notify on new reviews needing approval

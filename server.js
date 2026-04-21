@@ -350,14 +350,19 @@ app.get("/api/public-tenant/:id", async (req, res) => {
     }
     if (!tenant) return res.status(404).json({ error: "Tenant not found" });
 
-    // Return only safe fields needed by the website chat widget
+    // Return only safe fields needed by the website chat widget.
+    // Apr 21, 2026: added brand_color, accent_color, logo_url so widget
+    // can render with tenant branding instead of default orange.
     res.json({
       id: tenant.id,
       name: tenant.name,
       company_name: tenant.company_name,
       welcome_message: tenant.welcome_message,
       twilio_phone_number: tenant.twilio_phone_number,
-      timezone: tenant.timezone
+      timezone: tenant.timezone,
+      brand_color: tenant.brand_color || null,
+      accent_color: tenant.accent_color || null,
+      logo_url: tenant.logo_url || null
     });
   } catch (error) {
     console.error("Public tenant API error:", error.message);

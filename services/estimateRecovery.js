@@ -221,6 +221,41 @@ const INQUIRY_SEQUENCE = [
   },
 ];
 
+/**
+ * 🆕 Missed-call sequence — when AI didn't answer (busy/failed/no-answer).
+ *
+ * Immediate SMS is sent by the caller of startMissedCallRecovery (not by this
+ * sequence), so step 1 here is the 30-minute AI callback. If they replied to
+ * the immediate SMS in the meantime, the cron job skips this step because
+ * last_response_at will be set — OR the follow-up can be cancelled manually.
+ *
+ * 30 min → AI callback w/ voicemail detection
+ * Day 1  → second AI callback attempt (catches the morning-after hot leads)
+ * Done   → DORMANT → seasonal campaigns
+ */
+const MISSED_CALL_SEQUENCE = [
+  {
+    step: "missed_call_30min",
+    channel: "call",
+    delayHours: 0.5, // 30 minutes
+    script:
+      "Hi {{first_name}}, this is the AI assistant calling back from {{company_name}}. I noticed we missed your call a little while ago and wanted to reach out right away. What can I help you with today?",
+    voicemail:
+      "Hi, this is {{company_name}} calling you back — sorry we missed your call earlier! We'd love to help with your project. Just give us a call back or reply to our text anytime. Thanks!",
+    next: "missed_call_24h",
+  },
+  {
+    step: "missed_call_24h",
+    channel: "call",
+    delayHours: 23.5, // ~24h after the initial missed call (30min + 23.5h)
+    script:
+      "Hi {{first_name}}, this is {{company_name}} following up on the call we missed yesterday. I just wanted to personally make sure we didn't leave you hanging. Were you looking for a painting estimate, or is there something specific I can help you with?",
+    voicemail:
+      "Hi, this is {{company_name}} calling you back about the call we missed yesterday. If you're still interested in a painting estimate, we'd love to help. Give us a call back or reply to our text — thanks!",
+    next: null, // → DORMANT → seasonal campaigns
+  },
+];
+
 // Facebook messages between SMS touches
 const FACEBOOK_MESSAGES = [
   `Just wanted to make sure you saw the estimate we sent over 🙂`,
@@ -242,6 +277,7 @@ for (const seq of [
   PRICE_SEQUENCE,
   SPOUSE_SEQUENCE,
   INQUIRY_SEQUENCE,
+  MISSED_CALL_SEQUENCE, // 🆕
 ]) {
   for (const s of seq) ALL_STEPS.set(s.step, s);
 }
@@ -394,6 +430,64 @@ async function startInquiryRecovery(tenantId, lead, options = {}) {
     ]
   );
   console.log("[Recovery] Inquiry started id=%s tenant=%s phone=%s", res.rows[0].id, tenantId, phone);
+  return res.rows[0];
+}
+
+/**
+ * 🆕 Start missed-call recovery (Option B).
+ *
+ * Called from routes/twilio.js /status handler when Twilio reports the call
+ * as busy/failed/no-answer. The IMMEDIATE "sorry we missed your call" SMS is
+ * sent by the caller before invoking this function — this sets up the
+ * follow-up call cadence:
+ *   - 30 minutes:  first AI callback
+ *   - ~24 hours:   second AI callback
+ *   - dormant →    seasonal campaigns
+ *
+ * Dedupe: if an active recovery already exists for this phone (any type),
+ * skip — don't stack recoveries for the same caller.
+ */
+async function startMissedCallRecovery(tenantId, lead, options = {}) {
+  const phone = lead.phone || lead.contact_phone;
+  if (!phone) return null;
+
+  const existing = await db.query(
+    "SELECT id FROM estimate_recoveries WHERE tenant_id = $1 AND contact_phone = $2 AND status = 'active'",
+    [tenantId, phone]
+  );
+  if (existing.rows.length > 0) {
+    console.log("[Recovery] Missed-call dedupe: recovery already active for %s", phone);
+    return existing.rows[0];
+  }
+
+  const now          = new Date();
+  const firstStep    = MISSED_CALL_SEQUENCE[0];
+  const nextActionAt = addHours(now, firstStep.delayHours);
+
+  const res = await db.query(
+    `INSERT INTO estimate_recoveries (
+      tenant_id, lead_id, call_id, contact_name, contact_phone, contact_email,
+      status, current_step, next_action_at, lead_source
+    ) VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8, 'missed_call')
+    RETURNING *`,
+    [
+      tenantId,
+      lead.id || null,
+      options.call_id || null,
+      lead.name || lead.contact_name || "Guest",
+      phone,
+      lead.email || lead.contact_email || null,
+      firstStep.step,
+      nextActionAt.toISOString(),
+    ]
+  );
+  console.log(
+    "[Recovery] Missed-call recovery started id=%s tenant=%s phone=%s next=%s",
+    res.rows[0].id,
+    tenantId,
+    phone,
+    nextActionAt.toISOString()
+  );
   return res.rows[0];
 }
 
@@ -806,6 +900,7 @@ module.exports = {
   startRecovery,
   startInquiryRecovery,
   startEstimateRecovery,
+  startMissedCallRecovery,   // 🆕
   processDueRecoveries,
   setObjection,
   markConverted,
@@ -822,6 +917,8 @@ module.exports = {
   makeRecoveryCall,
   advanceStep,
   GHOST_SEQUENCE,
+  INQUIRY_SEQUENCE,
+  MISSED_CALL_SEQUENCE,      // 🆕
   OBJECTION_SEQUENCES,
   ALL_STEPS,
 };

@@ -162,6 +162,45 @@ export function getTenantRollup(parentId) {
   return api(`/api/tenants/${parentId}/rollup`);
 }
 
+// ── HQ Full Rollup Dashboard (Apr 21, 2026) ──
+// Three-tab dashboard: Overview / Activity / Alerts.
+// Backend routes: routes/rollup.js (mounted at /api/rollup).
+// Separate from getTenantRollup above (that one is the simpler Businesses page).
+
+/**
+ * Overview tab — aggregated KPIs + per-location cards for a parent tenant.
+ * Returns { parent, locationCount, kpis, locations }.
+ */
+export function getRollupOverview(parentId) {
+  return api(`/api/rollup/${parentId}/overview`);
+}
+
+/**
+ * Activity tab — cross-location event feed from notifications.
+ * options: { locationId?, before?, limit?, types? (array) }
+ * Returns { events, nextCursor }.
+ */
+export function getRollupActivity(parentId, options = {}) {
+  const params = new URLSearchParams();
+  if (options.locationId) params.set("locationId", options.locationId);
+  if (options.before) params.set("before", options.before);
+  if (options.limit) params.set("limit", String(options.limit));
+  if (Array.isArray(options.types) && options.types.length) {
+    params.set("types", options.types.join(","));
+  }
+  const qs = params.toString();
+  return api(`/api/rollup/${parentId}/activity${qs ? `?${qs}` : ""}`);
+}
+
+/**
+ * Alerts tab — health signals (stalled leads, missed calls, negative reviews,
+ * high hangup rate) across all child locations.
+ * Returns { alerts }.
+ */
+export function getRollupAlerts(parentId) {
+  return api(`/api/rollup/${parentId}/alerts`);
+}
+
 export function getCalls(tenantId, params = {}) {
   const extra = tenantId === 'all' ? { tenant_id: 'all', rollup: 'true', ...params } : { tenant_id: tenantId, ...params };
   const q = new URLSearchParams(extra);

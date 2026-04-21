@@ -386,20 +386,23 @@ router.get("/followups", async (req, res) => {
     if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
 
     const [recoveryRes, followupRes, appointmentRes] = await Promise.all([
-      db.query(`
-        SELECT er.*, 
-                l.estimated_revenue_cents,
-                l.name as lead_name,
-                l.status as lead_status,
-                l.lead_source,
-                'recovery' as system_type,
-                (SELECT MAX(created_at) FROM recovery_touches WHERE recovery_id = er.id) as last_contact,
-                EXTRACT(EPOCH FROM (now() - er.created_at)) / 86400.0 as days_waiting
-         FROM estimate_recoveries er
-         LEFT JOIN leads l ON er.lead_id = l.id
-         WHERE er.tenant_id = ANY($1) AND er.status IN ('active', 'paused')`,
-        [tenantIds]
-      ),
+     db.query(`
+  SELECT er.*, 
+          l.estimated_revenue_cents,
+          l.name as lead_name,
+          l.status as lead_status,
+          l.lead_source,
+          CASE 
+            WHEN er.lead_source = 'missed_call' THEN 'missed_call'
+            ELSE 'recovery'
+          END as system_type,
+          (SELECT MAX(created_at) FROM recovery_touches WHERE recovery_id = er.id) as last_contact,
+          EXTRACT(EPOCH FROM (now() - er.created_at)) / 86400.0 as days_waiting
+   FROM estimate_recoveries er
+   LEFT JOIN leads l ON er.lead_id = l.id
+   WHERE er.tenant_id = ANY($1) AND er.status IN ('active', 'paused')`,
+  [tenantIds]
+),
       db.query(`
         SELECT f.id, f.tenant_id, f.contact_name, f.status,
                 f.contact_name as lead_name,

@@ -3,6 +3,7 @@ import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import {
   getTenants,
   getTenantRollup,
+  getRollupActivity,
   updateTenant,
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
@@ -32,6 +33,10 @@ import {
   Users,
   Mail,
   Loader2,
+  Activity,
+  UserPlus,
+  PhoneMissed,
+  Star,
 } from "lucide-react";
 
 const MAX_LOGO_BYTES = 1024 * 1024;

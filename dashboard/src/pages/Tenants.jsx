@@ -286,16 +286,6 @@ export default function Tenants() {
         </div>
       )}
 
-      {activeTab === "overview" && (
-        <>
-      {/* HQ Summary Hero */}
-      <HQHero parent={parent} summary={summary} />
-
-      {/* Insights strip */}
-      {insights && insights.length > 0 && (
-        <InsightsStrip insights={insights} onSelect={onSelect} />
-      )}
-
   {activeTab === "overview" && (
         <>
           {/* HQ Summary Hero */}

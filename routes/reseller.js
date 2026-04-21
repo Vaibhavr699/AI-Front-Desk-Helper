@@ -3,6 +3,7 @@
 // ============================================================================
 // routes/reseller.js
 // Apr 20, 2026 — Phase 2 WL Reseller Account Type
+// Apr 21, 2026 — Added subscription_status to /tier response (Step 8 e2e fix)
 // ============================================================================
 // Authenticated reseller dashboard + subscription management endpoints.
 // Uses pg Pool (lib/db.js) with raw SQL — matches existing routes pattern.
@@ -475,6 +476,12 @@ router.post('/customers/:customerId/resend-invite', async (req, res) => {
 
 // ===========================================================================
 // GET /reseller/tier
+// Apr 21: added subscription_status to response so ResellerPlans.jsx can
+// gate "current plan" badge on BOTH reseller_tier matching AND active
+// subscription. Without this, admin-stamped resellers (reseller_tier set
+// by admin modal to satisfy tenants_reseller_fields_consistency CHECK
+// constraint) incorrectly render as already-subscribed on first visit to
+// /reseller/plans, blocking the Subscribe button.
 // ===========================================================================
 router.get('/tier', async (req, res) => {
   try {
@@ -488,7 +495,16 @@ router.get('/tier', async (req, res) => {
       description: t.description,
       tagline: t.tagline,
     }));
-    return res.json({ current, available });
+    // subscription_status values (Stripe): null, 'incomplete', 'incomplete_expired',
+    // 'trialing', 'active', 'past_due', 'canceled', 'unpaid', 'paused'.
+    // We also set 'inactive' on admin-create as a pre-checkout placeholder.
+    return res.json({
+      current,
+      available,
+      subscription_status: req.user.tenant.subscription_status || null,
+      stripe_customer_id: req.user.tenant.stripe_customer_id || null,
+      stripe_subscription_id: req.user.tenant.stripe_subscription_id || null,
+    });
   } catch (err) {
     console.error('[reseller/tier]', err);
     return res.status(500).json({ error: err.message });

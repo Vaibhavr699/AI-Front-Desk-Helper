@@ -429,6 +429,7 @@ app.use("/api/ai-coach", authMiddleware, require("./routes/aicoach"));
 app.use("/api/reviews", require("./routes/reviews"));
 app.use('/api/reseller', require('./routes/reseller'));
 app.use('/api/reseller-public', require('./routes/reseller-public'));
+app.use('/api/rollup', authMiddleware, require('./routes/rollup'));
 app.use('/churn', require('./routes/churnPublic'));
 
 // Serve dashboard static assets early so JS/CSS/images load,

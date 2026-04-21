@@ -9,11 +9,20 @@ import {
 /**
  * Reseller plan picker & billing management page.
  *
- * Two display modes:
- *   - Not subscribed: all 3 tier cards show "Subscribe" → Stripe Checkout
- *   - Subscribed: current tier badged; tier changes route to Stripe Billing
- *     Portal (prevents double-subscriptions; Stripe handles proration)
+ * Gating (Apr 21, 2026 fix):
+ *   - "CURRENT PLAN" badge + disabled button requires BOTH
+ *       (a) current.tier matches the card AND
+ *       (b) subscription_status is 'active' or 'trialing'
+ *     Previously gated only on reseller_tier, which is set by the admin
+ *     modal at tenant-create time to satisfy the tenants_reseller_fields_
+ *     consistency CHECK constraint — causing pre-subscription resellers to
+ *     render as already-subscribed and blocking the Subscribe button.
+ *   - "Change via Stripe portal" appears only when the reseller HAS an
+ *     active subscription on a different tier (Stripe handles proration).
+ *   - "Subscribe to {tier}" appears when no active subscription exists.
  */
+const ACTIVE_SUB_STATUSES = new Set(["active", "trialing"]);
+
 export default function ResellerPlans() {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
@@ -81,8 +90,14 @@ export default function ResellerPlans() {
     );
   }
 
-  const isSubscribed = data?.current?.tier;
-  const currentTierId = data?.current?.tier;
+  // ── Corrected subscription gating ──────────────────────────────────────
+  // A reseller is "subscribed" only when Stripe reports an active or
+  // trialing subscription. reseller_tier alone means nothing — it's set
+  // at tenant-create time by admin to satisfy the DB CHECK constraint.
+  const subscriptionStatus = data?.subscription_status || null;
+  const hasActiveSubscription = ACTIVE_SUB_STATUSES.has(subscriptionStatus);
+  const currentTierId = hasActiveSubscription ? data?.current?.tier : null;
+  const isSubscribed = hasActiveSubscription;
   const tiers = data?.available || [];
 
   return (

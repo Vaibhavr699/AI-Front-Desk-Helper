@@ -68,6 +68,7 @@ export default function Tenants() {
   const [error, setError] = useState("");
   const [saveLoading, setSaveLoading] = useState(false);
   const [editTenant, setEditTenant] = useState(null); // null = card view, object = editing
+  const [activeTab, setActiveTab] = useState("overview"); // "overview" | "activity"
 
   useEffect(() => {
     fetchData();
@@ -196,6 +197,8 @@ export default function Tenants() {
         }}
         onAddLocation={() => navigate("/locations")}
         error={error}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
       />
     );
   }
@@ -218,7 +221,7 @@ export default function Tenants() {
 // ROLLUP VIEW — franchise/multi-location dashboard
 // ═════════════════════════════════════════════════════════════════════════
 
-function RollupView({ rollup, onEdit, onSelect, onAddLocation, error }) {
+  function RollupView({ rollup, onEdit, onSelect, onAddLocation, error, activeTab, setActiveTab }) {
   const { parent, summary, locations, insights } = rollup;
 
   // Split HQ out from child locations so we can render them differently.
@@ -232,7 +235,7 @@ function RollupView({ rollup, onEdit, onSelect, onAddLocation, error }) {
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4 mb-8 flex-wrap">
+      <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
         <div>
           <h1 className="text-2xl font-black text-stone-900 flex items-center gap-3">
             <Building2 className="text-stone-600" size={28} />
@@ -252,6 +255,30 @@ function RollupView({ rollup, onEdit, onSelect, onAddLocation, error }) {
         </button>
       </div>
 
+       {/* ── Tabs ─────────────────────────────────────────────── Apr 21, 2026 */}
+      <div className="flex items-center gap-1 p-1 bg-stone-100/80 rounded-xl w-fit mb-6">
+        <button
+          onClick={() => setActiveTab("overview")}
+          className={`px-4 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all ${
+            activeTab === "overview"
+              ? "bg-white text-stone-900 shadow-sm"
+              : "text-stone-500 hover:text-stone-700"
+          }`}
+        >
+          Overview
+        </button>
+        <button
+          onClick={() => setActiveTab("activity")}
+          className={`px-4 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all inline-flex items-center gap-1.5 ${
+            activeTab === "activity"
+              ? "bg-white text-stone-900 shadow-sm"
+              : "text-stone-500 hover:text-stone-700"
+          }`}
+        >
+          <Activity className="w-3 h-3" />
+          Activity
+        </button>
+      </div>
       {error && (
         <div className="mb-6 bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl flex items-center gap-3 text-sm">
           <AlertCircle size={18} />
@@ -259,6 +286,8 @@ function RollupView({ rollup, onEdit, onSelect, onAddLocation, error }) {
         </div>
       )}
 
+      {activeTab === "overview" && (
+        <>
       {/* HQ Summary Hero */}
       <HQHero parent={parent} summary={summary} />
 
@@ -267,47 +296,67 @@ function RollupView({ rollup, onEdit, onSelect, onAddLocation, error }) {
         <InsightsStrip insights={insights} onSelect={onSelect} />
       )}
 
-      {/* HQ row (if operating_hq) */}
-      {hqRow && (
-        <div className="mt-6">
-          <div className="text-xs font-bold uppercase tracking-wider text-stone-400 mb-3 flex items-center gap-2">
-            <Crown className="w-3.5 h-3.5 text-amber-500" />
-            Headquarters
+  {activeTab === "overview" && (
+        <>
+          {/* HQ Summary Hero */}
+          <HQHero parent={parent} summary={summary} />
+
+          {/* Insights strip */}
+          {insights && insights.length > 0 && (
+            <InsightsStrip insights={insights} onSelect={onSelect} />
+          )}
+
+          {/* HQ row (if operating_hq) */}
+          {hqRow && (
+            <div className="mt-6">
+              <div className="text-xs font-bold uppercase tracking-wider text-stone-400 mb-3 flex items-center gap-2">
+                <Crown className="w-3.5 h-3.5 text-amber-500" />
+                Headquarters
+              </div>
+              <LocationCard
+                location={hqRow}
+                parent={parent}
+                onEdit={() => onEdit(hqRow)}
+                onSelect={() => onSelect(hqRow.id)}
+              />
+            </div>
+          )}
+
+          {/* Locations list */}
+          <div className="mt-6">
+            <div className="text-xs font-bold uppercase tracking-wider text-stone-400 mb-3 flex items-center gap-2">
+              <MapPin className="w-3.5 h-3.5" />
+              {hqRow ? "Branch locations" : "Locations"} ({childRows.length})
+            </div>
+            {childRows.length === 0 ? (
+              <EmptyLocationsPrompt parent={parent} onAddLocation={onAddLocation} />
+            ) : (
+              <div className="space-y-3">
+                {childRows.map((loc) => (
+                  <LocationCard
+                    key={loc.id}
+                    location={loc}
+                    parent={parent}
+                    onEdit={() => onEdit(loc)}
+                    onSelect={() => onSelect(loc.id)}
+                  />
+                ))}
+              </div>
+            )}
           </div>
-          <LocationCard
-            location={hqRow}
-            parent={parent}
-            onEdit={() => onEdit(hqRow)}
-            onSelect={() => onSelect(hqRow.id)}
-          />
-        </div>
+        </>
       )}
 
-      {/* Locations list */}
-      <div className="mt-6">
-        <div className="text-xs font-bold uppercase tracking-wider text-stone-400 mb-3 flex items-center gap-2">
-          <MapPin className="w-3.5 h-3.5" />
-          {hqRow ? "Branch locations" : "Locations"} ({childRows.length})
-        </div>
-        {childRows.length === 0 ? (
-          <EmptyLocationsPrompt parent={parent} onAddLocation={onAddLocation} />
-        ) : (
-          <div className="space-y-3">
-            {childRows.map((loc) => (
-              <LocationCard
-                key={loc.id}
-                location={loc}
-                parent={parent}
-                onEdit={() => onEdit(loc)}
-                onSelect={() => onSelect(loc.id)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      {activeTab === "activity" && (
+        <ActivityFeedTab
+          parentId={parent.id}
+          locations={locations}
+          onSelect={onSelect}
+        />
+      )}
     </div>
   );
-}
+}    
 
 function HQHero({ parent, summary }) {
   const isWhiteLabel = parent.brand_mode === "white_label";
@@ -1167,4 +1216,269 @@ function IntegrationBadge({ active, icon, name }) {
       {active && <CheckCircle2 size={12} className="text-green-600" />}
     </div>
   );
+}
+
+      // ═════════════════════════════════════════════════════════════════════════
+// ACTIVITY FEED TAB — Apr 21, 2026
+// Cross-location event stream from /api/rollup/:parentId/activity.
+// Filter by location, paginate back 7d → 30d → further.
+// ═════════════════════════════════════════════════════════════════════════
+
+function ActivityFeedTab({ parentId, locations, onSelect }) {
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState("");
+  const [nextCursor, setNextCursor] = useState(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [locationFilter, setLocationFilter] = useState("all");
+
+  // Load initial feed on mount OR when locationFilter changes.
+  useEffect(() => {
+    loadFirstPage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationFilter]);
+
+  async function loadFirstPage() {
+    setLoading(true);
+    setError("");
+    setEvents([]);
+    setNextCursor(null);
+    setHasMore(true);
+    try {
+      const opts = { limit: 50 };
+      if (locationFilter !== "all") opts.locationId = locationFilter;
+      const data = await getRollupActivity(parentId, opts);
+      setEvents(data.events || []);
+      setNextCursor(data.nextCursor);
+      setHasMore(!!data.nextCursor);
+    } catch (e) {
+      setError(e.message || "Failed to load activity");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadNextPage() {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const opts = { limit: 50, before: nextCursor };
+      if (locationFilter !== "all") opts.locationId = locationFilter;
+      const data = await getRollupActivity(parentId, opts);
+      setEvents((prev) => [...prev, ...(data.events || [])]);
+      setNextCursor(data.nextCursor);
+      setHasMore(!!data.nextCursor);
+    } catch (e) {
+      setError(e.message || "Failed to load more");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  const locationOptions = [
+    { value: "all", label: "All locations" },
+    ...locations.map((l) => ({
+      value: l.id,
+      label: l.name + (l.is_hq ? " (HQ)" : ""),
+    })),
+  ];
+
+  return (
+    <div>
+      {/* Filter bar */}
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
+        <span className="text-xs font-bold uppercase tracking-wider text-stone-400">
+          Filter
+        </span>
+        <select
+          value={locationFilter}
+          onChange={(e) => setLocationFilter(e.target.value)}
+          className="px-3 py-1.5 bg-white border border-stone-200 rounded-lg text-sm font-medium text-stone-700 hover:border-stone-300 focus:ring-2 focus:ring-stone-500 focus:border-transparent"
+        >
+          {locationOptions.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <span className="text-xs text-stone-400 ml-auto">
+          Last 7 days · newest first
+        </span>
+      </div>
+
+      {error && (
+        <div className="mb-4 bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl flex items-center gap-3 text-sm">
+          <AlertCircle size={18} />
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-6 h-6 text-stone-400 animate-spin" />
+        </div>
+      ) : events.length === 0 ? (
+        <ActivityEmptyState />
+      ) : (
+        <>
+          <div className="space-y-2">
+            {events.map((ev) => (
+              <ActivityEventRow key={ev.id} event={ev} onSelect={onSelect} />
+            ))}
+          </div>
+
+          {hasMore && (
+            <div className="flex justify-center mt-6">
+              <button
+                onClick={loadNextPage}
+                disabled={loadingMore}
+                className="px-4 py-2 bg-white border border-stone-200 rounded-xl text-sm font-bold text-stone-700 hover:bg-stone-50 hover:border-stone-300 disabled:opacity-50 flex items-center gap-2 transition-all"
+              >
+                {loadingMore && <Loader2 className="w-4 h-4 animate-spin" />}
+                Load older events
+              </button>
+            </div>
+          )}
+
+          {!hasMore && events.length > 0 && (
+            <div className="text-center mt-6 text-xs text-stone-400">
+              End of activity
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function ActivityEmptyState() {
+  return (
+    <div className="bg-white rounded-2xl border-2 border-dashed border-stone-200 p-10 text-center">
+      <div className="w-14 h-14 rounded-2xl bg-stone-100 flex items-center justify-center mx-auto mb-4">
+        <Activity className="w-7 h-7 text-stone-400" />
+      </div>
+      <h3 className="text-base font-bold text-stone-900 mb-1">
+        No activity yet
+      </h3>
+      <p className="text-sm text-stone-500 max-w-md mx-auto">
+        When new leads, bookings, or calls happen across your locations, they'll
+        show up here in real-time.
+      </p>
+    </div>
+  );
+}
+
+function ActivityEventRow({ event, onSelect }) {
+  const cfg = EVENT_CONFIG[event.type] || EVENT_CONFIG.default;
+
+  return (
+    <button
+      onClick={() => onSelect && onSelect(event.tenantId)}
+      className="w-full bg-white rounded-2xl border border-stone-200 shadow-sm hover:shadow-md hover:border-stone-300 transition-all text-left px-4 py-3 flex items-start gap-3 group"
+    >
+      <div
+        className={`shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${cfg.iconWrap}`}
+      >
+        <cfg.Icon className={`w-5 h-5 ${cfg.iconColor}`} />
+      </div>
+
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-black text-stone-900 truncate">
+            {event.title || cfg.defaultTitle}
+          </span>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400 px-1.5 py-0.5 bg-stone-100 rounded">
+            {event.tenantName}
+          </span>
+        </div>
+        {event.body && (
+          <p className="text-xs text-stone-500 mt-0.5 line-clamp-2">
+            {event.body}
+          </p>
+        )}
+      </div>
+
+      <div className="shrink-0 text-[10px] font-medium text-stone-400 whitespace-nowrap pt-1">
+        {formatRelativeTime(event.createdAt)}
+      </div>
+    </button>
+  );
+}
+
+const EVENT_CONFIG = {
+  new_lead: {
+    Icon: UserPlus,
+    iconWrap: "bg-blue-50",
+    iconColor: "text-blue-600",
+    defaultTitle: "New lead",
+  },
+  lead_captured: {
+    Icon: UserPlus,
+    iconWrap: "bg-blue-50",
+    iconColor: "text-blue-600",
+    defaultTitle: "Lead info captured",
+  },
+  booking_created: {
+    Icon: CalendarCheck,
+    iconWrap: "bg-emerald-50",
+    iconColor: "text-emerald-600",
+    defaultTitle: "New booking",
+  },
+  missed_call: {
+    Icon: PhoneMissed,
+    iconWrap: "bg-amber-50",
+    iconColor: "text-amber-600",
+    defaultTitle: "Missed call",
+  },
+  transfer_requested: {
+    Icon: PhoneCall,
+    iconWrap: "bg-indigo-50",
+    iconColor: "text-indigo-600",
+    defaultTitle: "Transfer requested",
+  },
+  revenue_recovered: {
+    Icon: DollarSign,
+    iconWrap: "bg-emerald-50",
+    iconColor: "text-emerald-600",
+    defaultTitle: "Revenue recorded",
+  },
+  negative_review: {
+    Icon: Star,
+    iconWrap: "bg-red-50",
+    iconColor: "text-red-600",
+    defaultTitle: "Negative review",
+  },
+  review_received: {
+    Icon: Star,
+    iconWrap: "bg-amber-50",
+    iconColor: "text-amber-600",
+    defaultTitle: "Review received",
+  },
+  spam_detected: {
+    Icon: AlertCircle,
+    iconWrap: "bg-stone-100",
+    iconColor: "text-stone-500",
+    defaultTitle: "Spam call",
+  },
+  default: {
+    Icon: Activity,
+    iconWrap: "bg-stone-100",
+    iconColor: "text-stone-500",
+    defaultTitle: "Event",
+  },
+};
+
+function formatRelativeTime(iso) {
+  if (!iso) return "";
+  const ms = Date.now() - new Date(iso).getTime();
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }

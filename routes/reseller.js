@@ -3,17 +3,8 @@
 // ============================================================================
 // routes/reseller.js
 // Apr 20, 2026 — Phase 2 WL Reseller Account Type
-// Apr 21, 2026 — Added subscription_status to /tier response (Step 8 e2e fix)
-// ============================================================================
-// Authenticated reseller dashboard + subscription management endpoints.
-// Uses pg Pool (lib/db.js) with raw SQL — matches existing routes pattern.
-//
-// Mount in server.js:
-//   app.use('/reseller', require('./routes/reseller'));
-//
-// All routes require:
-//   - Auth via authMiddleware from lib/auth.js
-//   - req.user.tenant.account_type === 'reseller' (requireReseller below)
+// Apr 21, 2026 — Added subscription_status to /tier response
+// Apr 21, 2026 — Step 9: wired 3 TODO email stubs to real resellerEmail calls
 // ============================================================================
 
 const express = require('express');
@@ -34,6 +25,12 @@ const {
   createResellerCheckoutSession,
   createResellerBillingPortalSession,
 } = require('../lib/resellerStripe');
+const {
+  sendResellerCustomerWelcomeEmail,
+  sendResellerCustomerRemovedEmail,
+} = require('../services/resellerEmail');
+
+const APP_URL = process.env.APP_URL || 'https://aifrontdeskhelper.com';
 
 // ---------------------------------------------------------------------------
 // Middleware: requireReseller
@@ -84,9 +81,19 @@ function thirtyDaysAgoISO() {
   return d.toISOString();
 }
 
+/**
+ * Build the branded "set your password" URL for a reseller customer.
+ * Apr 21 Step 9: customers currently don't have a first-party set-password
+ * flow. We send them to the generic reset-password page. Rahul can harden
+ * this with a dedicated set-password token later.
+ */
+function buildSetPasswordUrl(customerEmail) {
+  const base = APP_URL.replace(/\/+$/, '');
+  return `${base}/reset-password?email=${encodeURIComponent(customerEmail)}`;
+}
+
 // ===========================================================================
 // GET /reseller/overview
-// Hero: tier info + aggregated 30-day metrics across all customers
 // ===========================================================================
 router.get('/overview', async (req, res) => {
   try {
@@ -164,7 +171,6 @@ router.get('/overview', async (req, res) => {
 
 // ===========================================================================
 // GET /reseller/customers
-// List customers with per-customer 30d metrics (single grouped SQL query)
 // ===========================================================================
 router.get('/customers', async (req, res) => {
   try {
@@ -184,7 +190,6 @@ router.get('/customers', async (req, res) => {
     const customerIds = customers.map((c) => c.id);
     const since = thirtyDaysAgoISO();
 
-    // Single grouped query per metric instead of N parallel queries
     const [callRes, bookRes] = await Promise.all([
       db.query(
         `SELECT tenant_id, COUNT(*)::int AS count
@@ -226,7 +231,6 @@ router.get('/customers', async (req, res) => {
 
 // ===========================================================================
 // POST /reseller/customers/preview
-// Dry-run cap check for AddCustomerSheet step 1
 // ===========================================================================
 router.post('/customers/preview', async (req, res) => {
   try {
@@ -259,7 +263,7 @@ router.post('/customers/preview', async (req, res) => {
 
 // ===========================================================================
 // POST /reseller/customers
-// Add a new customer tenant under this reseller
+// Apr 21 Step 9: wired sendResellerCustomerWelcomeEmail
 // ===========================================================================
 router.post('/customers', async (req, res) => {
   const {
@@ -309,9 +313,18 @@ router.post('/customers', async (req, res) => {
       details: { customer_name: name, plan, brand_mode_inherit },
     });
 
-    // TODO Step 6: sendResellerCustomerWelcomeEmail (needs set-password URL)
-    console.log(
-      `[reseller/customers:create] TODO email: welcome ${primary_email} from ${req.user.tenant.name}`
+    // Apr 21 Step 9: real welcome email. Fire-and-forget so Resend outage
+    // never blocks the customer-create API response.
+    sendResellerCustomerWelcomeEmail({
+      to: primary_email,
+      customer_name: name,
+      reseller_name: req.user.tenant.name,
+      reseller_contact_email: req.user.tenant.primary_email || 'support@aifrontdeskhelper.com',
+      reseller_brand_color: req.user.tenant.brand_color,
+      reseller_logo_url: req.user.tenant.logo_url,
+      set_password_url: buildSetPasswordUrl(primary_email),
+    }).catch((err) =>
+      console.error('[reseller/customers:create] welcome email failed:', err.message)
     );
 
     return res.status(201).json({ customer: created });
@@ -359,7 +372,7 @@ router.patch('/customers/:customerId', async (req, res) => {
   for (const key of ALLOWED) {
     if (req.body[key] !== undefined) {
       values.push(req.body[key]);
-      setClauses.push(`${key} = $${values.length}`); // key from whitelist, safe
+      setClauses.push(`${key} = $${values.length}`);
     }
   }
 
@@ -375,7 +388,7 @@ router.patch('/customers/:customerId', async (req, res) => {
     );
     if (!existing) return res.status(404).json({ error: 'Customer not found' });
 
-    values.push(req.params.customerId); // $N for WHERE
+    values.push(req.params.customerId);
     const { rows } = await db.query(
       `UPDATE tenants
           SET ${setClauses.join(', ')}, updated_at = now()
@@ -403,7 +416,7 @@ router.patch('/customers/:customerId', async (req, res) => {
 
 // ===========================================================================
 // DELETE /reseller/customers/:customerId
-// Soft-delete: customer loses service. (Reseller-level churn = Step 6.)
+// Apr 21 Step 9: wired sendResellerCustomerRemovedEmail
 // ===========================================================================
 router.delete('/customers/:customerId', async (req, res) => {
   try {
@@ -430,10 +443,25 @@ router.delete('/customers/:customerId', async (req, res) => {
       details: { customer_name: existing.name },
     });
 
-    // TODO Step 6: sendResellerCustomerRemovedEmail
-    console.log(
-      `[reseller/customers:delete] TODO email: removal ${existing.primary_email} from ${req.user.tenant.name}`
-    );
+    // Apr 21 Step 9: real removal email. Customer gets notified their account
+    // is closed + how to contact the reseller for reinstatement.
+    if (existing.primary_email) {
+      sendResellerCustomerRemovedEmail({
+        to: existing.primary_email,
+        customer_name: existing.name,
+        reseller_name: req.user.tenant.name,
+        reseller_contact_email: req.user.tenant.primary_email || 'support@aifrontdeskhelper.com',
+        reseller_brand_color: req.user.tenant.brand_color,
+        reseller_logo_url: req.user.tenant.logo_url,
+      }).catch((err) =>
+        console.error('[reseller/customers:delete] removed email failed:', err.message)
+      );
+    } else {
+      console.warn(
+        '[reseller/customers:delete] No primary_email on customer %s — skipping removal email',
+        existing.id
+      );
+    }
 
     return res.json({ success: true });
   } catch (err) {
@@ -444,6 +472,7 @@ router.delete('/customers/:customerId', async (req, res) => {
 
 // ===========================================================================
 // POST /reseller/customers/:customerId/resend-invite
+// Apr 21 Step 9: wired sendResellerCustomerWelcomeEmail (same template as create)
 // ===========================================================================
 router.post('/customers/:customerId/resend-invite', async (req, res) => {
   try {
@@ -454,9 +483,22 @@ router.post('/customers/:customerId/resend-invite', async (req, res) => {
     );
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
 
-    // TODO Step 6: sendResellerCustomerWelcomeEmail (needs set-password URL)
-    console.log(
-      `[reseller/customers:resend] TODO email: welcome resend ${customer.primary_email}`
+    if (!customer.primary_email) {
+      return res.status(400).json({
+        error: 'Customer has no email on file — cannot resend invite',
+      });
+    }
+
+    await sendResellerCustomerWelcomeEmail({
+      to: customer.primary_email,
+      customer_name: customer.name,
+      reseller_name: req.user.tenant.name,
+      reseller_contact_email: req.user.tenant.primary_email || 'support@aifrontdeskhelper.com',
+      reseller_brand_color: req.user.tenant.brand_color,
+      reseller_logo_url: req.user.tenant.logo_url,
+      set_password_url: buildSetPasswordUrl(customer.primary_email),
+    }).catch((err) =>
+      console.error('[reseller/customers:resend] welcome email failed:', err.message)
     );
 
     await safeAuditLog({
@@ -476,12 +518,7 @@ router.post('/customers/:customerId/resend-invite', async (req, res) => {
 
 // ===========================================================================
 // GET /reseller/tier
-// Apr 21: added subscription_status to response so ResellerPlans.jsx can
-// gate "current plan" badge on BOTH reseller_tier matching AND active
-// subscription. Without this, admin-stamped resellers (reseller_tier set
-// by admin modal to satisfy tenants_reseller_fields_consistency CHECK
-// constraint) incorrectly render as already-subscribed on first visit to
-// /reseller/plans, blocking the Subscribe button.
+// Apr 21: returns subscription_status so ResellerPlans.jsx gates correctly
 // ===========================================================================
 router.get('/tier', async (req, res) => {
   try {
@@ -495,9 +532,6 @@ router.get('/tier', async (req, res) => {
       description: t.description,
       tagline: t.tagline,
     }));
-    // subscription_status values (Stripe): null, 'incomplete', 'incomplete_expired',
-    // 'trialing', 'active', 'past_due', 'canceled', 'unpaid', 'paused'.
-    // We also set 'inactive' on admin-create as a pre-checkout placeholder.
     return res.json({
       current,
       available,
@@ -513,7 +547,6 @@ router.get('/tier', async (req, res) => {
 
 // ===========================================================================
 // POST /reseller/checkout
-// Stripe Checkout for initial subscription OR tier change
 // ===========================================================================
 router.post('/checkout', async (req, res) => {
   const { tier, interval = 'monthly' } = req.body || {};
@@ -553,7 +586,6 @@ router.post('/checkout', async (req, res) => {
 
 // ===========================================================================
 // POST /reseller/billing-portal
-// Stripe Billing Portal (cancel, update payment, change tier)
 // ===========================================================================
 router.post('/billing-portal', async (req, res) => {
   try {

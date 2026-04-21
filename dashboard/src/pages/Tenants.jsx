@@ -3,7 +3,7 @@ import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import {
   getTenants,
   getTenantRollup,
-  getRollupActivity,export async
+  getRollupActivity,
   getRollupAlerts,
   updateTenant,
 } from "../api";

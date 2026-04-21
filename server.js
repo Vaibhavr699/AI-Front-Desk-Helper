@@ -358,6 +358,7 @@ app.get("/api/public-tenant/:id", async (req, res) => {
       name: tenant.name,
       company_name: tenant.company_name,
       welcome_message: tenant.welcome_message,
+      chat_welcome_message: tenant.chat_welcome_message || null,
       twilio_phone_number: tenant.twilio_phone_number,
       timezone: tenant.timezone,
       brand_color: tenant.brand_color || null,
@@ -2347,14 +2348,17 @@ async function handleTwilioVoice(req, res, tenantId) {
       return;
     }
 
-    const greeting = tenant.welcome_message || WARM_GREETING;
+  // Apr 21, 2026: prefer voice_welcome_message (channel-specific) over the
+    // legacy welcome_message field. Fallback chain: voice → legacy → built-in.
+    // Greeting is now spoken by OpenAI Realtime via instructions injection
+    // (see EDIT 3 below) — no more robotic Twilio Polly <Say> TTS.
+    const greeting = tenant.voice_welcome_message || tenant.welcome_message || WARM_GREETING;
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say>${escapeXml(greeting)}</Say>
   <Connect>
     <Stream url="${wsUrl}" />
   </Connect>
-</Response>`;
+</Response>`;  
 
     res.type("text/xml").send(twiml);
   } catch (error) {
@@ -3002,7 +3006,16 @@ wss.on("connection", async (twilioSocket, req) => {
     input_audio_format: "g711_ulaw",
     output_audio_format: "g711_ulaw",
     voice: aiConfig.voice,
-    instructions: `${aiConfig.instructions}\n\nSpeak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English. DO NOT USE ANY OTHER LANGUAGE AT THE START OF THE CALL.`,
+   instructions: `${aiConfig.instructions}
+
+CRITICAL — OPENING GREETING:
+When the call connects, your VERY FIRST utterance must be exactly this greeting, spoken naturally and warmly. Do not paraphrase or expand it on the first turn:
+
+"${tenant?.voice_welcome_message || tenant?.welcome_message || "Hello! Thanks for calling. How can I help you today?"}"
+
+After the greeting, wait for the caller to respond, then proceed conversationally.
+
+Speak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English. DO NOT USE ANY OTHER LANGUAGE AT THE START OF THE CALL.`,
     tools: aiConfig.tools,
     turn_detection: {
       type: "server_vad",

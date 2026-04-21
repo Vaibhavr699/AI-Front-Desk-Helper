@@ -1,0 +1,12 @@
+-- Add primary_email + phone to tenants for reseller customer management
+-- and franchise account contacts. These are separate from dashboard_users
+-- because a tenant may have 0 or N users, but always has exactly 1 primary
+-- contact email/phone on the account itself.
+ALTER TABLE tenants
+  ADD COLUMN IF NOT EXISTS primary_email TEXT,
+  ADD COLUMN IF NOT EXISTS phone TEXT;
+
+-- Index for lookups (reseller list views filter/search by email)
+CREATE INDEX IF NOT EXISTS idx_tenants_primary_email
+  ON tenants (primary_email)
+  WHERE primary_email IS NOT NULL;

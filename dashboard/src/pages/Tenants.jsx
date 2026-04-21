@@ -354,7 +354,7 @@ export default function Tenants() {
           onSelect={onSelect}
         />
       )}
-    </div>
+     </div>     
   );
 }    
 

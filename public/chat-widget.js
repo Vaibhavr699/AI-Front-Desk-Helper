@@ -38,6 +38,15 @@
   let hasWelcomed        = false;
   let isOpen             = false;
 
+  // ── Mobile detection (Apr 21, 2026 — mobile sizing fix) ───────────────────
+  // Single source of truth for breakpoint. 640px matches Tailwind's `sm:`.
+  // Re-evaluated on every resize/orientationchange so rotating a tablet into
+  // phone width doesn't leave the widget in a stale desktop layout.
+  const MOBILE_BP = 640;
+  function isMobile() {
+    return window.innerWidth <= MOBILE_BP;
+  }
+
   // ── Helper: lighten a hex color for hover states ──────────────────────────
   function lightenColor(hex, amount) {
     try {
@@ -108,7 +117,9 @@
 
     const hoverColor = lightenColor(brandColor, 20);
 
-    // Animations
+    // Animations + mobile-specific media query rules.
+    // Apr 21, 2026: Added @media block for mobile-specific CSS that can't be
+    // expressed inline (viewport-relative sizing depends on being in CSS, not JS).
     const style = document.createElement("style");
     style.innerHTML = `
       @keyframes ai-fadeIn   { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
@@ -123,6 +134,45 @@
       .ai-typing-dot:nth-child(2) { animation-delay:0.2s; }
       .ai-typing-dot:nth-child(3) { animation-delay:0.4s; }
       #ai-chat-toggle:hover { opacity:0.9; transform:scale(1.05) !important; }
+
+      /* Mobile-specific rules (applied on ≤640px) */
+      @media (max-width: 640px) {
+        #ai-chat-container {
+          /* 100dvh respects iOS/Android keyboard; falls back to 100vh on old browsers */
+          width: calc(100vw - 16px) !important;
+          max-width: calc(100vw - 16px) !important;
+          height: calc(100vh - 16px) !important;
+          height: calc(100dvh - 16px) !important;
+          right: 8px !important;
+          left: 8px !important;
+          bottom: 8px !important;
+          border-radius: 14px !important;
+        }
+        #ai-chat-toggle {
+          /* Bubble-only on mobile — circular icon instead of pill */
+          width: 56px !important;
+          height: 56px !important;
+          padding: 0 !important;
+          border-radius: 50% !important;
+          font-size: 24px !important;
+          bottom: 20px !important;
+          right: 20px !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+        }
+        #ai-chat-callout {
+          /* Hide callout on mobile — screen real estate too precious */
+          display: none !important;
+        }
+        #ai-sms-modal {
+          /* Lift SMS modal out of its container on mobile so it's not clipped */
+          position: fixed !important;
+          top: 0 !important; left: 0 !important;
+          width: 100vw !important; height: 100vh !important;
+          height: 100dvh !important;
+        }
+      }
     `;
     document.head.appendChild(style);
 
@@ -130,7 +180,7 @@
     const toggle = document.createElement("div");
     toggle.id = "ai-chat-toggle";
     toggle.className = "ai-slide-in";
-    toggle.innerText = `Chat with ${companyName}`;
+    // Text content set dynamically by applyResponsiveLayout() depending on mobile state
     Object.assign(toggle.style, {
       position: "fixed", bottom: "30px", right: "30px",
       background: brandColor,
@@ -179,7 +229,7 @@
     callout.appendChild(calloutClose);
 
     function showCallout() {
-      if (isOpen) return;
+      if (isOpen || isMobile()) return; // Don't show callout on mobile
       callout.style.display = "block";
       setTimeout(() => { callout.style.opacity = "1"; callout.style.transform = "translateY(0)"; }, 100);
     }
@@ -241,6 +291,7 @@
     // Title + status
     const headerInfo = document.createElement("div");
     headerInfo.style.flex = "1";
+    headerInfo.style.minWidth = "0"; // Enables text-overflow ellipsis on mobile
     const headerTitle = document.createElement("div");
     headerTitle.innerText = companyName;
     Object.assign(headerTitle.style, {
@@ -253,6 +304,20 @@
     headerInfo.appendChild(headerTitle);
     headerInfo.appendChild(headerStatus);
     header.appendChild(headerInfo);
+
+    // Close button for header (mobile + desktop — clearer UX than clicking the floating toggle)
+    // Apr 21, 2026: added so mobile users have an obvious way to close full-screen chat.
+    const closeBtn = document.createElement("button");
+    closeBtn.innerHTML = "&times;";
+    closeBtn.type = "button";
+    closeBtn.title = "Close chat";
+    Object.assign(closeBtn.style, {
+      width: "32px", height: "32px", borderRadius: "50%",
+      border: "none", background: "rgba(255,255,255,0.2)", color: "#fff",
+      cursor: "pointer", fontSize: "22px", fontWeight: "bold", lineHeight: "1",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      flexShrink: "0", padding: "0"
+    });
 
     // SMS button
     const smsBtn = document.createElement("button");
@@ -299,7 +364,10 @@
       } else {
         if (!tooltip.parentNode) document.body.appendChild(tooltip);
         const r = helpBtn.getBoundingClientRect();
-        tooltip.style.left = Math.max(8, r.right - 300) + "px";
+        // Apr 21: clamp tooltip to viewport on mobile so it doesn't hang off screen
+        const tooltipWidth = Math.min(300, window.innerWidth - 16);
+        tooltip.style.width = tooltipWidth + "px";
+        tooltip.style.left = Math.max(8, Math.min(window.innerWidth - tooltipWidth - 8, r.right - tooltipWidth)) + "px";
         tooltip.style.top  = Math.max(8, r.top - 220)  + "px";
         tooltip.style.display = "block";
       }
@@ -310,6 +378,7 @@
       }
     });
     header.appendChild(helpBtn);
+    header.appendChild(closeBtn); // Close button last so it's right-most
     container.appendChild(header);
 
     // ── Messages area ────────────────────────────────────────────────────────
@@ -317,7 +386,9 @@
     Object.assign(messagesBody.style, {
       flex: "1", padding: "16px", overflowY: "auto",
       display: "flex", flexDirection: "column", gap: "10px",
-      background: "#fafafa"
+      background: "#fafafa",
+      // Apr 21: smooth scroll + momentum scroll for iOS
+      WebkitOverflowScrolling: "touch"
     });
     container.appendChild(messagesBody);
 
@@ -325,16 +396,19 @@
     const inputArea = document.createElement("div");
     Object.assign(inputArea.style, {
       display: "flex", padding: "12px 14px", borderTop: "1px solid #eee",
-      background: "#fff", alignItems: "center", gap: "8px"
+      background: "#fff", alignItems: "center", gap: "8px",
+      flexShrink: "0" // Apr 21: prevent input row from being squeezed when messages overflow
     });
     container.appendChild(inputArea);
 
     const input = document.createElement("input");
     input.placeholder = "Type a message...";
+    // Apr 21: 16px font prevents iOS Safari from zooming on focus
     Object.assign(input.style, {
-      flex: "1", border: "1.5px solid #eee", outline: "none", fontSize: "14px",
+      flex: "1", border: "1.5px solid #eee", outline: "none", fontSize: "16px",
       padding: "9px 12px", background: "#f7f7f7", borderRadius: "20px",
-      color: "#111", transition: "border-color 0.2s"
+      color: "#111", transition: "border-color 0.2s",
+      minWidth: "0" // Prevents input from overflowing flex container on small screens
     });
     input.addEventListener("focus",  () => { input.style.borderColor = brandColor; });
     input.addEventListener("blur",   () => { input.style.borderColor = "#eee"; });
@@ -391,27 +465,54 @@
       if (t) t.remove();
     }
 
-    // ── Toggle open/close ─────────────────────────────────────────────────────
-    toggle.onclick = () => {
-      isOpen = !isOpen;
-      if (isOpen) {
-        trackVisitor("chat_opened");
-        hideCallout();
-        toggle.classList.remove("ai-pulse-anim");
-        container.style.display = "flex";
-        setTimeout(() => { container.style.opacity = "1"; container.style.transform = "translateY(0)"; }, 10);
-        toggle.innerText = "Close";
-        toggle.style.background = "#444";
-        if (!hasWelcomed) { addMsg(welcomeMessage, false); hasWelcomed = true; }
-        setTimeout(() => input.focus(), 400);
+    // ── Responsive layout — called on mount, resize, and orientationchange ───
+    // Apr 21, 2026: keeps the toggle button text in sync with viewport size.
+    // Desktop: full "Chat with X" / "Close". Mobile: icon only (💬 / ×).
+    function applyResponsiveLayout() {
+      const mobile = isMobile();
+      if (!isOpen) {
+        if (mobile) {
+          toggle.innerText = "💬";
+        } else {
+          toggle.innerText = `Chat with ${companyName}`;
+        }
       } else {
-        container.style.opacity = "0";
-        container.style.transform = "translateY(10px)";
-        setTimeout(() => { container.style.display = "none"; }, 400);
-        toggle.innerText = `Chat with ${companyName}`;
-        toggle.style.background = brandColor;
+        if (mobile) {
+          toggle.innerText = "×";
+          toggle.style.fontSize = "28px";
+        } else {
+          toggle.innerText = "Close";
+          toggle.style.fontSize = "15px";
+        }
       }
-    };
+    }
+    applyResponsiveLayout();
+    window.addEventListener("resize", applyResponsiveLayout);
+    window.addEventListener("orientationchange", applyResponsiveLayout);
+
+    // ── Open/close logic ─────────────────────────────────────────────────────
+    function openChat() {
+      isOpen = true;
+      trackVisitor("chat_opened");
+      hideCallout();
+      toggle.classList.remove("ai-pulse-anim");
+      container.style.display = "flex";
+      setTimeout(() => { container.style.opacity = "1"; container.style.transform = "translateY(0)"; }, 10);
+      toggle.style.background = "#444";
+      applyResponsiveLayout();
+      if (!hasWelcomed) { addMsg(welcomeMessage, false); hasWelcomed = true; }
+      setTimeout(() => input.focus(), 400);
+    }
+    function closeChat() {
+      isOpen = false;
+      container.style.opacity = "0";
+      container.style.transform = "translateY(10px)";
+      setTimeout(() => { container.style.display = "none"; }, 400);
+      toggle.style.background = brandColor;
+      applyResponsiveLayout();
+    }
+    toggle.onclick  = () => { isOpen ? closeChat() : openChat(); };
+    closeBtn.onclick = () => { closeChat(); };
 
     // ── SMS consent modal ─────────────────────────────────────────────────────
     const smsModal = document.createElement("div");
@@ -420,15 +521,18 @@
       position: "absolute", top: "0", left: "0", width: "100%", height: "100%",
       background: "rgba(255,255,255,0.98)", zIndex: "2147483648",
       display: "none", flexDirection: "column", padding: "28px 20px",
-      boxSizing: "border-box", textAlign: "center", fontFamily: "'Inter', sans-serif"
+      boxSizing: "border-box", textAlign: "center", fontFamily: "'Inter', sans-serif",
+      overflowY: "auto" // Apr 21: allow scrolling on short mobile viewports
     });
     container.appendChild(smsModal);
 
     const smsClose = document.createElement("div");
     smsClose.innerHTML = "&times;";
     Object.assign(smsClose.style, {
-      position: "absolute", top: "14px", right: "18px", fontSize: "22px",
-      cursor: "pointer", color: "#999"
+      position: "absolute", top: "14px", right: "18px", fontSize: "28px",
+      cursor: "pointer", color: "#999", lineHeight: "1",
+      width: "32px", height: "32px", display: "flex",
+      alignItems: "center", justifyContent: "center" // Larger tap target
     });
     smsClose.onclick = () => { smsModal.style.display = "none"; };
     smsModal.appendChild(smsClose);
@@ -447,6 +551,7 @@
     const smsPhoneInput = document.createElement("input");
     smsPhoneInput.type = "tel";
     smsPhoneInput.placeholder = "(555) 000-0000";
+    // Apr 21: 16px font prevents iOS zoom on focus
     Object.assign(smsPhoneInput.style, {
       width: "100%", padding: "12px", borderRadius: "10px",
       border: `1.5px solid ${brandColor}`, fontSize: "16px",
@@ -463,6 +568,10 @@
     consentCheck.type = "checkbox";
     consentCheck.style.marginTop = "3px";
     consentCheck.style.accentColor = brandColor;
+    // Apr 21: bigger tap target on mobile
+    consentCheck.style.width = "18px";
+    consentCheck.style.height = "18px";
+    consentCheck.style.flexShrink = "0";
     const disclosureText = `By submitting, you agree to receive text messages from ${companyName} about your quote, scheduling, and service updates. Msg/data rates may apply. Reply STOP to opt out.`;
     const consentLabel = document.createElement("label");
     consentLabel.innerText = disclosureText;

@@ -313,15 +313,16 @@ router.post('/customers', async (req, res) => {
 
     const { rows } = await db.query(
       `INSERT INTO tenants (
-         name, slug, primary_email, phone, plan,
+         name, slug, company_name, primary_email, phone, plan,
          account_type, reseller_id, billing_owner, brand_mode,
          stripe_customer_id, stripe_subscription_id
        )
-       VALUES ($1, $2, $3, $4, $5, 'customer', $6, 'reseller', $7, NULL, NULL)
+       VALUES ($1, $2, $3, $4, $5, $6, 'customer', $7, 'reseller', $8, NULL, NULL)
        RETURNING *`,
       [
         name,
         slug,
+        name,           // company_name defaults to display name (matches dashboard.js pattern)
         primary_email,
         phone || null,
         plan,

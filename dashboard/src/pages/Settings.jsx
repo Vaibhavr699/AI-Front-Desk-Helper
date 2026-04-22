@@ -67,7 +67,7 @@ import {
   Palette,
   Image as ImageIcon,
   Building2,
-  Shield
+  Shield,
   SlidersHorizontal,
   Power,
   PhoneForwarded,

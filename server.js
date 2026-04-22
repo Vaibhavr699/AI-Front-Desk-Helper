@@ -3277,13 +3277,6 @@ wss.on("connection", async (twilioSocket, req) => {
     voice: aiConfig.voice,
    instructions: `${aiConfig.instructions}
 
-CRITICAL — OPENING GREETING:
-When the call connects, your VERY FIRST utterance must be exactly this greeting, spoken naturally and warmly. Do not paraphrase or expand it on the first turn:
-
-"${tenant?.voice_welcome_message || tenant?.welcome_message || "Hello! Thanks for calling. How can I help you today?"}"
-
-After the greeting, wait for the caller to respond, then proceed conversationally.
-
 Speak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English. DO NOT USE ANY OTHER LANGUAGE AT THE START OF THE CALL.`,
     tools: aiConfig.tools,
     turn_detection: {

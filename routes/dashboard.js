@@ -1473,12 +1473,13 @@ router.get("/twilio/available-numbers", async (req, res) => {
 
 // -------------------- Phone Numbers --------------------
 
-router.get("/phone-numbers", async (req, res) => {
-  try {
-    const tenantIds = await getTargetTenantIds(req);
-    if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
-    const result = await db.query(
-      "SELECT id, tenant_id, phone, is_primary, lead_source, created_at FROM phone_numbers WHERE tenant_id = ANY($1) ORDER BY is_primary DESC, created_at",
+const result = await db.query(
+      `SELECT id, tenant_id, phone, is_primary, lead_source, created_at,
+              twilio_sid, ai_status, ring_first_enabled, ring_first_phone,
+              ring_first_timeout_seconds, business_hours_enabled, voicemail_message_url
+         FROM phone_numbers
+        WHERE tenant_id = ANY($1)
+        ORDER BY is_primary DESC, created_at`,
       [tenantIds]
     );
     res.json({ phone_numbers: result.rows });
@@ -1487,6 +1488,147 @@ router.get("/phone-numbers", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
+// ══════════════════════════════════════════════════════════════════════
+// Build 1 (Apr 23, 2026) — helpers for validating the AI scheduling +
+// ring-first fields that migration 039 added to phone_numbers. Shared by
+// POST /phone-numbers (create) and PATCH /phone-numbers/:id (update).
+//
+// Each helper returns { ok: true, value } on success or
+// { ok: false, error: "<msg>" } on failure. The caller translates failures
+// into 400 responses. Kept as plain helpers (not a class) to match the
+// rest of this file's style.
+// ══════════════════════════════════════════════════════════════════════
+
+function validateAiStatus(raw) {
+  if (raw == null) return { ok: true, value: undefined };
+  const v = String(raw).toLowerCase();
+  if (v !== "on" && v !== "off") {
+    return { ok: false, error: "ai_status must be 'on' or 'off'" };
+  }
+  return { ok: true, value: v };
+}
+
+function validateRingFirstTimeout(raw) {
+  if (raw == null || raw === "") return { ok: true, value: undefined };
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 5 || n > 60) {
+    return { ok: false, error: "ring_first_timeout_seconds must be an integer between 5 and 60" };
+  }
+  return { ok: true, value: n };
+}
+
+/**
+ * Ring-first destination. Accepts E.164 input OR loose human formats
+ * (dashed, parens, leading 1), reusing the existing normalizePhoneInput
+ * helper so users don't need to type the `+` themselves. Passing null or
+ * empty string clears the field.
+ */
+function validateRingFirstPhone(raw) {
+  if (raw == null || raw === "") return { ok: true, value: null };
+  const normalized = normalizePhoneInput(raw);
+  if (!normalized) {
+    return { ok: false, error: "ring_first_phone must be a valid US phone number (e.g. +14025551234 or 402-555-1234)" };
+  }
+  return { ok: true, value: normalized };
+}
+
+/**
+ * Voicemail URL — must be HTTPS (Twilio refuses http:// <Play> sources)
+ * and end in .mp3 or .wav. Empty string or null clears the field.
+ */
+function validateVoicemailUrl(raw) {
+  if (raw == null || raw === "") return { ok: true, value: null };
+  const s = String(raw).trim();
+  if (!/^https:\/\//i.test(s)) {
+    return { ok: false, error: "voicemail_message_url must start with https://" };
+  }
+  if (!/\.(mp3|wav)(\?.*)?$/i.test(s)) {
+    return { ok: false, error: "voicemail_message_url must point to an .mp3 or .wav file" };
+  }
+  if (s.length > 2000) {
+    return { ok: false, error: "voicemail_message_url is too long (max 2000 chars)" };
+  }
+  return { ok: true, value: s };
+}
+
+/**
+ * Build the SET clause + values array for phone_numbers UPDATE/INSERT of
+ * the Build 1 fields. Also enforces the cross-field rule that matches
+ * the DB CHECK constraint (ring_first_enabled=true REQUIRES ring_first_phone
+ * to be set — either in the request OR already present on the row).
+ *
+ * existingRow is the current DB state (for PATCH) or null (for POST).
+ * Returns { ok, fields: { col: value, ... }, error? }.
+ */
+function collectRoutingFields(body, existingRow) {
+  const out = {};
+
+  // ai_status
+  if (body.ai_status !== undefined) {
+    const r = validateAiStatus(body.ai_status);
+    if (!r.ok) return { ok: false, error: r.error };
+    out.ai_status = r.value;
+  }
+
+  // ring_first_enabled (boolean, no validator needed beyond coercion)
+  let ringFirstEnabledIncoming;
+  if (body.ring_first_enabled !== undefined) {
+    out.ring_first_enabled = !!body.ring_first_enabled;
+    ringFirstEnabledIncoming = out.ring_first_enabled;
+  }
+
+  // ring_first_phone
+  let ringFirstPhoneIncoming;
+  if (body.ring_first_phone !== undefined) {
+    const r = validateRingFirstPhone(body.ring_first_phone);
+    if (!r.ok) return { ok: false, error: r.error };
+    out.ring_first_phone = r.value;
+    ringFirstPhoneIncoming = r.value;
+  }
+
+  // ring_first_timeout_seconds
+  if (body.ring_first_timeout_seconds !== undefined) {
+    const r = validateRingFirstTimeout(body.ring_first_timeout_seconds);
+    if (!r.ok) return { ok: false, error: r.error };
+    if (r.value !== undefined) out.ring_first_timeout_seconds = r.value;
+  }
+
+  // business_hours_enabled (boolean)
+  if (body.business_hours_enabled !== undefined) {
+    out.business_hours_enabled = !!body.business_hours_enabled;
+  }
+
+  // voicemail_message_url
+  if (body.voicemail_message_url !== undefined) {
+    const r = validateVoicemailUrl(body.voicemail_message_url);
+    if (!r.ok) return { ok: false, error: r.error };
+    out.voicemail_message_url = r.value;
+  }
+
+  // Cross-field rule: if ring-first is being enabled, there must be a
+  // destination phone EITHER in this request OR already on the row.
+  // Matches the DB CHECK constraint phone_numbers_ring_first_phone_required
+  // so we fail fast in the 400 path instead of hitting a Postgres 23514.
+  const willBeEnabled =
+    ringFirstEnabledIncoming !== undefined
+      ? ringFirstEnabledIncoming
+      : existingRow?.ring_first_enabled === true;
+
+  const willHavePhone =
+    ringFirstPhoneIncoming !== undefined
+      ? ringFirstPhoneIncoming != null
+      : existingRow?.ring_first_phone != null;
+
+  if (willBeEnabled && !willHavePhone) {
+    return {
+      ok: false,
+      error: "ring_first_phone is required when ring_first_enabled is true",
+    };
+  }
+
+  return { ok: true, fields: out };
+}
 
 router.post("/phone-numbers", async (req, res) => {
   try {
@@ -1500,7 +1642,7 @@ router.post("/phone-numbers", async (req, res) => {
 
     const countRes = await db.query("SELECT COUNT(*) FROM phone_numbers WHERE tenant_id = $1", [tenantId]);
     const currentCount = parseInt(countRes.rows[0].count, 10);
-    
+
     const { getPlan } = require("../lib/plans");
     const planDef = getPlan(tenant.plan || "basic");
     const planLimit = planDef.numberLimit || 1;
@@ -1508,15 +1650,16 @@ router.post("/phone-numbers", async (req, res) => {
     const totalLimit = planLimit + extraLimit;
 
     if (currentCount >= totalLimit) {
-      return res.status(403).json({ 
+      return res.status(403).json({
         error: `Phone number limit reached. Your '${tenant.plan || "basic"}' plan includes ${planLimit} number(s) plus ${extraLimit} purchased extra(s). Total allowed: ${totalLimit}.`,
         limit_reached: true,
         current_plan: tenant.plan || "basic",
         plan_limit: planLimit,
         extra_limit: extraLimit,
-        total_limit: totalLimit
+        total_limit: totalLimit,
       });
     }
+
     const phone = normalizePhoneInput(req.body?.phone);
     const lead_source = req.body?.lead_source || req.body?.label || null;
     const setPrimary = !!req.body?.is_primary;
@@ -1533,6 +1676,14 @@ router.post("/phone-numbers", async (req, res) => {
         return res.status(409).json({ error: "This number is already added to your business." });
       }
       return res.status(409).json({ error: "This phone number is already assigned to another business." });
+    }
+
+    // Build 1: collect the routing fields from the body. existingRow=null
+    // because this is a fresh create. Safe to include even when all fields
+    // are omitted — the helper just returns {}.
+    const routing = collectRoutingFields(req.body || {}, null);
+    if (!routing.ok) {
+      return res.status(400).json({ error: routing.error });
     }
 
     const isPurchasable = !!req.body?.is_purchasable;
@@ -1553,83 +1704,40 @@ router.post("/phone-numbers", async (req, res) => {
 
     const tenantForTwilio = await getTenantById(tenantId);
     const webhookResult = await configurePhoneWebhook(phone, tenantId, tenantForTwilio);
-    
+
+    // Base INSERT columns — the existing ones that have always been here.
+    // Then dynamically append any Build 1 routing fields the caller provided.
+    const insertCols = ["tenant_id", "phone", "is_primary", "twilio_sid", "lead_source"];
+    const insertVals = [
+      tenantId,
+      phone,
+      setPrimary,
+      webhookResult.success ? (webhookResult.twilioSid || null) : null,
+      lead_source,
+    ];
+    for (const [col, val] of Object.entries(routing.fields)) {
+      insertCols.push(col);
+      insertVals.push(val);
+    }
+    const placeholders = insertVals.map((_, i) => `$${i + 1}`).join(", ");
+    const returningCols = [
+      "id", "tenant_id", "phone", "is_primary", "twilio_sid", "lead_source", "created_at",
+      "ai_status", "ring_first_enabled", "ring_first_phone", "ring_first_timeout_seconds",
+      "business_hours_enabled", "voicemail_message_url",
+    ].join(", ");
+
     const result = await db.query(
-      "INSERT INTO phone_numbers (tenant_id, phone, is_primary, twilio_sid, lead_source) VALUES ($1, $2, $3, $4, $5) RETURNING id, tenant_id, phone, is_primary, twilio_sid, lead_source, created_at",
-      [tenantId, phone, setPrimary, webhookResult.success ? (webhookResult.twilioSid || null) : null, lead_source]
+      `INSERT INTO phone_numbers (${insertCols.join(", ")})
+       VALUES (${placeholders})
+       RETURNING ${returningCols}`,
+      insertVals
     );
 
-    res.status(201).json({ 
-      ...result.rows[0], 
+    res.status(201).json({
+      ...result.rows[0],
       webhook_configured: webhookResult.success,
-      warning: webhookResult.success ? null : "Number added, but could not be configured in Twilio (External Number)"
+      warning: webhookResult.success ? null : "Number added, but could not be configured in Twilio (External Number)",
     });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-router.delete("/phone-numbers/:id", async (req, res) => {
-  try {
-    const tenantId = getTenantIdFromQuery(req);
-    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
-    const phoneId = req.params.id;
-    const existing = await db.query(
-      "SELECT id, is_primary FROM phone_numbers WHERE id = $1 AND tenant_id = $2",
-      [phoneId, tenantId]
-    );
-    if (existing.rows.length === 0) {
-      return res.status(404).json({ error: "Phone number not found" });
-    }
-    await db.query("DELETE FROM phone_numbers WHERE id = $1", [phoneId]);
-    res.json({ success: true });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-router.patch("/phone-numbers/:id", async (req, res) => {
-  try {
-    const tenantId = getTenantIdFromQuery(req);
-    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
-    const { is_primary, lead_source, label } = req.body;
-    const finalSource = lead_source || label;
-    const phoneId = req.params.id;
-
-    const existing = await db.query(
-      "SELECT id FROM phone_numbers WHERE id = $1 AND tenant_id = $2",
-      [phoneId, tenantId]
-    );
-    if (existing.rows.length === 0) {
-      return res.status(404).json({ error: "Phone number not found" });
-    }
-
-    if (is_primary) {
-      await db.query(
-        "UPDATE phone_numbers SET is_primary = false, updated_at = now() WHERE tenant_id = $1",
-        [tenantId]
-      );
-      await db.query(
-        "UPDATE phone_numbers SET is_primary = true, updated_at = now() WHERE id = $1",
-        [phoneId]
-      );
-    } else {
-      await db.query(
-        "UPDATE phone_numbers SET is_primary = false, updated_at = now() WHERE id = $1",
-        [phoneId]
-      );
-    }
-
-    if (finalSource !== undefined) {
-      await db.query(
-        "UPDATE phone_numbers SET lead_source = $1, updated_at = now() WHERE id = $2",
-        [finalSource, phoneId]
-      );
-    }
-
-    res.json({ success: true });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error" });
@@ -1695,16 +1803,97 @@ router.get("/recoveries/:id", async (req, res) => {
   }
 });
 
-router.patch("/recoveries/:id/objection", async (req, res) => {
+router.patch("/phone-numbers/:id", async (req, res) => {
   try {
-    const { objection_type } = req.body || {};
-    if (!["price", "thinking", "spouse"].includes(objection_type)) {
-      return res.status(400).json({ error: "objection_type must be: price, thinking, or spouse" });
+    const tenantId = getTenantIdFromQuery(req);
+    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+
+    const { is_primary, lead_source, label } = req.body || {};
+    const finalSource = lead_source || label;
+    const phoneId = req.params.id;
+
+    // Read the full row up-front so collectRoutingFields can enforce
+    // cross-field rules (e.g. enabling ring-first when the row already
+    // has a destination phone set). Also doubles as the ownership check.
+    const existingResult = await db.query(
+      `SELECT id, tenant_id, ai_status, ring_first_enabled, ring_first_phone,
+              ring_first_timeout_seconds, business_hours_enabled, voicemail_message_url
+         FROM phone_numbers
+        WHERE id = $1 AND tenant_id = $2`,
+      [phoneId, tenantId]
+    );
+    if (existingResult.rows.length === 0) {
+      return res.status(404).json({ error: "Phone number not found" });
     }
-    await estimateRecovery.setObjection(req.params.id, objection_type);
-    const updated = await estimateRecovery.getRecoveryById(req.params.id);
-    res.json(updated);
+    const existingRow = existingResult.rows[0];
+
+    // ── Build 1: validate routing fields BEFORE doing any writes ──────
+    const routing = collectRoutingFields(req.body || {}, existingRow);
+    if (!routing.ok) {
+      return res.status(400).json({ error: routing.error });
+    }
+
+    // ── Legacy behavior: primary-flip and lead_source updates ─────────
+    if (is_primary === true) {
+      await db.query(
+        "UPDATE phone_numbers SET is_primary = false, updated_at = now() WHERE tenant_id = $1",
+        [tenantId]
+      );
+      await db.query(
+        "UPDATE phone_numbers SET is_primary = true, updated_at = now() WHERE id = $1",
+        [phoneId]
+      );
+    } else if (is_primary === false) {
+      // Only clear primary on the target row. Don't touch siblings — that
+      // would leave the tenant with no primary at all.
+      await db.query(
+        "UPDATE phone_numbers SET is_primary = false, updated_at = now() WHERE id = $1",
+        [phoneId]
+      );
+    }
+
+    if (finalSource !== undefined) {
+      await db.query(
+        "UPDATE phone_numbers SET lead_source = $1, updated_at = now() WHERE id = $2",
+        [finalSource, phoneId]
+      );
+    }
+
+    // ── Build 1 routing field updates ─────────────────────────────────
+    // Build a single UPDATE covering whichever subset the caller provided.
+    // Keeps the write atomic and avoids a flurry of small UPDATEs.
+    const routingKeys = Object.keys(routing.fields);
+    if (routingKeys.length > 0) {
+      const setParts = routingKeys.map((k, i) => `${k} = $${i + 1}`);
+      setParts.push(`updated_at = now()`);
+      const values = routingKeys.map((k) => routing.fields[k]);
+      values.push(phoneId);
+      await db.query(
+        `UPDATE phone_numbers SET ${setParts.join(", ")} WHERE id = $${values.length}`,
+        values
+      );
+    }
+
+    // Return the fresh row so the UI can update optimistic state
+    const freshResult = await db.query(
+      `SELECT id, tenant_id, phone, is_primary, lead_source, created_at, updated_at,
+              ai_status, ring_first_enabled, ring_first_phone, ring_first_timeout_seconds,
+              business_hours_enabled, voicemail_message_url
+         FROM phone_numbers
+        WHERE id = $1`,
+      [phoneId]
+    );
+
+    res.json({ success: true, phone_number: freshResult.rows[0] });
   } catch (e) {
+    // Surface DB CHECK constraint violations as 400 instead of 500 so the
+    // UI can show a useful message. Postgres uses SQLSTATE 23514 for these.
+    if (e.code === "23514") {
+      console.warn("[PATCH phone_numbers] CHECK constraint violated:", e.message);
+      return res.status(400).json({
+        error: "One of the values you provided isn't allowed. Check ring-first phone format, timeout range (5-60), or ai_status (on/off).",
+      });
+    }
     console.error(e);
     res.status(500).json({ error: "Server error" });
   }

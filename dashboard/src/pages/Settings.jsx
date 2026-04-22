@@ -1645,7 +1645,6 @@ export default function Settings({ tenantId }) {
                     className="w-full md:max-w-md px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-sm focus:ring-4 focus:ring-primary/5 transition-all outline-none placeholder:text-slate-500"
                   />
                   <p className="text-xs text-gray-500 mt-2">Used in email footers ("Reply to this email or contact..."). Leave blank to use the AI Front Desk Helper default.</p>
-                </div>
 
                 {/* ── Timezone picker (Apr 23, 2026) ──────────────────── */}
                 {/* Global tenant setting — affects call routing, nurturing  */}

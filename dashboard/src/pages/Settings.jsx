@@ -1635,7 +1635,6 @@ export default function Settings({ tenantId }) {
                 </div>
 
                 <div>
-                  <div>
                   <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Support email</label>
                   <input
                     type="email"
@@ -1645,20 +1644,14 @@ export default function Settings({ tenantId }) {
                     className="w-full md:max-w-md px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-sm focus:ring-4 focus:ring-primary/5 transition-all outline-none placeholder:text-slate-500"
                   />
                   <p className="text-xs text-gray-500 mt-2">Used in email footers ("Reply to this email or contact..."). Leave blank to use the AI Front Desk Helper default.</p>
+                </div>
 
                 {/* ── Timezone picker (Apr 23, 2026) ──────────────────── */}
-                {/* Global tenant setting — affects call routing, nurturing  */}
-                {/* schedules, calendar bookings, and daily reports. Auto-   */}
-                {/* populated from browser on first save; customers can      */}
-                {/* override here if their business is in a different TZ.    */}
                 <div>
                   <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Timezone</label>
                   <select
                     value={tenant?.timezone || ""}
                     onChange={(e) => {
-                      // Timezone lives on the tenant row (not form state) —
-                      // we update it directly via a targeted PATCH, then
-                      // refresh local tenant state so the picker reflects it.
                       const newTz = e.target.value;
                       if (!newTz) return;
                       updateTenant(tenantId, { timezone: newTz })
@@ -1851,14 +1844,13 @@ export default function Settings({ tenantId }) {
                 </div>
               </section>
 
-      {/* ── Custom domain (Phase 2 preview) ─────────────────────── */}
+              {/* ── Custom domain (Phase 2 preview) ─────────────────────── */}
               <section className="pt-8 border-t border-gray-100">
                 <h3 className="text-sm font-black text-gray-500 uppercase tracking-widest flex items-center gap-2 mb-4">
                   <Globe className="w-3.5 h-3.5" />
                   Custom domain
                 </h3>
                 {tenant?.brand_mode === "white_label" ? (
-                  /* ─── White-label tenant: feature preview, no upsell ─── */
                   <div className="p-5 bg-slate-50/60 border-2 border-dashed border-slate-200 rounded-2xl flex items-start gap-4">
                     <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center shrink-0">
                       <Globe className="w-5 h-5 text-slate-400" />
@@ -1884,7 +1876,6 @@ export default function Settings({ tenantId }) {
                     </div>
                   </div>
                 ) : (
-                  /* ─── ai_branded tenant (Basic/Pro): Elite upsell ─── */
                   <div className="relative overflow-hidden p-5 bg-gradient-to-br from-amber-50 via-white to-amber-50/30 border-2 border-amber-200 rounded-2xl flex items-start gap-4">
                     <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-amber-400 blur-[80px] opacity-20 rounded-full pointer-events-none"></div>
                     <div className="relative z-10 w-10 h-10 rounded-xl bg-white border border-amber-200 flex items-center justify-center shrink-0 shadow-sm">

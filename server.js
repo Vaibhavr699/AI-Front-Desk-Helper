@@ -35,6 +35,7 @@ const cron = require("node-cron");
 
 const { getTenantByPhone, getTenantById, getAllTenants, getTenantByFacebookPageId, getTenantBySlug } = require("./lib/tenant");
 const callsService = require("./services/calls");
+const { decideCallRouting } = require("./lib/callRouting");
 const recordingService = require("./services/recording");
 const transferService = require("./services/transfer");
 const bookingsService = require("./services/bookings");
@@ -614,6 +615,77 @@ function buildFallbackTwiml(message, transferNumber) {
 <Response>
   <Say>${escapeXml(message)}</Say>
   <Hangup/>
+</Response>`;
+}
+
+/**
+ * TwiML for voicemail-only routing (AI off AND no ring-first).
+ *
+ * If the tenant configured a custom voicemail URL for this phone, play it
+ * then <Record>. Otherwise fall back to a generic TTS greeting.
+ *
+ * Build 1 — Apr 23, 2026.
+ */
+function buildVoicemailTwiml(voicemailMessageUrl) {
+  if (voicemailMessageUrl) {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Play>${escapeXml(voicemailMessageUrl)}</Play>
+  <Record maxLength="120" playBeep="true" trim="trim-silence" />
+  <Hangup/>
+</Response>`;
+  }
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">We're unable to take your call right now. Please leave a message after the tone.</Say>
+  <Record maxLength="120" playBeep="true" trim="trim-silence" />
+  <Hangup/>
+</Response>`;
+}
+
+/**
+ * TwiML for ring-first routing. Rings the configured human number, then
+ * on no-answer falls through to either the AI stream or voicemail.
+ *
+ * <Dial> behavior: the verb completes and Twilio moves to the next verb
+ * when the Dial times out OR the dialed party hangs up without answering.
+ * So putting <Connect><Stream/> (or <Record>) after <Dial> is the correct
+ * "if no-answer, do X" pattern.
+ *
+ * GOTCHA#23 already handled upstream in decideCallRouting — we never
+ * produce ring-first TwiML when the caller IS the ring-first target.
+ *
+ * Build 1 — Apr 23, 2026.
+ */
+function buildRingFirstTwiml({
+  ringFirstPhone,
+  ringFirstTimeout,
+  fallbackType,          // "ai_stream" | "voicemail"
+  streamUrl,
+  voicemailMessageUrl,
+}) {
+  const timeout = Math.min(60, Math.max(5, Number(ringFirstTimeout) || 20));
+
+  let fallbackVerbs;
+  if (fallbackType === "ai_stream") {
+    fallbackVerbs = `<Connect>
+    <Stream url="${escapeXml(streamUrl)}" />
+  </Connect>`;
+  } else if (voicemailMessageUrl) {
+    fallbackVerbs = `<Play>${escapeXml(voicemailMessageUrl)}</Play>
+  <Record maxLength="120" playBeep="true" trim="trim-silence" />
+  <Hangup/>`;
+  } else {
+    fallbackVerbs = `<Say voice="Polly.Joanna">We're unable to take your call right now. Please leave a message after the tone.</Say>
+  <Record maxLength="120" playBeep="true" trim="trim-silence" />
+  <Hangup/>`;
+  }
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Dial timeout="${timeout}">${escapeXml(ringFirstPhone)}</Dial>
+  ${fallbackVerbs}
 </Response>`;
 }
 
@@ -2290,10 +2362,10 @@ const WARM_GREETING = "Thanks for calling. How can I help you today?";
 async function handleTwilioVoice(req, res, tenantId) {
   let resolvedTenantId = tenantId;
   let tenant = TENANTS[tenantId];
+  let phoneNumberRow = null;
 
-  // If not found in memory OR it is the default 'gladiators', try to look up by the 'To' OR 'From' phone number.
-  // This allows multiple phone numbers to use the same generic /twilio/voice webhook.
-  const toNum = req.body?.To || req.query?.To;
+  // Tenant lookup by To (primary) or From (fallback) — existing behavior.
+  const toNum   = req.body?.To   || req.query?.To;
   const fromNum = req.body?.From || req.query?.From;
 
   if (!tenant || resolvedTenantId === "gladiators") {
@@ -2311,13 +2383,37 @@ async function handleTwilioVoice(req, res, tenantId) {
     }
   }
 
-  // Final fallback
+  // Last-resort fallback to gladiators so a misconfigured number doesn't
+  // hard-crash the webhook (existing behavior, preserved).
   if (!tenant) {
     tenant = TENANTS["gladiators"];
     resolvedTenantId = "gladiators";
   }
 
-  // Business hours gating removed to allow 24/7 AI answering.
+  // Build 1 — fetch the phone_numbers row for the dialed number so we can
+  // apply per-phone AI toggle, ring-first, per-phone BH opt-in, and custom
+  // voicemail URL. Null-safe: if the row is missing or the query fails
+  // (e.g. migration 039 hasn't run yet), decideCallRouting defaults to
+  // AI-on / no ring-first, matching pre-Build-1 behavior.
+  if (toNum && tenant?.id) {
+    try {
+      const pnResult = await pool.query(
+        `SELECT id, tenant_id, phone, is_primary, lead_source,
+                ai_status, ring_first_enabled, ring_first_phone,
+                ring_first_timeout_seconds, business_hours_enabled,
+                voicemail_message_url
+           FROM phone_numbers
+          WHERE phone = $1 AND tenant_id = $2
+          LIMIT 1`,
+        [toNum, tenant.id]
+      );
+      phoneNumberRow = pnResult.rows[0] || null;
+    } catch (err) {
+      // Likely cause: migration 039 hasn't run on this environment. Log
+      // and continue — decideCallRouting handles null gracefully.
+      console.error("[AI-Desk] phone_numbers lookup failed:", err.message);
+    }
+  }
 
   try {
     if (!OPENAI_API_KEY) {
@@ -2339,6 +2435,30 @@ async function handleTwilioVoice(req, res, tenantId) {
       return;
     }
 
+    // ── Build 1 routing decision ───────────────────────────────────────
+    const routing = decideCallRouting({
+      tenant,
+      phoneNumber: phoneNumberRow,
+      fromNumber:  fromNum,
+    });
+
+    console.log(
+      "[AI-Desk] Routing tenant=%s to=%s from=%s → shouldRunAi=%s ringFirst=%s reason=%s",
+      tenant.id,
+      toNum,
+      fromNum,
+      routing.shouldRunAi,
+      routing.ringFirst,
+      routing.reason
+    );
+
+    // Case 1: voicemail-only (AI off, no ring-first).
+    if (!routing.shouldRunAi && !routing.ringFirst) {
+      res.type("text/xml").send(buildVoicemailTwiml(routing.voicemailMessageUrl));
+      return;
+    }
+
+    // Need a WS URL whether we're streaming direct or as ring-first fallback.
     const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId, tenant.lead_source);
     if (!/^wss:\/\//i.test(wsUrl)) {
       const fallbackTwiml = buildFallbackTwiml(
@@ -2349,17 +2469,26 @@ async function handleTwilioVoice(req, res, tenantId) {
       return;
     }
 
-  // Apr 21, 2026: prefer voice_welcome_message (channel-specific) over the
-    // legacy welcome_message field. Fallback chain: voice → legacy → built-in.
-    // Greeting is now spoken by OpenAI Realtime via instructions injection
-    // (see EDIT 3 below) — no more robotic Twilio Polly <Say> TTS.
-    const greeting = tenant.voice_welcome_message || tenant.welcome_message || WARM_GREETING;
+    // Case 2: ring a human first, fall through to AI or voicemail.
+    if (routing.ringFirst) {
+      const ringTwiml = buildRingFirstTwiml({
+        ringFirstPhone:      routing.ringFirstPhone,
+        ringFirstTimeout:    routing.ringFirstTimeoutSeconds,
+        fallbackType:        routing.shouldRunAi ? "ai_stream" : "voicemail",
+        streamUrl:           wsUrl,
+        voicemailMessageUrl: routing.voicemailMessageUrl,
+      });
+      res.type("text/xml").send(ringTwiml);
+      return;
+    }
+
+    // Case 3: AI direct — the legacy path, preserved unchanged.
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
     <Stream url="${wsUrl}" />
   </Connect>
-</Response>`;  
+</Response>`;
 
     res.type("text/xml").send(twiml);
   } catch (error) {

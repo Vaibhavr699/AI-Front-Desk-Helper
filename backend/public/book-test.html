@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Book by Text - Testing</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <style>
+    body { font-family: 'Inter', sans-serif; background: #fafafa; padding: 100px 50px; text-align: center; }
+    h1 { margin-bottom: 20px; }
+    p { color: #666; margin-bottom: 50px; }
+    .hero-btn { 
+      background: #000; color: #fff; padding: 20px 40px; border-radius: 16px; 
+      font-size: 20px; font-weight: bold; text-decoration: none; display: inline-block;
+      transition: transform 0.2s;
+    }
+    .hero-btn:hover { transform: translateY(-5px); box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
+    .secondary-link { margin-top: 50px; display: block; color: #888; text-decoration: none; font-size: 14px; }
+    .secondary-link:hover { color: #000; text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+  <h1>Click to Book by Text</h1>
+  <p>Test the new standalone SMS consent and booking script.</p>
+
+  <!-- This is the "Book Link" your developer will add -->
+  <a href="#" class="ai-book-link hero-btn">
+    <i class="fab fa-whatsapp"></i> &nbsp; Book Appointment by Text
+  </a>
+
+  <a href="#" class="ai-book-link secondary-link">Secondary Inline Link Test</a>
+
+  <!-- This is the Script Tag your developer will add -->
+  <script 
+    src="/book-by-text.js" 
+    data-tenant-id="8c9b3a98-8ec0-4a87-88f2-8959be70570a"
+  ></script>
+
+</body>
+</html>

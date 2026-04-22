@@ -1082,7 +1082,7 @@ function maskFacebookToken(token) {
 }
 
 const TENANT_SELECT_TWILIO = `t.twilio_account_sid, t.twilio_auth_token`;
-const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message,t.voice_welcome_message, t.chat_welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.plan, t.facebook_page_id, t.facebook_page_access_token, t.tone_of_voice, t.objection_handling_config, t.business_hours, t.afterhours_behavior, t.google_calendar_linked, t.google_calendar_id, t.google_calendar_email, t.zapier_webhook_url, t.api_key, t.website, t.voice_model, t.faqs, t.plan_overrides, t.promo_label, t.logo_url, t.nurturing_enabled, t.referral_enabled, t.seasonal_campaigns_enabled, t.maintenance_reminder_months, t.reengagement_reminder_months, t.referral_request_days_after_service, t.nurturing_campaign_calendar, t.maintenance_touchpoints, t.reengagement_touchpoints, t.parent_id, t.business_type, t.default_lead_source, t.brand_color, t.brand_mode, t.inbound_voice, t.outbound_voice, t.outbound_agent_name, t.outbound_instructions, t.accent_color, t.favicon_url, t.support_email, t.account_type, t.parent_mode, t.billing_owner, t.reseller_tier, t.reseller_code, t.reseller_customer_limit, t.reseller_wholesale_rate_cents, t.reseller_id, t.billing_responsibility`;
+const TENANT_SELECT_BASE = `t.id, t.name, t.slug, t.company_name, t.welcome_message,t.voice_welcome_message, t.chat_welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.plan, t.facebook_page_id, t.facebook_page_access_token, t.tone_of_voice, t.objection_handling_config, t.business_hours, t.afterhours_behavior, t.google_calendar_linked, t.google_calendar_id, t.google_calendar_email, t.zapier_webhook_url, t.api_key, t.website, t.voice_model, t.faqs, t.plan_overrides, t.promo_label, t.logo_url, t.nurturing_enabled, t.referral_enabled, t.seasonal_campaigns_enabled, t.maintenance_reminder_months, t.reengagement_reminder_months, t.referral_request_days_after_service, t.nurturing_campaign_calendar, t.maintenance_touchpoints, t.reengagement_touchpoints, t.parent_id, t.business_type, t.default_lead_source, t.brand_color, t.brand_mode, t.inbound_voice, t.outbound_voice, t.outbound_agent_name, t.outbound_instructions, t.accent_color, t.favicon_url, t.support_email, t.account_type, t.parent_mode, t.billing_owner, t.reseller_tier, t.reseller_code, t.reseller_customer_limit, t.reseller_wholesale_rate_cents, t.reseller_id, t.billing_responsibility, t.ai_master_enabled, t.ai_answers_after_hours, t.ring_first_enabled, t.ring_first_phone, t.ring_first_timeout_seconds, t.voicemail_message_url`;
 const TENANT_SELECT_BASE_LEGACY = `t.id, t.name, t.slug, t.company_name, t.welcome_message, t.instructions, t.transfer_numbers, t.transfer_sms_brief, t.crm_webhook_url, t.crm_type, t.follow_up_enabled, t.parent_id, t.business_type`;
 
 router.get("/tenants/:id", async (req, res) => {
@@ -1327,7 +1327,7 @@ router.patch("/tenants/:id", async (req, res) => {
       }
     }
 
-   let allowed = [
+  let allowed = [
       "name", "company_name", "timezone", "website", "logo_url",
       "welcome_message", "voice_welcome_message", "chat_welcome_message", "instructions", "transfer_numbers", "transfer_sms_brief",
       "crm_webhook_url", "crm_type", "follow_up_enabled", "plan", 
@@ -1339,7 +1339,11 @@ router.patch("/tenants/:id", async (req, res) => {
       "nurturing_enabled", "referral_enabled", "seasonal_campaigns_enabled",
       "maintenance_reminder_months", "reengagement_reminder_months", "referral_request_days_after_service",
       "nurturing_campaign_calendar",
-      "maintenance_touchpoints", "reengagement_touchpoints"
+      "maintenance_touchpoints", "reengagement_touchpoints",
+      // AI Control (mig 040) — tenant-wide routing fields. Apr 23, 2026.
+      "ai_master_enabled", "ai_answers_after_hours",
+      "ring_first_enabled", "ring_first_phone", "ring_first_timeout_seconds",
+      "voicemail_message_url"
     ];
    
     try {
@@ -1349,6 +1353,81 @@ router.patch("/tenants/:id", async (req, res) => {
         allowed = allowed.filter((k) => k !== "twilio_account_sid" && k !== "twilio_auth_token");
       } else throw colErr;
     }
+    // ── AI Control validation (mig 040, tenant-wide routing) ─────────
+    // Validate the 6 AI Control fields UP FRONT before the generic
+    // update loop runs. We do this before the generic loop so that
+    // (a) validation errors return clean 400s instead of raw 500s
+    // from Postgres CHECK constraints, and (b) the cross-field rule
+    // (ring_first_enabled=true REQUIRES ring_first_phone) is enforced
+    // at the API layer. The DB CHECK is still the last line of defense,
+    // but this path gives the UI actionable error messages.
+    const body = req.body || {};
+
+    // ring_first_phone — must be E.164 (+1XXXXXXXXXX). Accept loose
+    // input and normalize. Passing null/empty clears it.
+    if (body.ring_first_phone !== undefined && body.ring_first_phone !== null && body.ring_first_phone !== "") {
+      const normalized = normalizePhoneInput(body.ring_first_phone);
+      if (!normalized) {
+        return res.status(400).json({
+          error: "ring_first_phone must be a valid US phone number (e.g. +14025551234 or 402-555-1234)"
+        });
+      }
+      body.ring_first_phone = normalized;
+    } else if (body.ring_first_phone === "" || body.ring_first_phone === null) {
+      body.ring_first_phone = null;
+    }
+
+    // ring_first_timeout_seconds — must be integer 5–60
+    if (body.ring_first_timeout_seconds !== undefined && body.ring_first_timeout_seconds !== null) {
+      const n = Number(body.ring_first_timeout_seconds);
+      if (!Number.isInteger(n) || n < 5 || n > 60) {
+        return res.status(400).json({
+          error: "ring_first_timeout_seconds must be an integer between 5 and 60"
+        });
+      }
+      body.ring_first_timeout_seconds = n;
+    }
+
+    // voicemail_message_url — HTTPS only, must end in .mp3 or .wav
+    if (body.voicemail_message_url !== undefined && body.voicemail_message_url !== null && body.voicemail_message_url !== "") {
+      const s = String(body.voicemail_message_url).trim();
+      if (!/^https:\/\//i.test(s)) {
+        return res.status(400).json({ error: "voicemail_message_url must start with https://" });
+      }
+      if (!/\.(mp3|wav)(\?.*)?$/i.test(s)) {
+        return res.status(400).json({ error: "voicemail_message_url must point to an .mp3 or .wav file" });
+      }
+      if (s.length > 2000) {
+        return res.status(400).json({ error: "voicemail_message_url is too long (max 2000 chars)" });
+      }
+      body.voicemail_message_url = s;
+    } else if (body.voicemail_message_url === "" || body.voicemail_message_url === null) {
+      body.voicemail_message_url = null;
+    }
+
+    // Cross-field rule: if ring_first_enabled is being set to true,
+    // ring_first_phone must be present either in this request OR
+    // already on the tenant row. Matches DB constraint
+    // tenants_ring_first_phone_required.
+    if (body.ring_first_enabled === true) {
+      const existingRow = await db.query(
+        "SELECT ring_first_phone FROM tenants WHERE id = $1",
+        [id]
+      );
+      const existingPhone = existingRow.rows[0]?.ring_first_phone;
+      const incomingPhone = body.ring_first_phone; // may be undefined, null, or string
+      const willHavePhone =
+        incomingPhone !== undefined
+          ? incomingPhone != null
+          : existingPhone != null;
+      if (!willHavePhone) {
+        return res.status(400).json({
+          error: "ring_first_phone is required when ring_first_enabled is true"
+        });
+      }
+    }
+    // ───────────────────────────────────────────────────────────────
+
     const updates = {};
     for (const key of allowed) {
       if (req.body[key] === undefined) continue;
@@ -1356,7 +1435,7 @@ router.patch("/tenants/:id", async (req, res) => {
         updates[key] = normalizeTransferNumbers(req.body[key]);
       } else if (key === "twilio_auth_token") {
         updates[key] = req.body[key] === "" ? null : req.body[key];
-   } else if (key === "plan") {
+ } else if (key === "plan") {
         const p = (req.body[key] || "").toLowerCase();
         if (!["basic", "pro", "elite"].includes(p)) {
           return res.status(400).json({ error: "plan must be basic, pro, or elite" });
@@ -1445,8 +1524,32 @@ router.patch("/tenants/:id", async (req, res) => {
       user_agent: req.get("user-agent") || null,
     }).catch(() => {});
 
-    res.json(out);
+   res.json(out);
   } catch (e) {
+    // DB CHECK constraint violations — SQLSTATE 23514. Map the
+    // known mig 040 constraint names to user-friendly messages so
+    // the Settings UI can surface them on save. Anything we don't
+    // recognize falls through to the generic 500 path.
+    if (e.code === "23514") {
+      const name = e.constraint || "";
+      const errorMap = {
+        tenants_ring_first_phone_format:
+          "ring_first_phone must be in E.164 format (e.g. +14025551234)",
+        tenants_ring_first_timeout_range:
+          "ring_first_timeout_seconds must be between 5 and 60",
+        tenants_ring_first_phone_required:
+          "ring_first_phone is required when ring_first_enabled is true",
+        tenants_voicemail_url_format:
+          "voicemail_message_url must be an HTTPS URL under 2000 characters",
+      };
+      if (errorMap[name]) {
+        console.warn("[PATCH /tenants] CHECK constraint '%s' violated: %s", name, e.message);
+        return res.status(400).json({ error: errorMap[name] });
+      }
+      // Unknown constraint — log raw and give a generic 400.
+      console.warn("[PATCH /tenants] Unrecognized CHECK constraint:", name, e.message);
+      return res.status(400).json({ error: "One of the values you provided isn't allowed." });
+    }
     console.error(e);
     res.status(500).json({ error: "Server error" });
   }

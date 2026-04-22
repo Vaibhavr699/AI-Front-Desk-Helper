@@ -3022,23 +3022,14 @@ wss.on("connection", async (twilioSocket, req) => {
 
         console.log("[AI-Desk] Triggering initial INBOUND greeting (verbatim): \"%s\"", verbatimGreeting);
 
-        // Step 1: inject the greeting as if the assistant already said it.
-        sendToOpenAI({
-          type: "conversation.item.create",
-          item: {
-            type: "message",
-            role: "assistant",
-            content: [{ type: "text", text: verbatimGreeting }],
-          },
-        });
-
-        // Step 2: tell Realtime to generate audio from that pre-composed message.
         sendToOpenAI({
           type: "response.create",
           response: {
             modalities: ["audio", "text"],
+            instructions: `Your first utterance on this call must be EXACTLY this, word-for-word, spoken warmly:\n\n"${verbatimGreeting}"\n\nDo not paraphrase, do not add words before or after. After you say this greeting, stop and wait for the caller to respond.`,
           },
         });
+        
       } else {
         // For OUTBOUND/RECOVERY, initiate response using campaign persona set in session.update
         console.log("[AI-Desk] Triggering initial OUTBOUND/RECOVERY introduction");

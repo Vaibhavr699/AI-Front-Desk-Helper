@@ -285,16 +285,43 @@ router.post('/customers', async (req, res) => {
       ? req.user.tenant.brand_mode || 'default'
       : 'default';
 
+    // Generate a unique slug from the business name. tenants.slug is
+    // NOT NULL + UNIQUE, so we slugify, then probe the DB until we find
+    // an unused variant (max 20 attempts before giving up). Mirrors the
+    // pattern used by the parent location-create endpoint in dashboard.js.
+    let baseSlug = name.toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '');
+    if (!baseSlug) baseSlug = `customer-${Date.now()}`;
+
+    let slug = baseSlug;
+    let attempt = 1;
+    while (attempt < 20) {
+      const existing = await db.query(
+        'SELECT id FROM tenants WHERE slug = $1',
+        [slug]
+      );
+      if (existing.rows.length === 0) break;
+      slug = `${baseSlug}-${attempt}`;
+      attempt++;
+    }
+    if (attempt >= 20) {
+      return res.status(409).json({
+        error: 'Could not generate a unique slug from this business name. Try a different name.',
+      });
+    }
+
     const { rows } = await db.query(
       `INSERT INTO tenants (
-         name, primary_email, phone, plan,
+         name, slug, primary_email, phone, plan,
          account_type, reseller_id, billing_owner, brand_mode,
          stripe_customer_id, stripe_subscription_id
        )
-       VALUES ($1, $2, $3, $4, 'customer', $5, 'reseller', $6, NULL, NULL)
+       VALUES ($1, $2, $3, $4, $5, 'customer', $6, 'reseller', $7, NULL, NULL)
        RETURNING *`,
       [
         name,
+        slug,
         primary_email,
         phone || null,
         plan,

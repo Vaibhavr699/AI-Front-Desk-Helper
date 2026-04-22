@@ -584,15 +584,25 @@ function resolveBaseUrl(req) {
   return normalizeBaseUrl(`${proto}://${host}`);
 }
 
-function buildTenantWsUrl(baseUrl, tenantId, leadSource = null) {
+function buildTenantWsUrl(baseUrl, tenantId, leadSource = null, callContext = {}) {
   const wsBaseUrl = toWebSocketBaseUrl(baseUrl);
-  let url = `${wsBaseUrl}/twilio-media/${tenantId}`;
-  if (leadSource) {
-    url += `?leadSource=${encodeURIComponent(leadSource)}`;
-  }
+  const { callSid, fromNumber, toNumber, direction } = callContext;
+
+  let url = callSid
+    ? `${wsBaseUrl}/twilio-media/${tenantId}/${encodeURIComponent(callSid)}`
+    : `${wsBaseUrl}/twilio-media/${tenantId}`;
+
+  const params = new URLSearchParams();
+  if (fromNumber) params.set("From", fromNumber);
+  if (toNumber)   params.set("To",   toNumber);
+  if (direction)  params.set("direction", direction);
+  if (leadSource) params.set("leadSource", leadSource);
+
+  const qs = params.toString();
+  if (qs) url += `?${qs}`;
+
   return url;
 }
-
 function escapeXml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -2459,7 +2469,12 @@ async function handleTwilioVoice(req, res, tenantId) {
     }
 
     // Need a WS URL whether we're streaming direct or as ring-first fallback.
-    const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId, tenant.lead_source);
+    const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId, tenant.lead_source, {
+      callSid:    req.body?.CallSid || req.query?.CallSid,
+      fromNumber: fromNum,
+      toNumber:   toNum,
+      direction:  "inbound",
+    });
     if (!/^wss:\/\//i.test(wsUrl)) {
       const fallbackTwiml = buildFallbackTwiml(
         "Please hold while we connect you to the team.",

@@ -982,8 +982,10 @@ export default function Settings({ tenantId }) {
     if (form.twilio_auth_token) payload.twilio_auth_token = form.twilio_auth_token;
 
     try {
-      const updated = await updateTenant(tenantId, payload);
-      setTenant(updated);
+     const updated = await updateTenant(tenantId, payload);
+      // Merge instead of replace — backend may return only the updated fields,
+      // which would wipe out unchanged fields like timezone from local state.
+      setTenant((prev) => ({ ...prev, ...updated }));
       success("Settings saved successfully.");
       setMessage("Settings saved successfully.");
       window.scrollTo({ top: 0, behavior: "smooth" });

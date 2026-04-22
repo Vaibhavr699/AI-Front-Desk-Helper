@@ -916,7 +916,20 @@ export default function Settings({ tenantId }) {
       setSaving(false);
       return;
     }
-
+// ── Timezone auto-detect (Apr 23, 2026) ──────────────────────────
+    // If the tenant doesn't have a timezone saved yet, silently detect
+    // the browser's timezone and include it in the PATCH. Handles the
+    // 99% case where the owner sets up their dashboard from their own
+    // business location. If the browser reports a timezone we don't
+    // support (e.g. America/Indiana/Indianapolis), we skip this step
+    // and leave timezone null — they can set it manually in Branding.
+    let autoDetectedTimezone = null;
+    if (!tenant?.timezone) {
+      autoDetectedTimezone = detectBrowserTimezone();
+      if (autoDetectedTimezone) {
+        console.log("[Settings] Auto-detected timezone:", autoDetectedTimezone);
+      }
+    }
     const payload = {
       // Branding
       company_name: form.company_name.trim() || null,
@@ -1622,6 +1635,7 @@ export default function Settings({ tenantId }) {
                 </div>
 
                 <div>
+                  <div>
                   <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Support email</label>
                   <input
                     type="email"
@@ -1631,6 +1645,45 @@ export default function Settings({ tenantId }) {
                     className="w-full md:max-w-md px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-sm focus:ring-4 focus:ring-primary/5 transition-all outline-none placeholder:text-slate-500"
                   />
                   <p className="text-xs text-gray-500 mt-2">Used in email footers ("Reply to this email or contact..."). Leave blank to use the AI Front Desk Helper default.</p>
+                </div>
+
+                {/* ── Timezone picker (Apr 23, 2026) ──────────────────── */}
+                {/* Global tenant setting — affects call routing, nurturing  */}
+                {/* schedules, calendar bookings, and daily reports. Auto-   */}
+                {/* populated from browser on first save; customers can      */}
+                {/* override here if their business is in a different TZ.    */}
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Timezone</label>
+                  <select
+                    value={tenant?.timezone || ""}
+                    onChange={(e) => {
+                      // Timezone lives on the tenant row (not form state) —
+                      // we update it directly via a targeted PATCH, then
+                      // refresh local tenant state so the picker reflects it.
+                      const newTz = e.target.value;
+                      if (!newTz) return;
+                      updateTenant(tenantId, { timezone: newTz })
+                        .then(() => {
+                          setTenant((prev) => prev ? { ...prev, timezone: newTz } : prev);
+                          success("Timezone updated.");
+                        })
+                        .catch((err) => toastError(`Failed to update timezone: ${err.message}`));
+                    }}
+                    className="w-full md:max-w-md px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-sm focus:ring-4 focus:ring-primary/5 transition-all outline-none cursor-pointer"
+                  >
+                    {!tenant?.timezone && <option value="">(not set — save once to auto-detect)</option>}
+                    {TIMEZONE_OPTIONS.map((tz) => (
+                      <option key={tz.value} value={tz.value}>
+                        {tz.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Affects call routing, nurturing schedules, and daily reports.
+                    {tenant?.timezone
+                      ? ` Currently: ${tenant.timezone}.`
+                      : " We'll auto-detect this from your browser on your first save."}
+                  </p>
                 </div>
               </section>
 
@@ -2280,9 +2333,19 @@ export default function Settings({ tenantId }) {
                       these hours to decide what's "business hours" vs "after hours."
                     </p>
                   </div>
-                  <div className="px-3 py-1.5 bg-primary/10 rounded-xl">
-                    <span className="text-xs font-bold text-primary">{tenant?.timezone || "America/Chicago"}</span>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("branding")}
+                    className="px-3 py-1.5 bg-primary/10 hover:bg-primary/15 rounded-xl transition-colors cursor-pointer group"
+                    title="Change timezone in Branding tab"
+                  >
+                    <span className="text-xs font-bold text-primary flex items-center gap-1.5">
+                      {tenant?.timezone || "Set timezone →"}
+                      <span className="text-[10px] opacity-0 group-hover:opacity-60 transition-opacity">
+                        edit
+                      </span>
+                    </span>
+                  </button>
                 </div>
 
                 <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100">

@@ -68,6 +68,11 @@ import {
   Image as ImageIcon,
   Building2,
   Shield
+  SlidersHorizontal,
+  Power,
+  PhoneForwarded,
+  Mic,
+  AlertTriangle
 } from "lucide-react";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -335,7 +340,7 @@ const TABS = [
  { id: "branding",     label: "Branding",             icon: Palette    },
  { id: "ai",           label: "AI behavior",          icon: Bot        },
  { id: "knowledge",    label: "Knowledge base",       icon: BookOpen   },
- { id: "hours",        label: "Business hours",       icon: Clock      },
+ { id: "ai-control",   label: "AI Control",           icon: SlidersHorizontal },
  { id: "nurturing",    label: "Nurturing & referrals", icon: UserPlus  },
  { id: "integrations", label: "Integrations",         icon: LinkIcon   },
  { id: "plans",        label: "Plans",                icon: CreditCard },
@@ -398,7 +403,14 @@ export default function Settings({ tenantId }) {
     referral_request_days_after_service: 5,
     nurturing_campaign_calendar: {},
     maintenance_touchpoints: [{ months: 6, header: "" }],
-    reengagement_touchpoints: [{ months: 12, header: "" }]
+    reengagement_touchpoints: [{ months: 12, header: "" }],
+    // ── AI Control (mig 040, Apr 23 2026) ─────────────────────
+    ai_master_enabled: true,
+    ai_answers_after_hours: false,
+    ring_first_enabled: false,
+    ring_first_phone: "",
+    ring_first_timeout_seconds: 20,
+    voicemail_message_url: ""
   });
 
   // Phone numbers state
@@ -508,6 +520,15 @@ export default function Settings({ tenantId }) {
         reengagement_touchpoints: Array.isArray(t.reengagement_touchpoints) && t.reengagement_touchpoints.length > 0
           ? t.reengagement_touchpoints.slice(0, 3)
           : [{ months: t.reengagement_reminder_months ?? 12, header: "" }],
+        // ── AI Control (mig 040, Apr 23 2026) ─────────────────────
+        // Null-safe defaults: new tenants pre-migration will have
+        // undefined, so we fall back to "AI fully on, no ring-first."
+        ai_master_enabled: t.ai_master_enabled !== false, // default true
+        ai_answers_after_hours: t.ai_answers_after_hours === true,
+        ring_first_enabled: t.ring_first_enabled === true,
+        ring_first_phone: t.ring_first_phone || "",
+        ring_first_timeout_seconds: t.ring_first_timeout_seconds || 20,
+        voicemail_message_url: t.voicemail_message_url || ""
       });
     } catch (e) {
       toastError(`Failed to load tenant: ${e.message}`);
@@ -904,7 +925,14 @@ export default function Settings({ tenantId }) {
       referral_request_days_after_service: form.referral_request_days_after_service,
       nurturing_campaign_calendar: form.nurturing_campaign_calendar,
       maintenance_touchpoints: form.maintenance_touchpoints,
-      reengagement_touchpoints: form.reengagement_touchpoints
+      reengagement_touchpoints: form.reengagement_touchpoints,
+      // ── AI Control (mig 040, Apr 23 2026) ─────────────────────
+      ai_master_enabled: form.ai_master_enabled,
+      ai_answers_after_hours: form.ai_answers_after_hours,
+      ring_first_enabled: form.ring_first_enabled,
+      ring_first_phone: form.ring_first_phone.trim() || null,
+      ring_first_timeout_seconds: form.ring_first_timeout_seconds,
+      voicemail_message_url: form.voicemail_message_url.trim() || null
     };
 
     if (form.facebook_page_access_token) payload.facebook_page_access_token = form.facebook_page_access_token;
@@ -2129,77 +2157,345 @@ export default function Settings({ tenantId }) {
                 </div>
           )}
 
-          {activeTab === "hours" && (
-            <div className="space-y-8">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                    <Clock className="text-primary w-5 h-5" />
-                    Business Hours
-                  </h2>
-                  <p className="text-sm text-gray-500 mt-1">AI behavior will change automatically based on these hours.</p>
-                </div>
-                <div className="px-4 py-2 bg-primary/10 rounded-xl">
-                  <span className="text-sm font-bold text-primary">{tenant?.timezone || "America/Chicago"} Time</span>
-                </div>
+          {activeTab === "ai-control" && (
+            <div className="space-y-10 animate-in fade-in slide-in-from-right-4 duration-500">
+
+              {/* ── Tab header ───────────────────────────────────── */}
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                  <SlidersHorizontal className="text-primary w-5 h-5" />
+                  AI Control
+                </h2>
+                <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-2xl">
+                  Control when and how your AI answers calls. Master kill-switch,
+                  calling hours, ring-first handoff, and voicemail — all in one place.
+                </p>
               </div>
 
-              <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100">
-                <div className="space-y-4">
-                  {Object.entries(form.business_hours).map(([day, config]) => (
-                    <div key={day} className="flex items-center justify-between gap-4 py-1">
-                      <div className="w-28">
-                        <span className="text-sm font-bold text-gray-700 capitalize">{day}</span>
+              {/* ── 1. Master AI toggle (dark hero card) ──────────── */}
+              <section className={`relative overflow-hidden rounded-3xl p-8 transition-all border-2 ${
+                form.ai_master_enabled
+                  ? "bg-slate-900 border-slate-900 shadow-2xl shadow-slate-900/20"
+                  : "bg-red-950 border-red-800 shadow-2xl shadow-red-900/20"
+              }`}>
+                <div className="absolute top-0 right-0 p-8 opacity-[0.06] pointer-events-none">
+                  <Power className="w-32 h-32" />
+                </div>
+                <div className="relative z-10 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+                  <div className="flex items-start gap-4">
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
+                      form.ai_master_enabled ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-300"
+                    }`}>
+                      <Power className="w-6 h-6" strokeWidth={2.5} />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-black text-white tracking-tight mb-1 flex items-center gap-2">
+                        AI Assistant
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
+                          form.ai_master_enabled
+                            ? "bg-emerald-500/20 text-emerald-300 border border-emerald-400/30"
+                            : "bg-red-500/30 text-red-200 border border-red-400/40"
+                        }`}>
+                          {form.ai_master_enabled ? "Live" : "Off"}
+                        </span>
+                      </h3>
+                      <p className="text-sm text-slate-300 leading-relaxed max-w-lg">
+                        {form.ai_master_enabled
+                          ? "Your AI is answering calls based on the rules below."
+                          : "AI is off. Incoming calls ring your ring-first or transfer number, then fall through to voicemail."}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateForm("ai_master_enabled", !form.ai_master_enabled)}
+                    className={`relative w-16 h-9 rounded-full transition-colors shrink-0 ${
+                      form.ai_master_enabled ? "bg-emerald-500" : "bg-red-500"
+                    }`}
+                    aria-pressed={form.ai_master_enabled}
+                    aria-label="Toggle AI assistant"
+                  >
+                    <div
+                      className={`absolute top-1 w-7 h-7 rounded-full bg-white shadow-lg transition-transform ${
+                        form.ai_master_enabled ? "translate-x-8" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* Setup sanity check — if AI is off AND no human destination */}
+                {!form.ai_master_enabled &&
+                 !form.ring_first_phone.trim() &&
+                 !(form.transfer_numbers_raw && form.transfer_numbers_raw.trim()) && (
+                  <div className="relative z-10 mt-5 p-4 bg-red-500/20 border border-red-400/30 rounded-xl flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-red-300 shrink-0 mt-0.5" />
+                    <div className="text-xs text-red-100 leading-relaxed">
+                      <strong className="font-bold">Heads up:</strong> You have no ring-first phone or transfer number configured.
+                      With AI off, every call will go straight to voicemail. Add a transfer number in the
+                      <strong> Integrations → Voice &amp; SMS</strong> tab, or enable ring-first below.
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              {/* ── 2. Your calling hours (BH jsonb editor) ──────── */}
+              <section>
+                <div className="flex items-center justify-between flex-wrap gap-4 mb-4">
+                  <div>
+                    <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-primary" />
+                      Your calling hours
+                    </h3>
+                    <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-xl">
+                      When is someone at your business ready to take calls? The AI uses
+                      these hours to decide what's "business hours" vs "after hours."
+                    </p>
+                  </div>
+                  <div className="px-3 py-1.5 bg-primary/10 rounded-xl">
+                    <span className="text-xs font-bold text-primary">{tenant?.timezone || "America/Chicago"}</span>
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100">
+                  <div className="space-y-4">
+                    {Object.entries(form.business_hours).map(([day, config]) => (
+                      <div key={day} className="flex items-center justify-between gap-4 py-1">
+                        <div className="w-28">
+                          <span className="text-sm font-bold text-gray-700 capitalize">{day}</span>
+                        </div>
+                        <div className="flex-1 flex items-center gap-4">
+                          {!config.closed ? (
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="time"
+                                value={config.open || "08:00"}
+                                onChange={(e) => handleUpdateOpeningHours(day, "open", e.target.value)}
+                                className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold focus:ring-4 focus:ring-primary/5 transition-all"
+                              />
+                              <span className="text-gray-400 font-bold">—</span>
+                              <input
+                                type="time"
+                                value={config.close || "17:00"}
+                                onChange={(e) => handleUpdateOpeningHours(day, "close", e.target.value)}
+                                className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold focus:ring-4 focus:ring-primary/5 transition-all"
+                              />
+                            </div>
+                          ) : (
+                            <span className="text-sm text-gray-400 font-bold italic">Closed All Day</span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateOpeningHours(day, "closed", !config.closed)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-tight transition-all border ${config.closed
+                            ? "bg-red-50 text-red-600 border-red-100"
+                            : "bg-emerald-50 text-emerald-600 border-emerald-100"
+                            }`}
+                        >
+                          {config.closed ? "Closed" : "Open"}
+                        </button>
                       </div>
-                      <div className="flex-1 flex items-center gap-4">
-                        {!config.closed ? (
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="time"
-                              value={config.open || "08:00"}
-                              onChange={(e) => handleUpdateOpeningHours(day, "open", e.target.value)}
-                              className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold focus:ring-4 focus:ring-primary/5 transition-all"
-                            />
-                            <span className="text-gray-400 font-bold">—</span>
-                            <input
-                              type="time"
-                              value={config.close || "17:00"}
-                              onChange={(e) => handleUpdateOpeningHours(day, "close", e.target.value)}
-                              className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold focus:ring-4 focus:ring-primary/5 transition-all"
-                            />
-                          </div>
-                        ) : (
-                          <span className="text-sm text-gray-400 font-bold italic">Closed All Day</span>
+                    ))}
+                  </div>
+                </div>
+              </section>
+
+              {/* ── 3. When AI answers (24/7 vs after-hours only) ── */}
+              <section className={`pt-2 ${!form.ai_master_enabled ? "opacity-40 pointer-events-none" : ""}`}>
+                <div className="mb-4">
+                  <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
+                    <Bot className="w-4 h-4 text-primary" />
+                    When should AI answer?
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-xl">
+                    Choose whether AI handles every call, or only after your calling hours
+                    end so you can pick up during the day.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateForm("ai_answers_after_hours", false)}
+                    className={`relative flex items-start gap-3 p-5 rounded-2xl border-2 transition-all text-left ${
+                      !form.ai_answers_after_hours
+                        ? "border-gray-900 bg-gray-900 text-white shadow-lg scale-[1.01]"
+                        : "border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300 hover:bg-gray-100"
+                    }`}
+                  >
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                      !form.ai_answers_after_hours ? "bg-emerald-500/20 text-emerald-300" : "bg-white text-gray-400"
+                    }`}>
+                      <Bot className="w-5 h-5" strokeWidth={2.5} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h4 className="text-sm font-black uppercase tracking-wide">AI answers 24/7</h4>
+                        {!form.ai_answers_after_hours && (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                         )}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleUpdateOpeningHours(day, "closed", !config.closed)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-tight transition-all border ${config.closed
-                          ? "bg-red-50 text-red-600 border-red-100"
-                          : "bg-emerald-50 text-emerald-600 border-emerald-100"
-                          }`}
-                      >
-                        {config.closed ? "Closed" : "Open"}
-                      </button>
+                      <p className={`text-xs leading-relaxed ${!form.ai_answers_after_hours ? "text-slate-300" : "text-gray-500"}`}>
+                        Every call is answered by AI, regardless of time of day. Best for
+                        maximum lead capture.
+                      </p>
                     </div>
-                  ))}
-                </div>
-              </div>
+                  </button>
 
-              <div className="pt-6 border-t border-gray-100">
-                <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">After-Hours Behavior</label>
-                <select
-                  value={form.afterhours_behavior}
-                  onChange={(e) => handleUpdateForm("afterhours_behavior", e.target.value)}
-                  className="w-full md:w-64 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-primary/5 transition-all outline-none font-bold text-xs"
-                >
-                  <option value="voicemail">AI Out-of-Office Greeting</option>
-                  <option value="transfer">Transfer to Live Agent</option>
-                  <option value="sms">Send SMS Notification</option>
-                </select>
-                <p className="text-xs text-gray-500 mt-2 italic">Note: Transfer only works if a transfer number is configured.</p>
-              </div>
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateForm("ai_answers_after_hours", true)}
+                    className={`relative flex items-start gap-3 p-5 rounded-2xl border-2 transition-all text-left ${
+                      form.ai_answers_after_hours
+                        ? "border-gray-900 bg-gray-900 text-white shadow-lg scale-[1.01]"
+                        : "border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300 hover:bg-gray-100"
+                    }`}
+                  >
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                      form.ai_answers_after_hours ? "bg-emerald-500/20 text-emerald-300" : "bg-white text-gray-400"
+                    }`}>
+                      <Clock className="w-5 h-5" strokeWidth={2.5} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h4 className="text-sm font-black uppercase tracking-wide">After-hours only</h4>
+                        {form.ai_answers_after_hours && (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        )}
+                      </div>
+                      <p className={`text-xs leading-relaxed ${form.ai_answers_after_hours ? "text-slate-300" : "text-gray-500"}`}>
+                        AI only answers outside your calling hours. During the day,
+                        calls go to voicemail so you can pick up.
+                      </p>
+                    </div>
+                  </button>
+                </div>
+              </section>
+
+              {/* ── 4. Ring-first handoff ──────────────────────────── */}
+              <section className={`pt-4 border-t border-gray-100 ${!form.ai_master_enabled ? "opacity-60" : ""}`}>
+                <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
+                      <PhoneForwarded className="w-4 h-4 text-primary" />
+                      Ring-first handoff
+                    </h3>
+                    <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-xl">
+                      Ring a human's number first. If they don't pick up within the timeout,
+                      the call falls through to {form.ai_master_enabled ? "AI (or voicemail if AI is off)" : "voicemail"}.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !form.ring_first_enabled;
+                      // Smart autofill: when enabling for the first time and no
+                      // phone is set yet, pre-populate from transfer_numbers[0]
+                      // if available (matches memory #29 decision).
+                      if (next && !form.ring_first_phone.trim() && form.transfer_numbers_raw) {
+                        const firstTransfer = form.transfer_numbers_raw
+                          .split(",")
+                          .map((s) => s.trim())
+                          .filter(Boolean)[0];
+                        if (firstTransfer) {
+                          handleUpdateForm("ring_first_phone", firstTransfer);
+                        }
+                      }
+                      handleUpdateForm("ring_first_enabled", next);
+                    }}
+                    className={`relative w-12 h-7 rounded-full transition-colors shrink-0 ${
+                      form.ring_first_enabled ? "bg-gray-900" : "bg-gray-300"
+                    }`}
+                    aria-pressed={form.ring_first_enabled}
+                    aria-label="Toggle ring-first"
+                  >
+                    <div
+                      className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${
+                        form.ring_first_enabled ? "translate-x-5" : "translate-x-0.5"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {form.ring_first_enabled && (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-2">
+                        Phone to ring
+                      </label>
+                      <input
+                        type="tel"
+                        value={form.ring_first_phone}
+                        onChange={(e) => handleUpdateForm("ring_first_phone", e.target.value)}
+                        placeholder="+1 (402) 555-1234"
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-sm focus:ring-4 focus:ring-primary/5 transition-all outline-none placeholder:text-slate-400"
+                      />
+                      <p className="text-xs text-gray-500 mt-1.5 italic">
+                        US or international, any format. We'll normalize it.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-2">
+                        Ring timeout
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={5}
+                          max={60}
+                          value={form.ring_first_timeout_seconds}
+                          onChange={(e) => handleUpdateForm("ring_first_timeout_seconds", parseInt(e.target.value, 10) || 20)}
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-bold text-sm focus:ring-4 focus:ring-primary/5 transition-all outline-none text-center"
+                        />
+                        <span className="text-xs font-black text-gray-500 uppercase tracking-widest">sec</span>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1.5 italic">5–60 seconds</p>
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              {/* ── 5. Voicemail greeting ─────────────────────────── */}
+              <section className="pt-4 border-t border-gray-100">
+                <div className="mb-4">
+                  <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
+                    <Volume2 className="w-4 h-4 text-primary" />
+                    Voicemail greeting <span className="text-xs font-medium text-gray-400 normal-case ml-1">(optional)</span>
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-xl">
+                    Custom audio played when a call lands in voicemail. Leave blank to
+                    use a friendly default message.
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-2">
+                      Audio URL
+                    </label>
+                    <input
+                      type="url"
+                      value={form.voicemail_message_url}
+                      onChange={(e) => handleUpdateForm("voicemail_message_url", e.target.value)}
+                      placeholder="https://cdn.example.com/my-greeting.mp3"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:ring-4 focus:ring-primary/5 transition-all outline-none placeholder:text-slate-400"
+                    />
+                    <p className="text-xs text-gray-500 mt-1.5 italic">
+                      Must be HTTPS, and end in <code className="bg-gray-100 px-1 rounded">.mp3</code> or <code className="bg-gray-100 px-1 rounded">.wav</code>.
+                    </p>
+                  </div>
+
+                  {/* Record greeting — placeholder stub (Round C) */}
+                  <button
+                    type="button"
+                    disabled
+                    className="w-full md:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-gray-100 text-gray-400 rounded-xl text-xs font-black uppercase tracking-widest cursor-not-allowed border border-gray-200"
+                    title="In-browser recording coming in a future update"
+                  >
+                    <Mic className="w-3.5 h-3.5" />
+                    Record greeting (coming soon)
+                  </button>
+                </div>
+              </section>
             </div>
           )}
 

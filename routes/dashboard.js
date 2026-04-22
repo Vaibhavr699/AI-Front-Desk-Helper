@@ -1473,7 +1473,11 @@ router.get("/twilio/available-numbers", async (req, res) => {
 
 // -------------------- Phone Numbers --------------------
 
-const result = await db.query(
+router.get("/phone-numbers", async (req, res) => {
+  try {
+    const tenantIds = await getTargetTenantIds(req);
+    if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
+    const result = await db.query(
       `SELECT id, tenant_id, phone, is_primary, lead_source, created_at,
               twilio_sid, ai_status, ring_first_enabled, ring_first_phone,
               ring_first_timeout_seconds, business_hours_enabled, voicemail_message_url

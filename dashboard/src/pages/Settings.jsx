@@ -282,6 +282,35 @@ function WebhookGuideDrawer({ isOpen, onClose, webhook, onCopy }) {
 
 const TENANT_STORAGE_KEY = "tenantId";
 
+// ── Timezone options (Apr 23, 2026) ──────────────────────────────────
+// Maps friendly names to IANA strings. IANA is what tenant.timezone expects
+// and what the backend's isWithinBusinessHours() passes to Intl.DateTimeFormat.
+// Arizona is its own entry because it stays on MST year-round (no DST).
+const TIMEZONE_OPTIONS = [
+  { value: "America/New_York",    label: "Eastern Time (ET)" },
+  { value: "America/Chicago",     label: "Central Time (CT)" },
+  { value: "America/Denver",      label: "Mountain Time (MT)" },
+  { value: "America/Phoenix",     label: "Arizona (MST, no DST)" },
+  { value: "America/Los_Angeles", label: "Pacific Time (PT)" },
+];
+
+/**
+ * Best-effort browser timezone detection. Returns the IANA string the browser
+ * reports, or null if it doesn't match one of our 5 supported US zones.
+ * Used to auto-populate tenant.timezone on first save if it's null.
+ */
+function detectBrowserTimezone() {
+  try {
+    const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (TIMEZONE_OPTIONS.some((o) => o.value === detected)) return detected;
+    // Browser returned something we don't offer (e.g. America/Indiana/Indianapolis).
+    // Caller falls back to null so the tenant keeps whatever they had.
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 const DEFAULT_CAMPAIGN_PLACEHOLDERS = {
@@ -2258,7 +2287,17 @@ export default function Settings({ tenantId }) {
 
                 <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100">
                   <div className="space-y-4">
-                    {Object.entries(form.business_hours).map(([day, config]) => (
+                    {(() => {
+                      // Sort days Sunday → Saturday. Object.entries() returns
+                      // keys in insertion order, which depends on when the
+                      // business_hours jsonb was seeded — not guaranteed to
+                      // be Sun→Sat. This IIFE re-orders for display.
+                      const DAY_ORDER = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+                      return DAY_ORDER
+                        .filter((day) => form.business_hours[day])
+                        .map((day) => [day, form.business_hours[day]]);
+                    })().map(([day, config]) => (
+                    
                       <div key={day} className="flex items-center justify-between gap-4 py-1">
                         <div className="w-28">
                           <span className="text-sm font-bold text-gray-700 capitalize">{day}</span>

@@ -3258,8 +3258,8 @@ wss.on("connection", async (twilioSocket, req) => {
         outboundScript,
       });
 
-      const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 1000;
-      const vadThreshold = parseFloat(process.env.REALTIME_VAD_THRESHOLD) || 0.6;
+      const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 1500;
+      const vadThreshold = parseFloat(process.env.REALTIME_VAD_THRESHOLD) || 0.85;
       const sessionUpdate = {
   type: "session.update",
   session: {
@@ -3276,7 +3276,6 @@ Speak clearly at a moderate pace. Let the caller finish before you respond. Alwa
       prefix_padding_ms: 500,
       silence_duration_ms: silenceMs,
     },
-    input_audio_transcription: { model: "whisper-1" },
   },
 };
  

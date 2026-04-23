@@ -95,11 +95,11 @@ function getNavItems(activeTenant) {
     items.push({ to: "/locations", label: "Locations", icon: LocationsIcon });
   }
 
-  if (isHQ) {
+ if (isHQ) {
     items.push({ to: "/team",     label: "Team",       icon: TeamIcon       });
     items.push({ to: "/tenants",  label: "Businesses", icon: BusinessesIcon });
+    items.push({ to: "/rollup-v5", label: "Rollup",    icon: RollupIcon     });
   }
-
   if (user?.is_super_admin) {
     items.push({ to: "/admin/tenants", label: "Admin Console", icon: AdminIcon });
   }
@@ -180,6 +180,15 @@ function BusinessesIcon({ className }) {
   return (
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+    </svg>
+  );
+}
+
+// ── Rollup icon — sparkle (new V5 dashboard) ──────────────────────────────
+function RollupIcon({ className }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
     </svg>
   );
 }

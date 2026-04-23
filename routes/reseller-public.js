@@ -19,7 +19,11 @@ const router = express.Router();
 const db = require('../lib/db');
 const { auditLog } = require('../lib/auditLogger');
 const { validateCanAddCustomer } = require('../lib/resellerBilling');
-const { sendResellerCustomerWelcomeEmail } = require('../services/resellerEmail');
+const {
+  sendResellerCustomerWelcomeEmail,
+  sendResellerNewCustomerNotification,
+} = require('../services/resellerEmail');
+const { notifyResellerNewCustomer } = require('../services/notifications');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -251,9 +255,28 @@ router.post('/:code/signup', async (req, res) => {
       console.error('[reseller-public/signup] welcome email failed:', err.message)
     );
 
-    // TODO: notify the reseller of the new self-signup (Test 4 work).
-    // Phase 3 punt — adds complexity and we don't have a generic
-    // sendResellerNewCustomerNotification template yet.
+   // Notify the reseller via in-app bell + email. Both fire-and-forget so
+    // a Resend outage or notifications table issue never blocks signup.
+    notifyResellerNewCustomer(reseller.id, {
+      customer_tenant_id: created.id,
+      customer_name: trimmedName,
+      customer_email: normalizedEmail,
+      via: 'public_signup',
+    }).catch((err) =>
+      console.error('[reseller-public/signup] bell notification failed:', err.message)
+    );
+
+    if (reseller.primary_email) {
+      sendResellerNewCustomerNotification({
+        to: reseller.primary_email,
+        reseller_name: reseller.name,
+        customer_name: trimmedName,
+        customer_email: normalizedEmail,
+        customer_phone: phone ? String(phone).trim() : null,
+      }).catch((err) =>
+        console.error('[reseller-public/signup] reseller notification email failed:', err.message)
+      );
+    }
 
     return res.status(201).json({
       success: true,

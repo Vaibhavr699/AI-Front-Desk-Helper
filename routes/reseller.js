@@ -28,7 +28,9 @@ const {
 const {
   sendResellerCustomerWelcomeEmail,
   sendResellerCustomerRemovedEmail,
+  sendResellerNewCustomerNotification,
 } = require('../services/resellerEmail');
+const { notifyResellerNewCustomer } = require('../services/notifications');
 
 const APP_URL = process.env.APP_URL || 'https://aifrontdeskhelper.com';
 
@@ -354,6 +356,30 @@ router.post('/customers', async (req, res) => {
     }).catch((err) =>
       console.error('[reseller/customers:create] welcome email failed:', err.message)
     );
+
+    // Apr 23, 2026: Bell notification + reseller email so the reseller has
+    // a record of every customer added — even ones they added themselves.
+    // Per Drew spec: gives reseller forwardable proof the welcome email landed.
+    notifyResellerNewCustomer(req.user.tenant.id, {
+      customer_tenant_id: created.id,
+      customer_name: name,
+      customer_email: primary_email,
+      via: 'manual_add',
+    }).catch((err) =>
+      console.error('[reseller/customers:create] bell notification failed:', err.message)
+    );
+
+    if (req.user.tenant.primary_email) {
+      sendResellerNewCustomerNotification({
+        to: req.user.tenant.primary_email,
+        reseller_name: req.user.tenant.name,
+        customer_name: name,
+        customer_email: primary_email,
+        customer_phone: phone || null,
+      }).catch((err) =>
+        console.error('[reseller/customers:create] reseller notification email failed:', err.message)
+      );
+    }
 
     return res.status(201).json({ customer: created });
   } catch (err) {

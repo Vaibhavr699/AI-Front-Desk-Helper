@@ -42,7 +42,7 @@ async function validateParentAccess(req, res, parentId) {
 
   const parentRes = await db.query(
     `SELECT id, name, company_name, parent_id, parent_mode, brand_mode,
-            timezone, brand_color, logo_url
+            timezone, brand_color, logo_url, created_at
        FROM tenants
       WHERE id = $1
       LIMIT 1`,
@@ -55,17 +55,13 @@ async function validateParentAccess(req, res, parentId) {
     return null;
   }
 
-  // Must be a parent (has parent_mode set). Children/standalone tenants don't
-  // have a rollup view — redirect them to their own dashboard instead.
   if (!parent.parent_mode) {
     res.status(400).json({ error: "This tenant is not a parent / rollup tenant" });
     return null;
   }
 
-  // Superadmin bypass — match existing pattern from routes/admin.js
   if (req.user?.is_super_admin) return parent;
 
-  // Otherwise the authenticated user must have membership in this tenant
   const membershipRes = await db.query(
     `SELECT 1 FROM team_members
       WHERE user_id = $1 AND tenant_id = $2
@@ -90,8 +86,6 @@ async function validateParentAccess(req, res, parentId) {
 //   children only (including parent would always add zeros)
 //
 // Active children = haven't been removed, aren't suspended, not soft-deleted.
-// Removed-but-within-retention locations are excluded so tiles don't show
-// zombie data from closed franchisees.
 async function getRollupScopeIds(parent) {
   const { rows } = await db.query(
     `SELECT id
@@ -104,8 +98,6 @@ async function getRollupScopeIds(parent) {
   );
   const childIds = rows.map((r) => r.id);
 
-  // operating_hq parents count their own activity in the rollup.
-  // rollup_only parents do not (they never have direct jobs/calls/bookings).
   if (parent.parent_mode === "operating_hq") {
     return { all_ids: [parent.id, ...childIds], child_ids: childIds };
   }
@@ -115,14 +107,6 @@ async function getRollupScopeIds(parent) {
 // ═══════════════════════════════════════════════════════════════════════════
 // HERO TILE 1 — AI ACTIVITY
 // ═══════════════════════════════════════════════════════════════════════════
-// Shows: total calls handled + booking conversion rate across all locations.
-// Definition per Apr 23 spec:
-//   • calls_total       = COUNT(calls) in period where direction='inbound'
-//   • bookings_total    = COUNT(bookings) created in period
-//   • booking_rate      = bookings_total / calls_total (as percentage)
-// Edge cases:
-//   • If calls_total = 0, booking_rate = null (don't render "NaN%")
-//   • If no tenant IDs in scope, all values return 0 / null
 async function getAiActivityTile(tenantIds, days) {
   if (tenantIds.length === 0) {
     return { calls_total: 0, bookings_total: 0, booking_rate_pct: null };
@@ -145,7 +129,7 @@ async function getAiActivityTile(tenantIds, days) {
   const { calls_total, bookings_total } = result.rows[0];
   const booking_rate_pct =
     calls_total > 0
-      ? Math.round((bookings_total / calls_total) * 1000) / 10  // 1 decimal place
+      ? Math.round((bookings_total / calls_total) * 1000) / 10
       : null;
 
   return { calls_total, bookings_total, booking_rate_pct };
@@ -154,30 +138,6 @@ async function getAiActivityTile(tenantIds, days) {
 // ═══════════════════════════════════════════════════════════════════════════
 // HERO TILE 2 — AFTER-HOURS REVENUE
 // ═══════════════════════════════════════════════════════════════════════════
-// The sales-pitch tile: "Your AI captured $X outside business hours."
-//
-// Definition per Apr 23 spec:
-//   • Only bookings.actual_revenue_cents (honest — understates early but
-//     never inflates).
-//   • Bookings are "after-hours" if created_at falls OUTSIDE that tenant's
-//     own business_hours when evaluated in that tenant's timezone.
-//   • business_hours fallback when NULL/empty: Mon-Fri 8 AM - 6 PM local.
-//
-// SQL strategy:
-//   1. JOIN bookings to tenants to get each tenant's business_hours + timezone
-//   2. Convert booking.created_at to local time via AT TIME ZONE
-//   3. Extract dow (day of week) and time-of-day
-//   4. Compare against business_hours[day] JSONB — closed days always count
-//      as after-hours, and time-outside-open/close counts too
-//   5. Fallback to 8-6 Mon-Fri if business_hours IS NULL
-//
-// Returns:
-//   {
-//     after_hours_revenue_cents: <int>,
-//     after_hours_booking_count: <int>,
-//     total_revenue_cents:       <int>,  // for % comparison
-//     after_hours_pct_of_total:  <number|null>
-//   }
 async function getAfterHoursRevenueTile(tenantIds, days) {
   if (tenantIds.length === 0) {
     return {
@@ -188,20 +148,6 @@ async function getAfterHoursRevenueTile(tenantIds, days) {
     };
   }
 
-  // Postgres dow: 0=Sunday, 1=Monday, ... 6=Saturday.
-  // business_hours JSONB uses lowercase day names: sunday, monday, ...
-  // We map dow → key via CASE, pull the nested open/close/closed, then
-  // compare against the local time of booking.created_at.
-  //
-  // Fallback behavior:
-  //   • If business_hours IS NULL → use Mon-Fri 8:00-18:00 (hardcoded in CASE)
-  //   • If business_hours[day] has closed=true → always after-hours
-  //   • If business_hours[day] has no open/close → same fallback
-  //
-  // Timezone handling:
-  //   • Each tenant may have its own timezone (IANA string like 'America/Chicago')
-  //   • Fallback to 'America/Chicago' if NULL (matches backend default)
-  //   • AT TIME ZONE converts created_at (timestamptz) to local wall clock
   const result = await db.query(
     `
     WITH booking_scope AS (
@@ -223,7 +169,6 @@ async function getAfterHoursRevenueTile(tenantIds, days) {
         id,
         actual_revenue_cents,
         CASE
-          -- No business_hours configured: fallback Mon-Fri 8:00-18:00
           WHEN business_hours IS NULL THEN
             CASE
               WHEN EXTRACT(DOW FROM (created_at AT TIME ZONE tz)) NOT IN (1,2,3,4,5) THEN true
@@ -232,9 +177,7 @@ async function getAfterHoursRevenueTile(tenantIds, days) {
               ELSE false
             END
           ELSE
-            -- Use tenant's business_hours JSONB
             CASE
-              -- Day marked closed OR missing entirely → after-hours
               WHEN COALESCE(
                 (business_hours -> (
                   CASE EXTRACT(DOW FROM (created_at AT TIME ZONE tz))::int
@@ -249,7 +192,6 @@ async function getAfterHoursRevenueTile(tenantIds, days) {
                 ) ->> 'closed')::boolean,
                 true
               ) THEN true
-              -- Before opening time → after-hours
               WHEN (created_at AT TIME ZONE tz)::time 
                 COALESCE(
                   (business_hours -> (
@@ -266,7 +208,6 @@ async function getAfterHoursRevenueTile(tenantIds, days) {
                   '08:00'::time
                 )
               THEN true
-              -- At or after closing time → after-hours
               WHEN (created_at AT TIME ZONE tz)::time >=
                 COALESCE(
                   (business_hours -> (
@@ -319,6 +260,110 @@ async function getAfterHoursRevenueTile(tenantIds, days) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// HERO TILE 3 — NETWORK REVENUE
+// ═══════════════════════════════════════════════════════════════════════════
+// Sum of actual_revenue_cents across all rollup-scope tenants in the period,
+// plus MoM delta comparing to the immediately prior same-length window.
+//
+// Definition per Apr 23 spec:
+//   • actual_revenue_cents ONLY — matches Tile 2, keeps the dashboard honest.
+//     Pipeline (estimated_revenue_cents) NOT included.
+//   • MoM delta: current period total vs previous equal-length period
+//     (e.g. period=30d → current 0-30d, previous 30-60d).
+//   • Confidence flag: 'high' when parent has ≥60d of history, otherwise
+//     'low' so the UI can gray out or show a disclaimer. We do NOT suppress
+//     the delta itself — backend returns data, frontend decides display.
+//
+// Age source: tenant parent's created_at. For rollup_only parents with
+// multiple children of varying ages this is still the right signal —
+// the question is "has THIS dashboard accumulated enough data yet", which
+// is answered by when the parent tenant was created.
+//
+// Edge cases:
+//   • Previous period total = 0 → delta_pct = null (can't divide by zero).
+//     UI should render "No prior data" instead of "+∞%".
+//   • Current = 0 and previous = 0 → delta_pct = null, delta_direction = 'flat'.
+//   • Current > 0 and previous = 0 → delta_cents > 0 but delta_pct = null.
+//     UI shows absolute delta ("+$X") without a percentage.
+async function getNetworkRevenueTile(tenantIds, days, parentCreatedAt) {
+  if (tenantIds.length === 0) {
+    return {
+      current_cents:     0,
+      previous_cents:    0,
+      delta_cents:       0,
+      delta_pct:         null,
+      delta_direction:   "flat",
+      confidence:        "low",
+      parent_age_days:   0,
+    };
+  }
+
+  // Two SUMs in a single query — Postgres handles the date math. We express
+  // both windows in terms of `now()` so there's no timezone edge case: both
+  // windows always compare to the same reference point.
+  //
+  // Current window:  now() - $days               → now()
+  // Previous window: now() - ($days * 2)         → now() - $days
+  const result = await db.query(
+    `SELECT
+       COALESCE(SUM(CASE
+         WHEN created_at > now() - ($2::int * interval '1 day') THEN actual_revenue_cents
+         ELSE 0
+       END), 0)::bigint AS current_cents,
+       COALESCE(SUM(CASE
+         WHEN created_at <= now() - ($2::int * interval '1 day')
+          AND created_at >  now() - (($2::int * 2) * interval '1 day')
+         THEN actual_revenue_cents
+         ELSE 0
+       END), 0)::bigint AS previous_cents
+     FROM bookings
+     WHERE tenant_id = ANY($1::uuid[])
+       AND created_at > now() - (($2::int * 2) * interval '1 day')
+       AND actual_revenue_cents IS NOT NULL
+       AND actual_revenue_cents > 0`,
+    [tenantIds, days]
+  );
+
+  const current_cents  = Number(result.rows[0].current_cents);
+  const previous_cents = Number(result.rows[0].previous_cents);
+  const delta_cents    = current_cents - previous_cents;
+
+  // Percentage: divide by previous, but guard against /0.
+  // Signed — positive when growing, negative when shrinking.
+  const delta_pct =
+    previous_cents > 0
+      ? Math.round((delta_cents / previous_cents) * 1000) / 10
+      : null;
+
+  let delta_direction = "flat";
+  if (delta_cents > 0) delta_direction = "up";
+  else if (delta_cents < 0) delta_direction = "down";
+
+  // Confidence: based on how long this parent tenant has existed relative
+  // to the comparison window. "60 days" is the spec's heuristic for "enough
+  // history to trust the delta." We use the actual window size * 2 as the
+  // threshold because that's what we're comparing against — if a parent is
+  // 65 days old and period=30d, we need 60d of data and have 65, which is
+  // high confidence. If period=90d, we need 180d and 65 is low confidence.
+  const parent_age_days = parentCreatedAt
+    ? Math.floor((Date.now() - new Date(parentCreatedAt).getTime()) / (1000 * 60 * 60 * 24))
+    : 0;
+  const required_days_for_high_confidence = days * 2;
+  const confidence =
+    parent_age_days >= required_days_for_high_confidence ? "high" : "low";
+
+  return {
+    current_cents,
+    previous_cents,
+    delta_cents,
+    delta_pct,
+    delta_direction,
+    confidence,
+    parent_age_days,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MAIN ENDPOINT
 // GET /api/rollup-v5/:parentId?period=30d
 // ═══════════════════════════════════════════════════════════════════════════
@@ -327,19 +372,17 @@ router.get("/:parentId", async (req, res) => {
     const { parentId } = req.params;
     const { period, days } = resolvePeriod(req.query.period);
 
-    // 1. Validate access and fetch parent row
     const parent = await validateParentAccess(req, res, parentId);
-    if (!parent) return; // validateParentAccess already sent the error response
+    if (!parent) return;
 
-    // 2. Resolve rollup scope. For operating_hq parents this includes the
-    //    parent itself; for rollup_only it doesn't. See getRollupScopeIds.
     const scope = await getRollupScopeIds(parent);
 
-    // 3. Build tiles. Run in parallel — independent data, no reason to wait
-    //    serially. Future tiles will follow the same pattern.
-    const [aiActivity, afterHoursRevenue] = await Promise.all([
+    // All three tiles run in parallel. Tile 3 needs the parent row's
+    // created_at to compute confidence, so we pass it down.
+    const [aiActivity, afterHoursRevenue, networkRevenue] = await Promise.all([
       getAiActivityTile(scope.all_ids, days),
       getAfterHoursRevenueTile(scope.all_ids, days),
+      getNetworkRevenueTile(scope.all_ids, days, parent.created_at),
     ]);
 
     res.json({
@@ -364,7 +407,7 @@ router.get("/:parentId", async (req, res) => {
       tiles: {
         ai_activity:         aiActivity,
         after_hours_revenue: afterHoursRevenue,
-        // network_revenue:     TODO (tile 3)
+        network_revenue:     networkRevenue,
         // reviews_health:      TODO (tile 4)
       },
       // contact_method_donut: TODO

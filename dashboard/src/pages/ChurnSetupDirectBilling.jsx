@@ -189,6 +189,9 @@ function Row(props) {
 }
 
 function ErrorCard(props) {
+  function handleClick() {
+    window.location.href = props.ctaHref;
+  }
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-stone-200 p-8 text-center">
       <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-red-100 mb-3">
@@ -198,12 +201,13 @@ function ErrorCard(props) {
       </div>
       <h1 className="text-xl font-bold text-stone-900 mb-2">{props.title}</h1>
       <p className="text-sm text-stone-500 mb-5 leading-relaxed">{props.message}</p>
-      
-        href={props.ctaHref}
+      <button
+        type="button"
+        onClick={handleClick}
         className="inline-block px-5 py-2.5 text-sm font-bold text-white bg-stone-900 hover:bg-stone-800 rounded-lg transition-colors"
       >
         {props.ctaLabel}
-      </a>
+      </button>
     </div>
   );
 }

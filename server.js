@@ -421,6 +421,7 @@ app.use("/api/admin", authMiddleware, requireSuperAdmin, require("./routes/admin
 app.use("/api/team", authMiddleware, require("./routes/team"));
 app.use("/api/audit-logs", authMiddleware, auditLogsRouter);
 app.use("/api/franchisee", require("./routes/franchisee"));
+app.use('/api/reseller-public', require('./routes/reseller-public'));
 app.use("/api", authMiddleware, dashboardRoutes);
 app.use("/auth/google/calendar", require("./routes/google-calendar"));
 app.use("/api/google-calendar", authMiddleware, require("./routes/google-calendar"));
@@ -429,7 +430,6 @@ app.use("/api/coaching", authMiddleware, require("./routes/coaching"));
 app.use("/api/ai-coach", authMiddleware, require("./routes/aicoach"));
 app.use("/api/reviews", require("./routes/reviews"));
 app.use('/api/reseller', require('./routes/reseller'));
-app.use('/api/reseller-public', require('./routes/reseller-public'));
 app.use('/api/rollup', authMiddleware, require('./routes/rollup'));
 app.use('/churn', require('./routes/churnPublic'));
 

@@ -145,7 +145,19 @@ async function getAiActivityTile(tenantIds, days) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// HERO TILE 2 — AFTER-HOURS REVENUE
+// HERO TILE 2 — AFTER-HOURS REVENUE (JS-based classification)
+// ═══════════════════════════════════════════════════════════════════════════
+// Replaced the nested-CASE SQL variant with JS classification after a 499
+// timeout on prod (Apr 23 evening) — the AT TIME ZONE + JSONB approach was
+// O(N) full-table scan because we have no composite index on
+// (tenant_id, created_at, actual_revenue_cents).
+//
+// New approach: pull raw bookings + tenant tz/hours ONCE, classify in Node.
+// Memory trivial (25-100 rows per tenant in period); query time <100ms.
+//
+// Trade-off: JS-side uses Intl.DateTimeFormat per booking which has some
+// overhead. For 10k bookings this might get slow (~2s). At that scale,
+// revisit with a proper covering index + bring the CASE variant back.
 // ═══════════════════════════════════════════════════════════════════════════
 async function getAfterHoursRevenueTile(tenantIds, days) {
   if (tenantIds.length === 0) {
@@ -157,103 +169,36 @@ async function getAfterHoursRevenueTile(tenantIds, days) {
     };
   }
 
+  // Pull all revenue-bearing bookings in the period with tenant context.
+  // Simple indexed-friendly query: tenant_id = ANY + created_at range.
   const result = await db.query(
-    `
-    WITH booking_scope AS (
-      SELECT
-        b.id,
-        b.actual_revenue_cents,
-        b.created_at,
-        COALESCE(t.timezone, 'America/Chicago') AS tz,
-        t.business_hours
-      FROM bookings b
-      JOIN tenants t ON t.id = b.tenant_id
-      WHERE b.tenant_id = ANY($1::uuid[])
-        AND b.created_at > now() - ($2::int * interval '1 day')
-        AND b.actual_revenue_cents IS NOT NULL
-        AND b.actual_revenue_cents > 0
-    ),
-    booking_classified AS (
-      SELECT
-        id,
-        actual_revenue_cents,
-        CASE
-          WHEN business_hours IS NULL THEN
-            CASE
-              WHEN EXTRACT(DOW FROM (created_at AT TIME ZONE tz)) NOT IN (1,2,3,4,5) THEN true
-              WHEN (created_at AT TIME ZONE tz)::time < '08:00:00' THEN true
-              WHEN (created_at AT TIME ZONE tz)::time >= '18:00:00' THEN true
-              ELSE false
-            END
-          ELSE
-            CASE
-              WHEN COALESCE(
-                (business_hours -> (
-                  CASE EXTRACT(DOW FROM (created_at AT TIME ZONE tz))::int
-                    WHEN 0 THEN 'sunday'
-                    WHEN 1 THEN 'monday'
-                    WHEN 2 THEN 'tuesday'
-                    WHEN 3 THEN 'wednesday'
-                    WHEN 4 THEN 'thursday'
-                    WHEN 5 THEN 'friday'
-                    WHEN 6 THEN 'saturday'
-                  END
-                ) ->> 'closed')::boolean,
-                true
-              ) THEN true
-              WHEN (created_at AT TIME ZONE tz)::time 
-                COALESCE(
-                  (business_hours -> (
-                    CASE EXTRACT(DOW FROM (created_at AT TIME ZONE tz))::int
-                      WHEN 0 THEN 'sunday'
-                      WHEN 1 THEN 'monday'
-                      WHEN 2 THEN 'tuesday'
-                      WHEN 3 THEN 'wednesday'
-                      WHEN 4 THEN 'thursday'
-                      WHEN 5 THEN 'friday'
-                      WHEN 6 THEN 'saturday'
-                    END
-                  ) ->> 'open')::time,
-                  '08:00'::time
-                )
-              THEN true
-              WHEN (created_at AT TIME ZONE tz)::time >=
-                COALESCE(
-                  (business_hours -> (
-                    CASE EXTRACT(DOW FROM (created_at AT TIME ZONE tz))::int
-                      WHEN 0 THEN 'sunday'
-                      WHEN 1 THEN 'monday'
-                      WHEN 2 THEN 'tuesday'
-                      WHEN 3 THEN 'wednesday'
-                      WHEN 4 THEN 'thursday'
-                      WHEN 5 THEN 'friday'
-                      WHEN 6 THEN 'saturday'
-                    END
-                  ) ->> 'close')::time,
-                  '18:00'::time
-                )
-              THEN true
-              ELSE false
-            END
-        END AS is_after_hours
-      FROM booking_scope
-    )
-    SELECT
-      COALESCE(SUM(CASE WHEN is_after_hours THEN actual_revenue_cents ELSE 0 END), 0)::bigint
-        AS after_hours_revenue_cents,
-      COUNT(*) FILTER (WHERE is_after_hours)::int
-        AS after_hours_booking_count,
-      COALESCE(SUM(actual_revenue_cents), 0)::bigint
-        AS total_revenue_cents
-    FROM booking_classified
-    `,
+    `SELECT
+       b.actual_revenue_cents,
+       b.created_at,
+       COALESCE(t.timezone, 'America/Chicago') AS tz,
+       t.business_hours
+     FROM bookings b
+     JOIN tenants t ON t.id = b.tenant_id
+     WHERE b.tenant_id = ANY($1::uuid[])
+       AND b.created_at > now() - ($2::int * interval '1 day')
+       AND b.actual_revenue_cents IS NOT NULL
+       AND b.actual_revenue_cents > 0`,
     [tenantIds, days]
   );
 
-  const row = result.rows[0];
-  const after_hours_revenue_cents = Number(row.after_hours_revenue_cents);
-  const after_hours_booking_count = Number(row.after_hours_booking_count);
-  const total_revenue_cents       = Number(row.total_revenue_cents);
+  let after_hours_revenue_cents = 0;
+  let after_hours_booking_count = 0;
+  let total_revenue_cents       = 0;
+
+  for (const row of result.rows) {
+    const cents = Number(row.actual_revenue_cents);
+    total_revenue_cents += cents;
+
+    if (isAfterHours(row.created_at, row.tz, row.business_hours)) {
+      after_hours_revenue_cents += cents;
+      after_hours_booking_count += 1;
+    }
+  }
 
   const after_hours_pct_of_total =
     total_revenue_cents > 0
@@ -266,6 +211,65 @@ async function getAfterHoursRevenueTile(tenantIds, days) {
     total_revenue_cents,
     after_hours_pct_of_total,
   };
+}
+
+// Classify a booking's created_at as after-hours given tenant's tz +
+// business_hours JSONB. Mirrors the SQL logic from the previous variant:
+//   • business_hours IS NULL  → Mon-Fri 08:00-18:00 fallback
+//   • day's "closed" flag true → always after-hours
+//   • time < open OR time >= close → after-hours
+// Shape (Apr 23 spec):
+//   { monday: { open: "08:00", close: "17:00", closed: false }, ... }
+const DAY_KEYS_JS = [
+  "sunday", "monday", "tuesday", "wednesday",
+  "thursday", "friday", "saturday",
+];
+const WEEKDAY_SHORT_ORDER = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function isAfterHours(createdAt, tz, businessHours) {
+  const d = new Date(createdAt);
+
+  // Intl.DateTimeFormat gets us local time in the tenant's timezone without
+  // pulling moment-timezone. Parts give weekday short name + HH:MM in 24h.
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+
+  const weekdayShort = parts.find((p) => p.type === "weekday")?.value;
+  let hour   = parts.find((p) => p.type === "hour")?.value;
+  const minute = parts.find((p) => p.type === "minute")?.value;
+
+  // Intl sometimes returns "24" for midnight — normalize to "00".
+  if (hour === "24") hour = "00";
+
+  const dowIndex = WEEKDAY_SHORT_ORDER.indexOf(weekdayShort);
+  // Defensive: if parse fails (shouldn't in practice), treat as after-hours
+  // so we don't under-report the sales pitch value.
+  if (dowIndex < 0 || !hour || !minute) return true;
+
+  const localTime = `${hour}:${minute}`;
+  const dayKey = DAY_KEYS_JS[dowIndex];
+
+  // Fallback: no business_hours configured → Mon-Fri 08:00-18:00
+  if (!businessHours || typeof businessHours !== "object") {
+    const isWeekend = dowIndex === 0 || dowIndex === 6;
+    if (isWeekend) return true;
+    return localTime < "08:00" || localTime >= "18:00";
+  }
+
+  const dayConfig = businessHours[dayKey];
+
+  // Day missing entirely OR explicitly closed → after-hours
+  if (!dayConfig || dayConfig.closed === true) return true;
+
+  const open  = dayConfig.open  || "08:00";
+  const close = dayConfig.close || "18:00";
+
+  return localTime < open || localTime >= close;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -511,50 +515,17 @@ async function getReviewsAlertsList(tenantIds) {
 // ═══════════════════════════════════════════════════════════════════════════
 // LOCATION TABLE
 // ═══════════════════════════════════════════════════════════════════════════
-// Per-tenant row breakdown across the network. Sortable by any displayed
-// column, with default sort revenue_cents desc (business-health framing).
-//
-// Design decisions:
-//   • Scope: uses scope.all_ids (same as tiles) so operating_hq parents
-//     see themselves in the table alongside children. A tenant viewing
-//     their own rollup SHOULD see their own row — excluding self would
-//     mean the table sum wouldn't equal the hero tiles.
-//   • One big query via LEFT JOINs + CTEs rather than N separate queries.
-//     For 50-location networks this is the difference between 50ms and
-//     2500ms. Every aggregate computes once on pre-filtered rowsets.
-//   • rank_revenue computed via window function (RANK() OVER). Always
-//     reflects ranking across the current scope, regardless of what the
-//     user is sorting by — so the frontend can show "#3 of 10" badges
-//     even when sorted alphabetically.
-//   • SQL injection: sort column is whitelisted BEFORE interpolation.
-//     See ALLOWED_SORT_COLUMNS above. Direction is ASC/DESC only.
-//   • NULLS handling: revenue-zero, rating-null tenants are sorted last
-//     for DESC sorts via NULLS LAST. For ASC we use NULLS FIRST so
-//     "worst first" actually shows worst.
-//
-// Returns: { locations: [ {...rowShape}, ... ], sort, dir }
 async function getLocationTable(tenantIds, days, sort, dir) {
   if (tenantIds.length === 0) {
     return { locations: [], sort, dir };
   }
 
-  // The column we ORDER BY has two edge cases:
-  //   1. booking_rate_pct is derived (not a raw column) — we compute it
-  //      inline in the SELECT so we can sort on the alias.
-  //   2. For numeric columns, NULL values need to sort at the extreme
-  //      "worst" end (NULLS LAST for DESC, NULLS FIRST for ASC) so users
-  //      always see ranked data first.
-  //
-  // We build the ORDER BY clause server-side after whitelist validation.
   const nullsPosition = dir === "DESC" ? "NULLS LAST" : "NULLS FIRST";
-  // Secondary sort by tenant_name for deterministic ordering when primary
-  // sort values tie (e.g. two locations both have $0 revenue).
   const orderByClause = `${sort} ${dir} ${nullsPosition}, tenant_name ASC`;
 
   const result = await db.query(
     `
     WITH
-    -- Per-tenant basic info + OAuth status
     location_info AS (
       SELECT
         t.id AS tenant_id,
@@ -563,7 +534,6 @@ async function getLocationTable(tenantIds, days, sort, dir) {
       FROM tenants t
       WHERE t.id = ANY($1::uuid[])
     ),
-    -- Per-tenant call counts in period (inbound only)
     call_stats AS (
       SELECT
         tenant_id,
@@ -574,7 +544,6 @@ async function getLocationTable(tenantIds, days, sort, dir) {
         AND started_at > now() - ($2::int * interval '1 day')
       GROUP BY tenant_id
     ),
-    -- Per-tenant booking counts + revenue sums in period
     booking_stats AS (
       SELECT
         tenant_id,
@@ -585,7 +554,6 @@ async function getLocationTable(tenantIds, days, sort, dir) {
         AND created_at > now() - ($2::int * interval '1 day')
       GROUP BY tenant_id
     ),
-    -- Per-tenant review stats (lifetime avg + count, pending alerts 90d)
     review_stats AS (
       SELECT
         tenant_id,
@@ -600,7 +568,6 @@ async function getLocationTable(tenantIds, days, sort, dir) {
       WHERE tenant_id = ANY($1::uuid[])
       GROUP BY tenant_id
     ),
-    -- Assemble per-location rows with derived fields
     rows_assembled AS (
       SELECT
         li.tenant_id,
@@ -617,7 +584,7 @@ async function getLocationTable(tenantIds, days, sort, dir) {
           ) / 10
           ELSE NULL
         END AS booking_rate_pct,
-        rs.avg_rating,  -- null if no reviews (preserved)
+        rs.avg_rating,
         COALESCE(rs.review_count,         0) AS review_count,
         COALESCE(rs.pending_alerts_count, 0) AS pending_alerts_count
       FROM location_info li
@@ -625,9 +592,6 @@ async function getLocationTable(tenantIds, days, sort, dir) {
       LEFT JOIN booking_stats bs ON bs.tenant_id = li.tenant_id
       LEFT JOIN review_stats  rs ON rs.tenant_id = li.tenant_id
     ),
-    -- Add revenue rank across the entire network (regardless of sort).
-    -- RANK() handles ties — two tenants with same revenue get same rank.
-    -- We use DENSE_RANK to avoid skipped numbers on ties.
     rows_ranked AS (
       SELECT
         *,

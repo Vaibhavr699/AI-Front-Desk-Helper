@@ -3,13 +3,25 @@
 const db = require("../lib/db");
 const notificationService = require("./notifications");
 
+/**
+ * Derive contact_method from available signals when not explicitly passed.
+ * Priority: explicit arg > ID prefix > lead_source heuristics > 'unknown'.
+ */
+function deriveContactMethod(explicit, input, leadSource) {
+  if (explicit) return explicit;
+  if (typeof input === "string" && input.startsWith("fb-")) return "facebook";
+  if (typeof input === "string" && input.startsWith("web-")) return "web_form";
+  if (leadSource && /dripjobs|crm|webhook/i.test(leadSource)) return "crm";
+  return "unknown";
+}
+
 /** Get or create a lead by phone number or external ID for a tenant */
-async function getOrCreateLead(tenantId, phoneOrId, name = null, leadSource = null) {
+async function getOrCreateLead(tenantId, phoneOrId, name = null, leadSource = null, contactMethod = null) {
   if (!tenantId || !phoneOrId) return null;
   const input = String(phoneOrId).trim();
-  
+
   let res;
-  
+
   // 1. Try to find by specialized external ID columns first if it's an ID
   if (input.startsWith("fb-")) {
     const fbId = input.replace("fb-", "");
@@ -21,10 +33,10 @@ async function getOrCreateLead(tenantId, phoneOrId, name = null, leadSource = nu
     // Standard phone lookup
     res = await db.query("SELECT * FROM leads WHERE tenant_id = $1 AND phone = $2", [tenantId, input]);
   }
-  
+
   if (res.rows.length > 0) {
     const lead = res.rows[0];
-    
+
     // Sync external ID if missing but present in query
     if (input.startsWith("fb-") && !lead.facebook_id) {
        await db.query("UPDATE leads SET facebook_id = $1 WHERE id = $2", [input.replace("fb-", ""), lead.id]);
@@ -40,35 +52,39 @@ async function getOrCreateLead(tenantId, phoneOrId, name = null, leadSource = nu
       );
       return updated.rows[0];
     }
+    // NOTE: contact_method is intentionally NOT updated on existing leads.
+    // It represents original acquisition channel and is immutable after INSERT.
     return lead;
   }
-  
+
   // 2. Create new
   const facebook_id = input.startsWith("fb-") ? input.replace("fb-", "") : null;
-  const web_id = input.startsWith("web-") ? input.replace("web-", "") : null;
+  const web_id      = input.startsWith("web-") ? input.replace("web-", "") : null;
+  const resolvedContactMethod = deriveContactMethod(contactMethod, input, leadSource);
 
   try {
     res = await db.query(
-      `INSERT INTO leads (tenant_id, phone, name, status, lead_source, facebook_id, web_id)
-       VALUES ($1, $2, $3, 'New Lead', $4, $5, $6)
+      `INSERT INTO leads (tenant_id, phone, name, status, lead_source, facebook_id, web_id, contact_method)
+       VALUES ($1, $2, $3, 'New Lead', $4, $5, $6, $7)
        RETURNING *`,
-      [tenantId, input, name, leadSource, facebook_id, web_id]
+      [tenantId, input, name, leadSource, facebook_id, web_id, resolvedContactMethod]
     );
     const newLead = res.rows[0];
 
     // 🆕 Fire new-lead notification (never blocks lead creation)
     notificationService.notifyNewLead(tenantId, {
-      customer_name: newLead.name,
-      phone:         newLead.phone,
-      source:        newLead.lead_source,
-      lead_id:       newLead.id,
+      customer_name:  newLead.name,
+      phone:          newLead.phone,
+      source:         newLead.lead_source,
+      contact_method: newLead.contact_method,
+      lead_id:        newLead.id,
     }).catch((e) => console.error("[Leads] notifyNewLead failed:", e.message));
 
     return newLead;
   } catch (err) {
     // Handle race condition: retry lookup
     if (err.code === '23505') {
-      return getOrCreateLead(tenantId, phoneOrId, name, leadSource);
+      return getOrCreateLead(tenantId, phoneOrId, name, leadSource, contactMethod);
     }
     throw err;
   }
@@ -85,10 +101,12 @@ async function updateLeadInfo(id, data) {
   const fields = [];
   const values = [];
   let i = 1;
-  
+
+  // NOTE: contact_method is NOT in this allow-list — immutable after INSERT by design.
+  // If an admin needs to correct a mis-categorized lead, do it via direct SQL.
   const allowed = [
-    'name', 'email', 'address', 'project_type', 'notes', 'status', 
-    'estimated_revenue_cents', 'actual_revenue_cents', 'lead_source', 'has_sms_consent', 'last_consent_at', 
+    'name', 'email', 'address', 'project_type', 'notes', 'status',
+    'estimated_revenue_cents', 'actual_revenue_cents', 'lead_source', 'has_sms_consent', 'last_consent_at',
     'last_consent_id', 'phone', 'facebook_id', 'web_id'
   ];
   for (const key of allowed) {
@@ -97,9 +115,9 @@ async function updateLeadInfo(id, data) {
       values.push(data[key]);
     }
   }
-  
+
   if (fields.length === 0) return null;
-  
+
   values.push(id);
   const query = `UPDATE leads SET ${fields.join(', ')}, updated_at = now() WHERE id = $${i} RETURNING *`;
   const res = await db.query(query, values);
@@ -108,7 +126,7 @@ async function updateLeadInfo(id, data) {
 
 async function getLeadById(id) {
   const res = await db.query(`
-    SELECT l.*, 
+    SELECT l.*,
            sc.consent_text, sc.ip_address, sc.user_agent, sc.page_url, sc.source as consent_source
     FROM leads l
     LEFT JOIN sms_consents sc ON l.last_consent_id = sc.id

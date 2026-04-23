@@ -8,6 +8,7 @@ import {
 } from "../api";
 import CustomerTenantCard from "../components/CustomerTenantCard";
 import AddCustomerSheet from "../components/AddCustomerSheet";
+import EditCustomerSheet from "../components/EditCustomerSheet";
 
 /**
  * Reseller dashboard — mirrors the Businesses (Tenants.jsx) page pattern for
@@ -26,6 +27,7 @@ export default function Reseller() {
   const [error, setError] = useState(null);
   const [showAddSheet, setShowAddSheet] = useState(false);
   const [actionMessage, setActionMessage] = useState(null);
+  const [editingCustomer, setEditingCustomer] = useState(null);
 
   useEffect(() => {
     loadAll();
@@ -71,11 +73,18 @@ export default function Reseller() {
   }
 
   function handleEdit(customer) {
-    navigate(`/reseller/customers/${customer.id}`);
+    setEditingCustomer(customer);
   }
 
   function handleSettings(customer) {
-    navigate(`/reseller/customers/${customer.id}`);
+    // Gear icon opens the same edit sheet for now. Detail page coming
+    // in Phase 3.5 if customers ask for deeper management surface.
+    setEditingCustomer(customer);
+  }
+
+  function handleEditSaved(updated) {
+    setActionMessage(`${updated.name} updated successfully.`);
+    loadAll();
   }
 
   function handleAddClick() {
@@ -308,6 +317,13 @@ export default function Reseller() {
         onClose={() => setShowAddSheet(false)}
         onCreated={handleCustomerCreated}
         onUpgrade={handleUpgradeFromSheet}
+      />
+
+      <EditCustomerSheet
+        open={!!editingCustomer}
+        customer={editingCustomer}
+        onClose={() => setEditingCustomer(null)}
+        onSaved={handleEditSaved}
       />
     </div>
   );

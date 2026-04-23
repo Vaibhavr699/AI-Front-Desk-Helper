@@ -272,13 +272,23 @@ router.post('/customers', async (req, res) => {
     name,
     primary_email,
     phone,
-    plan = 'growth',
+    plan: rawPlan,
     brand_mode_inherit = true,
   } = req.body || {};
 
   if (!name || !primary_email) {
     return res.status(400).json({ error: 'name and primary_email are required' });
   }
+
+  // Customer plans are basic/pro/elite — distinct from reseller tiers
+  // (starter/growth/scale). Default to 'basic' for new customer adds;
+  // reseller can upgrade later via the Edit modal. This guard exists
+  // because AddCustomerSheet historically offered "Growth" in its dropdown,
+  // which collides with the reseller-tier name and trips tenants_plan_check.
+  const ALLOWED_PLANS = ['basic', 'pro', 'elite'];
+  const plan = ALLOWED_PLANS.includes((rawPlan || '').toLowerCase())
+    ? rawPlan.toLowerCase()
+    : 'basic';
 
   try {
     await validateCanAddCustomer(db, req.user.tenant);

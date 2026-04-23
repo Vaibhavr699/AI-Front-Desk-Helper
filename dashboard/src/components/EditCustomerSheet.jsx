@@ -123,7 +123,6 @@ export default function EditCustomerSheet({ open, customer, onClose, onSaved }) 
             >
               <option value="basic">Basic</option>
               <option value="pro">Pro</option>
-              <option value="growth">Growth</option>
               <option value="elite">Elite</option>
             </select>
           </div>

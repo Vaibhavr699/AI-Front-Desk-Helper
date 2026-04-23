@@ -19,6 +19,7 @@ const router = express.Router();
 const db = require('../lib/db');
 const { auditLog } = require('../lib/auditLogger');
 const { validateCanAddCustomer } = require('../lib/resellerBilling');
+const { sendResellerCustomerWelcomeEmail } = require('../services/resellerEmail');
 
 // ---------------------------------------------------------------------------
 // Helpers

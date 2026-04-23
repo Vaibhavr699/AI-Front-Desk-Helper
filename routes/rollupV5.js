@@ -315,30 +315,6 @@ async function getNetworkRevenueTile(tenantIds, days, parentCreatedAt) {
 // ═══════════════════════════════════════════════════════════════════════════
 // HERO TILE 4 — REVIEWS HEALTH
 // ═══════════════════════════════════════════════════════════════════════════
-// Shows: lifetime avg rating + count of "prominent alerts" needing response.
-//
-// Definitions (locked Apr 23 spec + session decisions):
-//   • Avg rating: ALL-TIME average of google_reviews.rating across all
-//     in-scope tenants, not period-filtered. Rationale: star rating is a
-//     slow-moving leading indicator; period filtering generates noise on
-//     small samples (one angry 1-star tanks a 30-day window).
-//   • Prominent alerts: reviews where rating ≤ 3 AND status = 'pending'
-//     AND review_date > now() - 90 days. "Pending" means the owner hasn't
-//     responded yet. 90-day window catches still-unresponded older ones
-//     without pulling in truly ancient complaints.
-//   • Tenant scope: all in-scope tenants. If none have OAuth'd Google,
-//     avg_rating = null and prominent_alert_count = 0 — we do NOT filter
-//     the scope to only OAuth'd tenants. That way the tile accurately
-//     reports "X of Y locations connected."
-//
-// Returns:
-//   {
-//     avg_rating_lifetime:     <number|null>,  // e.g. 4.7, or null
-//     total_review_count:      <int>,          // lifetime, all tenants
-//     prominent_alert_count:   <int>,          // 1-3 star pending, last 90d
-//     oauth_connected_count:   <int>,          // tenants with Google linked
-//     total_tenant_count:      <int>,          // for "X of Y" display
-//   }
 async function getReviewsHealthTile(tenantIds) {
   if (tenantIds.length === 0) {
     return {
@@ -350,43 +326,20 @@ async function getReviewsHealthTile(tenantIds) {
     };
   }
 
-  // Single query covering all four metrics. Cheaper than 4 separate
-  // queries — Postgres plans all the aggregates in one pass.
-  //
-  // OAuth-connected check: tenant has both google_access_token AND
-  // google_location_id. Matches the `connected` definition in
-  // routes/reviews.js GET /status. We count, not list, because the
-  // tile only shows a count — the location table will show per-location
-  // connection status later.
   const result = await db.query(
     `SELECT
-       -- All-time avg across all reviews for these tenants.
-       -- Returns null when there are zero reviews (AVG of empty set).
        AVG(r.rating)::numeric(3,2) AS avg_rating_lifetime,
-
-       -- Lifetime total review count across all in-scope tenants.
        COUNT(r.id)::int AS total_review_count,
-
-       -- Prominent alerts: 1-3 star, pending, last 90 days.
-       -- COUNT(*) FILTER (WHERE ...) is the Postgres idiom for conditional
-       -- counts in a single aggregate pass.
        COUNT(r.id) FILTER (
          WHERE r.rating <= 3
            AND r.status = 'pending'
            AND r.review_date > now() - interval '90 days'
        )::int AS prominent_alert_count,
-
-       -- OAuth-connected tenant count. Subquery against the tenants table
-       -- so we count tenants regardless of whether they have reviews yet
-       -- (a newly-connected tenant with zero reviews still counts as
-       -- connected for the "X of Y" display).
        (SELECT COUNT(*)::int FROM tenants
          WHERE id = ANY($1::uuid[])
            AND google_access_token IS NOT NULL
            AND google_location_id IS NOT NULL
        ) AS oauth_connected_count,
-
-       -- Total tenants in scope (denominator for "X of Y connected").
        $2::int AS total_tenant_count
      FROM google_reviews r
      WHERE r.tenant_id = ANY($1::uuid[])`,
@@ -395,9 +348,6 @@ async function getReviewsHealthTile(tenantIds) {
 
   const row = result.rows[0];
 
-  // AVG returns null when no reviews exist, or a numeric string when it
-  // does. Cast carefully — Number(null) is 0, which would misreport
-  // "0.0 stars" to the frontend. Preserve the null signal.
   const avg_rating_lifetime =
     row.avg_rating_lifetime === null
       ? null
@@ -409,6 +359,98 @@ async function getReviewsHealthTile(tenantIds) {
     prominent_alert_count: Number(row.prominent_alert_count),
     oauth_connected_count: Number(row.oauth_connected_count),
     total_tenant_count:    Number(row.total_tenant_count),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONTACT-METHOD DONUT
+// ═══════════════════════════════════════════════════════════════════════════
+// Breakdown of leads by acquisition channel within the selected period.
+//
+// Definitions (locked Apr 23 spec + session decisions):
+//   • Time window: matches the period toggle (7d/30d/90d). Rationale: donut
+//     should breathe with the rest of the dashboard when user toggles.
+//     Lifetime donuts become stale on mature tenants and miss recent shifts
+//     (e.g. a tenant that just launched a web form should see that slice grow).
+//   • Buckets: voice | sms | web_form | facebook | crm | unknown.
+//     Matches the CHECK constraint from Mig 042.
+//   • Unknown: included AS a slice with its own count, but also returned as
+//     a separate `unknown_count` field so the frontend can decide how to
+//     display it (as a slice, as a data-quality warning, or hidden). Backend
+//     tells the truth, UI decides presentation.
+//
+// Returns:
+//   {
+//     total_leads:       <int>,            // sum of all buckets
+//     unknown_count:     <int>,            // for frontend data-quality signal
+//     buckets: [
+//       { method: 'voice',    count: <int>, pct: <number> },
+//       { method: 'sms',      count: <int>, pct: <number> },
+//       ...
+//     ]
+//   }
+//
+// Buckets always returned in the same deterministic order so the frontend
+// can use stable chart colors without maintaining a lookup table.
+const DONUT_METHOD_ORDER = ["voice", "sms", "web_form", "facebook", "crm", "unknown"];
+
+async function getContactMethodDonut(tenantIds, days) {
+  if (tenantIds.length === 0) {
+    return {
+      total_leads:   0,
+      unknown_count: 0,
+      buckets:       DONUT_METHOD_ORDER.map((method) => ({
+        method,
+        count: 0,
+        pct:   0,
+      })),
+    };
+  }
+
+  // GROUP BY contact_method gives us sparse rows (only methods with counts
+  // in-period will appear). We hydrate the full 6-bucket shape client-side
+  // so the donut always renders the same number of slices — methods with
+  // zero leads in the period show count=0, pct=0.
+  //
+  // Filtering on created_at (not updated_at) because contact_method is
+  // set at INSERT time and never updated — created_at is the acquisition
+  // timestamp, which is what the donut semantically represents.
+  const result = await db.query(
+    `SELECT contact_method, COUNT(*)::int AS count
+       FROM leads
+      WHERE tenant_id = ANY($1::uuid[])
+        AND created_at > now() - ($2::int * interval '1 day')
+      GROUP BY contact_method`,
+    [tenantIds, days]
+  );
+
+  // Build a map so we can hydrate the full 6-bucket shape.
+  const countMap = {};
+  let total_leads = 0;
+  for (const row of result.rows) {
+    const count = Number(row.count);
+    countMap[row.contact_method] = count;
+    total_leads += count;
+  }
+
+  // Guard divide-by-zero: if no leads in period, all pcts are 0.
+  // Using `|| 0` on the divisor would lie about the denominator; instead
+  // branch explicitly.
+  const buckets = DONUT_METHOD_ORDER.map((method) => {
+    const count = countMap[method] || 0;
+    const pct =
+      total_leads > 0
+        ? Math.round((count / total_leads) * 1000) / 10  // 1 decimal
+        : 0;
+    return { method, count, pct };
+  });
+
+  const unknown_count = countMap["unknown"] || 0;
+
+  return {
+    total_leads,
+    unknown_count,
+    buckets,
   };
 }
 
@@ -426,14 +468,14 @@ router.get("/:parentId", async (req, res) => {
 
     const scope = await getRollupScopeIds(parent);
 
-    // All four tiles run in parallel. Tile 4 doesn't use `days` since
-    // avg rating is always lifetime — keeps the signature clean.
-    const [aiActivity, afterHoursRevenue, networkRevenue, reviewsHealth] =
+    // All tiles + donut run in parallel. 5 queries, single round-trip latency.
+    const [aiActivity, afterHoursRevenue, networkRevenue, reviewsHealth, donut] =
       await Promise.all([
         getAiActivityTile(scope.all_ids, days),
         getAfterHoursRevenueTile(scope.all_ids, days),
         getNetworkRevenueTile(scope.all_ids, days, parent.created_at),
         getReviewsHealthTile(scope.all_ids),
+        getContactMethodDonut(scope.all_ids, days),
       ]);
 
     res.json({
@@ -461,7 +503,7 @@ router.get("/:parentId", async (req, res) => {
         network_revenue:     networkRevenue,
         reviews_health:      reviewsHealth,
       },
-      // contact_method_donut: TODO
+      contact_method_donut: donut,
       // reviews_alerts:       TODO
       // locations:            TODO
     });

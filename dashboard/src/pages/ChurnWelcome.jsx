@@ -5,6 +5,10 @@ export default function ChurnWelcome() {
   const [searchParams] = useSearchParams();
   const alreadyActive = searchParams.get("already_active") === "1";
 
+  function goToLogin() {
+    window.location.href = "/login";
+  }
+
   return (
     <div className="min-h-screen bg-stone-100 py-12 px-4">
       <div className="max-w-md mx-auto">
@@ -25,12 +29,13 @@ export default function ChurnWelcome() {
               ? "Your direct billing is already active. Log in to access your dashboard."
               : "Your direct billing is now active. Your service will continue uninterrupted."}
           </p>
-          
-            href="/login"
+          <button
+            type="button"
+            onClick={goToLogin}
             className="inline-block w-full px-5 py-3 text-sm font-bold text-white bg-stone-900 hover:bg-stone-800 rounded-lg transition-colors"
           >
             Log in to your dashboard
-          </a>
+          </button>
           <p className="text-xs text-stone-400 mt-5">
             Need help? Email support@aifrontdeskhelper.com
           </p>

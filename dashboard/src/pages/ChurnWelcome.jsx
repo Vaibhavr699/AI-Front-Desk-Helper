@@ -1,17 +1,6 @@
 import React from "react";
 import { useSearchParams } from "react-router-dom";
 
-/**
- * Stripe success URL after the customer completes direct-billing checkout.
- * Their grace token is cleared by the server-side webhook handler in
- * lib/stripe.js (kicked off by metadata.type='churn_direct_billing').
- *
- * This page just confirms the transition + gives them a path back into
- * their dashboard. We don't try to log them in automatically — they should
- * sign in fresh so the auth state is clean.
- *
- * Apr 23, 2026 — Phase 3 Reseller Ops Item 3.
- */
 export default function ChurnWelcome() {
   const [searchParams] = useSearchParams();
   const alreadyActive = searchParams.get("already_active") === "1";
@@ -34,7 +23,7 @@ export default function ChurnWelcome() {
           <p className="text-sm text-stone-500 mb-6 leading-relaxed">
             {alreadyActive
               ? "Your direct billing is already active. Log in to access your dashboard."
-              : "Your direct billing is now active. Your service will continue uninterrupted, and you can manage everything from your dashboard."}
+              : "Your direct billing is now active. Your service will continue uninterrupted."}
           </p>
           
             href="/login"
@@ -43,10 +32,7 @@ export default function ChurnWelcome() {
             Log in to your dashboard
           </a>
           <p className="text-xs text-stone-400 mt-5">
-            Need help? Email{" "}
-            <a href="mailto:support@aifrontdeskhelper.com" className="text-stone-600 hover:text-stone-900 underline">
-              support@aifrontdeskhelper.com
-            </a>
+            Need help? Email support@aifrontdeskhelper.com
           </p>
         </div>
       </div>

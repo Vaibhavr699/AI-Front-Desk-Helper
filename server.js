@@ -266,12 +266,12 @@ app.post("/api/widget/start-sms", async (req, res) => {
     );
     const consentRow = consentRes.rows[0];
 
-    // 2. Find or Create Lead
+  // 2. Find or Create Lead
     let lead = await db.query("SELECT id FROM leads WHERE tenant_id = $1 AND phone = $2", [tenantId, phone]).then(r => r.rows[0]);
     if (!lead) {
       const leadRes = await db.query(
-        "INSERT INTO leads (tenant_id, phone, lead_source, created_at, updated_at) VALUES ($1, $2, $3, now(), now()) RETURNING id",
-        [tenantId, phone, source || "widget_sms_popup"]
+        "INSERT INTO leads (tenant_id, phone, lead_source, contact_method, created_at, updated_at) VALUES ($1, $2, $3, $4, now(), now()) RETURNING id",
+        [tenantId, phone, source || "widget_sms_popup", 'sms']
       );
       lead = leadRes.rows[0];
     }
@@ -1538,7 +1538,21 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
   thread.history.push({ role: "user", text: incomingText, at: new Date().toISOString() });
 
   if (tenant) {
-    const lead = await leadsService.getOrCreateLead(tenant.id, thread.phone, thread.leadCapture?.full_name);
+    // Map thread.channel → contact_method bucket. sms/website/facebook
+    // are the only values thread.channel ever takes (set in
+    // getOrCreateSmsThread + /website-chat + processFacebookConversation).
+    const channelToContactMethod = {
+      sms:      'sms',
+      website:  'web_form',
+      facebook: 'facebook',
+    };
+    const lead = await leadsService.getOrCreateLead(
+      tenant.id,
+      thread.phone,
+      thread.leadCapture?.full_name,
+      null,
+      channelToContactMethod[thread.channel] || 'unknown'
+    );
     if (lead) {
       thread.leadId = lead.id;
       thread.tenantId = tenant.id;
@@ -1666,7 +1680,7 @@ async function processFacebookConversation(senderId, messageText, tenant = null,
       }
     }
 
-    const lead = await leadsService.getOrCreateLead(tenant.id, thread.phone, thread.leadCapture?.full_name);
+   const lead = await leadsService.getOrCreateLead(tenant.id, thread.phone, thread.leadCapture?.full_name, null, 'facebook');
     if (lead) {
       thread.leadId = lead.id;
       // If the lead was just created and we just got the name, it's already in there.
@@ -3726,9 +3740,9 @@ sendToOpenAI(sessionUpdate);
       }
 
       // --- Lead/CRM Integration ---
-      from = msg.start?.customParameters?.From || msg.start?.from || null;
+     from = msg.start?.customParameters?.From || msg.start?.from || null;
       if (from && tenant) {
-        leadsService.getOrCreateLead(tenant.id, from, null, leadSource).then(lead => {
+        leadsService.getOrCreateLead(tenant.id, from, null, leadSource, 'voice').then(lead => {
           if (lead) {
             leadId = lead.id;
             console.log("[AI-Desk] Lead linked callSid=%s leadId=%s", callSid, leadId);
@@ -3998,8 +4012,8 @@ app.post("/lead-capture", async (req, res) => {
       if (!tenant) tenant = await getTenantBySlug(tenantId).catch(() => null);
     }
 
-    if (tenant && lead) {
-      const leadRecord = await leadsService.getOrCreateLead(tenant.id, lead.phone || sessionId, lead.full_name || lead.name);
+   if (tenant && lead) {
+      const leadRecord = await leadsService.getOrCreateLead(tenant.id, lead.phone || sessionId, lead.full_name || lead.name, null, 'web_form');
       if (leadRecord && Object.keys(lead).length > 0) {
         await leadsService.updateLeadInfo(leadRecord.id, {
           name: lead.full_name || lead.name,

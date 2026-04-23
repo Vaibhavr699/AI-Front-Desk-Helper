@@ -152,6 +152,173 @@ async function getAiActivityTile(tenantIds, days) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// HERO TILE 2 — AFTER-HOURS REVENUE
+// ═══════════════════════════════════════════════════════════════════════════
+// The sales-pitch tile: "Your AI captured $X outside business hours."
+//
+// Definition per Apr 23 spec:
+//   • Only bookings.actual_revenue_cents (honest — understates early but
+//     never inflates).
+//   • Bookings are "after-hours" if created_at falls OUTSIDE that tenant's
+//     own business_hours when evaluated in that tenant's timezone.
+//   • business_hours fallback when NULL/empty: Mon-Fri 8 AM - 6 PM local.
+//
+// SQL strategy:
+//   1. JOIN bookings to tenants to get each tenant's business_hours + timezone
+//   2. Convert booking.created_at to local time via AT TIME ZONE
+//   3. Extract dow (day of week) and time-of-day
+//   4. Compare against business_hours[day] JSONB — closed days always count
+//      as after-hours, and time-outside-open/close counts too
+//   5. Fallback to 8-6 Mon-Fri if business_hours IS NULL
+//
+// Returns:
+//   {
+//     after_hours_revenue_cents: <int>,
+//     after_hours_booking_count: <int>,
+//     total_revenue_cents:       <int>,  // for % comparison
+//     after_hours_pct_of_total:  <number|null>
+//   }
+async function getAfterHoursRevenueTile(tenantIds, days) {
+  if (tenantIds.length === 0) {
+    return {
+      after_hours_revenue_cents: 0,
+      after_hours_booking_count: 0,
+      total_revenue_cents:       0,
+      after_hours_pct_of_total:  null,
+    };
+  }
+
+  // Postgres dow: 0=Sunday, 1=Monday, ... 6=Saturday.
+  // business_hours JSONB uses lowercase day names: sunday, monday, ...
+  // We map dow → key via CASE, pull the nested open/close/closed, then
+  // compare against the local time of booking.created_at.
+  //
+  // Fallback behavior:
+  //   • If business_hours IS NULL → use Mon-Fri 8:00-18:00 (hardcoded in CASE)
+  //   • If business_hours[day] has closed=true → always after-hours
+  //   • If business_hours[day] has no open/close → same fallback
+  //
+  // Timezone handling:
+  //   • Each tenant may have its own timezone (IANA string like 'America/Chicago')
+  //   • Fallback to 'America/Chicago' if NULL (matches backend default)
+  //   • AT TIME ZONE converts created_at (timestamptz) to local wall clock
+  const result = await db.query(
+    `
+    WITH booking_scope AS (
+      SELECT
+        b.id,
+        b.actual_revenue_cents,
+        b.created_at,
+        COALESCE(t.timezone, 'America/Chicago') AS tz,
+        t.business_hours
+      FROM bookings b
+      JOIN tenants t ON t.id = b.tenant_id
+      WHERE b.tenant_id = ANY($1::uuid[])
+        AND b.created_at > now() - ($2::int * interval '1 day')
+        AND b.actual_revenue_cents IS NOT NULL
+        AND b.actual_revenue_cents > 0
+    ),
+    booking_classified AS (
+      SELECT
+        id,
+        actual_revenue_cents,
+        CASE
+          -- No business_hours configured: fallback Mon-Fri 8:00-18:00
+          WHEN business_hours IS NULL THEN
+            CASE
+              WHEN EXTRACT(DOW FROM (created_at AT TIME ZONE tz)) NOT IN (1,2,3,4,5) THEN true
+              WHEN (created_at AT TIME ZONE tz)::time < '08:00:00' THEN true
+              WHEN (created_at AT TIME ZONE tz)::time >= '18:00:00' THEN true
+              ELSE false
+            END
+          ELSE
+            -- Use tenant's business_hours JSONB
+            CASE
+              -- Day marked closed OR missing entirely → after-hours
+              WHEN COALESCE(
+                (business_hours -> (
+                  CASE EXTRACT(DOW FROM (created_at AT TIME ZONE tz))::int
+                    WHEN 0 THEN 'sunday'
+                    WHEN 1 THEN 'monday'
+                    WHEN 2 THEN 'tuesday'
+                    WHEN 3 THEN 'wednesday'
+                    WHEN 4 THEN 'thursday'
+                    WHEN 5 THEN 'friday'
+                    WHEN 6 THEN 'saturday'
+                  END
+                ) ->> 'closed')::boolean,
+                true
+              ) THEN true
+              -- Before opening time → after-hours
+              WHEN (created_at AT TIME ZONE tz)::time 
+                COALESCE(
+                  (business_hours -> (
+                    CASE EXTRACT(DOW FROM (created_at AT TIME ZONE tz))::int
+                      WHEN 0 THEN 'sunday'
+                      WHEN 1 THEN 'monday'
+                      WHEN 2 THEN 'tuesday'
+                      WHEN 3 THEN 'wednesday'
+                      WHEN 4 THEN 'thursday'
+                      WHEN 5 THEN 'friday'
+                      WHEN 6 THEN 'saturday'
+                    END
+                  ) ->> 'open')::time,
+                  '08:00'::time
+                )
+              THEN true
+              -- At or after closing time → after-hours
+              WHEN (created_at AT TIME ZONE tz)::time >=
+                COALESCE(
+                  (business_hours -> (
+                    CASE EXTRACT(DOW FROM (created_at AT TIME ZONE tz))::int
+                      WHEN 0 THEN 'sunday'
+                      WHEN 1 THEN 'monday'
+                      WHEN 2 THEN 'tuesday'
+                      WHEN 3 THEN 'wednesday'
+                      WHEN 4 THEN 'thursday'
+                      WHEN 5 THEN 'friday'
+                      WHEN 6 THEN 'saturday'
+                    END
+                  ) ->> 'close')::time,
+                  '18:00'::time
+                )
+              THEN true
+              ELSE false
+            END
+        END AS is_after_hours
+      FROM booking_scope
+    )
+    SELECT
+      COALESCE(SUM(CASE WHEN is_after_hours THEN actual_revenue_cents ELSE 0 END), 0)::bigint
+        AS after_hours_revenue_cents,
+      COUNT(*) FILTER (WHERE is_after_hours)::int
+        AS after_hours_booking_count,
+      COALESCE(SUM(actual_revenue_cents), 0)::bigint
+        AS total_revenue_cents
+    FROM booking_classified
+    `,
+    [tenantIds, days]
+  );
+
+  const row = result.rows[0];
+  const after_hours_revenue_cents = Number(row.after_hours_revenue_cents);
+  const after_hours_booking_count = Number(row.after_hours_booking_count);
+  const total_revenue_cents       = Number(row.total_revenue_cents);
+
+  const after_hours_pct_of_total =
+    total_revenue_cents > 0
+      ? Math.round((after_hours_revenue_cents / total_revenue_cents) * 1000) / 10
+      : null;
+
+  return {
+    after_hours_revenue_cents,
+    after_hours_booking_count,
+    total_revenue_cents,
+    after_hours_pct_of_total,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MAIN ENDPOINT
 // GET /api/rollup-v5/:parentId?period=30d
 // ═══════════════════════════════════════════════════════════════════════════
@@ -168,10 +335,12 @@ router.get("/:parentId", async (req, res) => {
     //    parent itself; for rollup_only it doesn't. See getRollupScopeIds.
     const scope = await getRollupScopeIds(parent);
 
-    // 3. Build tiles. Each tile is independent so one failure doesn't break
-    //    the whole response — future tiles will wrap in try/catch with a
-    //    null fallback. For now only AI Activity is implemented.
-    const aiActivity = await getAiActivityTile(scope.all_ids, days);
+    // 3. Build tiles. Run in parallel — independent data, no reason to wait
+    //    serially. Future tiles will follow the same pattern.
+    const [aiActivity, afterHoursRevenue] = await Promise.all([
+      getAiActivityTile(scope.all_ids, days),
+      getAfterHoursRevenueTile(scope.all_ids, days),
+    ]);
 
     res.json({
       parent: {
@@ -193,8 +362,8 @@ router.get("/:parentId", async (req, res) => {
         generated_at:        new Date().toISOString(),
       },
       tiles: {
-        ai_activity: aiActivity,
-        // after_hours_revenue: TODO (tile 2)
+        ai_activity:         aiActivity,
+        after_hours_revenue: afterHoursRevenue,
         // network_revenue:     TODO (tile 3)
         // reviews_health:      TODO (tile 4)
       },

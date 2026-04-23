@@ -171,18 +171,46 @@ router.post('/:code/signup', async (req, res) => {
       });
     }
 
-    // Create customer tenant
+   // Create customer tenant. tenants.slug + company_name are NOT NULL,
+    // so generate a unique slug from the business name and default
+    // company_name to the same value (mirrors routes/reseller.js fix).
     const brandMode = reseller.brand_mode || 'default';
+
+    let baseSlug = trimmedName.toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '');
+    if (!baseSlug) baseSlug = `customer-${Date.now()}`;
+
+    let slug = baseSlug;
+    let attempt = 1;
+    while (attempt < 20) {
+      const existing = await db.query(
+        'SELECT id FROM tenants WHERE slug = $1',
+        [slug]
+      );
+      if (existing.rows.length === 0) break;
+      slug = `${baseSlug}-${attempt}`;
+      attempt++;
+    }
+    if (attempt >= 20) {
+      return res.status(409).json({
+        error: 'Could not generate a unique account identifier. Try a different business name.',
+        code: 'SLUG_COLLISION',
+      });
+    }
+
     const { rows } = await db.query(
       `INSERT INTO tenants (
-         name, primary_email, phone, plan,
+         name, slug, company_name, primary_email, phone, plan,
          account_type, reseller_id, billing_owner, brand_mode,
          stripe_customer_id, stripe_subscription_id
        )
-       VALUES ($1, $2, $3, 'growth', 'customer', $4, 'reseller', $5, NULL, NULL)
+       VALUES ($1, $2, $3, $4, $5, 'growth', 'customer', $6, 'reseller', $7, NULL, NULL)
        RETURNING id, name, primary_email`,
       [
         trimmedName,
+        slug,
+        trimmedName,        // company_name = display name (same pattern as authenticated reseller endpoint)
         normalizedEmail,
         phone ? String(phone).trim() : null,
         reseller.id,
@@ -207,12 +235,24 @@ router.post('/:code/signup', async (req, res) => {
       },
     });
 
-    // TODO Step 6 emails:
-    //   - sendResellerCustomerWelcomeEmail (to customer, with password-set link)
-    //   - sendResellerNewCustomerNotification (to reseller)
-    console.log(
-      `[reseller-public/signup] TODO emails: welcome ${normalizedEmail}, notify reseller ${reseller.primary_email}`
+   // Send welcome email to the customer with password-set link.
+    // Fire-and-forget so a Resend outage doesn't block the signup response.
+    const appUrl = (process.env.APP_URL || 'https://aifrontdeskhelper.com').replace(/\/+$/, '');
+    sendResellerCustomerWelcomeEmail({
+      to: normalizedEmail,
+      customer_name: trimmedName,
+      reseller_name: reseller.name,
+      reseller_contact_email: reseller.primary_email || 'support@aifrontdeskhelper.com',
+      reseller_brand_color: reseller.brand_color,
+      reseller_logo_url: reseller.logo_url,
+      set_password_url: `${appUrl}/reset-password?email=${encodeURIComponent(normalizedEmail)}`,
+    }).catch((err) =>
+      console.error('[reseller-public/signup] welcome email failed:', err.message)
     );
+
+    // TODO: notify the reseller of the new self-signup (Test 4 work).
+    // Phase 3 punt — adds complexity and we don't have a generic
+    // sendResellerNewCustomerNotification template yet.
 
     return res.status(201).json({
       success: true,

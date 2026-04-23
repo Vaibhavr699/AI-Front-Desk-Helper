@@ -1,0 +1,985 @@
+import { useState, useEffect, useMemo } from "react";
+import { Link, useOutletContext } from "react-router-dom";
+import { getTenants, getRollupV5 } from "../api";
+import { LumaSpin } from "../components/ui/luma-spin";
+import { useBrand } from "../contexts/BrandContext";
+import {
+  Building2,
+  MapPin,
+  Crown,
+  Phone,
+  PhoneCall,
+  Moon,
+  TrendingUp,
+  TrendingDown,
+  Star,
+  AlertCircle,
+  AlertTriangle,
+  ChevronRight,
+  ChevronUp,
+  ChevronDown,
+  Sparkles,
+  Globe,
+  MessageSquare,
+  Facebook,
+  Zap,
+  HelpCircle,
+  CheckCircle2,
+  Info,
+  ArrowUpDown,
+} from "lucide-react";
+
+// ═════════════════════════════════════════════════════════════════════════
+// Rollup V5 — Parent Tenant Dashboard
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Replaces the V4 /tenants page (Tenants.jsx).
+// Single-page dashboard: 4 hero tiles + donut + reviews alerts + location table.
+//
+// Endpoint: GET /api/rollup-v5/:parentId?period=30d&sort=revenue_cents&dir=desc
+// Backend:  routes/rollupV5.js
+// Brand-aware via useBrand() — matches Apr 18-19 cream/dark contrast fix.
+// ═════════════════════════════════════════════════════════════════════════
+
+// ── Formatters (mirror Tenants.jsx conventions) ─────────────────────────
+function formatCents(cents) {
+  if (cents == null) return "$0";
+  const dollars = cents / 100;
+  if (dollars === 0) return "$0";
+  if (Math.abs(dollars) >= 1000) {
+    return `$${Math.round(dollars).toLocaleString()}`;
+  }
+  return `$${dollars.toFixed(2)}`;
+}
+
+function formatNum(n) {
+  if (n == null) return "0";
+  return Number(n).toLocaleString();
+}
+
+function formatPct(n) {
+  if (n == null) return "—";
+  return `${n}%`;
+}
+
+function formatRating(r) {
+  if (r == null) return "—";
+  return Number(r).toFixed(1);
+}
+
+// ── Label maps ──────────────────────────────────────────────────────────
+const CONTACT_METHOD_LABELS = {
+  voice:    "Phone",
+  sms:      "SMS",
+  web_form: "Web form",
+  facebook: "Facebook",
+  crm:      "CRM",
+  unknown:  "Unknown",
+};
+
+const CONTACT_METHOD_ICONS = {
+  voice:    PhoneCall,
+  sms:      MessageSquare,
+  web_form: Globe,
+  facebook: Facebook,
+  crm:      Zap,
+  unknown:  HelpCircle,
+};
+
+// Stable slice colors — maps to DONUT_METHOD_ORDER on the backend.
+const CONTACT_METHOD_COLORS = {
+  voice:    "bg-blue-500",
+  sms:      "bg-emerald-500",
+  web_form: "bg-amber-500",
+  facebook: "bg-indigo-500",
+  crm:      "bg-purple-500",
+  unknown:  "bg-stone-400",
+};
+
+const SORT_LABELS = {
+  tenant_name:          "Location",
+  calls_total:          "Calls",
+  bookings_total:       "Bookings",
+  booking_rate_pct:     "Booking rate",
+  revenue_cents:        "Revenue",
+  avg_rating:           "Rating",
+  review_count:         "Reviews",
+  pending_alerts_count: "Alerts",
+};
+
+// ═════════════════════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ═════════════════════════════════════════════════════════════════════════
+export default function RollupV5() {
+  const { tenantId } = useOutletContext() || {};
+  const brand = useBrand();
+
+  const [parentId, setParentId]       = useState(null);
+  const [data, setData]               = useState(null);
+  const [loading, setLoading]         = useState(true);
+  const [refreshing, setRefreshing]   = useState(false);
+  const [error, setError]             = useState("");
+
+  // Period toggle (7d/30d/90d) — default 30d per backend contract
+  const [period, setPeriod] = useState("30d");
+
+  // Location-table sort state — default revenue_cents desc
+  const [sort, setSort] = useState("revenue_cents");
+  const [dir, setDir]   = useState("desc");
+
+  // Step 1: figure out which parent tenant we're showing.
+  // The active tenantId from context might be a child location, so we pull
+  // the tenants list and find the HQ/parent to query. Same pattern as
+  // Tenants.jsx — the API returns the user's tenant first.
+  useEffect(() => {
+    resolveParent();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
+
+  async function resolveParent() {
+    setLoading(true);
+    setError("");
+    try {
+      const tenantsResponse = await getTenants();
+      const list = tenantsResponse?.tenants || [];
+      const primary = list[0];
+
+      // If primary IS the parent (operating_hq or rollup_only), use it.
+      // Otherwise walk up to the parent_id.
+      const isParent =
+        primary?.business_type === "parent" ||
+        list.some((t) => t.parent_id === primary?.id);
+
+      if (isParent && primary?.id) {
+        setParentId(primary.id);
+      } else if (primary?.parent_id) {
+        setParentId(primary.parent_id);
+      } else {
+        // Standalone tenant — no rollup view available.
+        setParentId(null);
+        setLoading(false);
+        setError(
+          "This dashboard is only available for parent tenants with child locations."
+        );
+      }
+    } catch (e) {
+      setError(e.message || "Failed to load business info");
+      setLoading(false);
+    }
+  }
+
+  // Step 2: whenever parentId / period / sort / dir changes, refetch.
+  useEffect(() => {
+    if (!parentId) return;
+    fetchRollup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parentId, period, sort, dir]);
+
+  async function fetchRollup() {
+    // Show the big spinner only on the very first load; after that use a
+    // subtle refresh indicator so the page doesn't flash blank on toggle.
+    if (data) setRefreshing(true);
+    else setLoading(true);
+
+    try {
+      const result = await getRollupV5(parentId, { period, sort, dir });
+      setData(result);
+      setError("");
+    } catch (e) {
+      setError(e.message || "Failed to load rollup data");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }
+
+  // ── Handlers ──────────────────────────────────────────────────────────
+  function handleSort(column) {
+    if (sort === column) {
+      // Same column clicked: flip direction
+      setDir((prev) => (prev === "desc" ? "asc" : "desc"));
+    } else {
+      // New column: default to desc for numeric, asc for tenant_name
+      setSort(column);
+      setDir(column === "tenant_name" ? "asc" : "desc");
+    }
+  }
+
+  // ── Render states ─────────────────────────────────────────────────────
+  if (loading && !data) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <LumaSpin />
+      </div>
+    );
+  }
+
+  if (error && !data) {
+    return (
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+        <div className="mb-6 bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl flex items-center gap-3 text-sm">
+          <AlertCircle size={18} />
+          {error}
+        </div>
+        <Link
+          to="/tenants"
+          className="text-sm font-medium text-stone-600 hover:text-stone-900 transition-colors"
+        >
+          ← Back to Businesses (V4)
+        </Link>
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const { parent, meta, tiles, contact_method_donut, reviews_alerts, locations } = data;
+
+  return (
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+      {/* ── Header ────────────────────────────────────────────────────── */}
+      <Header
+        parent={parent}
+        meta={meta}
+        period={period}
+        setPeriod={setPeriod}
+        refreshing={refreshing}
+      />
+
+      {error && (
+        <div className="mb-6 bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl flex items-center gap-3 text-sm">
+          <AlertCircle size={18} />
+          {error}
+        </div>
+      )}
+
+      {/* ── 4 Hero Tiles ──────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <AiActivityTile data={tiles.ai_activity} period={period} />
+        <AfterHoursRevenueTile data={tiles.after_hours_revenue} period={period} />
+        <NetworkRevenueTile data={tiles.network_revenue} period={period} />
+        <ReviewsHealthTile data={tiles.reviews_health} />
+      </div>
+
+      {/* ── Donut + Reviews Alerts (side-by-side) ─────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
+        <ContactMethodDonut data={contact_method_donut} period={period} />
+        <ReviewsAlertsPanel data={reviews_alerts} />
+      </div>
+
+      {/* ── Location Table ────────────────────────────────────────────── */}
+      <LocationTable
+        locations={locations}
+        sort={sort}
+        dir={dir}
+        onSort={handleSort}
+      />
+
+      {/* ── Footer link back to V4 while we're in dual-mode ───────────── */}
+      <div className="mt-8 text-center">
+        <Link
+          to="/tenants"
+          className="text-xs text-stone-400 hover:text-stone-600 font-medium transition-colors"
+        >
+          ← Switch to Businesses (V4)
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// HEADER
+// ═════════════════════════════════════════════════════════════════════════
+function Header({ parent, meta, period, setPeriod, refreshing }) {
+  const periods = [
+    { value: "7d",  label: "7d"  },
+    { value: "30d", label: "30d" },
+    { value: "90d", label: "90d" },
+  ];
+
+  return (
+    <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
+      <div>
+        <h1 className="text-2xl font-black text-stone-900 flex items-center gap-3">
+          <Sparkles className="text-brand-600" size={28} />
+          Business Rollup
+          {refreshing && (
+            <span className="text-xs font-medium text-stone-400 normal-case tracking-normal">
+              Refreshing...
+            </span>
+          )}
+        </h1>
+        <p className="text-stone-500 mt-1 text-sm">
+          {parent.company_name || parent.name} ·{" "}
+          {formatNum(meta.location_count)}{" "}
+          location{meta.location_count !== 1 ? "s" : ""}
+          {meta.includes_parent && " (HQ + branches)"}
+        </p>
+      </div>
+
+      {/* Period toggle — matches Metrics.jsx pill pattern */}
+      <div className="flex items-center gap-1 p-1 bg-stone-100/80 rounded-xl">
+        {periods.map((p) => (
+          <button
+            key={p.value}
+            onClick={() => setPeriod(p.value)}
+            className={`px-4 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all ${
+              period === p.value
+                ? "bg-white text-stone-900 shadow-sm"
+                : "text-stone-500 hover:text-stone-700"
+            }`}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// TILE 1 — AI ACTIVITY
+// ═════════════════════════════════════════════════════════════════════════
+function AiActivityTile({ data, period }) {
+  return (
+    <TileShell
+      icon={<PhoneCall className="w-4 h-4" />}
+      label="AI Activity"
+      subtitle={`Calls + bookings · ${period}`}
+      color="blue"
+    >
+      <div className="text-3xl font-black text-stone-900 tabular-nums tracking-tight">
+        {formatNum(data.calls_total)}
+      </div>
+      <div className="text-xs font-medium text-stone-500 mt-0.5">
+        calls handled
+      </div>
+      <div className="mt-3 pt-3 border-t border-stone-100 flex items-center justify-between text-xs">
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-stone-400 font-bold">
+            Booked
+          </div>
+          <div className="text-sm font-black text-stone-900 tabular-nums">
+            {formatNum(data.bookings_total)}
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-[10px] uppercase tracking-wider text-stone-400 font-bold">
+            Rate
+          </div>
+          <div className="text-sm font-black text-emerald-600 tabular-nums">
+            {formatPct(data.booking_rate_pct)}
+          </div>
+        </div>
+      </div>
+    </TileShell>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// TILE 2 — AFTER-HOURS REVENUE (THE SALES PITCH)
+// ═════════════════════════════════════════════════════════════════════════
+function AfterHoursRevenueTile({ data, period }) {
+  return (
+    <TileShell
+      icon={<Moon className="w-4 h-4" />}
+      label="After-Hours Revenue"
+      subtitle={`AI-captured · ${period}`}
+      color="indigo"
+      highlight
+    >
+      <div className="text-3xl font-black text-stone-900 tabular-nums tracking-tight">
+        {formatCents(data.after_hours_revenue_cents)}
+      </div>
+      <div className="text-xs font-medium text-stone-500 mt-0.5">
+        {formatNum(data.after_hours_booking_count)} booking
+        {data.after_hours_booking_count !== 1 ? "s" : ""} outside hours
+      </div>
+      <div className="mt-3 pt-3 border-t border-stone-100 text-xs text-stone-600">
+        <span className="font-bold text-stone-900">
+          {data.after_hours_pct_of_total != null
+            ? `${data.after_hours_pct_of_total}%`
+            : "—"}
+        </span>
+        <span className="text-stone-400"> of total revenue</span>
+      </div>
+    </TileShell>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// TILE 3 — NETWORK REVENUE (+ MoM DELTA + CONFIDENCE FLAG)
+// ═════════════════════════════════════════════════════════════════════════
+function NetworkRevenueTile({ data, period }) {
+  const isUp   = data.delta_direction === "up";
+  const isDown = data.delta_direction === "down";
+  const isLowConfidence = data.confidence === "low";
+
+  const TrendIcon = isUp ? TrendingUp : isDown ? TrendingDown : null;
+  const trendColor = isLowConfidence
+    ? "text-stone-400"
+    : isUp
+    ? "text-emerald-600"
+    : isDown
+    ? "text-red-500"
+    : "text-stone-500";
+
+  return (
+    <TileShell
+      icon={<TrendingUp className="w-4 h-4" />}
+      label="Network Revenue"
+      subtitle={`Total · ${period}`}
+      color="emerald"
+    >
+      <div className="text-3xl font-black text-stone-900 tabular-nums tracking-tight">
+        {formatCents(data.current_cents)}
+      </div>
+      <div className="text-xs font-medium text-stone-500 mt-0.5">
+        confirmed revenue
+      </div>
+      <div className="mt-3 pt-3 border-t border-stone-100 flex items-center justify-between text-xs">
+        <div className={`flex items-center gap-1 ${trendColor} font-bold`}>
+          {TrendIcon && <TrendIcon className="w-3.5 h-3.5" />}
+          <span className="tabular-nums">
+            {data.delta_pct != null
+              ? `${data.delta_pct > 0 ? "+" : ""}${data.delta_pct}%`
+              : data.delta_cents > 0
+              ? `+${formatCents(data.delta_cents)}`
+              : "—"}
+          </span>
+          <span className="text-stone-400 font-medium">vs prior {period}</span>
+        </div>
+        {isLowConfidence && (
+          <span
+            className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase tracking-wider text-stone-400"
+            title={`Only ${data.parent_age_days} days of data — trend may be noisy`}
+          >
+            <Info className="w-2.5 h-2.5" />
+            Low conf
+          </span>
+        )}
+      </div>
+    </TileShell>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// TILE 4 — REVIEWS HEALTH
+// ═════════════════════════════════════════════════════════════════════════
+function ReviewsHealthTile({ data }) {
+  const hasAlerts    = data.prominent_alert_count > 0;
+  const connectionRate = data.total_tenant_count > 0
+    ? Math.round((data.oauth_connected_count / data.total_tenant_count) * 100)
+    : 0;
+
+  return (
+    <TileShell
+      icon={<Star className="w-4 h-4" />}
+      label="Reviews Health"
+      subtitle="Lifetime avg"
+      color="amber"
+    >
+      <div className="flex items-baseline gap-1.5">
+        <div className="text-3xl font-black text-stone-900 tabular-nums tracking-tight">
+          {formatRating(data.avg_rating_lifetime)}
+        </div>
+        <Star
+          className="w-5 h-5 text-amber-500 fill-amber-500"
+          strokeWidth={1.5}
+        />
+      </div>
+      <div className="text-xs font-medium text-stone-500 mt-0.5">
+        across {formatNum(data.total_review_count)} review
+        {data.total_review_count !== 1 ? "s" : ""}
+      </div>
+      <div className="mt-3 pt-3 border-t border-stone-100 flex items-center justify-between text-xs">
+        {hasAlerts ? (
+          <div className="flex items-center gap-1 text-red-600 font-bold">
+            <AlertTriangle className="w-3.5 h-3.5" />
+            <span className="tabular-nums">
+              {formatNum(data.prominent_alert_count)}
+            </span>
+            <span className="text-stone-500 font-medium">pending</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1 text-emerald-600 font-bold">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            <span>All clear</span>
+          </div>
+        )}
+        <span
+          className="text-[10px] font-bold uppercase tracking-wider text-stone-400"
+          title={`${data.oauth_connected_count} of ${data.total_tenant_count} locations have Google connected`}
+        >
+          {data.oauth_connected_count}/{data.total_tenant_count} linked
+        </span>
+      </div>
+    </TileShell>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// SHARED TILE SHELL
+// ═════════════════════════════════════════════════════════════════════════
+function TileShell({ icon, label, subtitle, color, highlight, children }) {
+  const colorClasses = {
+    blue:    "from-blue-50 text-blue-600 ring-blue-200/50",
+    indigo:  "from-indigo-50 text-indigo-600 ring-indigo-200/50",
+    emerald: "from-emerald-50 text-emerald-600 ring-emerald-200/50",
+    amber:   "from-amber-50 text-amber-600 ring-amber-200/50",
+  };
+
+  return (
+    <div
+      className={`bg-white rounded-2xl border shadow-sm hover:shadow-md transition-all p-5 ${
+        highlight ? "border-brand-200" : "border-stone-200"
+      }`}
+    >
+      <div className="flex items-center gap-2 mb-3">
+        <div
+          className={`w-7 h-7 rounded-lg bg-gradient-to-br to-white flex items-center justify-center ring-1 ${colorClasses[color] || colorClasses.blue}`}
+        >
+          {icon}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-[11px] font-black text-stone-900 uppercase tracking-wider leading-tight">
+            {label}
+          </div>
+          <div className="text-[10px] text-stone-400 font-medium leading-tight">
+            {subtitle}
+          </div>
+        </div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// CONTACT-METHOD DONUT
+// ═════════════════════════════════════════════════════════════════════════
+function ContactMethodDonut({ data, period }) {
+  // SVG donut rendered manually (no recharts dependency). We compute each
+  // slice's arc based on its percentage of the total.
+  const size   = 140;
+  const stroke = 18;
+  const radius = (size - stroke) / 2;
+  const cx     = size / 2;
+  const cy     = size / 2;
+  const circumference = 2 * Math.PI * radius;
+
+  // Filter out zero-count buckets from rendering (but they still appear in
+  // the legend so the design stays stable across periods).
+  const slicesWithCounts = data.buckets.filter((b) => b.count > 0);
+  const hasData = data.total_leads > 0;
+
+  // Build cumulative offsets for each slice on the SVG circle.
+  let cumulative = 0;
+
+  return (
+    <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-black text-stone-900">Contact Method</h3>
+          <p className="text-[10px] text-stone-400 font-medium uppercase tracking-wider mt-0.5">
+            How leads reached you · {period}
+          </p>
+        </div>
+        <div className="text-right">
+          <div className="text-2xl font-black text-stone-900 tabular-nums">
+            {formatNum(data.total_leads)}
+          </div>
+          <div className="text-[10px] text-stone-400 font-medium uppercase tracking-wider">
+            total leads
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-6">
+        {/* Donut SVG */}
+        <div className="shrink-0 relative">
+          <svg width={size} height={size} className="-rotate-90">
+            {/* Background track */}
+            <circle
+              cx={cx}
+              cy={cy}
+              r={radius}
+              fill="none"
+              stroke="#f5f5f4"
+              strokeWidth={stroke}
+            />
+            {/* Slices */}
+            {hasData &&
+              slicesWithCounts.map((bucket) => {
+                const pct = bucket.count / data.total_leads;
+                const dash = pct * circumference;
+                const offset = -cumulative * circumference;
+                cumulative += pct;
+
+                return (
+                  <circle
+                    key={bucket.method}
+                    cx={cx}
+                    cy={cy}
+                    r={radius}
+                    fill="none"
+                    stroke={getSliceColor(bucket.method)}
+                    strokeWidth={stroke}
+                    strokeDasharray={`${dash} ${circumference - dash}`}
+                    strokeDashoffset={offset}
+                  />
+                );
+              })}
+          </svg>
+          {/* Center label */}
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <div className="text-lg font-black text-stone-900 tabular-nums">
+              {formatNum(data.total_leads)}
+            </div>
+            <div className="text-[9px] text-stone-400 font-bold uppercase tracking-wider">
+              leads
+            </div>
+          </div>
+        </div>
+
+        {/* Legend */}
+        <div className="flex-1 min-w-0 space-y-1.5">
+          {data.buckets.map((bucket) => {
+            const Icon = CONTACT_METHOD_ICONS[bucket.method];
+            return (
+              <div
+                key={bucket.method}
+                className="flex items-center justify-between text-xs"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span
+                    className={`shrink-0 w-2 h-2 rounded-full ${CONTACT_METHOD_COLORS[bucket.method]}`}
+                  />
+                  <Icon className="w-3.5 h-3.5 text-stone-400 shrink-0" />
+                  <span className="font-medium text-stone-700 truncate">
+                    {CONTACT_METHOD_LABELS[bucket.method]}
+                  </span>
+                </div>
+                <div className="shrink-0 flex items-center gap-2">
+                  <span className="font-bold text-stone-900 tabular-nums">
+                    {formatNum(bucket.count)}
+                  </span>
+                  <span className="text-stone-400 tabular-nums w-10 text-right">
+                    {bucket.pct}%
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Unknown count nudge — data quality signal */}
+      {data.unknown_count > 0 && data.total_leads > 0 && (
+        <div className="mt-4 pt-3 border-t border-stone-100 flex items-center gap-2 text-[11px] text-stone-500">
+          <Info className="w-3.5 h-3.5 text-stone-400 shrink-0" />
+          <span>
+            {formatNum(data.unknown_count)} lead
+            {data.unknown_count !== 1 ? "s" : ""} missing source — check your
+            integrations
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Helper: convert Tailwind bg-* class to SVG stroke color
+function getSliceColor(method) {
+  const colorHex = {
+    voice:    "#3b82f6", // blue-500
+    sms:      "#10b981", // emerald-500
+    web_form: "#f59e0b", // amber-500
+    facebook: "#6366f1", // indigo-500
+    crm:      "#a855f7", // purple-500
+    unknown:  "#a8a29e", // stone-400
+  };
+  return colorHex[method] || "#a8a29e";
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// REVIEWS ALERTS PANEL
+// ═════════════════════════════════════════════════════════════════════════
+function ReviewsAlertsPanel({ data }) {
+  const { alerts, total_count_14d } = data;
+  const hasAlerts = alerts.length > 0;
+  const extraCount = Math.max(0, total_count_14d - alerts.length);
+
+  return (
+    <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-black text-stone-900 flex items-center gap-2">
+            Reviews Needing Response
+            {hasAlerts && (
+              <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 bg-red-100 text-red-700 text-[10px] font-bold rounded-full">
+                {total_count_14d}
+              </span>
+            )}
+          </h3>
+          <p className="text-[10px] text-stone-400 font-medium uppercase tracking-wider mt-0.5">
+            1-3★ pending · last 14 days
+          </p>
+        </div>
+      </div>
+
+      {hasAlerts ? (
+        <div className="space-y-3">
+          {alerts.map((alert) => (
+            <ReviewAlertCard key={alert.review_id} alert={alert} />
+          ))}
+          {extraCount > 0 && (
+            <Link
+              to="/reviews"
+              className="block text-center text-xs font-bold text-stone-600 hover:text-stone-900 pt-2 transition-colors"
+            >
+              View all {total_count_14d} pending reviews →
+            </Link>
+          )}
+        </div>
+      ) : (
+        <div className="text-center py-8">
+          <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center mx-auto mb-3">
+            <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+          </div>
+          <h4 className="text-sm font-bold text-stone-900 mb-1">All clear</h4>
+          <p className="text-xs text-stone-500">
+            No pending bad reviews in the last 14 days
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReviewAlertCard({ alert }) {
+  return (
+    <Link
+      to="/reviews"
+      className="block border border-stone-200 rounded-xl p-3 hover:border-stone-300 hover:shadow-sm transition-all group"
+    >
+      <div className="flex items-start gap-3">
+        <div className="shrink-0 w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center">
+          <Star className="w-4 h-4 text-red-500 fill-red-500" strokeWidth={1.5} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <span className="text-xs font-black text-stone-900">
+              {alert.rating}-star
+            </span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-stone-400 px-1.5 py-0.5 bg-stone-100 rounded">
+              {alert.tenant_name}
+            </span>
+            {alert.has_ai_draft && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-emerald-700 px-1.5 py-0.5 bg-emerald-50 rounded border border-emerald-100">
+                <Sparkles className="w-2.5 h-2.5" />
+                AI draft ready
+              </span>
+            )}
+          </div>
+          {alert.reviewer_name && (
+            <div className="text-[11px] text-stone-500 font-medium mb-1">
+              {alert.reviewer_name}
+            </div>
+          )}
+          {alert.review_text && (
+            <p className="text-xs text-stone-700 line-clamp-2 leading-snug">
+              {alert.review_text}
+            </p>
+          )}
+        </div>
+        <ChevronRight className="w-4 h-4 shrink-0 text-stone-300 group-hover:text-stone-500 transition-colors" />
+      </div>
+    </Link>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// LOCATION TABLE
+// ═════════════════════════════════════════════════════════════════════════
+function LocationTable({ locations, sort, dir, onSort }) {
+  const columns = [
+    { key: "tenant_name",          label: "Location",     align: "left"  },
+    { key: "calls_total",          label: "Calls",        align: "right" },
+    { key: "bookings_total",       label: "Bookings",     align: "right" },
+    { key: "booking_rate_pct",     label: "Rate",         align: "right" },
+    { key: "revenue_cents",        label: "Revenue",      align: "right" },
+    { key: "avg_rating",           label: "Rating",       align: "right" },
+    { key: "review_count",         label: "Reviews",      align: "right" },
+    { key: "pending_alerts_count", label: "Alerts",       align: "right" },
+  ];
+
+  if (locations.length === 0) {
+    return (
+      <div className="bg-white rounded-2xl border-2 border-dashed border-stone-200 p-10 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-stone-100 flex items-center justify-center mx-auto mb-4">
+          <MapPin className="w-7 h-7 text-stone-400" />
+        </div>
+        <h3 className="text-base font-bold text-stone-900 mb-1">
+          No locations
+        </h3>
+        <p className="text-sm text-stone-500">
+          Add locations to see network-wide performance.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b border-stone-100 flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-black text-stone-900">Locations</h3>
+          <p className="text-[10px] text-stone-400 font-medium uppercase tracking-wider mt-0.5">
+            {formatNum(locations.length)} location{locations.length !== 1 ? "s" : ""} · sorted by {SORT_LABELS[sort]} {dir}
+          </p>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-stone-50/50 border-b border-stone-100">
+            <tr>
+              {columns.map((col) => (
+                <th
+                  key={col.key}
+                  className={`px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-stone-400 ${
+                    col.align === "right" ? "text-right" : "text-left"
+                  }`}
+                >
+                  <button
+                    onClick={() => onSort(col.key)}
+                    className={`inline-flex items-center gap-1 hover:text-stone-700 transition-colors ${
+                      col.align === "right" ? "flex-row-reverse" : ""
+                    } ${sort === col.key ? "text-stone-900" : ""}`}
+                  >
+                    <span>{col.label}</span>
+                    {sort === col.key ? (
+                      dir === "desc" ? (
+                        <ChevronDown className="w-3 h-3" />
+                      ) : (
+                        <ChevronUp className="w-3 h-3" />
+                      )
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 opacity-30" />
+                    )}
+                  </button>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-stone-100">
+            {locations.map((loc) => (
+              <LocationRow key={loc.tenant_id} loc={loc} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function LocationRow({ loc }) {
+  // Rank badge: subtle #1/#2/#3 indicator based on revenue rank across the
+  // network. Always present regardless of current sort.
+  const showRankBadge = loc.rank_revenue <= 3;
+  const rankColors = {
+    1: "bg-amber-100 text-amber-700 border-amber-200",
+    2: "bg-stone-100 text-stone-600 border-stone-200",
+    3: "bg-orange-50 text-orange-700 border-orange-200",
+  };
+
+  return (
+    <tr className="hover:bg-stone-50/30 transition-colors group">
+      {/* Location name + rank + oauth pill */}
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-2 min-w-0">
+          {showRankBadge && (
+            <span
+              className={`shrink-0 inline-flex items-center justify-center min-w-[22px] h-5 px-1 text-[10px] font-black rounded border ${rankColors[loc.rank_revenue]}`}
+              title={`Rank #${loc.rank_revenue} by revenue`}
+            >
+              #{loc.rank_revenue}
+            </span>
+          )}
+          <span className="font-bold text-stone-900 truncate">
+            {loc.tenant_name}
+          </span>
+          {loc.oauth_connected && (
+            <span
+              className="shrink-0 w-1.5 h-1.5 rounded-full bg-emerald-400"
+              title="Google Reviews connected"
+            />
+          )}
+        </div>
+      </td>
+
+      {/* Calls */}
+      <td className="px-4 py-3 text-right font-bold text-stone-900 tabular-nums">
+        {formatNum(loc.calls_total)}
+      </td>
+
+      {/* Bookings */}
+      <td className="px-4 py-3 text-right font-bold text-stone-900 tabular-nums">
+        {formatNum(loc.bookings_total)}
+      </td>
+
+      {/* Booking rate */}
+      <td className="px-4 py-3 text-right font-bold tabular-nums">
+        <span
+          className={
+            loc.booking_rate_pct == null
+              ? "text-stone-400"
+              : loc.booking_rate_pct >= 40
+              ? "text-emerald-600"
+              : loc.booking_rate_pct >= 20
+              ? "text-amber-600"
+              : "text-red-500"
+          }
+        >
+          {formatPct(loc.booking_rate_pct)}
+        </span>
+      </td>
+
+      {/* Revenue */}
+      <td className="px-4 py-3 text-right font-black text-stone-900 tabular-nums">
+        {formatCents(loc.revenue_cents)}
+      </td>
+
+      {/* Avg rating */}
+      <td className="px-4 py-3 text-right tabular-nums">
+        {loc.avg_rating != null ? (
+          <span className="inline-flex items-center gap-1 font-bold text-stone-900">
+            {formatRating(loc.avg_rating)}
+            <Star className="w-3 h-3 text-amber-500 fill-amber-500" strokeWidth={1.5} />
+          </span>
+        ) : (
+          <span className="text-stone-400 font-medium">—</span>
+        )}
+      </td>
+
+      {/* Review count */}
+      <td className="px-4 py-3 text-right font-medium text-stone-600 tabular-nums">
+        {formatNum(loc.review_count)}
+      </td>
+
+      {/* Pending alerts */}
+      <td className="px-4 py-3 text-right tabular-nums">
+        {loc.pending_alerts_count > 0 ? (
+          <span className="inline-flex items-center gap-1 font-bold text-red-600">
+            <AlertTriangle className="w-3 h-3" />
+            {loc.pending_alerts_count}
+          </span>
+        ) : (
+          <span className="text-stone-400 font-medium">—</span>
+        )}
+      </td>
+    </tr>
+  );
+}

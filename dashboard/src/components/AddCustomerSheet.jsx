@@ -23,7 +23,7 @@ export default function AddCustomerSheet({ open, onClose, onCreated, onUpgrade }
     business_name: "",
     primary_email: "",
     phone: "",
-    plan: "growth",
+    plan: "basic",
     brand_mode_inherit: true,
   });
 
@@ -249,7 +249,6 @@ export default function AddCustomerSheet({ open, onClose, onCreated, onUpgrade }
                   <option value="basic">Basic</option>
                   <option value="pro">Pro</option>
                   <option value="elite">Elite</option>
-                  <option value="growth">Growth</option>
                 </select>
               </Field>
 

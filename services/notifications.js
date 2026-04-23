@@ -290,6 +290,46 @@ async function notifyStripeSyncFailed(parentTenantId, { child_tenant_id, child_n
   }
 }
 
+/**
+ * Fires when a new customer is added to a reseller — either via manual
+ * AddCustomerSheet or via public self-signup link. Notifies the RESELLER
+ * (not the new customer) so they can see who's joining their portfolio.
+ *
+ * tenantId here is the RESELLER's tenant id, not the new customer's.
+ * Apr 23, 2026.
+ */
+async function notifyResellerNewCustomer(resellerTenantId, { customer_tenant_id, customer_name, customer_email, via }) {
+  try {
+    if (!resellerTenantId || !customer_tenant_id) return null;
+
+    // Dedup on customer_tenant_id so the same signup never bells twice
+    // (e.g. if a webhook retries or the manual-add API is double-clicked).
+    const existing = await db.query(
+      `SELECT id FROM notifications
+       WHERE tenant_id = $1
+         AND type = 'reseller_new_customer'
+         AND data->>'customer_tenant_id' = $2
+       LIMIT 1`,
+      [resellerTenantId, String(customer_tenant_id)]
+    );
+    if (existing.rows.length > 0) return null;
+
+    const sourceLabel = via === 'public_signup'
+      ? 'signed up via your link'
+      : 'was added to your account';
+
+    return await createNotification(resellerTenantId, {
+      type: 'reseller_new_customer',
+      title: 'New Customer',
+      body: `${customer_name} ${sourceLabel}.${customer_email ? ` (${customer_email})` : ''}`,
+      data: { customer_tenant_id, customer_name, customer_email, via },
+    });
+  } catch (err) {
+    console.error("[Notification] notifyResellerNewCustomer failed:", err.message);
+    return null;
+  }
+}
+
 // ─────────────────────────────────────────────────────────
 // SCHEDULED CHECKS (existing — unchanged)
 // ─────────────────────────────────────────────────────────
@@ -437,5 +477,6 @@ module.exports = {
   notifyHotLead,
   notifyEstimateRecoveryStarted,
   notifyStripeSyncFailed,
+  notifyResellerNewCustomer,
   HOT_LEAD_THRESHOLD_CENTS,
 };

@@ -82,7 +82,7 @@ router.post("/crm/estimate-sent", async (req, res) => {
 
     // Get or Create Lead
     const source = lead_source || "CRM Webhook";
-    let lead = await getOrCreateLead(tenantId, phone, name || "CRM Lead", source);
+    let lead = await getOrCreateLead(tenantId, phone, name || "CRM Lead", source, 'crm');
     
     // Update additional properties
     let updates = {};
@@ -170,7 +170,7 @@ router.post("/crm/job-won", async (req, res) => {
     const tenantId = rTenant.rows[0].id;
 
     const source = lead_source || "CRM Webhook";
-    let lead = await getOrCreateLead(tenantId, phone, name || "CRM Lead", source);
+    let lead = await getOrCreateLead(tenantId, phone, name || "CRM Lead", source, 'crm');
     
     let updates = { status: 'Won' };
     if (contact_email && !lead.email) updates.email = contact_email;

@@ -239,7 +239,7 @@ router.post("/status", (req, res) => {
         if (!tenantRow) return;
 
         // Get or create the lead — fires notifyNewLead bell automatically
-        const lead = await getOrCreateLead(call.tenant_id, From, null, "missed_call");
+        const lead = await getOrCreateLead(call.tenant_id, From, null, "missed_call", 'voice');
         if (!lead) return;
 
         // 1️⃣  IMMEDIATE "sorry we missed you" SMS

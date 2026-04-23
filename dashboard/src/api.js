@@ -162,6 +162,26 @@ export function getTenantRollup(parentId) {
   return api(`/api/tenants/${parentId}/rollup`);
 }
 
+// ── Rollup V5 (Apr 23, 2026) ──────────────────────────────────────────────
+// New parent tenant dashboard that replaces the V4 Businesses page.
+// One-shot endpoint returning everything the page needs:
+// { parent, meta, tiles, contact_method_donut, reviews_alerts, locations }.
+// Backend: routes/rollupV5.js (mounted at /api/rollup-v5).
+
+/**
+ * Fetch the full Rollup V5 dashboard payload for a parent tenant.
+ * @param {string} parentId - UUID of the parent tenant
+ * @param {object} options  - { period?: '7d'|'30d'|'90d', sort?: string, dir?: 'asc'|'desc' }
+ */
+export function getRollupV5(parentId, options = {}) {
+  const params = new URLSearchParams();
+  if (options.period) params.set("period", options.period);
+  if (options.sort)   params.set("sort", options.sort);
+  if (options.dir)    params.set("dir", options.dir);
+  const qs = params.toString();
+  return api(`/api/rollup-v5/${parentId}${qs ? `?${qs}` : ""}`);
+}
+
 // ── HQ Full Rollup Dashboard (Apr 21, 2026) ──
 // Three-tab dashboard: Overview / Activity / Alerts.
 // Backend routes: routes/rollup.js (mounted at /api/rollup).

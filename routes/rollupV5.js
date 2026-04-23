@@ -19,8 +19,6 @@ const db      = require("../lib/db");
 const router  = express.Router();
 
 // ── Period handling ────────────────────────────────────────────────────────
-// Accept only the 3 values the spec locks. Anything else → 30d default.
-// Returned as a days int so SQL can do `now() - interval '$N days'`.
 const PERIOD_TO_DAYS = { "7d": 7, "30d": 30, "90d": 90 };
 
 function resolvePeriod(raw) {
@@ -31,9 +29,6 @@ function resolvePeriod(raw) {
 }
 
 // ── Parent tenant validation ───────────────────────────────────────────────
-// Ensures the authenticated user owns this parent tenant OR is a superadmin.
-// Also ensures the parent IS actually a parent (operating_hq or rollup_only).
-// Returns the parent row on success, or null + writes an error response.
 async function validateParentAccess(req, res, parentId) {
   if (!parentId || !/^[0-9a-f-]{36}$/i.test(parentId)) {
     res.status(400).json({ error: "Invalid parent tenant ID" });
@@ -77,15 +72,6 @@ async function validateParentAccess(req, res, parentId) {
 }
 
 // ── Rollup scope resolver ──────────────────────────────────────────────────
-// Returns the set of tenant IDs that contribute to rollup metrics.
-//
-// For parent_mode='operating_hq' (Gladiators-style — HQ runs jobs itself):
-//   includes parent + all active children
-//
-// For parent_mode='rollup_only' (franchise brand corp — no jobs):
-//   children only (including parent would always add zeros)
-//
-// Active children = haven't been removed, aren't suspended, not soft-deleted.
 async function getRollupScopeIds(parent) {
   const { rows } = await db.query(
     `SELECT id
@@ -262,29 +248,6 @@ async function getAfterHoursRevenueTile(tenantIds, days) {
 // ═══════════════════════════════════════════════════════════════════════════
 // HERO TILE 3 — NETWORK REVENUE
 // ═══════════════════════════════════════════════════════════════════════════
-// Sum of actual_revenue_cents across all rollup-scope tenants in the period,
-// plus MoM delta comparing to the immediately prior same-length window.
-//
-// Definition per Apr 23 spec:
-//   • actual_revenue_cents ONLY — matches Tile 2, keeps the dashboard honest.
-//     Pipeline (estimated_revenue_cents) NOT included.
-//   • MoM delta: current period total vs previous equal-length period
-//     (e.g. period=30d → current 0-30d, previous 30-60d).
-//   • Confidence flag: 'high' when parent has ≥60d of history, otherwise
-//     'low' so the UI can gray out or show a disclaimer. We do NOT suppress
-//     the delta itself — backend returns data, frontend decides display.
-//
-// Age source: tenant parent's created_at. For rollup_only parents with
-// multiple children of varying ages this is still the right signal —
-// the question is "has THIS dashboard accumulated enough data yet", which
-// is answered by when the parent tenant was created.
-//
-// Edge cases:
-//   • Previous period total = 0 → delta_pct = null (can't divide by zero).
-//     UI should render "No prior data" instead of "+∞%".
-//   • Current = 0 and previous = 0 → delta_pct = null, delta_direction = 'flat'.
-//   • Current > 0 and previous = 0 → delta_cents > 0 but delta_pct = null.
-//     UI shows absolute delta ("+$X") without a percentage.
 async function getNetworkRevenueTile(tenantIds, days, parentCreatedAt) {
   if (tenantIds.length === 0) {
     return {
@@ -298,12 +261,6 @@ async function getNetworkRevenueTile(tenantIds, days, parentCreatedAt) {
     };
   }
 
-  // Two SUMs in a single query — Postgres handles the date math. We express
-  // both windows in terms of `now()` so there's no timezone edge case: both
-  // windows always compare to the same reference point.
-  //
-  // Current window:  now() - $days               → now()
-  // Previous window: now() - ($days * 2)         → now() - $days
   const result = await db.query(
     `SELECT
        COALESCE(SUM(CASE
@@ -328,8 +285,6 @@ async function getNetworkRevenueTile(tenantIds, days, parentCreatedAt) {
   const previous_cents = Number(result.rows[0].previous_cents);
   const delta_cents    = current_cents - previous_cents;
 
-  // Percentage: divide by previous, but guard against /0.
-  // Signed — positive when growing, negative when shrinking.
   const delta_pct =
     previous_cents > 0
       ? Math.round((delta_cents / previous_cents) * 1000) / 10
@@ -339,12 +294,6 @@ async function getNetworkRevenueTile(tenantIds, days, parentCreatedAt) {
   if (delta_cents > 0) delta_direction = "up";
   else if (delta_cents < 0) delta_direction = "down";
 
-  // Confidence: based on how long this parent tenant has existed relative
-  // to the comparison window. "60 days" is the spec's heuristic for "enough
-  // history to trust the delta." We use the actual window size * 2 as the
-  // threshold because that's what we're comparing against — if a parent is
-  // 65 days old and period=30d, we need 60d of data and have 65, which is
-  // high confidence. If period=90d, we need 180d and 65 is low confidence.
   const parent_age_days = parentCreatedAt
     ? Math.floor((Date.now() - new Date(parentCreatedAt).getTime()) / (1000 * 60 * 60 * 24))
     : 0;
@@ -364,6 +313,106 @@ async function getNetworkRevenueTile(tenantIds, days, parentCreatedAt) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// HERO TILE 4 — REVIEWS HEALTH
+// ═══════════════════════════════════════════════════════════════════════════
+// Shows: lifetime avg rating + count of "prominent alerts" needing response.
+//
+// Definitions (locked Apr 23 spec + session decisions):
+//   • Avg rating: ALL-TIME average of google_reviews.rating across all
+//     in-scope tenants, not period-filtered. Rationale: star rating is a
+//     slow-moving leading indicator; period filtering generates noise on
+//     small samples (one angry 1-star tanks a 30-day window).
+//   • Prominent alerts: reviews where rating ≤ 3 AND status = 'pending'
+//     AND review_date > now() - 90 days. "Pending" means the owner hasn't
+//     responded yet. 90-day window catches still-unresponded older ones
+//     without pulling in truly ancient complaints.
+//   • Tenant scope: all in-scope tenants. If none have OAuth'd Google,
+//     avg_rating = null and prominent_alert_count = 0 — we do NOT filter
+//     the scope to only OAuth'd tenants. That way the tile accurately
+//     reports "X of Y locations connected."
+//
+// Returns:
+//   {
+//     avg_rating_lifetime:     <number|null>,  // e.g. 4.7, or null
+//     total_review_count:      <int>,          // lifetime, all tenants
+//     prominent_alert_count:   <int>,          // 1-3 star pending, last 90d
+//     oauth_connected_count:   <int>,          // tenants with Google linked
+//     total_tenant_count:      <int>,          // for "X of Y" display
+//   }
+async function getReviewsHealthTile(tenantIds) {
+  if (tenantIds.length === 0) {
+    return {
+      avg_rating_lifetime:   null,
+      total_review_count:    0,
+      prominent_alert_count: 0,
+      oauth_connected_count: 0,
+      total_tenant_count:    0,
+    };
+  }
+
+  // Single query covering all four metrics. Cheaper than 4 separate
+  // queries — Postgres plans all the aggregates in one pass.
+  //
+  // OAuth-connected check: tenant has both google_access_token AND
+  // google_location_id. Matches the `connected` definition in
+  // routes/reviews.js GET /status. We count, not list, because the
+  // tile only shows a count — the location table will show per-location
+  // connection status later.
+  const result = await db.query(
+    `SELECT
+       -- All-time avg across all reviews for these tenants.
+       -- Returns null when there are zero reviews (AVG of empty set).
+       AVG(r.rating)::numeric(3,2) AS avg_rating_lifetime,
+
+       -- Lifetime total review count across all in-scope tenants.
+       COUNT(r.id)::int AS total_review_count,
+
+       -- Prominent alerts: 1-3 star, pending, last 90 days.
+       -- COUNT(*) FILTER (WHERE ...) is the Postgres idiom for conditional
+       -- counts in a single aggregate pass.
+       COUNT(r.id) FILTER (
+         WHERE r.rating <= 3
+           AND r.status = 'pending'
+           AND r.review_date > now() - interval '90 days'
+       )::int AS prominent_alert_count,
+
+       -- OAuth-connected tenant count. Subquery against the tenants table
+       -- so we count tenants regardless of whether they have reviews yet
+       -- (a newly-connected tenant with zero reviews still counts as
+       -- connected for the "X of Y" display).
+       (SELECT COUNT(*)::int FROM tenants
+         WHERE id = ANY($1::uuid[])
+           AND google_access_token IS NOT NULL
+           AND google_location_id IS NOT NULL
+       ) AS oauth_connected_count,
+
+       -- Total tenants in scope (denominator for "X of Y connected").
+       $2::int AS total_tenant_count
+     FROM google_reviews r
+     WHERE r.tenant_id = ANY($1::uuid[])`,
+    [tenantIds, tenantIds.length]
+  );
+
+  const row = result.rows[0];
+
+  // AVG returns null when no reviews exist, or a numeric string when it
+  // does. Cast carefully — Number(null) is 0, which would misreport
+  // "0.0 stars" to the frontend. Preserve the null signal.
+  const avg_rating_lifetime =
+    row.avg_rating_lifetime === null
+      ? null
+      : Number(row.avg_rating_lifetime);
+
+  return {
+    avg_rating_lifetime,
+    total_review_count:    Number(row.total_review_count),
+    prominent_alert_count: Number(row.prominent_alert_count),
+    oauth_connected_count: Number(row.oauth_connected_count),
+    total_tenant_count:    Number(row.total_tenant_count),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MAIN ENDPOINT
 // GET /api/rollup-v5/:parentId?period=30d
 // ═══════════════════════════════════════════════════════════════════════════
@@ -377,13 +426,15 @@ router.get("/:parentId", async (req, res) => {
 
     const scope = await getRollupScopeIds(parent);
 
-    // All three tiles run in parallel. Tile 3 needs the parent row's
-    // created_at to compute confidence, so we pass it down.
-    const [aiActivity, afterHoursRevenue, networkRevenue] = await Promise.all([
-      getAiActivityTile(scope.all_ids, days),
-      getAfterHoursRevenueTile(scope.all_ids, days),
-      getNetworkRevenueTile(scope.all_ids, days, parent.created_at),
-    ]);
+    // All four tiles run in parallel. Tile 4 doesn't use `days` since
+    // avg rating is always lifetime — keeps the signature clean.
+    const [aiActivity, afterHoursRevenue, networkRevenue, reviewsHealth] =
+      await Promise.all([
+        getAiActivityTile(scope.all_ids, days),
+        getAfterHoursRevenueTile(scope.all_ids, days),
+        getNetworkRevenueTile(scope.all_ids, days, parent.created_at),
+        getReviewsHealthTile(scope.all_ids),
+      ]);
 
     res.json({
       parent: {
@@ -408,7 +459,7 @@ router.get("/:parentId", async (req, res) => {
         ai_activity:         aiActivity,
         after_hours_revenue: afterHoursRevenue,
         network_revenue:     networkRevenue,
-        // reviews_health:      TODO (tile 4)
+        reviews_health:      reviewsHealth,
       },
       // contact_method_donut: TODO
       // reviews_alerts:       TODO

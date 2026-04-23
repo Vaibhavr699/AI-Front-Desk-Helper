@@ -16,6 +16,10 @@ import ResellerPlans from "./pages/ResellerPlans";
 import ResellerWelcome from "./pages/ResellerWelcome";
 import ResellerPublicSignup from "./pages/ResellerPublicSignup";
 
+// ── Phase 3 Reseller Ops Item 3 — Churn Direct Billing (Apr 23, 2026) ─────
+import ChurnSetupDirectBilling from "./pages/ChurnSetupDirectBilling";
+import ChurnWelcome from "./pages/ChurnWelcome";
+
 /** Scroll window to top on every route change so new pages (e.g. policy, login) are not shown at previous scroll position. */
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -127,6 +131,8 @@ export default function App() {
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/franchisee-invite/:token" element={<FranchiseeInvite />} />
           <Route path="/reseller/:code/signup" element={<ResellerPublicSignup />} />
+          <Route path="/churn/setup-direct-billing/:token" element={<ChurnSetupDirectBilling />} />
+          <Route path="/churn/welcome" element={<ChurnWelcome />} />
           <Route path="/welcome" element={<Welcome />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/sms-terms" element={<SmsTerms />} />

@@ -205,7 +205,7 @@ router.post('/:code/signup', async (req, res) => {
          account_type, reseller_id, billing_owner, brand_mode,
          stripe_customer_id, stripe_subscription_id
        )
-       VALUES ($1, $2, $3, $4, $5, 'growth', 'customer', $6, 'reseller', $7, NULL, NULL)
+       VALUES ($1, $2, $3, $4, $5, 'basic', 'customer', $6, 'reseller', $7, NULL, NULL)
        RETURNING id, name, primary_email`,
       [
         trimmedName,

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useParams, useSearchParams, useNavigate } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 
 /**
  * Public page reached via the tokenized link in sendResellerChurnTransferEmail.
@@ -14,7 +14,6 @@ import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 export default function ChurnSetupDirectBilling() {
   const { token } = useParams();
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
   const wasCanceled = searchParams.get("canceled") === "1";
 
   const [loading, setLoading] = useState(true);
@@ -22,7 +21,6 @@ export default function ChurnSetupDirectBilling() {
   const [errorCode, setErrorCode] = useState(null);
   const [data, setData] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [interval, setInterval] = useState("monthly");
 
   useEffect(() => {
     let cancelled = false;
@@ -54,14 +52,12 @@ export default function ChurnSetupDirectBilling() {
       const res = await fetch(`/api/churn-public/${encodeURIComponent(token)}/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ interval }),
+        body: JSON.stringify({ interval: "monthly" }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(body.error || "Could not start checkout");
       }
-      // Edge case: customer already activated in another tab. Skip Stripe,
-      // go straight to the welcome page.
       if (body.already_active && body.redirect_url) {
         window.location.href = body.redirect_url;
         return;
@@ -86,7 +82,6 @@ export default function ChurnSetupDirectBilling() {
     );
   }
 
-  // Token expired — show contact-support fallback
   if (errorCode === "TOKEN_EXPIRED") {
     return (
       <PageShell>
@@ -100,7 +95,6 @@ export default function ChurnSetupDirectBilling() {
     );
   }
 
-  // Token invalid or any other load error
   if (error || !data) {
     return (
       <PageShell>
@@ -115,12 +109,10 @@ export default function ChurnSetupDirectBilling() {
   }
 
   const { tenant, plan, originating_reseller_name, expires_at } = data;
-  const monthlyDollars = plan?.monthly_price_cents
+  const monthlyDollars = plan && plan.monthly_price_cents
     ? `$${(plan.monthly_price_cents / 100).toFixed(0)}`
     : null;
 
-  // Days remaining countdown — softens the "your service is being cut off"
-  // message into "you have N days to act" framing.
   const daysRemaining = expires_at
     ? Math.max(0, Math.ceil((new Date(expires_at) - Date.now()) / (1000 * 60 * 60 * 24)))
     : null;
@@ -159,7 +151,7 @@ export default function ChurnSetupDirectBilling() {
         <div className="rounded-xl bg-stone-50 border border-stone-200 p-5 mb-5 space-y-3">
           <Row label="Account" value={tenant.name} />
           <Row label="Email" value={tenant.primary_email} />
-          <Row label="Your plan" value={plan?.name || tenant.plan} />
+          <Row label="Your plan" value={(plan && plan.name) || tenant.plan} />
           {monthlyDollars && (
             <Row label="Price" value={`${monthlyDollars}/month`} />
           )}

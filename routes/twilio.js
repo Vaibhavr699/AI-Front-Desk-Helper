@@ -482,11 +482,88 @@ router.post("/nurturing-call-status", (req, res) => {
 });
 
 // ── Outbound campaign TwiML ───────────────────────────────────────────────
+//
+// Apr 24, 2026: Added AMD (Answering Machine Detection) handling.
+// When Twilio's machineDetection="Enable" is set on the dial, AnsweredBy is
+// populated: "human" | "machine_start" | "machine_end_*" | "fax" | "unknown".
+//
+// Flow:
+//   • machine/fax → play a short scripted voicemail, hang up
+//   • human/unknown → connect to AI stream as normal
+//
+// NOTE: For this to work, the outbound dial code (services/outbound.js or
+// outbound engine) MUST include: { machineDetection: "Enable" } when it
+// creates the Twilio call. Without that flag, AnsweredBy will always be
+// empty and every call falls through to the AI path — same as before.
+//
 router.all("/outbound", async (req, res) => {
   const campaignId = req.query.campaignId || req.body.campaignId;
   const contactId  = req.query.contactId  || req.body.contactId;
   const scriptId   = req.query.scriptId   || req.body.scriptId;
+  const answeredBy = req.query.AnsweredBy || req.body.AnsweredBy || "";
 
+  console.log("[Outbound-Call] campaignId=%s contactId=%s answeredBy=%s",
+    campaignId, contactId, answeredBy || "unknown");
+
+  // ── Voicemail detected — leave a short message and hang up ─────────────
+  // Reuses the campaign's prompt_description as the voicemail message since
+  // campaigns don't currently have a separate voicemail_script field. If
+  // the description is long, we truncate to ~50 words for voicemail use.
+  const isMachine = answeredBy.startsWith("machine") || answeredBy === "fax";
+
+  if (isMachine && campaignId) {
+    const db = require("../lib/db");
+    let voicemailScript = "";
+
+    try {
+      const cRes = await db.query(
+        "SELECT prompt_description, agent_name FROM outbound_campaigns WHERE id = $1",
+        [campaignId]
+      );
+      const campaign = cRes.rows[0];
+      if (campaign) {
+        const agent = campaign.agent_name || "Alex";
+        // Default voicemail if no good prompt to reuse
+        voicemailScript = `Hi, this is ${agent}. Sorry we missed you — please give us a call back when you have a moment. Have a great day.`;
+      }
+    } catch (e) {
+      console.error("[Outbound-Call] Voicemail script lookup failed:", e.message);
+      voicemailScript = "Hi, sorry we missed you. Please call us back when you have a moment. Have a great day.";
+    }
+
+    console.log("[Outbound-Call] Voicemail detected — playing voicemail script (%d chars)", voicemailScript.length);
+
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Pause length="2"/>
+  <Say voice="Polly.Joanna">${escapeXml(voicemailScript)}</Say>
+  <Pause length="1"/>
+  <Hangup/>
+</Response>`;
+
+    res.type("text/xml").send(twiml);
+
+    // Log the voicemail touch on the contact row (non-blocking)
+    if (contactId) {
+      setImmediate(async () => {
+        try {
+          const db = require("../lib/db");
+          await db.query(
+            `UPDATE outbound_contacts
+                SET last_status = 'voicemail_left', updated_at = now()
+              WHERE id = $1`,
+            [contactId]
+          );
+          console.log("[Outbound-Call] Voicemail status logged contactId=%s", contactId);
+        } catch (e) {
+          console.error("[Outbound-Call] Voicemail log error:", e.message);
+        }
+      });
+    }
+    return;
+  }
+
+  // ── Human answered (or detection disabled/unknown) — connect to AI ─────
   const db    = require("../lib/db");
   const wsUrl = (BASE_URL || "")
     .replace("https://", "wss://")

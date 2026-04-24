@@ -422,6 +422,7 @@ app.use("/api/team", authMiddleware, require("./routes/team"));
 app.use("/api/audit-logs", authMiddleware, auditLogsRouter);
 app.use("/api/franchisee", require("./routes/franchisee"));
 app.use('/api/reseller-public', require('./routes/reseller-public'));
+app.use('/api/reseller/usage', authMiddleware, require('./routes/resellerUsage'));
 app.use("/api/churn-public", require("./routes/churn-public"));
 app.use("/api", authMiddleware, dashboardRoutes);
 app.use("/auth/google/calendar", require("./routes/google-calendar"));

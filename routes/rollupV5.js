@@ -566,16 +566,8 @@ async function getLeadSourceDonut(tenantIds, days) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// REVENUE GOALS PANEL (NEW Apr 24)
+// REVENUE GOALS PANEL
 // ═══════════════════════════════════════════════════════════════════════════
-// Aggregates current-month revenue goals across all locations and shows:
-//   • Network total: sum(goals) vs sum(current-month actuals)
-//   • Top 3 by % attainment (not raw revenue — small locations matter)
-//   • Count of locations missing a goal (empty-state CTA)
-//
-// Schema: revenue_goals is per-tenant-per-month (year, month, revenue_goal).
-// actual_revenue is NULL in DB — we compute live from bookings table, which
-// mirrors how Metrics page works (revenue_goals.actual_revenue not maintained).
 async function getRevenueGoalsPanel(tenantIds) {
   if (tenantIds.length === 0) {
     return {
@@ -592,15 +584,11 @@ async function getRevenueGoalsPanel(tenantIds) {
 
   const now = new Date();
   const currentYear  = now.getFullYear();
-  const currentMonth = now.getMonth() + 1; // JS 0-indexed, DB 1-indexed
+  const currentMonth = now.getMonth() + 1;
 
-  // Days remaining in current month
   const lastDay = new Date(currentYear, currentMonth, 0).getDate();
   const days_remaining = Math.max(0, lastDay - now.getDate());
 
-  // Pull per-location: goal (from revenue_goals) + actual (from bookings
-  // this calendar month). FULL OUTER-style via LEFT JOIN from tenants so we
-  // see locations that have no goal set.
   const result = await db.query(
     `WITH
     month_goals AS (
@@ -663,7 +651,6 @@ async function getRevenueGoalsPanel(tenantIds) {
     }
   }
 
-  // Sort by attainment % desc for top performers, asc for bottom
   const sortedByAttainment = [...locationStats].sort(
     (a, b) => b.attainment_pct - a.attainment_pct
   );
@@ -694,49 +681,44 @@ async function getRevenueGoalsPanel(tenantIds) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CALL OUTCOMES PANEL (NEW Apr 24)
+// CALL OUTCOMES PANEL — Apr 24 SIMPLIFIED
 // ═══════════════════════════════════════════════════════════════════════════
-// Network-wide breakdown of call dispositions over the period. Mirrors
-// Metrics.jsx Hung Up Analysis patterns. Buckets are MUTUALLY EXCLUSIVE
-// so percentages sum to 100%.
+// 4-bucket version based on what raw `calls` data reliably supports. Does NOT
+// try to match Metrics.jsx's 5-bucket model because Metrics computes
+// calls_hung_up / calls_confused via transcript analysis in /api/metrics
+// that we don't have access to mirror here. Honest over fake.
 //
-// Category definitions (checked in this precedence order):
-//   1. Booked          — disposition = 'booked'
-//   2. Transferred     — disposition = 'transferred' OR transferred = true
-//   3. Spam            — disposition = 'spam'
-//   4. Hung up <30s    — duration_minutes < 0.5 (after the above)
-//   5. No outcome      — disposition IS NULL (after the above)
-//   6. Conversation    — everything else (completed but didn't convert)
+// Buckets (mutually exclusive, checked in precedence order):
+//   1. Booked       — disposition = 'booked'
+//   2. Transferred  — disposition = 'transferred' OR transferred = true
+//   3. Spam         — disposition = 'spam'
+//   4. Other        — everything else (completed, NULL, anything unclassified)
+//
+// "Other" is intentionally vague — it's honest. Some of those calls are
+// successful conversations, some are hang-ups, some are confused. We don't
+// have the data to distinguish them on raw disposition alone. Users can
+// drill into per-location Metrics for the fuller breakdown.
 async function getCallOutcomesPanel(tenantIds, days) {
   if (tenantIds.length === 0) {
     return {
       total_calls: 0,
       buckets: {
-        booked:       { count: 0, pct: 0 },
-        transferred:  { count: 0, pct: 0 },
-        spam:         { count: 0, pct: 0 },
-        hung_up:      { count: 0, pct: 0 },
-        no_outcome:   { count: 0, pct: 0 },
-        conversation: { count: 0, pct: 0 },
+        booked:      { count: 0, pct: 0 },
+        transferred: { count: 0, pct: 0 },
+        spam:        { count: 0, pct: 0 },
+        other:       { count: 0, pct: 0 },
       },
     };
   }
 
-  // Single query returns counts for each category. Uses FILTER clauses on
-  // COUNT for clean per-bucket aggregation. Precedence is enforced by
-  // ordering the WHEN clauses in each FILTER: booked wins over transferred
-  // wins over spam wins over hung_up wins over no_outcome wins over
-  // conversation (default).
   const result = await db.query(
     `WITH classified AS (
       SELECT
         CASE
-          WHEN disposition = 'booked'                                        THEN 'booked'
-          WHEN disposition = 'transferred' OR transferred = true             THEN 'transferred'
-          WHEN disposition = 'spam'                                          THEN 'spam'
-          WHEN COALESCE(duration_minutes, 0) < 0.5                           THEN 'hung_up'
-          WHEN disposition IS NULL                                           THEN 'no_outcome'
-          ELSE 'conversation'
+          WHEN disposition = 'booked'                              THEN 'booked'
+          WHEN disposition = 'transferred' OR transferred = true   THEN 'transferred'
+          WHEN disposition = 'spam'                                THEN 'spam'
+          ELSE 'other'
         END AS bucket
       FROM calls
       WHERE tenant_id = ANY($1::uuid[])
@@ -750,12 +732,10 @@ async function getCallOutcomesPanel(tenantIds, days) {
   );
 
   const countMap = {
-    booked:       0,
-    transferred:  0,
-    spam:         0,
-    hung_up:      0,
-    no_outcome:   0,
-    conversation: 0,
+    booked:      0,
+    transferred: 0,
+    spam:        0,
+    other:       0,
   };
 
   let total_calls = 0;

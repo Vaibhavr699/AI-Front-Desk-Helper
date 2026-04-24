@@ -20,6 +20,7 @@ function resolvePeriod(raw) {
 }
 
 // ── Sort handling ─────────────────────────────────────────────────────────
+// open_leads added Apr 24 — users can sort locations by pipeline size.
 const ALLOWED_SORT_COLUMNS = new Set([
   "tenant_name",
   "calls_total",
@@ -29,6 +30,7 @@ const ALLOWED_SORT_COLUMNS = new Set([
   "avg_rating",
   "review_count",
   "pending_alerts_count",
+  "open_leads",
 ]);
 
 function resolveSort(rawSort, rawDir) {
@@ -141,7 +143,7 @@ async function getAiActivityTile(tenantIds, days) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TILE 2 — AFTER-HOURS REVENUE (JS classification)
+// TILE 2 — AFTER-HOURS REVENUE
 // ═══════════════════════════════════════════════════════════════════════════
 async function getAfterHoursRevenueTile(tenantIds, days) {
   if (tenantIds.length === 0) {
@@ -357,6 +359,101 @@ async function getReviewsHealthTile(tenantIds) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TILE 5 — MISSED OPPORTUNITIES (NEW Apr 24)
+// ═══════════════════════════════════════════════════════════════════════════
+// Shows calls where caller connected with the AI but didn't convert. This
+// is the "AI value recovery opportunity" tile — frames what might have
+// been lost without AI, or what's still slipping through.
+//
+// Definition based on Gladiators disposition values (completed/booked/
+// transferred/spam/NULL):
+//   missed = calls where
+//     - disposition IN ('completed', NULL)  (connected but didn't definitively win)
+//     - AND disposition != 'booked'         (exclude wins)
+//     - AND transferred != true             (exclude human handoffs)
+//     - AND duration_minutes > 0.1          (exclude sub-6-sec misdials)
+//
+// Dollar estimate = missed_count × avg_job_value.
+// avg_job_value = total actual_revenue_cents / count of revenue-positive
+// bookings in same period. Scales with each tenant's real economics.
+//
+// Data quality flag: if >30% of calls have NULL disposition, we set
+// `data_quality_warning: true` so the frontend can hint the estimate
+// is less reliable. Spam calls are always excluded so they don't inflate
+// the denominator.
+async function getMissedOppsTile(tenantIds, days) {
+  if (tenantIds.length === 0) {
+    return {
+      missed_count:            0,
+      estimated_lost_cents:    0,
+      total_calls:             0,
+      null_disposition_count:  0,
+      data_quality_warning:    false,
+      avg_job_value_cents:     0,
+    };
+  }
+
+  const result = await db.query(
+    `WITH period_calls AS (
+      SELECT disposition, transferred, duration_minutes
+        FROM calls
+       WHERE tenant_id = ANY($1::uuid[])
+         AND direction = 'inbound'
+         AND started_at > now() - ($2::int * interval '1 day')
+    ),
+    period_bookings AS (
+      SELECT COALESCE(SUM(actual_revenue_cents), 0)::bigint AS total_revenue,
+             COUNT(*) FILTER (WHERE actual_revenue_cents > 0)::int AS booked_count
+        FROM bookings
+       WHERE tenant_id = ANY($1::uuid[])
+         AND created_at > now() - ($2::int * interval '1 day')
+         AND actual_revenue_cents IS NOT NULL
+         AND actual_revenue_cents > 0
+    )
+    SELECT
+      (SELECT COUNT(*)::int FROM period_calls
+         WHERE COALESCE(disposition, '') != 'spam'
+      ) AS total_calls,
+
+      (SELECT COUNT(*)::int FROM period_calls
+        WHERE (disposition = 'completed' OR disposition IS NULL)
+          AND (transferred IS NULL OR transferred = false)
+          AND COALESCE(duration_minutes, 0) > 0.1
+      ) AS missed_count,
+
+      (SELECT COUNT(*)::int FROM period_calls
+        WHERE disposition IS NULL
+      ) AS null_disposition_count,
+
+      (SELECT CASE
+        WHEN booked_count > 0 THEN (total_revenue / booked_count)::bigint
+        ELSE 0
+      END FROM period_bookings) AS avg_job_value_cents`,
+    [tenantIds, days]
+  );
+
+  const row = result.rows[0];
+  const missed_count           = Number(row.missed_count);
+  const total_calls            = Number(row.total_calls);
+  const null_disposition_count = Number(row.null_disposition_count);
+  const avg_job_value_cents    = Number(row.avg_job_value_cents);
+
+  const data_quality_warning =
+    total_calls > 0 && (null_disposition_count / total_calls) > 0.3;
+
+  const estimated_lost_cents = missed_count * avg_job_value_cents;
+
+  return {
+    missed_count,
+    estimated_lost_cents,
+    total_calls,
+    null_disposition_count,
+    data_quality_warning,
+    avg_job_value_cents,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // CONTACT-METHOD DONUT
 // ═══════════════════════════════════════════════════════════════════════════
 const DONUT_METHOD_ORDER = ["voice", "sms", "web_form", "facebook", "crm", "unknown"];
@@ -410,32 +507,8 @@ async function getContactMethodDonut(tenantIds, days) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LEAD SOURCE DONUT — NEW (Apr 24)
+// LEAD SOURCE DONUT
 // ═══════════════════════════════════════════════════════════════════════════
-// Shows which MARKETING SOURCE drove leads in the period. Different from
-// Contact Method donut (which shows channel used to reach you) — this shows
-// what channel/campaign originated the lead.
-//
-// Data reality (Apr 24 inspection of Gladiators leads table):
-//   • lead_source is free-text TEXT column, sparsely populated
-//   • Values are messy: mixed case, test artifacts ("dripjobs_test")
-//   • Gladiators sample: NULL × 8, "phone" × 3, "Dripjobs" × 1,
-//     "dripjobs_test" × 1, "CRM Webhook" × 1
-//   • Columns facebook_id and web_id are SET when lead came through those
-//     channels, regardless of lead_source value
-//
-// Normalization strategy (JS-side, not SQL, so mapping can evolve without
-// migrations):
-//   1. If facebook_id IS NOT NULL → "Facebook"
-//   2. Else if web_id IS NOT NULL → "Website"
-//   3. Else match lead_source against canonical buckets (case-insensitive,
-//      substring match handles variants like "dripjobs_test" → "DripJobs")
-//   4. Known ad platforms: Google Ads, LSA, Yelp, Angi, Thumbtack, Houzz
-//   5. CRM integrations: Dripjobs, CRM Webhook → "CRM"
-//   6. "phone" → "Phone"
-//   7. NULL / empty / unrecognized → "Unknown"
-//
-// Buckets are stable order for consistent slice colors on the frontend.
 const SOURCE_BUCKETS = [
   "Google Ads", "LSA", "Facebook", "Website",
   "Yelp", "Angi", "Thumbtack", "Houzz",
@@ -443,7 +516,6 @@ const SOURCE_BUCKETS = [
 ];
 
 function normalizeLeadSource(row) {
-  // Column-based signals take precedence — most reliable
   if (row.facebook_id) return "Facebook";
   if (row.web_id)      return "Website";
 
@@ -452,8 +524,6 @@ function normalizeLeadSource(row) {
 
   const lower = raw.toLowerCase();
 
-  // Canonical matching — case-insensitive substring so "Google Ads",
-  // "google ads", "Google_Ads" all match the same bucket.
   if (lower.includes("google ads") || lower.includes("google_ads")) return "Google Ads";
   if (lower.includes("lsa") || lower.includes("local service")) return "LSA";
   if (lower.includes("facebook") || lower.includes("meta") || lower === "fb") return "Facebook";
@@ -466,7 +536,6 @@ function normalizeLeadSource(row) {
   if (lower === "phone" || lower === "call" || lower.includes("inbound call")) return "Phone";
   if (lower.includes("dripjobs") || lower.includes("crm") || lower.includes("webhook") || lower.includes("zapier")) return "CRM";
 
-  // Unrecognized — bucket as "Other" so it's distinct from NULL "Unknown"
   return "Other";
 }
 
@@ -483,9 +552,6 @@ async function getLeadSourceDonut(tenantIds, days) {
     };
   }
 
-  // Pull raw rows with all source-relevant columns. Cheaper than doing this
-  // normalization in SQL — 14 rows for Gladiators, scales fine for any
-  // realistic tenant size.
   const result = await db.query(
     `SELECT lead_source, facebook_id, web_id
        FROM leads
@@ -593,6 +659,9 @@ async function getReviewsAlertsList(tenantIds) {
 // ═══════════════════════════════════════════════════════════════════════════
 // LOCATION TABLE
 // ═══════════════════════════════════════════════════════════════════════════
+// Apr 24 addition: new lead_stats CTE adds per-location open_leads count.
+// "Open" = status NOT IN ('Won', 'Lost') — matches Gladiators status values
+// (New Lead, FollowUp, Estimate Sent, Won).
 async function getLocationTable(tenantIds, days, sort, dir) {
   if (tenantIds.length === 0) {
     return { locations: [], sort, dir };
@@ -646,6 +715,18 @@ async function getLocationTable(tenantIds, days, sort, dir) {
       WHERE tenant_id = ANY($1::uuid[])
       GROUP BY tenant_id
     ),
+    lead_stats AS (
+      -- Open leads = anything not yet won or lost. Case-insensitive match
+      -- on status so 'Won' vs 'won' vs 'WON' all exclude correctly.
+      SELECT
+        tenant_id,
+        COUNT(*) FILTER (
+          WHERE LOWER(COALESCE(status, '')) NOT IN ('won', 'lost', 'archived')
+        )::int AS open_leads
+      FROM leads
+      WHERE tenant_id = ANY($1::uuid[])
+      GROUP BY tenant_id
+    ),
     rows_assembled AS (
       SELECT
         li.tenant_id,
@@ -664,11 +745,13 @@ async function getLocationTable(tenantIds, days, sort, dir) {
         END AS booking_rate_pct,
         rs.avg_rating,
         COALESCE(rs.review_count,         0) AS review_count,
-        COALESCE(rs.pending_alerts_count, 0) AS pending_alerts_count
+        COALESCE(rs.pending_alerts_count, 0) AS pending_alerts_count,
+        COALESCE(ls.open_leads,           0) AS open_leads
       FROM location_info li
       LEFT JOIN call_stats    cs ON cs.tenant_id = li.tenant_id
       LEFT JOIN booking_stats bs ON bs.tenant_id = li.tenant_id
       LEFT JOIN review_stats  rs ON rs.tenant_id = li.tenant_id
+      LEFT JOIN lead_stats    ls ON ls.tenant_id = li.tenant_id
     ),
     rows_ranked AS (
       SELECT
@@ -694,6 +777,7 @@ async function getLocationTable(tenantIds, days, sort, dir) {
     avg_rating:           row.avg_rating === null ? null : Number(row.avg_rating),
     review_count:         Number(row.review_count),
     pending_alerts_count: Number(row.pending_alerts_count),
+    open_leads:           Number(row.open_leads),
     rank_revenue:         Number(row.rank_revenue),
   }));
 
@@ -702,7 +786,6 @@ async function getLocationTable(tenantIds, days, sort, dir) {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN ENDPOINT
-// GET /api/rollup-v5/:parentId?period=30d&sort=revenue_cents&dir=desc
 // ═══════════════════════════════════════════════════════════════════════════
 router.get("/:parentId", async (req, res) => {
   const t0 = Date.now();
@@ -732,6 +815,7 @@ router.get("/:parentId", async (req, res) => {
       afterHoursRevenue,
       networkRevenue,
       reviewsHealth,
+      missedOpps,
       contactDonut,
       leadSourceDonut,
       reviewsAlerts,
@@ -741,17 +825,13 @@ router.get("/:parentId", async (req, res) => {
       timed("after_hours_revenue", () => getAfterHoursRevenueTile(scope.all_ids, days)),
       timed("network_revenue",     () => getNetworkRevenueTile(scope.all_ids, days, parent.created_at)),
       timed("reviews_health",      () => getReviewsHealthTile(scope.all_ids)),
+      timed("missed_opps",         () => getMissedOppsTile(scope.all_ids, days)),
       timed("contact_donut",       () => getContactMethodDonut(scope.all_ids, days)),
       timed("lead_source_donut",   () => getLeadSourceDonut(scope.all_ids, days)),
       timed("reviews_alerts",      () => getReviewsAlertsList(scope.all_ids)),
       timed("location_table",      () => getLocationTable(scope.all_ids, days, sort, dir)),
     ]);
 
-    log("all queries done, building response");
-
-    // location_count fix (Apr 24): previously reflected only child_ids, but
-    // for operating_hq parents the rendered table includes the parent too.
-    // Use scope.all_ids.length to match what's actually shown.
     const displayed_location_count = scope.all_ids.length;
 
     res.json({
@@ -781,6 +861,7 @@ router.get("/:parentId", async (req, res) => {
         after_hours_revenue: afterHoursRevenue,
         network_revenue:     networkRevenue,
         reviews_health:      reviewsHealth,
+        missed_opps:         missedOpps,
       },
       contact_method_donut: contactDonut,
       lead_source_donut:    leadSourceDonut,

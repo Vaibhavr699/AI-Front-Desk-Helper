@@ -531,6 +531,10 @@ export function listResellerCustomers() {
   return api("/api/reseller/customers");
 }
 
+export function getResellerUsage() {
+  return api("/api/reseller/usage");
+}
+
 /**
  * Preview adding a customer — dry-run cap check.
  * Returns { can_add, tier, customer_count, customer_limit, slots_remaining }

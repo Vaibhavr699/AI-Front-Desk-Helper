@@ -31,13 +31,14 @@ import {
   Target,
   Users,
   DollarSign,
+  Trophy,
+  Clock,
 } from "lucide-react";
 
 // ═════════════════════════════════════════════════════════════════════════
 // Rollup V5 — Parent Tenant Dashboard
 // ═════════════════════════════════════════════════════════════════════════
 
-// ── Formatters ─────────────────────────────────────────────────────────
 function formatCents(cents) {
   if (cents == null) return "$0";
   const dollars = cents / 100;
@@ -63,7 +64,11 @@ function formatRating(r) {
   return Number(r).toFixed(1);
 }
 
-// ── Label maps ──────────────────────────────────────────────────────────
+const MONTH_NAMES = [
+  "", "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"
+];
+
 const CONTACT_METHOD_LABELS = {
   voice:    "Phone",
   sms:      "SMS",
@@ -106,6 +111,26 @@ const LEAD_SOURCE_COLORS = {
   "Other":      "#64748b",
   "Unknown":    "#a8a29e",
 };
+
+// Call outcome bucket display config
+const CALL_OUTCOME_CONFIG = {
+  booked:       { label: "Booked",         color: "emerald", icon: CheckCircle2 },
+  transferred:  { label: "Transferred",    color: "blue",    icon: PhoneCall    },
+  conversation: { label: "Had conversation", color: "stone",   icon: MessageSquare },
+  hung_up:      { label: "Hung up (<30s)", color: "amber",   icon: PhoneMissed  },
+  no_outcome:   { label: "No outcome tagged", color: "stone",  icon: HelpCircle   },
+  spam:         { label: "Spam filtered",  color: "purple",  icon: AlertCircle  },
+};
+
+// Display order for Call Outcomes — wins first, issues next, admin last
+const CALL_OUTCOME_ORDER = [
+  "booked",
+  "transferred",
+  "conversation",
+  "hung_up",
+  "no_outcome",
+  "spam",
+];
 
 const SORT_LABELS = {
   tenant_name:          "Location",
@@ -209,10 +234,6 @@ export default function RollupV5() {
     }
   }
 
-  // Row click handler — switches active tenant and navigates to /dashboard.
-  // Same pattern as V4 Tenants.jsx onSelect. onTenantChange comes from
-  // DashboardLayout outlet context; if not provided (shouldn't happen),
-  // we still navigate so the user isn't stuck.
   function handleLocationClick(locationId) {
     if (onTenantChange) onTenantChange(locationId);
     navigate("/dashboard");
@@ -249,6 +270,8 @@ export default function RollupV5() {
     parent, meta, tiles,
     contact_method_donut,
     lead_source_donut,
+    revenue_goals_panel,
+    call_outcomes_panel,
     reviews_alerts,
     locations,
   } = data;
@@ -270,9 +293,6 @@ export default function RollupV5() {
         </div>
       )}
 
-      {/* 5 Hero Tiles — grid scales from 1 col mobile → 2 md → 3 lg → 5 xl.
-          Skipped direct lg:grid-cols-5 because at typical laptop width that
-          squeezes tiles too tight. xl breakpoint (1280px+) fits 5 cleanly. */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 mb-8">
         <AiActivityTile data={tiles.ai_activity} period={period} />
         <AfterHoursRevenueTile data={tiles.after_hours_revenue} period={period} />
@@ -284,6 +304,15 @@ export default function RollupV5() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         <ContactMethodDonut data={contact_method_donut} period={period} />
         <LeadSourceDonut data={lead_source_donut} period={period} />
+      </div>
+
+      {/* Revenue Goals + Call Outcomes — new Apr 24 panels */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <RevenueGoalsPanel
+          data={revenue_goals_panel}
+          onLocationClick={handleLocationClick}
+        />
+        <CallOutcomesPanel data={call_outcomes_panel} period={period} />
       </div>
 
       <div className="mb-8">
@@ -363,7 +392,7 @@ function Header({ parent, meta, period, setPeriod, refreshing }) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// TILE 1 — AI ACTIVITY
+// HERO TILES (1-5)
 // ═════════════════════════════════════════════════════════════════════════
 function AiActivityTile({ data, period }) {
   return (
@@ -401,9 +430,6 @@ function AiActivityTile({ data, period }) {
   );
 }
 
-// ═════════════════════════════════════════════════════════════════════════
-// TILE 2 — AFTER-HOURS REVENUE
-// ═════════════════════════════════════════════════════════════════════════
 function AfterHoursRevenueTile({ data, period }) {
   return (
     <TileShell
@@ -432,9 +458,6 @@ function AfterHoursRevenueTile({ data, period }) {
   );
 }
 
-// ═════════════════════════════════════════════════════════════════════════
-// TILE 3 — NETWORK REVENUE
-// ═════════════════════════════════════════════════════════════════════════
 function NetworkRevenueTile({ data, period }) {
   const isUp   = data.delta_direction === "up";
   const isDown = data.delta_direction === "down";
@@ -488,9 +511,6 @@ function NetworkRevenueTile({ data, period }) {
   );
 }
 
-// ═════════════════════════════════════════════════════════════════════════
-// TILE 4 — REVIEWS HEALTH
-// ═════════════════════════════════════════════════════════════════════════
 function ReviewsHealthTile({ data }) {
   const hasAlerts    = data.prominent_alert_count > 0;
   const noReviews    = data.total_review_count === 0;
@@ -574,12 +594,6 @@ function ReviewsHealthTile({ data }) {
   );
 }
 
-// ═════════════════════════════════════════════════════════════════════════
-// TILE 5 — MISSED OPPORTUNITIES (NEW Apr 24)
-// ═════════════════════════════════════════════════════════════════════════
-// Shows calls where caller connected with the AI but didn't convert.
-// Displays: missed count + estimated $ lost + data quality warning if
-// disposition tracking is sparse.
 function MissedOppsTile({ data, period }) {
   const hasLostValue = data.estimated_lost_cents > 0;
   const noData = data.total_calls === 0;
@@ -644,9 +658,6 @@ function MissedOppsTile({ data, period }) {
   );
 }
 
-// ═════════════════════════════════════════════════════════════════════════
-// SHARED TILE SHELL
-// ═════════════════════════════════════════════════════════════════════════
 function TileShell({ icon, label, subtitle, color, highlight, children }) {
   const colorClasses = {
     blue:    "from-blue-50 text-blue-600 ring-blue-200/50",
@@ -683,14 +694,12 @@ function TileShell({ icon, label, subtitle, color, highlight, children }) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// CONTACT-METHOD DONUT
+// CONTACT METHOD DONUT
 // ═════════════════════════════════════════════════════════════════════════
 function ContactMethodDonut({ data, period }) {
-  const size   = 140;
-  const stroke = 18;
+  const size = 140, stroke = 18;
   const radius = (size - stroke) / 2;
-  const cx     = size / 2;
-  const cy     = size / 2;
+  const cx = size / 2, cy = size / 2;
   const circumference = 2 * Math.PI * radius;
 
   const slicesWithCounts = data.buckets.filter((b) => b.count > 0);
@@ -731,9 +740,7 @@ function ContactMethodDonut({ data, period }) {
                 return (
                   <circle
                     key={bucket.method}
-                    cx={cx}
-                    cy={cy}
-                    r={radius}
+                    cx={cx} cy={cy} r={radius}
                     fill="none"
                     stroke={getContactSliceColor(bucket.method)}
                     strokeWidth={stroke}
@@ -808,11 +815,9 @@ function getContactSliceColor(method) {
 // LEAD SOURCE DONUT
 // ═════════════════════════════════════════════════════════════════════════
 function LeadSourceDonut({ data, period }) {
-  const size   = 140;
-  const stroke = 18;
+  const size = 140, stroke = 18;
   const radius = (size - stroke) / 2;
-  const cx     = size / 2;
-  const cy     = size / 2;
+  const cx = size / 2, cy = size / 2;
   const circumference = 2 * Math.PI * radius;
 
   const slicesWithCounts = data.buckets.filter((b) => b.count > 0);
@@ -858,9 +863,7 @@ function LeadSourceDonut({ data, period }) {
                 return (
                   <circle
                     key={bucket.source}
-                    cx={cx}
-                    cy={cy}
-                    r={radius}
+                    cx={cx} cy={cy} r={radius}
                     fill="none"
                     stroke={LEAD_SOURCE_COLORS[bucket.source] || "#a8a29e"}
                     strokeWidth={stroke}
@@ -920,6 +923,352 @@ function LeadSourceDonut({ data, period }) {
           </span>
         </div>
       )}
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// REVENUE GOALS PANEL — NEW Apr 24
+// ═════════════════════════════════════════════════════════════════════════
+// Shows network-wide monthly goal progress + top 3 performers by attainment.
+// Empty state when no goals are set. Click a performer to drill down to their
+// dashboard.
+function RevenueGoalsPanel({ data, onLocationClick }) {
+  const hasNetworkGoal = data.network_goal_cents > 0;
+  const monthName = MONTH_NAMES[data.current_month] || "This month";
+
+  // Empty state — no locations have a goal set for this month
+  if (!hasNetworkGoal) {
+    return (
+      <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-sm font-black text-stone-900 flex items-center gap-2">
+              <Target className="w-4 h-4 text-brand-600" />
+              Revenue Goals
+            </h3>
+            <p className="text-[10px] text-stone-400 font-medium uppercase tracking-wider mt-0.5">
+              {monthName} {/* e.g., "April" */}
+            </p>
+          </div>
+        </div>
+
+        <div className="text-center py-8">
+          <div className="w-12 h-12 rounded-2xl bg-stone-100 flex items-center justify-center mx-auto mb-3">
+            <Target className="w-6 h-6 text-stone-400" />
+          </div>
+          <h4 className="text-sm font-bold text-stone-900 mb-1">No goals set</h4>
+          <p className="text-xs text-stone-500 mb-3 max-w-[280px] mx-auto">
+            Set monthly revenue targets for your locations to track attainment.
+          </p>
+          <Link
+            to="/metrics"
+            className="inline-flex items-center gap-1 text-[11px] font-bold text-brand-600 hover:text-brand-700 transition-colors"
+          >
+            Set goals in Metrics
+            <ChevronRight className="w-3 h-3" />
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const attainmentPct = data.network_attainment_pct || 0;
+  const remainingCents = Math.max(0, data.network_goal_cents - data.network_actual_cents);
+
+  // Progress bar color based on attainment + days remaining.
+  // Logic: if you're at 50% attainment with 20 days left that's fine (on pace).
+  // If you're at 50% with 2 days left that's concerning.
+  // Simple heuristic: compare attainment % to % of month elapsed.
+  const daysInMonth = data.days_remaining + (new Date().getDate()); // approx
+  const pctMonthElapsed = daysInMonth > 0
+    ? ((daysInMonth - data.days_remaining) / daysInMonth) * 100
+    : 50;
+  const onPace = attainmentPct >= pctMonthElapsed * 0.9; // 10% grace
+
+  let barColor, barLabel;
+  if (attainmentPct >= 100) {
+    barColor = "bg-emerald-500";
+    barLabel = "text-emerald-600";
+  } else if (onPace) {
+    barColor = "bg-blue-500";
+    barLabel = "text-blue-600";
+  } else {
+    barColor = "bg-amber-500";
+    barLabel = "text-amber-600";
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-black text-stone-900 flex items-center gap-2">
+            <Target className="w-4 h-4 text-brand-600" />
+            Revenue Goals
+          </h3>
+          <p className="text-[10px] text-stone-400 font-medium uppercase tracking-wider mt-0.5">
+            {monthName} · {data.locations_with_goal} location{data.locations_with_goal !== 1 ? "s" : ""} tracking
+          </p>
+        </div>
+        <div className="text-right">
+          <div className={`text-2xl font-black tabular-nums ${barLabel}`}>
+            {formatPct(attainmentPct)}
+          </div>
+          <div className="text-[10px] text-stone-400 font-medium uppercase tracking-wider">
+            of goal
+          </div>
+        </div>
+      </div>
+
+      {/* Network progress bar */}
+      <div className="mb-4">
+        <div className="flex items-baseline justify-between mb-1.5">
+          <span className="text-sm font-black text-stone-900 tabular-nums">
+            {formatCents(data.network_actual_cents)}
+          </span>
+          <span className="text-xs text-stone-400 font-medium">
+            of {formatCents(data.network_goal_cents)}
+          </span>
+        </div>
+        <div className="h-2 bg-stone-100 rounded-full overflow-hidden">
+          <div
+            className={`h-full ${barColor} transition-all`}
+            style={{ width: `${Math.min(100, attainmentPct)}%` }}
+          />
+        </div>
+        <div className="flex items-center justify-between mt-1.5 text-[10px] text-stone-400 font-medium">
+          <span className="flex items-center gap-1">
+            <DollarSign className="w-3 h-3" />
+            {formatCents(remainingCents)} remaining
+          </span>
+          <span className="flex items-center gap-1">
+            <Clock className="w-3 h-3" />
+            {data.days_remaining} day{data.days_remaining !== 1 ? "s" : ""} left
+          </span>
+        </div>
+      </div>
+
+      {/* Top performers */}
+      {data.top_performers.length > 0 && (
+        <div className="pt-4 border-t border-stone-100">
+          <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-stone-400 mb-3">
+            <Trophy className="w-3 h-3 text-amber-500" />
+            Top Performers
+          </div>
+          <div className="space-y-2.5">
+            {data.top_performers.map((loc, idx) => (
+              <PerformerRow
+                key={loc.tenant_id}
+                rank={idx + 1}
+                loc={loc}
+                onClick={() => onLocationClick(loc.tenant_id)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Missing goals nudge */}
+      {data.locations_without_goal > 0 && (
+        <div className="mt-4 pt-3 border-t border-stone-100 flex items-center gap-2 text-[11px] text-stone-500">
+          <Info className="w-3.5 h-3.5 text-stone-400 shrink-0" />
+          <span>
+            {data.locations_without_goal} location{data.locations_without_goal !== 1 ? "s" : ""} missing a goal this month —
+          </span>
+          <Link
+            to="/metrics"
+            className="font-bold text-brand-600 hover:text-brand-700 transition-colors"
+          >
+            set goals
+          </Link>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PerformerRow({ rank, loc, onClick }) {
+  const rankBadgeColors = {
+    1: "bg-amber-100 text-amber-700 border-amber-200",
+    2: "bg-stone-100 text-stone-600 border-stone-200",
+    3: "bg-orange-50 text-orange-700 border-orange-200",
+  };
+
+  // Attainment bar color — same logic as network bar
+  const pct = loc.attainment_pct;
+  const barColor =
+    pct >= 100 ? "bg-emerald-500" :
+    pct >= 75  ? "bg-blue-500"    :
+    pct >= 50  ? "bg-amber-500"   :
+                 "bg-red-400";
+
+  return (
+    <button
+      onClick={onClick}
+      className="w-full text-left group"
+    >
+      <div className="flex items-center gap-3">
+        <span
+          className={`shrink-0 inline-flex items-center justify-center w-6 h-6 text-[10px] font-black rounded-full border ${rankBadgeColors[rank]}`}
+        >
+          #{rank}
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline justify-between gap-2 mb-1">
+            <span className="text-xs font-bold text-stone-900 truncate group-hover:text-brand-700 transition-colors">
+              {loc.tenant_name}
+            </span>
+            <span className="text-xs font-black text-stone-900 tabular-nums shrink-0">
+              {formatPct(loc.attainment_pct)}
+            </span>
+          </div>
+          <div className="h-1.5 bg-stone-100 rounded-full overflow-hidden">
+            <div
+              className={`h-full ${barColor} transition-all`}
+              style={{ width: `${Math.min(100, loc.attainment_pct)}%` }}
+            />
+          </div>
+          <div className="flex items-center justify-between mt-1 text-[10px] text-stone-400 font-medium tabular-nums">
+            <span>{formatCents(loc.actual_cents)}</span>
+            <span>/ {formatCents(loc.goal_cents)}</span>
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// CALL OUTCOMES PANEL — NEW Apr 24
+// ═════════════════════════════════════════════════════════════════════════
+// Network-wide breakdown of call dispositions. Horizontal bar chart style —
+// one row per bucket with count, %, and visual bar. Mirrors the Metrics page
+// Hung Up Analysis visual language.
+function CallOutcomesPanel({ data, period }) {
+  const { total_calls, buckets } = data;
+  const hasData = total_calls > 0;
+
+  if (!hasData) {
+    return (
+      <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-sm font-black text-stone-900 flex items-center gap-2">
+              <PhoneCall className="w-4 h-4 text-stone-600" />
+              Call Outcomes
+            </h3>
+            <p className="text-[10px] text-stone-400 font-medium uppercase tracking-wider mt-0.5">
+              {period}
+            </p>
+          </div>
+        </div>
+
+        <div className="text-center py-8">
+          <div className="w-12 h-12 rounded-2xl bg-stone-100 flex items-center justify-center mx-auto mb-3">
+            <PhoneCall className="w-6 h-6 text-stone-400" />
+          </div>
+          <h4 className="text-sm font-bold text-stone-900 mb-1">No calls yet</h4>
+          <p className="text-xs text-stone-500">
+            Call outcomes will appear here once your AI takes its first calls.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-black text-stone-900 flex items-center gap-2">
+            <PhoneCall className="w-4 h-4 text-stone-600" />
+            Call Outcomes
+          </h3>
+          <p className="text-[10px] text-stone-400 font-medium uppercase tracking-wider mt-0.5">
+            What happened · {period}
+          </p>
+        </div>
+        <div className="text-right">
+          <div className="text-2xl font-black text-stone-900 tabular-nums">
+            {formatNum(total_calls)}
+          </div>
+          <div className="text-[10px] text-stone-400 font-medium uppercase tracking-wider">
+            total calls
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        {CALL_OUTCOME_ORDER.map((key) => {
+          const bucket = buckets[key];
+          if (!bucket) return null;
+          return (
+            <CallOutcomeBar
+              key={key}
+              bucketKey={key}
+              bucket={bucket}
+              totalCalls={total_calls}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CallOutcomeBar({ bucketKey, bucket, totalCalls }) {
+  const config = CALL_OUTCOME_CONFIG[bucketKey];
+  if (!config) return null;
+
+  const Icon = config.icon;
+
+  // Bar color by semantic meaning
+  const barColor = {
+    emerald: "bg-emerald-500",
+    blue:    "bg-blue-500",
+    amber:   "bg-amber-500",
+    red:     "bg-red-400",
+    stone:   "bg-stone-300",
+    purple:  "bg-purple-400",
+  }[config.color] || "bg-stone-300";
+
+  const iconColor = {
+    emerald: "text-emerald-600",
+    blue:    "text-blue-600",
+    amber:   "text-amber-600",
+    red:     "text-red-500",
+    stone:   "text-stone-500",
+    purple:  "text-purple-500",
+  }[config.color] || "text-stone-500";
+
+  const isZero = bucket.count === 0;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-2 min-w-0">
+          <Icon className={`w-3.5 h-3.5 shrink-0 ${isZero ? "text-stone-300" : iconColor}`} />
+          <span className={`text-xs font-bold truncate ${isZero ? "text-stone-400" : "text-stone-700"}`}>
+            {config.label}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className={`text-xs font-black tabular-nums ${isZero ? "text-stone-400" : "text-stone-900"}`}>
+            {formatNum(bucket.count)}
+          </span>
+          <span className="text-[11px] text-stone-400 font-medium tabular-nums w-10 text-right">
+            {bucket.pct}%
+          </span>
+        </div>
+      </div>
+      <div className="h-1.5 bg-stone-100 rounded-full overflow-hidden">
+        {!isZero && (
+          <div
+            className={`h-full ${barColor} transition-all`}
+            style={{ width: `${Math.max(2, bucket.pct)}%` }}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -1025,7 +1374,6 @@ function ReviewAlertCard({ alert }) {
 // LOCATION TABLE
 // ═════════════════════════════════════════════════════════════════════════
 function LocationTable({ locations, sort, dir, onSort, onRowClick }) {
-  // Apr 24: added open_leads column between Alerts and end
   const columns = [
     { key: "tenant_name",          label: "Location",     align: "left"  },
     { key: "calls_total",          label: "Calls",        align: "right" },
@@ -1120,8 +1468,6 @@ function LocationRow({ loc, onClick }) {
     3: "bg-orange-50 text-orange-700 border-orange-200",
   };
 
-  // Apr 24: row is clickable — navigates to /dashboard with this tenant
-  // selected. cursor-pointer + hover state reinforce affordance.
   return (
     <tr
       onClick={onClick}
@@ -1173,7 +1519,6 @@ function LocationRow({ loc, onClick }) {
       <td className="px-4 py-3 text-right font-black text-stone-900 tabular-nums">
         {formatCents(loc.revenue_cents)}
       </td>
-      {/* Open leads — Apr 24 new column */}
       <td className="px-4 py-3 text-right font-bold tabular-nums">
         {loc.open_leads > 0 ? (
           <span className="text-blue-600">{formatNum(loc.open_leads)}</span>

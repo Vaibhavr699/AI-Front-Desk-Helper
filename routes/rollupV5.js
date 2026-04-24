@@ -623,21 +623,32 @@ async function getLocationTable(tenantIds, days, sort, dir) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN ENDPOINT
+// MAIN ENDPOINT — INSTRUMENTED (Apr 23 late-night debug)
 // GET /api/rollup-v5/:parentId?period=30d&sort=revenue_cents&dir=desc
 // ═══════════════════════════════════════════════════════════════════════════
 router.get("/:parentId", async (req, res) => {
+  const t0 = Date.now();
+  const log = (label) => console.log(`[RollupV5] ${label} @ ${Date.now() - t0}ms`);
+
   try {
     const { parentId } = req.params;
     const { period, days } = resolvePeriod(req.query.period);
     const { sort, dir } = resolveSort(req.query.sort, req.query.dir);
+    log("start");
 
     const parent = await validateParentAccess(req, res, parentId);
+    log("validateParentAccess done");
     if (!parent) return;
 
     const scope = await getRollupScopeIds(parent);
+    log(`getRollupScopeIds done (${scope.all_ids.length} tenants in scope)`);
 
-    // 7 queries in parallel. Single round-trip latency for the whole endpoint.
+    // Wrap each query so we can see which one is slow.
+    const timed = (name, fn) => fn().then(
+      (result) => { log(`${name} ✓`); return result; },
+      (err)    => { log(`${name} ✗ ${err.message}`); throw err; }
+    );
+
     const [
       aiActivity,
       afterHoursRevenue,
@@ -647,14 +658,16 @@ router.get("/:parentId", async (req, res) => {
       reviewsAlerts,
       locationTable,
     ] = await Promise.all([
-      getAiActivityTile(scope.all_ids, days),
-      getAfterHoursRevenueTile(scope.all_ids, days),
-      getNetworkRevenueTile(scope.all_ids, days, parent.created_at),
-      getReviewsHealthTile(scope.all_ids),
-      getContactMethodDonut(scope.all_ids, days),
-      getReviewsAlertsList(scope.all_ids),
-      getLocationTable(scope.all_ids, days, sort, dir),
+      timed("ai_activity",         () => getAiActivityTile(scope.all_ids, days)),
+      timed("after_hours_revenue", () => getAfterHoursRevenueTile(scope.all_ids, days)),
+      timed("network_revenue",     () => getNetworkRevenueTile(scope.all_ids, days, parent.created_at)),
+      timed("reviews_health",      () => getReviewsHealthTile(scope.all_ids)),
+      timed("donut",               () => getContactMethodDonut(scope.all_ids, days)),
+      timed("reviews_alerts",      () => getReviewsAlertsList(scope.all_ids)),
+      timed("location_table",      () => getLocationTable(scope.all_ids, days, sort, dir)),
     ]);
+
+    log("all queries done, sending response");
 
     res.json({
       parent: {
@@ -687,6 +700,8 @@ router.get("/:parentId", async (req, res) => {
       reviews_alerts:       reviewsAlerts,
       locations:            locationTable.locations,
     });
+
+    log("response sent");
   } catch (err) {
     console.error("[RollupV5] Error:", err);
     res.status(500).json({ error: "Server error", detail: err.message });

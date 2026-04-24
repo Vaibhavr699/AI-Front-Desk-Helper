@@ -3,12 +3,6 @@
 /**
  * Rollup V5 — Parent Tenant Dashboard
  * Mounted at /api/rollup-v5
- *
- * DIAGNOSTIC BUILD Apr 23 late-night:
- *   - console.error for ALL timing (Render sometimes suppresses stdout)
- *   - per-query 10s timeout (fail fast instead of 60s hang)
- *   - per-query start + end logs (catches hang-in-progress)
- *   - superadmin fast-path on auth (skip team_members query)
  */
 
 const express = require("express");
@@ -43,9 +37,7 @@ function resolveSort(rawSort, rawDir) {
   return { sort, dir };
 }
 
-// ── Timeout helper ─────────────────────────────────────────────────────────
-// Wraps a promise with a hard timeout. If the promise doesn't settle in the
-// given ms, we reject with a useful error identifying which query hung.
+// ── Timeout helper ────────────────────────────────────────────────────────
 function withTimeout(label, promise, ms = 10000) {
   return Promise.race([
     promise,
@@ -82,10 +74,8 @@ async function validateParentAccess(req, res, parentId) {
     return null;
   }
 
-  // Superadmin bypass — skip the team_members query entirely
   if (req.user?.is_super_admin) return parent;
 
-  // Fast membership check — should be sub-100ms on any indexed table
   const membershipRes = await db.query(
     `SELECT 1 FROM team_members
       WHERE user_id = $1 AND tenant_id = $2
@@ -420,6 +410,117 @@ async function getContactMethodDonut(tenantIds, days) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// LEAD SOURCE DONUT — NEW (Apr 24)
+// ═══════════════════════════════════════════════════════════════════════════
+// Shows which MARKETING SOURCE drove leads in the period. Different from
+// Contact Method donut (which shows channel used to reach you) — this shows
+// what channel/campaign originated the lead.
+//
+// Data reality (Apr 24 inspection of Gladiators leads table):
+//   • lead_source is free-text TEXT column, sparsely populated
+//   • Values are messy: mixed case, test artifacts ("dripjobs_test")
+//   • Gladiators sample: NULL × 8, "phone" × 3, "Dripjobs" × 1,
+//     "dripjobs_test" × 1, "CRM Webhook" × 1
+//   • Columns facebook_id and web_id are SET when lead came through those
+//     channels, regardless of lead_source value
+//
+// Normalization strategy (JS-side, not SQL, so mapping can evolve without
+// migrations):
+//   1. If facebook_id IS NOT NULL → "Facebook"
+//   2. Else if web_id IS NOT NULL → "Website"
+//   3. Else match lead_source against canonical buckets (case-insensitive,
+//      substring match handles variants like "dripjobs_test" → "DripJobs")
+//   4. Known ad platforms: Google Ads, LSA, Yelp, Angi, Thumbtack, Houzz
+//   5. CRM integrations: Dripjobs, CRM Webhook → "CRM"
+//   6. "phone" → "Phone"
+//   7. NULL / empty / unrecognized → "Unknown"
+//
+// Buckets are stable order for consistent slice colors on the frontend.
+const SOURCE_BUCKETS = [
+  "Google Ads", "LSA", "Facebook", "Website",
+  "Yelp", "Angi", "Thumbtack", "Houzz",
+  "Phone", "CRM", "Referral", "Other", "Unknown",
+];
+
+function normalizeLeadSource(row) {
+  // Column-based signals take precedence — most reliable
+  if (row.facebook_id) return "Facebook";
+  if (row.web_id)      return "Website";
+
+  const raw = (row.lead_source || "").trim();
+  if (!raw) return "Unknown";
+
+  const lower = raw.toLowerCase();
+
+  // Canonical matching — case-insensitive substring so "Google Ads",
+  // "google ads", "Google_Ads" all match the same bucket.
+  if (lower.includes("google ads") || lower.includes("google_ads")) return "Google Ads";
+  if (lower.includes("lsa") || lower.includes("local service")) return "LSA";
+  if (lower.includes("facebook") || lower.includes("meta") || lower === "fb") return "Facebook";
+  if (lower.includes("website") || lower.includes("web form") || lower.includes("web_form")) return "Website";
+  if (lower.includes("yelp")) return "Yelp";
+  if (lower.includes("angi") || lower.includes("homeadvisor")) return "Angi";
+  if (lower.includes("thumbtack")) return "Thumbtack";
+  if (lower.includes("houzz")) return "Houzz";
+  if (lower.includes("referral") || lower.includes("repeat")) return "Referral";
+  if (lower === "phone" || lower === "call" || lower.includes("inbound call")) return "Phone";
+  if (lower.includes("dripjobs") || lower.includes("crm") || lower.includes("webhook") || lower.includes("zapier")) return "CRM";
+
+  // Unrecognized — bucket as "Other" so it's distinct from NULL "Unknown"
+  return "Other";
+}
+
+async function getLeadSourceDonut(tenantIds, days) {
+  if (tenantIds.length === 0) {
+    return {
+      total_leads:   0,
+      unknown_count: 0,
+      buckets:       SOURCE_BUCKETS.map((source) => ({
+        source,
+        count: 0,
+        pct:   0,
+      })),
+    };
+  }
+
+  // Pull raw rows with all source-relevant columns. Cheaper than doing this
+  // normalization in SQL — 14 rows for Gladiators, scales fine for any
+  // realistic tenant size.
+  const result = await db.query(
+    `SELECT lead_source, facebook_id, web_id
+       FROM leads
+      WHERE tenant_id = ANY($1::uuid[])
+        AND created_at > now() - ($2::int * interval '1 day')`,
+    [tenantIds, days]
+  );
+
+  const countMap = {};
+  let total_leads = 0;
+  for (const row of result.rows) {
+    const bucket = normalizeLeadSource(row);
+    countMap[bucket] = (countMap[bucket] || 0) + 1;
+    total_leads += 1;
+  }
+
+  const buckets = SOURCE_BUCKETS.map((source) => {
+    const count = countMap[source] || 0;
+    const pct =
+      total_leads > 0
+        ? Math.round((count / total_leads) * 1000) / 10
+        : 0;
+    return { source, count, pct };
+  });
+
+  const unknown_count = countMap["Unknown"] || 0;
+
+  return {
+    total_leads,
+    unknown_count,
+    buckets,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // REVIEWS ALERTS LIST
 // ═══════════════════════════════════════════════════════════════════════════
 async function getReviewsAlertsList(tenantIds) {
@@ -600,7 +701,8 @@ async function getLocationTable(tenantIds, days, sort, dir) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN ENDPOINT — INSTRUMENTED
+// MAIN ENDPOINT
+// GET /api/rollup-v5/:parentId?period=30d&sort=revenue_cents&dir=desc
 // ═══════════════════════════════════════════════════════════════════════════
 router.get("/:parentId", async (req, res) => {
   const t0 = Date.now();
@@ -611,37 +713,27 @@ router.get("/:parentId", async (req, res) => {
     const { parentId } = req.params;
     const { period, days } = resolvePeriod(req.query.period);
     const { sort, dir } = resolveSort(req.query.sort, req.query.dir);
-    log(`parsed params: parentId=${parentId} period=${period} sort=${sort}`);
 
     const parent = await withTimeout("validateParentAccess", validateParentAccess(req, res, parentId));
-    log("validateParentAccess returned");
     if (!parent) return;
 
     const scope = await withTimeout("getRollupScopeIds", getRollupScopeIds(parent));
-    log(`scope resolved: ${scope.all_ids.length} tenants`);
 
     const timed = (name, fn) => {
       const qStart = Date.now();
       return withTimeout(name, fn()).then(
-        (result) => {
-          console.error(`[RollupV5] ${name} ✓ ${Date.now() - qStart}ms`);
-          return result;
-        },
-        (err) => {
-          console.error(`[RollupV5] ${name} ✗ ${Date.now() - qStart}ms: ${err.message}`);
-          throw err;
-        }
+        (result) => { console.error(`[RollupV5] ${name} ✓ ${Date.now() - qStart}ms`); return result; },
+        (err) => { console.error(`[RollupV5] ${name} ✗ ${Date.now() - qStart}ms: ${err.message}`); throw err; }
       );
     };
-
-    log("starting parallel queries");
 
     const [
       aiActivity,
       afterHoursRevenue,
       networkRevenue,
       reviewsHealth,
-      donut,
+      contactDonut,
+      leadSourceDonut,
       reviewsAlerts,
       locationTable,
     ] = await Promise.all([
@@ -649,12 +741,18 @@ router.get("/:parentId", async (req, res) => {
       timed("after_hours_revenue", () => getAfterHoursRevenueTile(scope.all_ids, days)),
       timed("network_revenue",     () => getNetworkRevenueTile(scope.all_ids, days, parent.created_at)),
       timed("reviews_health",      () => getReviewsHealthTile(scope.all_ids)),
-      timed("donut",               () => getContactMethodDonut(scope.all_ids, days)),
+      timed("contact_donut",       () => getContactMethodDonut(scope.all_ids, days)),
+      timed("lead_source_donut",   () => getLeadSourceDonut(scope.all_ids, days)),
       timed("reviews_alerts",      () => getReviewsAlertsList(scope.all_ids)),
       timed("location_table",      () => getLocationTable(scope.all_ids, days, sort, dir)),
     ]);
 
     log("all queries done, building response");
+
+    // location_count fix (Apr 24): previously reflected only child_ids, but
+    // for operating_hq parents the rendered table includes the parent too.
+    // Use scope.all_ids.length to match what's actually shown.
+    const displayed_location_count = scope.all_ids.length;
 
     res.json({
       parent: {
@@ -672,7 +770,8 @@ router.get("/:parentId", async (req, res) => {
         days,
         sort,
         dir:                 dir.toLowerCase(),
-        location_count:      scope.child_ids.length,
+        location_count:      displayed_location_count,
+        child_count:         scope.child_ids.length,
         includes_parent:     parent.parent_mode === "operating_hq",
         rollup_tenant_count: scope.all_ids.length,
         generated_at:        new Date().toISOString(),
@@ -683,7 +782,8 @@ router.get("/:parentId", async (req, res) => {
         network_revenue:     networkRevenue,
         reviews_health:      reviewsHealth,
       },
-      contact_method_donut: donut,
+      contact_method_donut: contactDonut,
+      lead_source_donut:    leadSourceDonut,
       reviews_alerts:       reviewsAlerts,
       locations:            locationTable.locations,
     });

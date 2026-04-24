@@ -4,15 +4,11 @@
  * Rollup V5 — Parent Tenant Dashboard
  * Mounted at /api/rollup-v5
  *
- * Replaces the V4 Businesses page (routes/rollup.js) with a single-page
- * dashboard built around 4 hero tiles, a contact-method donut, reviews
- * alerts, and a sortable location table.
- *
- * Spec locked Apr 23, 2026 (userMemories #7).
- *
- * Period toggle: ?period=7d|30d|90d (default 30d).
- * Sort:          ?sort=<column>&dir=asc|desc (default revenue_cents desc).
- * Child scope:   direct children only (WHERE parent_id = $1).
+ * DIAGNOSTIC BUILD Apr 23 late-night:
+ *   - console.error for ALL timing (Render sometimes suppresses stdout)
+ *   - per-query 10s timeout (fail fast instead of 60s hang)
+ *   - per-query start + end logs (catches hang-in-progress)
+ *   - superadmin fast-path on auth (skip team_members query)
  */
 
 const express = require("express");
@@ -29,11 +25,7 @@ function resolvePeriod(raw) {
   return { period: normalized, days };
 }
 
-// ── Sort handling (location table) ─────────────────────────────────────────
-// Whitelist of allowed sort columns. Anything else → default revenue_cents.
-// This is an SQL injection defense — we interpolate the column name directly
-// into the ORDER BY clause (Postgres doesn't support parameterized ORDER BY),
-// so we MUST validate against a known-safe set before use.
+// ── Sort handling ─────────────────────────────────────────────────────────
 const ALLOWED_SORT_COLUMNS = new Set([
   "tenant_name",
   "calls_total",
@@ -51,7 +43,19 @@ function resolveSort(rawSort, rawDir) {
   return { sort, dir };
 }
 
-// ── Parent tenant validation ───────────────────────────────────────────────
+// ── Timeout helper ─────────────────────────────────────────────────────────
+// Wraps a promise with a hard timeout. If the promise doesn't settle in the
+// given ms, we reject with a useful error identifying which query hung.
+function withTimeout(label, promise, ms = 10000) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+}
+
+// ── Parent validation ─────────────────────────────────────────────────────
 async function validateParentAccess(req, res, parentId) {
   if (!parentId || !/^[0-9a-f-]{36}$/i.test(parentId)) {
     res.status(400).json({ error: "Invalid parent tenant ID" });
@@ -78,8 +82,10 @@ async function validateParentAccess(req, res, parentId) {
     return null;
   }
 
+  // Superadmin bypass — skip the team_members query entirely
   if (req.user?.is_super_admin) return parent;
 
+  // Fast membership check — should be sub-100ms on any indexed table
   const membershipRes = await db.query(
     `SELECT 1 FROM team_members
       WHERE user_id = $1 AND tenant_id = $2
@@ -94,7 +100,7 @@ async function validateParentAccess(req, res, parentId) {
   return parent;
 }
 
-// ── Rollup scope resolver ──────────────────────────────────────────────────
+// ── Scope resolver ────────────────────────────────────────────────────────
 async function getRollupScopeIds(parent) {
   const { rows } = await db.query(
     `SELECT id
@@ -114,7 +120,7 @@ async function getRollupScopeIds(parent) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// HERO TILE 1 — AI ACTIVITY
+// TILE 1 — AI ACTIVITY
 // ═══════════════════════════════════════════════════════════════════════════
 async function getAiActivityTile(tenantIds, days) {
   if (tenantIds.length === 0) {
@@ -145,19 +151,7 @@ async function getAiActivityTile(tenantIds, days) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// HERO TILE 2 — AFTER-HOURS REVENUE (JS-based classification)
-// ═══════════════════════════════════════════════════════════════════════════
-// Replaced the nested-CASE SQL variant with JS classification after a 499
-// timeout on prod (Apr 23 evening) — the AT TIME ZONE + JSONB approach was
-// O(N) full-table scan because we have no composite index on
-// (tenant_id, created_at, actual_revenue_cents).
-//
-// New approach: pull raw bookings + tenant tz/hours ONCE, classify in Node.
-// Memory trivial (25-100 rows per tenant in period); query time <100ms.
-//
-// Trade-off: JS-side uses Intl.DateTimeFormat per booking which has some
-// overhead. For 10k bookings this might get slow (~2s). At that scale,
-// revisit with a proper covering index + bring the CASE variant back.
+// TILE 2 — AFTER-HOURS REVENUE (JS classification)
 // ═══════════════════════════════════════════════════════════════════════════
 async function getAfterHoursRevenueTile(tenantIds, days) {
   if (tenantIds.length === 0) {
@@ -169,8 +163,6 @@ async function getAfterHoursRevenueTile(tenantIds, days) {
     };
   }
 
-  // Pull all revenue-bearing bookings in the period with tenant context.
-  // Simple indexed-friendly query: tenant_id = ANY + created_at range.
   const result = await db.query(
     `SELECT
        b.actual_revenue_cents,
@@ -213,13 +205,6 @@ async function getAfterHoursRevenueTile(tenantIds, days) {
   };
 }
 
-// Classify a booking's created_at as after-hours given tenant's tz +
-// business_hours JSONB. Mirrors the SQL logic from the previous variant:
-//   • business_hours IS NULL  → Mon-Fri 08:00-18:00 fallback
-//   • day's "closed" flag true → always after-hours
-//   • time < open OR time >= close → after-hours
-// Shape (Apr 23 spec):
-//   { monday: { open: "08:00", close: "17:00", closed: false }, ... }
 const DAY_KEYS_JS = [
   "sunday", "monday", "tuesday", "wednesday",
   "thursday", "friday", "saturday",
@@ -229,8 +214,6 @@ const WEEKDAY_SHORT_ORDER = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 function isAfterHours(createdAt, tz, businessHours) {
   const d = new Date(createdAt);
 
-  // Intl.DateTimeFormat gets us local time in the tenant's timezone without
-  // pulling moment-timezone. Parts give weekday short name + HH:MM in 24h.
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: tz,
     weekday: "short",
@@ -243,18 +226,14 @@ function isAfterHours(createdAt, tz, businessHours) {
   let hour   = parts.find((p) => p.type === "hour")?.value;
   const minute = parts.find((p) => p.type === "minute")?.value;
 
-  // Intl sometimes returns "24" for midnight — normalize to "00".
   if (hour === "24") hour = "00";
 
   const dowIndex = WEEKDAY_SHORT_ORDER.indexOf(weekdayShort);
-  // Defensive: if parse fails (shouldn't in practice), treat as after-hours
-  // so we don't under-report the sales pitch value.
   if (dowIndex < 0 || !hour || !minute) return true;
 
   const localTime = `${hour}:${minute}`;
   const dayKey = DAY_KEYS_JS[dowIndex];
 
-  // Fallback: no business_hours configured → Mon-Fri 08:00-18:00
   if (!businessHours || typeof businessHours !== "object") {
     const isWeekend = dowIndex === 0 || dowIndex === 6;
     if (isWeekend) return true;
@@ -262,8 +241,6 @@ function isAfterHours(createdAt, tz, businessHours) {
   }
 
   const dayConfig = businessHours[dayKey];
-
-  // Day missing entirely OR explicitly closed → after-hours
   if (!dayConfig || dayConfig.closed === true) return true;
 
   const open  = dayConfig.open  || "08:00";
@@ -273,7 +250,7 @@ function isAfterHours(createdAt, tz, businessHours) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// HERO TILE 3 — NETWORK REVENUE
+// TILE 3 — NETWORK REVENUE
 // ═══════════════════════════════════════════════════════════════════════════
 async function getNetworkRevenueTile(tenantIds, days, parentCreatedAt) {
   if (tenantIds.length === 0) {
@@ -340,7 +317,7 @@ async function getNetworkRevenueTile(tenantIds, days, parentCreatedAt) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// HERO TILE 4 — REVIEWS HEALTH
+// TILE 4 — REVIEWS HEALTH
 // ═══════════════════════════════════════════════════════════════════════════
 async function getReviewsHealthTile(tenantIds) {
   if (tenantIds.length === 0) {
@@ -623,31 +600,41 @@ async function getLocationTable(tenantIds, days, sort, dir) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN ENDPOINT — INSTRUMENTED (Apr 23 late-night debug)
-// GET /api/rollup-v5/:parentId?period=30d&sort=revenue_cents&dir=desc
+// MAIN ENDPOINT — INSTRUMENTED
 // ═══════════════════════════════════════════════════════════════════════════
 router.get("/:parentId", async (req, res) => {
   const t0 = Date.now();
-  const log = (label) => console.log(`[RollupV5] ${label} @ ${Date.now() - t0}ms`);
+  const log = (msg) => console.error(`[RollupV5] ${msg} @ ${Date.now() - t0}ms`);
 
   try {
+    log("HIT /api/rollup-v5");
     const { parentId } = req.params;
     const { period, days } = resolvePeriod(req.query.period);
     const { sort, dir } = resolveSort(req.query.sort, req.query.dir);
-    log("start");
+    log(`parsed params: parentId=${parentId} period=${period} sort=${sort}`);
 
-    const parent = await validateParentAccess(req, res, parentId);
-    log("validateParentAccess done");
+    const parent = await withTimeout("validateParentAccess", validateParentAccess(req, res, parentId));
+    log("validateParentAccess returned");
     if (!parent) return;
 
-    const scope = await getRollupScopeIds(parent);
-    log(`getRollupScopeIds done (${scope.all_ids.length} tenants in scope)`);
+    const scope = await withTimeout("getRollupScopeIds", getRollupScopeIds(parent));
+    log(`scope resolved: ${scope.all_ids.length} tenants`);
 
-    // Wrap each query so we can see which one is slow.
-    const timed = (name, fn) => fn().then(
-      (result) => { log(`${name} ✓`); return result; },
-      (err)    => { log(`${name} ✗ ${err.message}`); throw err; }
-    );
+    const timed = (name, fn) => {
+      const qStart = Date.now();
+      return withTimeout(name, fn()).then(
+        (result) => {
+          console.error(`[RollupV5] ${name} ✓ ${Date.now() - qStart}ms`);
+          return result;
+        },
+        (err) => {
+          console.error(`[RollupV5] ${name} ✗ ${Date.now() - qStart}ms: ${err.message}`);
+          throw err;
+        }
+      );
+    };
+
+    log("starting parallel queries");
 
     const [
       aiActivity,
@@ -667,7 +654,7 @@ router.get("/:parentId", async (req, res) => {
       timed("location_table",      () => getLocationTable(scope.all_ids, days, sort, dir)),
     ]);
 
-    log("all queries done, sending response");
+    log("all queries done, building response");
 
     res.json({
       parent: {
@@ -703,8 +690,12 @@ router.get("/:parentId", async (req, res) => {
 
     log("response sent");
   } catch (err) {
-    console.error("[RollupV5] Error:", err);
-    res.status(500).json({ error: "Server error", detail: err.message });
+    console.error(`[RollupV5] ERROR @ ${Date.now() - t0}ms:`, err.message, err.stack);
+    res.status(500).json({
+      error: "Server error",
+      detail: err.message,
+      elapsed_ms: Date.now() - t0,
+    });
   }
 });
 

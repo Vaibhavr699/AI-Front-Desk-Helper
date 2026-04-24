@@ -33,6 +33,7 @@ import {
   DollarSign,
   Trophy,
   Clock,
+  Activity,
 } from "lucide-react";
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -112,25 +113,20 @@ const LEAD_SOURCE_COLORS = {
   "Unknown":    "#a8a29e",
 };
 
-// Call outcome bucket display config
+// Call outcome buckets — SIMPLIFIED 4-bucket Apr 24 (was 6, rolled back)
+// Backend only emits: booked, transferred, spam, other.
+// "Other" deliberately vague — we don't try to distinguish hang-ups from
+// confused calls from genuine conversations because the raw `calls` data
+// doesn't support it. For richer breakdown, user drills into per-location
+// Metrics page.
 const CALL_OUTCOME_CONFIG = {
-  booked:       { label: "Booked",         color: "emerald", icon: CheckCircle2 },
-  transferred:  { label: "Transferred",    color: "blue",    icon: PhoneCall    },
-  conversation: { label: "Had conversation", color: "stone",   icon: MessageSquare },
-  hung_up:      { label: "Hung up (<30s)", color: "amber",   icon: PhoneMissed  },
-  no_outcome:   { label: "No outcome tagged", color: "stone",  icon: HelpCircle   },
-  spam:         { label: "Spam filtered",  color: "purple",  icon: AlertCircle  },
+  booked:      { label: "Booked",            color: "emerald", icon: CheckCircle2 },
+  transferred: { label: "Transferred",       color: "blue",    icon: PhoneCall    },
+  other:       { label: "Other / in-progress", color: "stone",  icon: Activity     },
+  spam:        { label: "Spam filtered",     color: "purple",  icon: AlertCircle  },
 };
 
-// Display order for Call Outcomes — wins first, issues next, admin last
-const CALL_OUTCOME_ORDER = [
-  "booked",
-  "transferred",
-  "conversation",
-  "hung_up",
-  "no_outcome",
-  "spam",
-];
+const CALL_OUTCOME_ORDER = ["booked", "transferred", "other", "spam"];
 
 const SORT_LABELS = {
   tenant_name:          "Location",
@@ -306,7 +302,6 @@ export default function RollupV5() {
         <LeadSourceDonut data={lead_source_donut} period={period} />
       </div>
 
-      {/* Revenue Goals + Call Outcomes — new Apr 24 panels */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         <RevenueGoalsPanel
           data={revenue_goals_panel}
@@ -928,16 +923,12 @@ function LeadSourceDonut({ data, period }) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// REVENUE GOALS PANEL — NEW Apr 24
+// REVENUE GOALS PANEL
 // ═════════════════════════════════════════════════════════════════════════
-// Shows network-wide monthly goal progress + top 3 performers by attainment.
-// Empty state when no goals are set. Click a performer to drill down to their
-// dashboard.
 function RevenueGoalsPanel({ data, onLocationClick }) {
   const hasNetworkGoal = data.network_goal_cents > 0;
   const monthName = MONTH_NAMES[data.current_month] || "This month";
 
-  // Empty state — no locations have a goal set for this month
   if (!hasNetworkGoal) {
     return (
       <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
@@ -948,7 +939,7 @@ function RevenueGoalsPanel({ data, onLocationClick }) {
               Revenue Goals
             </h3>
             <p className="text-[10px] text-stone-400 font-medium uppercase tracking-wider mt-0.5">
-              {monthName} {/* e.g., "April" */}
+              {monthName}
             </p>
           </div>
         </div>
@@ -976,15 +967,11 @@ function RevenueGoalsPanel({ data, onLocationClick }) {
   const attainmentPct = data.network_attainment_pct || 0;
   const remainingCents = Math.max(0, data.network_goal_cents - data.network_actual_cents);
 
-  // Progress bar color based on attainment + days remaining.
-  // Logic: if you're at 50% attainment with 20 days left that's fine (on pace).
-  // If you're at 50% with 2 days left that's concerning.
-  // Simple heuristic: compare attainment % to % of month elapsed.
-  const daysInMonth = data.days_remaining + (new Date().getDate()); // approx
+  const daysInMonth = data.days_remaining + (new Date().getDate());
   const pctMonthElapsed = daysInMonth > 0
     ? ((daysInMonth - data.days_remaining) / daysInMonth) * 100
     : 50;
-  const onPace = attainmentPct >= pctMonthElapsed * 0.9; // 10% grace
+  const onPace = attainmentPct >= pctMonthElapsed * 0.9;
 
   let barColor, barLabel;
   if (attainmentPct >= 100) {
@@ -1020,7 +1007,6 @@ function RevenueGoalsPanel({ data, onLocationClick }) {
         </div>
       </div>
 
-      {/* Network progress bar */}
       <div className="mb-4">
         <div className="flex items-baseline justify-between mb-1.5">
           <span className="text-sm font-black text-stone-900 tabular-nums">
@@ -1048,7 +1034,6 @@ function RevenueGoalsPanel({ data, onLocationClick }) {
         </div>
       </div>
 
-      {/* Top performers */}
       {data.top_performers.length > 0 && (
         <div className="pt-4 border-t border-stone-100">
           <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-stone-400 mb-3">
@@ -1068,7 +1053,6 @@ function RevenueGoalsPanel({ data, onLocationClick }) {
         </div>
       )}
 
-      {/* Missing goals nudge */}
       {data.locations_without_goal > 0 && (
         <div className="mt-4 pt-3 border-t border-stone-100 flex items-center gap-2 text-[11px] text-stone-500">
           <Info className="w-3.5 h-3.5 text-stone-400 shrink-0" />
@@ -1094,7 +1078,6 @@ function PerformerRow({ rank, loc, onClick }) {
     3: "bg-orange-50 text-orange-700 border-orange-200",
   };
 
-  // Attainment bar color — same logic as network bar
   const pct = loc.attainment_pct;
   const barColor =
     pct >= 100 ? "bg-emerald-500" :
@@ -1139,11 +1122,11 @@ function PerformerRow({ rank, loc, onClick }) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// CALL OUTCOMES PANEL — NEW Apr 24
+// CALL OUTCOMES PANEL — 4 buckets Apr 24
 // ═════════════════════════════════════════════════════════════════════════
-// Network-wide breakdown of call dispositions. Horizontal bar chart style —
-// one row per bucket with count, %, and visual bar. Mirrors the Metrics page
-// Hung Up Analysis visual language.
+// Simplified from earlier 6-bucket design. Only distinguishes outcomes the
+// raw `calls` table reliably tracks. For richer analysis (hang-up timing,
+// confusion triggers), user drills into per-location Metrics page.
 function CallOutcomesPanel({ data, period }) {
   const { total_calls, buckets } = data;
   const hasData = total_calls > 0;
@@ -1212,17 +1195,24 @@ function CallOutcomesPanel({ data, period }) {
           );
         })}
       </div>
+
+      {/* Drill-down hint */}
+      <div className="mt-4 pt-3 border-t border-stone-100 flex items-center gap-2 text-[11px] text-stone-500">
+        <Info className="w-3.5 h-3.5 text-stone-400 shrink-0" />
+        <span>
+          For hang-up timing + confusion analysis, open a location's Metrics page.
+        </span>
+      </div>
     </div>
   );
 }
 
-function CallOutcomeBar({ bucketKey, bucket, totalCalls }) {
+function CallOutcomeBar({ bucketKey, bucket }) {
   const config = CALL_OUTCOME_CONFIG[bucketKey];
   if (!config) return null;
 
   const Icon = config.icon;
 
-  // Bar color by semantic meaning
   const barColor = {
     emerald: "bg-emerald-500",
     blue:    "bg-blue-500",

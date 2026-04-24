@@ -802,7 +802,7 @@ async function getReviewsAlertsList(tenantIds) {
       (SELECT COUNT(*)::int FROM candidate_alerts) AS total_count_14d
     FROM candidate_alerts
     ORDER BY review_date DESC
-    LIMIT 2
+    LIMIT 10
     `,
     [tenantIds]
   );

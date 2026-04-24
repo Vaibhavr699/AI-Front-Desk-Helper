@@ -20,7 +20,6 @@ function resolvePeriod(raw) {
 }
 
 // ── Sort handling ─────────────────────────────────────────────────────────
-// open_leads added Apr 24 — users can sort locations by pipeline size.
 const ALLOWED_SORT_COLUMNS = new Set([
   "tenant_name",
   "calls_total",
@@ -359,37 +358,17 @@ async function getReviewsHealthTile(tenantIds) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TILE 5 — MISSED OPPORTUNITIES (NEW Apr 24)
+// TILE 5 — MISSED OPPORTUNITIES
 // ═══════════════════════════════════════════════════════════════════════════
-// Shows calls where caller connected with the AI but didn't convert. This
-// is the "AI value recovery opportunity" tile — frames what might have
-// been lost without AI, or what's still slipping through.
-//
-// Definition based on Gladiators disposition values (completed/booked/
-// transferred/spam/NULL):
-//   missed = calls where
-//     - disposition IN ('completed', NULL)  (connected but didn't definitively win)
-//     - AND disposition != 'booked'         (exclude wins)
-//     - AND transferred != true             (exclude human handoffs)
-//     - AND duration_minutes > 0.1          (exclude sub-6-sec misdials)
-//
-// Dollar estimate = missed_count × avg_job_value.
-// avg_job_value = total actual_revenue_cents / count of revenue-positive
-// bookings in same period. Scales with each tenant's real economics.
-//
-// Data quality flag: if >30% of calls have NULL disposition, we set
-// `data_quality_warning: true` so the frontend can hint the estimate
-// is less reliable. Spam calls are always excluded so they don't inflate
-// the denominator.
 async function getMissedOppsTile(tenantIds, days) {
   if (tenantIds.length === 0) {
     return {
-      missed_count:            0,
-      estimated_lost_cents:    0,
-      total_calls:             0,
-      null_disposition_count:  0,
-      data_quality_warning:    false,
-      avg_job_value_cents:     0,
+      missed_count:           0,
+      estimated_lost_cents:   0,
+      total_calls:            0,
+      null_disposition_count: 0,
+      data_quality_warning:   false,
+      avg_job_value_cents:    0,
     };
   }
 
@@ -587,6 +566,220 @@ async function getLeadSourceDonut(tenantIds, days) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// REVENUE GOALS PANEL (NEW Apr 24)
+// ═══════════════════════════════════════════════════════════════════════════
+// Aggregates current-month revenue goals across all locations and shows:
+//   • Network total: sum(goals) vs sum(current-month actuals)
+//   • Top 3 by % attainment (not raw revenue — small locations matter)
+//   • Count of locations missing a goal (empty-state CTA)
+//
+// Schema: revenue_goals is per-tenant-per-month (year, month, revenue_goal).
+// actual_revenue is NULL in DB — we compute live from bookings table, which
+// mirrors how Metrics page works (revenue_goals.actual_revenue not maintained).
+async function getRevenueGoalsPanel(tenantIds) {
+  if (tenantIds.length === 0) {
+    return {
+      network_goal_cents:    0,
+      network_actual_cents:  0,
+      network_attainment_pct: null,
+      days_remaining:        0,
+      locations_with_goal:   0,
+      locations_without_goal: 0,
+      top_performers:        [],
+      bottom_performers:     [],
+    };
+  }
+
+  const now = new Date();
+  const currentYear  = now.getFullYear();
+  const currentMonth = now.getMonth() + 1; // JS 0-indexed, DB 1-indexed
+
+  // Days remaining in current month
+  const lastDay = new Date(currentYear, currentMonth, 0).getDate();
+  const days_remaining = Math.max(0, lastDay - now.getDate());
+
+  // Pull per-location: goal (from revenue_goals) + actual (from bookings
+  // this calendar month). FULL OUTER-style via LEFT JOIN from tenants so we
+  // see locations that have no goal set.
+  const result = await db.query(
+    `WITH
+    month_goals AS (
+      SELECT tenant_id, revenue_goal::bigint AS goal_cents
+        FROM revenue_goals
+       WHERE tenant_id = ANY($1::uuid[])
+         AND year  = $2::int
+         AND month = $3::int
+    ),
+    month_actuals AS (
+      SELECT tenant_id,
+             COALESCE(SUM(actual_revenue_cents), 0)::bigint AS actual_cents
+        FROM bookings
+       WHERE tenant_id = ANY($1::uuid[])
+         AND actual_revenue_cents IS NOT NULL
+         AND actual_revenue_cents > 0
+         AND EXTRACT(YEAR  FROM created_at) = $2::int
+         AND EXTRACT(MONTH FROM created_at) = $3::int
+       GROUP BY tenant_id
+    )
+    SELECT
+      t.id   AS tenant_id,
+      COALESCE(t.company_name, t.name, 'Unknown') AS tenant_name,
+      mg.goal_cents,
+      COALESCE(ma.actual_cents, 0)::bigint AS actual_cents
+    FROM tenants t
+    LEFT JOIN month_goals   mg ON mg.tenant_id = t.id
+    LEFT JOIN month_actuals ma ON ma.tenant_id = t.id
+    WHERE t.id = ANY($1::uuid[])`,
+    [tenantIds, currentYear, currentMonth]
+  );
+
+  let network_goal_cents   = 0;
+  let network_actual_cents = 0;
+  let locations_with_goal    = 0;
+  let locations_without_goal = 0;
+
+  const locationStats = [];
+
+  for (const row of result.rows) {
+    const goal_cents   = row.goal_cents !== null ? Number(row.goal_cents) : null;
+    const actual_cents = Number(row.actual_cents);
+
+    if (goal_cents && goal_cents > 0) {
+      locations_with_goal += 1;
+      network_goal_cents   += goal_cents;
+      network_actual_cents += actual_cents;
+
+      const attainment_pct = Math.round((actual_cents / goal_cents) * 1000) / 10;
+
+      locationStats.push({
+        tenant_id:      row.tenant_id,
+        tenant_name:    row.tenant_name,
+        goal_cents,
+        actual_cents,
+        attainment_pct,
+      });
+    } else {
+      locations_without_goal += 1;
+    }
+  }
+
+  // Sort by attainment % desc for top performers, asc for bottom
+  const sortedByAttainment = [...locationStats].sort(
+    (a, b) => b.attainment_pct - a.attainment_pct
+  );
+
+  const top_performers    = sortedByAttainment.slice(0, 3);
+  const bottom_performers = [...sortedByAttainment]
+    .reverse()
+    .filter((loc) => loc.attainment_pct < 50)
+    .slice(0, 2);
+
+  const network_attainment_pct =
+    network_goal_cents > 0
+      ? Math.round((network_actual_cents / network_goal_cents) * 1000) / 10
+      : null;
+
+  return {
+    network_goal_cents,
+    network_actual_cents,
+    network_attainment_pct,
+    days_remaining,
+    locations_with_goal,
+    locations_without_goal,
+    top_performers,
+    bottom_performers,
+    current_year:  currentYear,
+    current_month: currentMonth,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CALL OUTCOMES PANEL (NEW Apr 24)
+// ═══════════════════════════════════════════════════════════════════════════
+// Network-wide breakdown of call dispositions over the period. Mirrors
+// Metrics.jsx Hung Up Analysis patterns. Buckets are MUTUALLY EXCLUSIVE
+// so percentages sum to 100%.
+//
+// Category definitions (checked in this precedence order):
+//   1. Booked          — disposition = 'booked'
+//   2. Transferred     — disposition = 'transferred' OR transferred = true
+//   3. Spam            — disposition = 'spam'
+//   4. Hung up <30s    — duration_minutes < 0.5 (after the above)
+//   5. No outcome      — disposition IS NULL (after the above)
+//   6. Conversation    — everything else (completed but didn't convert)
+async function getCallOutcomesPanel(tenantIds, days) {
+  if (tenantIds.length === 0) {
+    return {
+      total_calls: 0,
+      buckets: {
+        booked:       { count: 0, pct: 0 },
+        transferred:  { count: 0, pct: 0 },
+        spam:         { count: 0, pct: 0 },
+        hung_up:      { count: 0, pct: 0 },
+        no_outcome:   { count: 0, pct: 0 },
+        conversation: { count: 0, pct: 0 },
+      },
+    };
+  }
+
+  // Single query returns counts for each category. Uses FILTER clauses on
+  // COUNT for clean per-bucket aggregation. Precedence is enforced by
+  // ordering the WHEN clauses in each FILTER: booked wins over transferred
+  // wins over spam wins over hung_up wins over no_outcome wins over
+  // conversation (default).
+  const result = await db.query(
+    `WITH classified AS (
+      SELECT
+        CASE
+          WHEN disposition = 'booked'                                        THEN 'booked'
+          WHEN disposition = 'transferred' OR transferred = true             THEN 'transferred'
+          WHEN disposition = 'spam'                                          THEN 'spam'
+          WHEN COALESCE(duration_minutes, 0) < 0.5                           THEN 'hung_up'
+          WHEN disposition IS NULL                                           THEN 'no_outcome'
+          ELSE 'conversation'
+        END AS bucket
+      FROM calls
+      WHERE tenant_id = ANY($1::uuid[])
+        AND direction = 'inbound'
+        AND started_at > now() - ($2::int * interval '1 day')
+    )
+    SELECT bucket, COUNT(*)::int AS count
+      FROM classified
+     GROUP BY bucket`,
+    [tenantIds, days]
+  );
+
+  const countMap = {
+    booked:       0,
+    transferred:  0,
+    spam:         0,
+    hung_up:      0,
+    no_outcome:   0,
+    conversation: 0,
+  };
+
+  let total_calls = 0;
+  for (const row of result.rows) {
+    const count = Number(row.count);
+    if (countMap.hasOwnProperty(row.bucket)) {
+      countMap[row.bucket] = count;
+    }
+    total_calls += count;
+  }
+
+  const buckets = {};
+  for (const [key, count] of Object.entries(countMap)) {
+    const pct =
+      total_calls > 0
+        ? Math.round((count / total_calls) * 1000) / 10
+        : 0;
+    buckets[key] = { count, pct };
+  }
+
+  return { total_calls, buckets };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // REVIEWS ALERTS LIST
 // ═══════════════════════════════════════════════════════════════════════════
 async function getReviewsAlertsList(tenantIds) {
@@ -659,9 +852,6 @@ async function getReviewsAlertsList(tenantIds) {
 // ═══════════════════════════════════════════════════════════════════════════
 // LOCATION TABLE
 // ═══════════════════════════════════════════════════════════════════════════
-// Apr 24 addition: new lead_stats CTE adds per-location open_leads count.
-// "Open" = status NOT IN ('Won', 'Lost') — matches Gladiators status values
-// (New Lead, FollowUp, Estimate Sent, Won).
 async function getLocationTable(tenantIds, days, sort, dir) {
   if (tenantIds.length === 0) {
     return { locations: [], sort, dir };
@@ -716,8 +906,6 @@ async function getLocationTable(tenantIds, days, sort, dir) {
       GROUP BY tenant_id
     ),
     lead_stats AS (
-      -- Open leads = anything not yet won or lost. Case-insensitive match
-      -- on status so 'Won' vs 'won' vs 'WON' all exclude correctly.
       SELECT
         tenant_id,
         COUNT(*) FILTER (
@@ -818,6 +1006,8 @@ router.get("/:parentId", async (req, res) => {
       missedOpps,
       contactDonut,
       leadSourceDonut,
+      revenueGoalsPanel,
+      callOutcomesPanel,
       reviewsAlerts,
       locationTable,
     ] = await Promise.all([
@@ -828,6 +1018,8 @@ router.get("/:parentId", async (req, res) => {
       timed("missed_opps",         () => getMissedOppsTile(scope.all_ids, days)),
       timed("contact_donut",       () => getContactMethodDonut(scope.all_ids, days)),
       timed("lead_source_donut",   () => getLeadSourceDonut(scope.all_ids, days)),
+      timed("revenue_goals_panel", () => getRevenueGoalsPanel(scope.all_ids)),
+      timed("call_outcomes",       () => getCallOutcomesPanel(scope.all_ids, days)),
       timed("reviews_alerts",      () => getReviewsAlertsList(scope.all_ids)),
       timed("location_table",      () => getLocationTable(scope.all_ids, days, sort, dir)),
     ]);
@@ -865,6 +1057,8 @@ router.get("/:parentId", async (req, res) => {
       },
       contact_method_donut: contactDonut,
       lead_source_donut:    leadSourceDonut,
+      revenue_goals_panel:  revenueGoalsPanel,
+      call_outcomes_panel:  callOutcomesPanel,
       reviews_alerts:       reviewsAlerts,
       locations:            locationTable.locations,
     });

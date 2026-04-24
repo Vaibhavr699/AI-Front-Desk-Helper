@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   getResellerOverview,
+  getResellerUsage,                    // ← NEW
   listResellerCustomers,
   removeResellerCustomer,
   resendResellerCustomerInvite,
@@ -9,19 +10,19 @@ import {
 import CustomerTenantCard from "../components/CustomerTenantCard";
 import AddCustomerSheet from "../components/AddCustomerSheet";
 import EditCustomerSheet from "../components/EditCustomerSheet";
+import ResellerUsageCard from "../components/ResellerUsageCard";  // ← NEW
 
 /**
  * Reseller dashboard — mirrors the Businesses (Tenants.jsx) page pattern for
  * parent_hq accounts. Top hero shows tier + aggregated 30d metrics across all
  * customer tenants. Grid below shows individual CustomerTenantCard per customer.
  *
- * Gated behind account_type='reseller' on the backend (routes/reseller.js
- * requireReseller middleware). If a parent_hq or customer user somehow hits
- * this page, the API calls return 403 and the page shows an access error.
+ * Apr 24: Added ResellerUsageCard for current-month voice/SMS cap tracking.
  */
 export default function Reseller() {
   const navigate = useNavigate();
   const [overview, setOverview] = useState(null);
+  const [usage, setUsage] = useState(null);        // ← NEW
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -37,12 +38,21 @@ export default function Reseller() {
     setLoading(true);
     setError(null);
     try {
-      const [ov, cs] = await Promise.all([
+      // Parallelize all 3 API calls. getResellerUsage is added as 3rd promise.
+      // If usage endpoint fails (e.g. no caps configured yet), we swallow the
+      // error and let the ResellerUsageCard handle its own null state — we
+      // don't want usage fetch failure to block the rest of the page.
+      const [ov, cs, usg] = await Promise.all([
         getResellerOverview(),
         listResellerCustomers(),
+        getResellerUsage().catch((err) => {
+          console.warn("[Reseller] Usage fetch failed:", err.message);
+          return null;
+        }),
       ]);
       setOverview(ov);
       setCustomers(cs.customers || []);
+      setUsage(usg);
     } catch (err) {
       setError(err.message || "Failed to load reseller dashboard");
     } finally {
@@ -77,8 +87,6 @@ export default function Reseller() {
   }
 
   function handleSettings(customer) {
-    // Gear icon opens the same edit sheet for now. Detail page coming
-    // in Phase 3.5 if customers ask for deeper management surface.
     setEditingCustomer(customer);
   }
 
@@ -248,6 +256,11 @@ export default function Reseller() {
           </div>
         </div>
       )}
+
+      {/* NEW Apr 24: Usage card renders between tier hero and signup link.
+          Component returns null if no usage data or caps aren't configured,
+          so we don't need to conditionally wrap it. */}
+      <ResellerUsageCard usage={usage} />
 
       {overview?.reseller?.reseller_code && (
         <div className="rounded-2xl bg-white border border-stone-200 p-5 mb-6">

@@ -129,8 +129,7 @@ export default function RollupV5() {
 
   // Step 1: figure out which parent tenant we're showing.
   // The active tenantId from context might be a child location, so we pull
-  // the tenants list and find the HQ/parent to query. Same pattern as
-  // Tenants.jsx — the API returns the user's tenant first.
+  // the tenants list and find the HQ/parent to query.
   useEffect(() => {
     resolveParent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -144,18 +143,31 @@ export default function RollupV5() {
       const list = tenantsResponse?.tenants || [];
       const primary = list[0];
 
-      // If primary IS the parent (operating_hq or rollup_only), use it.
-      // Otherwise walk up to the parent_id.
-      const isParent =
-        primary?.business_type === "parent" ||
-        list.some((t) => t.parent_id === primary?.id);
+      if (!primary?.id) {
+        setError("No tenant found for this user.");
+        setLoading(false);
+        return;
+      }
 
-      if (isParent && primary?.id) {
+      // Three signals that primary IS a parent (any one = yes):
+      //   1. parent_mode is set (operating_hq | rollup_only) — MOST RELIABLE
+      //      Gladiators has business_type=undefined but parent_mode='operating_hq',
+      //      so this check is the single source of truth.
+      //   2. business_type === "parent" — legacy signal, kept for compat
+      //   3. someone in the list has parent_id pointing at primary — inference
+      //      from the shape of the network
+      const isParent =
+        !!primary.parent_mode ||
+        primary.business_type === "parent" ||
+        list.some((t) => t.parent_id === primary.id);
+
+      if (isParent) {
         setParentId(primary.id);
-      } else if (primary?.parent_id) {
+      } else if (primary.parent_id) {
+        // Primary is a child location — walk up to its parent
         setParentId(primary.parent_id);
       } else {
-        // Standalone tenant — no rollup view available.
+        // Genuinely standalone tenant — no rollup view available
         setParentId(null);
         setLoading(false);
         setError(

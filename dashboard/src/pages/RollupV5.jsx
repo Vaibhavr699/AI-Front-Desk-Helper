@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { Link, useOutletContext } from "react-router-dom";
+import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import { getTenants, getRollupV5 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import { useBrand } from "../contexts/BrandContext";
@@ -9,6 +9,7 @@ import {
   Crown,
   Phone,
   PhoneCall,
+  PhoneMissed,
   Moon,
   TrendingUp,
   TrendingDown,
@@ -29,6 +30,7 @@ import {
   ArrowUpDown,
   Target,
   Users,
+  DollarSign,
 } from "lucide-react";
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -89,21 +91,20 @@ const CONTACT_METHOD_COLORS = {
   unknown:  "bg-stone-400",
 };
 
-// Lead Source bucket colors (must match SOURCE_BUCKETS order in backend)
 const LEAD_SOURCE_COLORS = {
-  "Google Ads": "#3b82f6",  // blue-500
-  "LSA":        "#0ea5e9",  // sky-500
-  "Facebook":   "#6366f1",  // indigo-500
-  "Website":    "#10b981",  // emerald-500
-  "Yelp":       "#ef4444",  // red-500
-  "Angi":       "#f97316",  // orange-500
-  "Thumbtack":  "#8b5cf6",  // violet-500
-  "Houzz":      "#14b8a6",  // teal-500
-  "Phone":      "#eab308",  // yellow-500
-  "CRM":        "#a855f7",  // purple-500
-  "Referral":   "#ec4899",  // pink-500
-  "Other":      "#64748b",  // slate-500
-  "Unknown":    "#a8a29e",  // stone-400
+  "Google Ads": "#3b82f6",
+  "LSA":        "#0ea5e9",
+  "Facebook":   "#6366f1",
+  "Website":    "#10b981",
+  "Yelp":       "#ef4444",
+  "Angi":       "#f97316",
+  "Thumbtack":  "#8b5cf6",
+  "Houzz":      "#14b8a6",
+  "Phone":      "#eab308",
+  "CRM":        "#a855f7",
+  "Referral":   "#ec4899",
+  "Other":      "#64748b",
+  "Unknown":    "#a8a29e",
 };
 
 const SORT_LABELS = {
@@ -115,13 +116,15 @@ const SORT_LABELS = {
   avg_rating:           "Rating",
   review_count:         "Reviews",
   pending_alerts_count: "Alerts",
+  open_leads:           "Open leads",
 };
 
 // ═════════════════════════════════════════════════════════════════════════
 // MAIN COMPONENT
 // ═════════════════════════════════════════════════════════════════════════
 export default function RollupV5() {
-  const { tenantId } = useOutletContext() || {};
+  const { tenantId, onTenantChange } = useOutletContext() || {};
+  const navigate = useNavigate();
   const brand = useBrand();
 
   const [parentId, setParentId]       = useState(null);
@@ -206,6 +209,15 @@ export default function RollupV5() {
     }
   }
 
+  // Row click handler — switches active tenant and navigates to /dashboard.
+  // Same pattern as V4 Tenants.jsx onSelect. onTenantChange comes from
+  // DashboardLayout outlet context; if not provided (shouldn't happen),
+  // we still navigate so the user isn't stuck.
+  function handleLocationClick(locationId) {
+    if (onTenantChange) onTenantChange(locationId);
+    navigate("/dashboard");
+  }
+
   if (loading && !data) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -258,31 +270,32 @@ export default function RollupV5() {
         </div>
       )}
 
-      {/* 4 Hero Tiles */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      {/* 5 Hero Tiles — grid scales from 1 col mobile → 2 md → 3 lg → 5 xl.
+          Skipped direct lg:grid-cols-5 because at typical laptop width that
+          squeezes tiles too tight. xl breakpoint (1280px+) fits 5 cleanly. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 mb-8">
         <AiActivityTile data={tiles.ai_activity} period={period} />
         <AfterHoursRevenueTile data={tiles.after_hours_revenue} period={period} />
         <NetworkRevenueTile data={tiles.network_revenue} period={period} />
         <ReviewsHealthTile data={tiles.reviews_health} />
+        <MissedOppsTile data={tiles.missed_opps} period={period} />
       </div>
 
-      {/* Two donuts side-by-side (stack on mobile) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         <ContactMethodDonut data={contact_method_donut} period={period} />
         <LeadSourceDonut data={lead_source_donut} period={period} />
       </div>
 
-      {/* Reviews Alerts full-width below donuts */}
       <div className="mb-8">
         <ReviewsAlertsPanel data={reviews_alerts} />
       </div>
 
-      {/* Location Table */}
       <LocationTable
         locations={locations}
         sort={sort}
         dir={dir}
         onSort={handleSort}
+        onRowClick={handleLocationClick}
       />
 
       <div className="mt-8 text-center">
@@ -307,8 +320,6 @@ function Header({ parent, meta, period, setPeriod, refreshing }) {
     { value: "90d", label: "90d" },
   ];
 
-  // location_count (Apr 24 fix): now reflects total rendered rows. For
-  // operating_hq, this includes HQ + branches together.
   const count = meta.location_count;
   const hqSuffix = meta.includes_parent ? " (HQ + branches)" : "";
 
@@ -478,15 +489,13 @@ function NetworkRevenueTile({ data, period }) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// TILE 4 — REVIEWS HEALTH (empty state polish Apr 24)
+// TILE 4 — REVIEWS HEALTH
 // ═════════════════════════════════════════════════════════════════════════
 function ReviewsHealthTile({ data }) {
-  const hasAlerts   = data.prominent_alert_count > 0;
-  const noReviews   = data.total_review_count === 0;
+  const hasAlerts    = data.prominent_alert_count > 0;
+  const noReviews    = data.total_review_count === 0;
   const noneConnected = data.oauth_connected_count === 0;
 
-  // Empty state — no reviews at all yet. Show a nudge instead of "— across 0"
-  // which looks broken. This is the Apr 24 polish from memory #13.
   if (noReviews) {
     return (
       <TileShell
@@ -519,7 +528,6 @@ function ReviewsHealthTile({ data }) {
     );
   }
 
-  // Normal state — has reviews
   return (
     <TileShell
       icon={<Star className="w-4 h-4" />}
@@ -567,6 +575,76 @@ function ReviewsHealthTile({ data }) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+// TILE 5 — MISSED OPPORTUNITIES (NEW Apr 24)
+// ═════════════════════════════════════════════════════════════════════════
+// Shows calls where caller connected with the AI but didn't convert.
+// Displays: missed count + estimated $ lost + data quality warning if
+// disposition tracking is sparse.
+function MissedOppsTile({ data, period }) {
+  const hasLostValue = data.estimated_lost_cents > 0;
+  const noData = data.total_calls === 0;
+
+  if (noData) {
+    return (
+      <TileShell
+        icon={<PhoneMissed className="w-4 h-4" />}
+        label="Missed Opps"
+        subtitle={`At-risk calls · ${period}`}
+        color="red"
+      >
+        <div className="py-2">
+          <div className="flex items-center gap-2 text-stone-700 font-bold text-sm mb-1">
+            <Info className="w-4 h-4 text-stone-400" />
+            No calls yet
+          </div>
+          <p className="text-xs text-stone-500 leading-snug">
+            When calls come in and don't convert, we'll surface them here.
+          </p>
+        </div>
+      </TileShell>
+    );
+  }
+
+  return (
+    <TileShell
+      icon={<PhoneMissed className="w-4 h-4" />}
+      label="Missed Opps"
+      subtitle={`At-risk calls · ${period}`}
+      color="red"
+    >
+      <div className="text-3xl font-black text-stone-900 tabular-nums tracking-tight">
+        {formatNum(data.missed_count)}
+      </div>
+      <div className="text-xs font-medium text-stone-500 mt-0.5">
+        calls without conversion
+      </div>
+      <div className="mt-3 pt-3 border-t border-stone-100 flex items-center justify-between text-xs">
+        {hasLostValue ? (
+          <div className="flex items-center gap-1">
+            <DollarSign className="w-3.5 h-3.5 text-stone-400" />
+            <span className="text-sm font-black text-stone-900 tabular-nums">
+              {formatCents(data.estimated_lost_cents)}
+            </span>
+            <span className="text-stone-400 font-medium">est. at risk</span>
+          </div>
+        ) : (
+          <span className="text-stone-400 font-medium">No $ estimate yet</span>
+        )}
+        {data.data_quality_warning && (
+          <span
+            className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-600"
+            title={`${data.null_disposition_count} calls untagged — estimate may be off`}
+          >
+            <Info className="w-2.5 h-2.5" />
+            Low conf
+          </span>
+        )}
+      </div>
+    </TileShell>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 // SHARED TILE SHELL
 // ═════════════════════════════════════════════════════════════════════════
 function TileShell({ icon, label, subtitle, color, highlight, children }) {
@@ -575,6 +653,7 @@ function TileShell({ icon, label, subtitle, color, highlight, children }) {
     indigo:  "from-indigo-50 text-indigo-600 ring-indigo-200/50",
     emerald: "from-emerald-50 text-emerald-600 ring-emerald-200/50",
     amber:   "from-amber-50 text-amber-600 ring-amber-200/50",
+    red:     "from-red-50 text-red-600 ring-red-200/50",
   };
 
   return (
@@ -641,14 +720,7 @@ function ContactMethodDonut({ data, period }) {
       <div className="flex items-center gap-6">
         <div className="shrink-0 relative">
           <svg width={size} height={size} className="-rotate-90">
-            <circle
-              cx={cx}
-              cy={cy}
-              r={radius}
-              fill="none"
-              stroke="#f5f5f4"
-              strokeWidth={stroke}
-            />
+            <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#f5f5f4" strokeWidth={stroke} />
             {hasData &&
               slicesWithCounts.map((bucket) => {
                 const pct = bucket.count / data.total_leads;
@@ -685,14 +757,9 @@ function ContactMethodDonut({ data, period }) {
           {data.buckets.map((bucket) => {
             const Icon = CONTACT_METHOD_ICONS[bucket.method];
             return (
-              <div
-                key={bucket.method}
-                className="flex items-center justify-between text-xs"
-              >
+              <div key={bucket.method} className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span
-                    className={`shrink-0 w-2 h-2 rounded-full ${CONTACT_METHOD_COLORS[bucket.method]}`}
-                  />
+                  <span className={`shrink-0 w-2 h-2 rounded-full ${CONTACT_METHOD_COLORS[bucket.method]}`} />
                   <Icon className="w-3.5 h-3.5 text-stone-400 shrink-0" />
                   <span className="font-medium text-stone-700 truncate">
                     {CONTACT_METHOD_LABELS[bucket.method]}
@@ -717,8 +784,7 @@ function ContactMethodDonut({ data, period }) {
           <Info className="w-3.5 h-3.5 text-stone-400 shrink-0" />
           <span>
             {formatNum(data.unknown_count)} lead
-            {data.unknown_count !== 1 ? "s" : ""} missing source — check your
-            integrations
+            {data.unknown_count !== 1 ? "s" : ""} missing source — check your integrations
           </span>
         </div>
       )}
@@ -739,16 +805,8 @@ function getContactSliceColor(method) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// LEAD SOURCE DONUT — NEW (Apr 24)
+// LEAD SOURCE DONUT
 // ═════════════════════════════════════════════════════════════════════════
-// Companion donut to Contact Method. Shows marketing origin of leads.
-// Backend normalizes raw lead_source + facebook_id + web_id into canonical
-// buckets (Google Ads / LSA / Facebook / Website / Yelp / Angi / ... / Unknown).
-//
-// Data quality nudge: if Unknown % is high (>30%), shows a prominent warning
-// that lead source tracking needs attention. Different threshold than
-// Contact Method (which just counts) because source tracking is more
-// important signal for marketing attribution.
 function LeadSourceDonut({ data, period }) {
   const size   = 140;
   const stroke = 18;
@@ -760,7 +818,6 @@ function LeadSourceDonut({ data, period }) {
   const slicesWithCounts = data.buckets.filter((b) => b.count > 0);
   const hasData = data.total_leads > 0;
 
-  // Determine if Unknown is dominant — strong data-quality signal
   const unknownPct = data.total_leads > 0
     ? (data.unknown_count / data.total_leads) * 100
     : 0;
@@ -790,14 +847,7 @@ function LeadSourceDonut({ data, period }) {
       <div className="flex items-center gap-6">
         <div className="shrink-0 relative">
           <svg width={size} height={size} className="-rotate-90">
-            <circle
-              cx={cx}
-              cy={cy}
-              r={radius}
-              fill="none"
-              stroke="#f5f5f4"
-              strokeWidth={stroke}
-            />
+            <circle cx={cx} cy={cy} r={radius} fill="none" stroke="#f5f5f4" strokeWidth={stroke} />
             {hasData &&
               slicesWithCounts.map((bucket) => {
                 const pct = bucket.count / data.total_leads;
@@ -830,16 +880,10 @@ function LeadSourceDonut({ data, period }) {
           </div>
         </div>
 
-        {/* Legend — only shows buckets with count > 0 to keep it tidy.
-            Lead source has 13 possible buckets vs 6 for contact_method, so
-            showing all zero-count buckets would overwhelm the sidebar. */}
         <div className="flex-1 min-w-0 space-y-1.5">
           {hasData ? (
             slicesWithCounts.map((bucket) => (
-              <div
-                key={bucket.source}
-                className="flex items-center justify-between text-xs"
-              >
+              <div key={bucket.source} className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2 min-w-0">
                   <span
                     className="shrink-0 w-2 h-2 rounded-full"
@@ -867,7 +911,6 @@ function LeadSourceDonut({ data, period }) {
         </div>
       </div>
 
-      {/* Data quality nudge — appears when Unknown bucket is dominant */}
       {highUnknown && data.total_leads > 0 && (
         <div className="mt-4 pt-3 border-t border-stone-100 flex items-start gap-2 text-[11px] text-amber-700 bg-amber-50 -mx-5 -mb-5 px-5 py-3 rounded-b-2xl">
           <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
@@ -981,13 +1024,15 @@ function ReviewAlertCard({ alert }) {
 // ═════════════════════════════════════════════════════════════════════════
 // LOCATION TABLE
 // ═════════════════════════════════════════════════════════════════════════
-function LocationTable({ locations, sort, dir, onSort }) {
+function LocationTable({ locations, sort, dir, onSort, onRowClick }) {
+  // Apr 24: added open_leads column between Alerts and end
   const columns = [
     { key: "tenant_name",          label: "Location",     align: "left"  },
     { key: "calls_total",          label: "Calls",        align: "right" },
     { key: "bookings_total",       label: "Bookings",     align: "right" },
     { key: "booking_rate_pct",     label: "Rate",         align: "right" },
     { key: "revenue_cents",        label: "Revenue",      align: "right" },
+    { key: "open_leads",           label: "Open",         align: "right" },
     { key: "avg_rating",           label: "Rating",       align: "right" },
     { key: "review_count",         label: "Reviews",      align: "right" },
     { key: "pending_alerts_count", label: "Alerts",       align: "right" },
@@ -1015,7 +1060,7 @@ function LocationTable({ locations, sort, dir, onSort }) {
         <div>
           <h3 className="text-sm font-black text-stone-900">Locations</h3>
           <p className="text-[10px] text-stone-400 font-medium uppercase tracking-wider mt-0.5">
-            {formatNum(locations.length)} location{locations.length !== 1 ? "s" : ""} · sorted by {SORT_LABELS[sort]} {dir}
+            {formatNum(locations.length)} location{locations.length !== 1 ? "s" : ""} · sorted by {SORT_LABELS[sort]} {dir} · click a row to view
           </p>
         </div>
       </div>
@@ -1054,7 +1099,11 @@ function LocationTable({ locations, sort, dir, onSort }) {
           </thead>
           <tbody className="divide-y divide-stone-100">
             {locations.map((loc) => (
-              <LocationRow key={loc.tenant_id} loc={loc} />
+              <LocationRow
+                key={loc.tenant_id}
+                loc={loc}
+                onClick={() => onRowClick(loc.tenant_id)}
+              />
             ))}
           </tbody>
         </table>
@@ -1063,7 +1112,7 @@ function LocationTable({ locations, sort, dir, onSort }) {
   );
 }
 
-function LocationRow({ loc }) {
+function LocationRow({ loc, onClick }) {
   const showRankBadge = loc.rank_revenue <= 3;
   const rankColors = {
     1: "bg-amber-100 text-amber-700 border-amber-200",
@@ -1071,8 +1120,13 @@ function LocationRow({ loc }) {
     3: "bg-orange-50 text-orange-700 border-orange-200",
   };
 
+  // Apr 24: row is clickable — navigates to /dashboard with this tenant
+  // selected. cursor-pointer + hover state reinforce affordance.
   return (
-    <tr className="hover:bg-stone-50/30 transition-colors group">
+    <tr
+      onClick={onClick}
+      className="hover:bg-stone-50 transition-colors group cursor-pointer"
+    >
       <td className="px-4 py-3">
         <div className="flex items-center gap-2 min-w-0">
           {showRankBadge && (
@@ -1083,7 +1137,7 @@ function LocationRow({ loc }) {
               #{loc.rank_revenue}
             </span>
           )}
-          <span className="font-bold text-stone-900 truncate">
+          <span className="font-bold text-stone-900 truncate group-hover:text-brand-700 transition-colors">
             {loc.tenant_name}
           </span>
           {loc.oauth_connected && (
@@ -1092,6 +1146,7 @@ function LocationRow({ loc }) {
               title="Google Reviews connected"
             />
           )}
+          <ChevronRight className="w-3 h-3 shrink-0 text-stone-300 group-hover:text-stone-500 transition-colors ml-auto" />
         </div>
       </td>
       <td className="px-4 py-3 text-right font-bold text-stone-900 tabular-nums">
@@ -1117,6 +1172,14 @@ function LocationRow({ loc }) {
       </td>
       <td className="px-4 py-3 text-right font-black text-stone-900 tabular-nums">
         {formatCents(loc.revenue_cents)}
+      </td>
+      {/* Open leads — Apr 24 new column */}
+      <td className="px-4 py-3 text-right font-bold tabular-nums">
+        {loc.open_leads > 0 ? (
+          <span className="text-blue-600">{formatNum(loc.open_leads)}</span>
+        ) : (
+          <span className="text-stone-400 font-medium">—</span>
+        )}
       </td>
       <td className="px-4 py-3 text-right tabular-nums">
         {loc.avg_rating != null ? (

@@ -27,21 +27,15 @@ import {
   CheckCircle2,
   Info,
   ArrowUpDown,
+  Target,
+  Users,
 } from "lucide-react";
 
 // ═════════════════════════════════════════════════════════════════════════
 // Rollup V5 — Parent Tenant Dashboard
 // ═════════════════════════════════════════════════════════════════════════
-//
-// Replaces the V4 /tenants page (Tenants.jsx).
-// Single-page dashboard: 4 hero tiles + donut + reviews alerts + location table.
-//
-// Endpoint: GET /api/rollup-v5/:parentId?period=30d&sort=revenue_cents&dir=desc
-// Backend:  routes/rollupV5.js
-// Brand-aware via useBrand() — matches Apr 18-19 cream/dark contrast fix.
-// ═════════════════════════════════════════════════════════════════════════
 
-// ── Formatters (mirror Tenants.jsx conventions) ─────────────────────────
+// ── Formatters ─────────────────────────────────────────────────────────
 function formatCents(cents) {
   if (cents == null) return "$0";
   const dollars = cents / 100;
@@ -86,7 +80,6 @@ const CONTACT_METHOD_ICONS = {
   unknown:  HelpCircle,
 };
 
-// Stable slice colors — maps to DONUT_METHOD_ORDER on the backend.
 const CONTACT_METHOD_COLORS = {
   voice:    "bg-blue-500",
   sms:      "bg-emerald-500",
@@ -94,6 +87,23 @@ const CONTACT_METHOD_COLORS = {
   facebook: "bg-indigo-500",
   crm:      "bg-purple-500",
   unknown:  "bg-stone-400",
+};
+
+// Lead Source bucket colors (must match SOURCE_BUCKETS order in backend)
+const LEAD_SOURCE_COLORS = {
+  "Google Ads": "#3b82f6",  // blue-500
+  "LSA":        "#0ea5e9",  // sky-500
+  "Facebook":   "#6366f1",  // indigo-500
+  "Website":    "#10b981",  // emerald-500
+  "Yelp":       "#ef4444",  // red-500
+  "Angi":       "#f97316",  // orange-500
+  "Thumbtack":  "#8b5cf6",  // violet-500
+  "Houzz":      "#14b8a6",  // teal-500
+  "Phone":      "#eab308",  // yellow-500
+  "CRM":        "#a855f7",  // purple-500
+  "Referral":   "#ec4899",  // pink-500
+  "Other":      "#64748b",  // slate-500
+  "Unknown":    "#a8a29e",  // stone-400
 };
 
 const SORT_LABELS = {
@@ -120,16 +130,10 @@ export default function RollupV5() {
   const [refreshing, setRefreshing]   = useState(false);
   const [error, setError]             = useState("");
 
-  // Period toggle (7d/30d/90d) — default 30d per backend contract
   const [period, setPeriod] = useState("30d");
+  const [sort, setSort]     = useState("revenue_cents");
+  const [dir, setDir]       = useState("desc");
 
-  // Location-table sort state — default revenue_cents desc
-  const [sort, setSort] = useState("revenue_cents");
-  const [dir, setDir]   = useState("desc");
-
-  // Step 1: figure out which parent tenant we're showing.
-  // The active tenantId from context might be a child location, so we pull
-  // the tenants list and find the HQ/parent to query.
   useEffect(() => {
     resolveParent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -149,13 +153,6 @@ export default function RollupV5() {
         return;
       }
 
-      // Three signals that primary IS a parent (any one = yes):
-      //   1. parent_mode is set (operating_hq | rollup_only) — MOST RELIABLE
-      //      Gladiators has business_type=undefined but parent_mode='operating_hq',
-      //      so this check is the single source of truth.
-      //   2. business_type === "parent" — legacy signal, kept for compat
-      //   3. someone in the list has parent_id pointing at primary — inference
-      //      from the shape of the network
       const isParent =
         !!primary.parent_mode ||
         primary.business_type === "parent" ||
@@ -164,10 +161,8 @@ export default function RollupV5() {
       if (isParent) {
         setParentId(primary.id);
       } else if (primary.parent_id) {
-        // Primary is a child location — walk up to its parent
         setParentId(primary.parent_id);
       } else {
-        // Genuinely standalone tenant — no rollup view available
         setParentId(null);
         setLoading(false);
         setError(
@@ -180,7 +175,6 @@ export default function RollupV5() {
     }
   }
 
-  // Step 2: whenever parentId / period / sort / dir changes, refetch.
   useEffect(() => {
     if (!parentId) return;
     fetchRollup();
@@ -188,8 +182,6 @@ export default function RollupV5() {
   }, [parentId, period, sort, dir]);
 
   async function fetchRollup() {
-    // Show the big spinner only on the very first load; after that use a
-    // subtle refresh indicator so the page doesn't flash blank on toggle.
     if (data) setRefreshing(true);
     else setLoading(true);
 
@@ -205,19 +197,15 @@ export default function RollupV5() {
     }
   }
 
-  // ── Handlers ──────────────────────────────────────────────────────────
   function handleSort(column) {
     if (sort === column) {
-      // Same column clicked: flip direction
       setDir((prev) => (prev === "desc" ? "asc" : "desc"));
     } else {
-      // New column: default to desc for numeric, asc for tenant_name
       setSort(column);
       setDir(column === "tenant_name" ? "asc" : "desc");
     }
   }
 
-  // ── Render states ─────────────────────────────────────────────────────
   if (loading && !data) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -245,11 +233,16 @@ export default function RollupV5() {
 
   if (!data) return null;
 
-  const { parent, meta, tiles, contact_method_donut, reviews_alerts, locations } = data;
+  const {
+    parent, meta, tiles,
+    contact_method_donut,
+    lead_source_donut,
+    reviews_alerts,
+    locations,
+  } = data;
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
-      {/* ── Header ────────────────────────────────────────────────────── */}
       <Header
         parent={parent}
         meta={meta}
@@ -265,7 +258,7 @@ export default function RollupV5() {
         </div>
       )}
 
-      {/* ── 4 Hero Tiles ──────────────────────────────────────────────── */}
+      {/* 4 Hero Tiles */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <AiActivityTile data={tiles.ai_activity} period={period} />
         <AfterHoursRevenueTile data={tiles.after_hours_revenue} period={period} />
@@ -273,13 +266,18 @@ export default function RollupV5() {
         <ReviewsHealthTile data={tiles.reviews_health} />
       </div>
 
-      {/* ── Donut + Reviews Alerts (side-by-side) ─────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
+      {/* Two donuts side-by-side (stack on mobile) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         <ContactMethodDonut data={contact_method_donut} period={period} />
+        <LeadSourceDonut data={lead_source_donut} period={period} />
+      </div>
+
+      {/* Reviews Alerts full-width below donuts */}
+      <div className="mb-8">
         <ReviewsAlertsPanel data={reviews_alerts} />
       </div>
 
-      {/* ── Location Table ────────────────────────────────────────────── */}
+      {/* Location Table */}
       <LocationTable
         locations={locations}
         sort={sort}
@@ -287,7 +285,6 @@ export default function RollupV5() {
         onSort={handleSort}
       />
 
-      {/* ── Footer link back to V4 while we're in dual-mode ───────────── */}
       <div className="mt-8 text-center">
         <Link
           to="/tenants"
@@ -310,6 +307,11 @@ function Header({ parent, meta, period, setPeriod, refreshing }) {
     { value: "90d", label: "90d" },
   ];
 
+  // location_count (Apr 24 fix): now reflects total rendered rows. For
+  // operating_hq, this includes HQ + branches together.
+  const count = meta.location_count;
+  const hqSuffix = meta.includes_parent ? " (HQ + branches)" : "";
+
   return (
     <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
       <div>
@@ -324,13 +326,12 @@ function Header({ parent, meta, period, setPeriod, refreshing }) {
         </h1>
         <p className="text-stone-500 mt-1 text-sm">
           {parent.company_name || parent.name} ·{" "}
-          {formatNum(meta.location_count)}{" "}
-          location{meta.location_count !== 1 ? "s" : ""}
-          {meta.includes_parent && " (HQ + branches)"}
+          {formatNum(count)}{" "}
+          location{count !== 1 ? "s" : ""}
+          {hqSuffix}
         </p>
       </div>
 
-      {/* Period toggle — matches Metrics.jsx pill pattern */}
       <div className="flex items-center gap-1 p-1 bg-stone-100/80 rounded-xl">
         {periods.map((p) => (
           <button
@@ -390,7 +391,7 @@ function AiActivityTile({ data, period }) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// TILE 2 — AFTER-HOURS REVENUE (THE SALES PITCH)
+// TILE 2 — AFTER-HOURS REVENUE
 // ═════════════════════════════════════════════════════════════════════════
 function AfterHoursRevenueTile({ data, period }) {
   return (
@@ -421,7 +422,7 @@ function AfterHoursRevenueTile({ data, period }) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// TILE 3 — NETWORK REVENUE (+ MoM DELTA + CONFIDENCE FLAG)
+// TILE 3 — NETWORK REVENUE
 // ═════════════════════════════════════════════════════════════════════════
 function NetworkRevenueTile({ data, period }) {
   const isUp   = data.delta_direction === "up";
@@ -477,14 +478,48 @@ function NetworkRevenueTile({ data, period }) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// TILE 4 — REVIEWS HEALTH
+// TILE 4 — REVIEWS HEALTH (empty state polish Apr 24)
 // ═════════════════════════════════════════════════════════════════════════
 function ReviewsHealthTile({ data }) {
-  const hasAlerts    = data.prominent_alert_count > 0;
-  const connectionRate = data.total_tenant_count > 0
-    ? Math.round((data.oauth_connected_count / data.total_tenant_count) * 100)
-    : 0;
+  const hasAlerts   = data.prominent_alert_count > 0;
+  const noReviews   = data.total_review_count === 0;
+  const noneConnected = data.oauth_connected_count === 0;
 
+  // Empty state — no reviews at all yet. Show a nudge instead of "— across 0"
+  // which looks broken. This is the Apr 24 polish from memory #13.
+  if (noReviews) {
+    return (
+      <TileShell
+        icon={<Star className="w-4 h-4" />}
+        label="Reviews Health"
+        subtitle="No data yet"
+        color="amber"
+      >
+        <div className="py-2">
+          <div className="flex items-center gap-2 text-stone-700 font-bold text-sm mb-1">
+            <Info className="w-4 h-4 text-stone-400" />
+            {noneConnected ? "Not connected" : "Waiting for reviews"}
+          </div>
+          <p className="text-xs text-stone-500 leading-snug mb-3">
+            {noneConnected
+              ? "Connect Google Business Profile to start tracking reviews across your locations."
+              : "Google is connected — reviews will appear here as they come in."}
+          </p>
+          {noneConnected && (
+            <Link
+              to="/reviews"
+              className="inline-flex items-center gap-1 text-[11px] font-bold text-brand-600 hover:text-brand-700 transition-colors"
+            >
+              Connect Google
+              <ChevronRight className="w-3 h-3" />
+            </Link>
+          )}
+        </div>
+      </TileShell>
+    );
+  }
+
+  // Normal state — has reviews
   return (
     <TileShell
       icon={<Star className="w-4 h-4" />}
@@ -572,8 +607,6 @@ function TileShell({ icon, label, subtitle, color, highlight, children }) {
 // CONTACT-METHOD DONUT
 // ═════════════════════════════════════════════════════════════════════════
 function ContactMethodDonut({ data, period }) {
-  // SVG donut rendered manually (no recharts dependency). We compute each
-  // slice's arc based on its percentage of the total.
   const size   = 140;
   const stroke = 18;
   const radius = (size - stroke) / 2;
@@ -581,12 +614,9 @@ function ContactMethodDonut({ data, period }) {
   const cy     = size / 2;
   const circumference = 2 * Math.PI * radius;
 
-  // Filter out zero-count buckets from rendering (but they still appear in
-  // the legend so the design stays stable across periods).
   const slicesWithCounts = data.buckets.filter((b) => b.count > 0);
   const hasData = data.total_leads > 0;
 
-  // Build cumulative offsets for each slice on the SVG circle.
   let cumulative = 0;
 
   return (
@@ -609,10 +639,8 @@ function ContactMethodDonut({ data, period }) {
       </div>
 
       <div className="flex items-center gap-6">
-        {/* Donut SVG */}
         <div className="shrink-0 relative">
           <svg width={size} height={size} className="-rotate-90">
-            {/* Background track */}
             <circle
               cx={cx}
               cy={cy}
@@ -621,7 +649,6 @@ function ContactMethodDonut({ data, period }) {
               stroke="#f5f5f4"
               strokeWidth={stroke}
             />
-            {/* Slices */}
             {hasData &&
               slicesWithCounts.map((bucket) => {
                 const pct = bucket.count / data.total_leads;
@@ -636,7 +663,7 @@ function ContactMethodDonut({ data, period }) {
                     cy={cy}
                     r={radius}
                     fill="none"
-                    stroke={getSliceColor(bucket.method)}
+                    stroke={getContactSliceColor(bucket.method)}
                     strokeWidth={stroke}
                     strokeDasharray={`${dash} ${circumference - dash}`}
                     strokeDashoffset={offset}
@@ -644,7 +671,6 @@ function ContactMethodDonut({ data, period }) {
                 );
               })}
           </svg>
-          {/* Center label */}
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             <div className="text-lg font-black text-stone-900 tabular-nums">
               {formatNum(data.total_leads)}
@@ -655,7 +681,6 @@ function ContactMethodDonut({ data, period }) {
           </div>
         </div>
 
-        {/* Legend */}
         <div className="flex-1 min-w-0 space-y-1.5">
           {data.buckets.map((bucket) => {
             const Icon = CONTACT_METHOD_ICONS[bucket.method];
@@ -687,7 +712,6 @@ function ContactMethodDonut({ data, period }) {
         </div>
       </div>
 
-      {/* Unknown count nudge — data quality signal */}
       {data.unknown_count > 0 && data.total_leads > 0 && (
         <div className="mt-4 pt-3 border-t border-stone-100 flex items-center gap-2 text-[11px] text-stone-500">
           <Info className="w-3.5 h-3.5 text-stone-400 shrink-0" />
@@ -702,17 +726,159 @@ function ContactMethodDonut({ data, period }) {
   );
 }
 
-// Helper: convert Tailwind bg-* class to SVG stroke color
-function getSliceColor(method) {
+function getContactSliceColor(method) {
   const colorHex = {
-    voice:    "#3b82f6", // blue-500
-    sms:      "#10b981", // emerald-500
-    web_form: "#f59e0b", // amber-500
-    facebook: "#6366f1", // indigo-500
-    crm:      "#a855f7", // purple-500
-    unknown:  "#a8a29e", // stone-400
+    voice:    "#3b82f6",
+    sms:      "#10b981",
+    web_form: "#f59e0b",
+    facebook: "#6366f1",
+    crm:      "#a855f7",
+    unknown:  "#a8a29e",
   };
   return colorHex[method] || "#a8a29e";
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// LEAD SOURCE DONUT — NEW (Apr 24)
+// ═════════════════════════════════════════════════════════════════════════
+// Companion donut to Contact Method. Shows marketing origin of leads.
+// Backend normalizes raw lead_source + facebook_id + web_id into canonical
+// buckets (Google Ads / LSA / Facebook / Website / Yelp / Angi / ... / Unknown).
+//
+// Data quality nudge: if Unknown % is high (>30%), shows a prominent warning
+// that lead source tracking needs attention. Different threshold than
+// Contact Method (which just counts) because source tracking is more
+// important signal for marketing attribution.
+function LeadSourceDonut({ data, period }) {
+  const size   = 140;
+  const stroke = 18;
+  const radius = (size - stroke) / 2;
+  const cx     = size / 2;
+  const cy     = size / 2;
+  const circumference = 2 * Math.PI * radius;
+
+  const slicesWithCounts = data.buckets.filter((b) => b.count > 0);
+  const hasData = data.total_leads > 0;
+
+  // Determine if Unknown is dominant — strong data-quality signal
+  const unknownPct = data.total_leads > 0
+    ? (data.unknown_count / data.total_leads) * 100
+    : 0;
+  const highUnknown = unknownPct >= 30;
+
+  let cumulative = 0;
+
+  return (
+    <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-black text-stone-900">Lead Source</h3>
+          <p className="text-[10px] text-stone-400 font-medium uppercase tracking-wider mt-0.5">
+            Marketing origin · {period}
+          </p>
+        </div>
+        <div className="text-right">
+          <div className="text-2xl font-black text-stone-900 tabular-nums">
+            {formatNum(data.total_leads)}
+          </div>
+          <div className="text-[10px] text-stone-400 font-medium uppercase tracking-wider">
+            total leads
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-6">
+        <div className="shrink-0 relative">
+          <svg width={size} height={size} className="-rotate-90">
+            <circle
+              cx={cx}
+              cy={cy}
+              r={radius}
+              fill="none"
+              stroke="#f5f5f4"
+              strokeWidth={stroke}
+            />
+            {hasData &&
+              slicesWithCounts.map((bucket) => {
+                const pct = bucket.count / data.total_leads;
+                const dash = pct * circumference;
+                const offset = -cumulative * circumference;
+                cumulative += pct;
+
+                return (
+                  <circle
+                    key={bucket.source}
+                    cx={cx}
+                    cy={cy}
+                    r={radius}
+                    fill="none"
+                    stroke={LEAD_SOURCE_COLORS[bucket.source] || "#a8a29e"}
+                    strokeWidth={stroke}
+                    strokeDasharray={`${dash} ${circumference - dash}`}
+                    strokeDashoffset={offset}
+                  />
+                );
+              })}
+          </svg>
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <div className="text-lg font-black text-stone-900 tabular-nums">
+              {formatNum(data.total_leads)}
+            </div>
+            <div className="text-[9px] text-stone-400 font-bold uppercase tracking-wider">
+              leads
+            </div>
+          </div>
+        </div>
+
+        {/* Legend — only shows buckets with count > 0 to keep it tidy.
+            Lead source has 13 possible buckets vs 6 for contact_method, so
+            showing all zero-count buckets would overwhelm the sidebar. */}
+        <div className="flex-1 min-w-0 space-y-1.5">
+          {hasData ? (
+            slicesWithCounts.map((bucket) => (
+              <div
+                key={bucket.source}
+                className="flex items-center justify-between text-xs"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span
+                    className="shrink-0 w-2 h-2 rounded-full"
+                    style={{ backgroundColor: LEAD_SOURCE_COLORS[bucket.source] || "#a8a29e" }}
+                  />
+                  <span className="font-medium text-stone-700 truncate">
+                    {bucket.source}
+                  </span>
+                </div>
+                <div className="shrink-0 flex items-center gap-2">
+                  <span className="font-bold text-stone-900 tabular-nums">
+                    {formatNum(bucket.count)}
+                  </span>
+                  <span className="text-stone-400 tabular-nums w-10 text-right">
+                    {bucket.pct}%
+                  </span>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="text-xs text-stone-400 italic">
+              No leads in this period
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Data quality nudge — appears when Unknown bucket is dominant */}
+      {highUnknown && data.total_leads > 0 && (
+        <div className="mt-4 pt-3 border-t border-stone-100 flex items-start gap-2 text-[11px] text-amber-700 bg-amber-50 -mx-5 -mb-5 px-5 py-3 rounded-b-2xl">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+          <span>
+            <strong>{Math.round(unknownPct)}% of leads have no source tracked.</strong>{" "}
+            Tag leads with a source in your CRM to unlock marketing attribution.
+          </span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -898,8 +1064,6 @@ function LocationTable({ locations, sort, dir, onSort }) {
 }
 
 function LocationRow({ loc }) {
-  // Rank badge: subtle #1/#2/#3 indicator based on revenue rank across the
-  // network. Always present regardless of current sort.
   const showRankBadge = loc.rank_revenue <= 3;
   const rankColors = {
     1: "bg-amber-100 text-amber-700 border-amber-200",
@@ -909,7 +1073,6 @@ function LocationRow({ loc }) {
 
   return (
     <tr className="hover:bg-stone-50/30 transition-colors group">
-      {/* Location name + rank + oauth pill */}
       <td className="px-4 py-3">
         <div className="flex items-center gap-2 min-w-0">
           {showRankBadge && (
@@ -931,18 +1094,12 @@ function LocationRow({ loc }) {
           )}
         </div>
       </td>
-
-      {/* Calls */}
       <td className="px-4 py-3 text-right font-bold text-stone-900 tabular-nums">
         {formatNum(loc.calls_total)}
       </td>
-
-      {/* Bookings */}
       <td className="px-4 py-3 text-right font-bold text-stone-900 tabular-nums">
         {formatNum(loc.bookings_total)}
       </td>
-
-      {/* Booking rate */}
       <td className="px-4 py-3 text-right font-bold tabular-nums">
         <span
           className={
@@ -958,13 +1115,9 @@ function LocationRow({ loc }) {
           {formatPct(loc.booking_rate_pct)}
         </span>
       </td>
-
-      {/* Revenue */}
       <td className="px-4 py-3 text-right font-black text-stone-900 tabular-nums">
         {formatCents(loc.revenue_cents)}
       </td>
-
-      {/* Avg rating */}
       <td className="px-4 py-3 text-right tabular-nums">
         {loc.avg_rating != null ? (
           <span className="inline-flex items-center gap-1 font-bold text-stone-900">
@@ -975,13 +1128,9 @@ function LocationRow({ loc }) {
           <span className="text-stone-400 font-medium">—</span>
         )}
       </td>
-
-      {/* Review count */}
       <td className="px-4 py-3 text-right font-medium text-stone-600 tabular-nums">
         {formatNum(loc.review_count)}
       </td>
-
-      {/* Pending alerts */}
       <td className="px-4 py-3 text-right tabular-nums">
         {loc.pending_alerts_count > 0 ? (
           <span className="inline-flex items-center gap-1 font-bold text-red-600">

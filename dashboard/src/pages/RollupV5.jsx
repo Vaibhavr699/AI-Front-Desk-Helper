@@ -115,10 +115,6 @@ const LEAD_SOURCE_COLORS = {
 
 // Call outcome buckets — SIMPLIFIED 4-bucket Apr 24 (was 6, rolled back)
 // Backend only emits: booked, transferred, spam, other.
-// "Other" deliberately vague — we don't try to distinguish hang-ups from
-// confused calls from genuine conversations because the raw `calls` data
-// doesn't support it. For richer breakdown, user drills into per-location
-// Metrics page.
 const CALL_OUTCOME_CONFIG = {
   booked:      { label: "Booked",            color: "emerald", icon: CheckCircle2 },
   transferred: { label: "Transferred",       color: "blue",    icon: PhoneCall    },
@@ -1124,9 +1120,6 @@ function PerformerRow({ rank, loc, onClick }) {
 // ═════════════════════════════════════════════════════════════════════════
 // CALL OUTCOMES PANEL — 4 buckets Apr 24
 // ═════════════════════════════════════════════════════════════════════════
-// Simplified from earlier 6-bucket design. Only distinguishes outcomes the
-// raw `calls` table reliably tracks. For richer analysis (hang-up timing,
-// confusion triggers), user drills into per-location Metrics page.
 function CallOutcomesPanel({ data, period }) {
   const { total_calls, buckets } = data;
   const hasData = total_calls > 0;
@@ -1196,7 +1189,6 @@ function CallOutcomesPanel({ data, period }) {
         })}
       </div>
 
-      {/* Drill-down hint */}
       <div className="mt-4 pt-3 border-t border-stone-100 flex items-center gap-2 text-[11px] text-stone-500">
         <Info className="w-3.5 h-3.5 text-stone-400 shrink-0" />
         <span>
@@ -1266,6 +1258,9 @@ function CallOutcomeBar({ bucketKey, bucket }) {
 // ═════════════════════════════════════════════════════════════════════════
 // REVIEWS ALERTS PANEL
 // ═════════════════════════════════════════════════════════════════════════
+// Apr 24 eve: Backend LIMIT bumped from 2 to 10. ReviewAlertCard tightened
+// (smaller padding, smaller icon, line-clamp-1) so 10 cards don't dominate
+// the page. "View all" link still surfaces anything beyond 10.
 function ReviewsAlertsPanel({ data }) {
   const { alerts, total_count_14d } = data;
   const hasAlerts = alerts.length > 0;
@@ -1290,7 +1285,7 @@ function ReviewsAlertsPanel({ data }) {
       </div>
 
       {hasAlerts ? (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {alerts.map((alert) => (
             <ReviewAlertCard key={alert.review_id} alert={alert} />
           ))}
@@ -1322,14 +1317,14 @@ function ReviewAlertCard({ alert }) {
   return (
     <Link
       to="/reviews"
-      className="block border border-stone-200 rounded-xl p-3 hover:border-stone-300 hover:shadow-sm transition-all group"
+      className="block border border-stone-200 rounded-xl p-2.5 hover:border-stone-300 hover:shadow-sm transition-all group"
     >
-      <div className="flex items-start gap-3">
-        <div className="shrink-0 w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center">
-          <Star className="w-4 h-4 text-red-500 fill-red-500" strokeWidth={1.5} />
+      <div className="flex items-start gap-2.5">
+        <div className="shrink-0 w-7 h-7 rounded-lg bg-red-50 flex items-center justify-center">
+          <Star className="w-3.5 h-3.5 text-red-500 fill-red-500" strokeWidth={1.5} />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1 flex-wrap">
+          <div className="flex items-center gap-2 mb-0.5 flex-wrap">
             <span className="text-xs font-black text-stone-900">
               {alert.rating}-star
             </span>
@@ -1344,12 +1339,12 @@ function ReviewAlertCard({ alert }) {
             )}
           </div>
           {alert.reviewer_name && (
-            <div className="text-[11px] text-stone-500 font-medium mb-1">
+            <div className="text-[11px] text-stone-500 font-medium mb-0.5">
               {alert.reviewer_name}
             </div>
           )}
           {alert.review_text && (
-            <p className="text-xs text-stone-700 line-clamp-2 leading-snug">
+            <p className="text-xs text-stone-700 line-clamp-1 leading-snug">
               {alert.review_text}
             </p>
           )}

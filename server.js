@@ -3370,16 +3370,68 @@ sendToOpenAI(sessionUpdate);
         }
       }
 
-      if (data.type === "response.audio_transcription.completed") {
-        const text = data.transcript || "";
-        console.log("[AI-Desk] Assistant Transcript:", text);
-        if (text) {
-          transcript += `Assistant: ${text}\n`;
-          if (leadId && tenant) {
-            messagesService.saveMessage(tenant.id, leadId, "voice", "outbound", text);
+    if (data.type === "response.audio_transcription.completed") {
+  const text = data.transcript || "";
+  console.log("[AI-Desk] Assistant Transcript:", text);
+  if (text) {
+    transcript += `Assistant: ${text}\n`;
+    if (leadId && tenant) {
+      messagesService.saveMessage(tenant.id, leadId, "voice", "outbound", text);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // GOODBYE DETECTION — Apr 24, 2026
+    // If Alex says a distinctive close phrase, schedule hangup 2.5s
+    // later (enough time for the audio to actually play out). Prevents
+    // Alex from rambling into voicemail menu prompts after the
+    // conversational close.
+    //
+    // Only on outbound calls (including recovery + nurturing) —
+    // inbound calls already have hang_up tool + silence timeout.
+    //
+    // Phrases chosen are things Alex says ONLY when closing:
+    //   "have a great day" / "take care"
+    // Deliberately NOT triggering on bare "goodbye" to reduce false
+    // positives (caller might say "okay goodbye" early).
+    // ─────────────────────────────────────────────────────────────
+    const isOutboundContext = isOutbound || isRecovery || isNurturing;
+    if (isOutboundContext && !hasScheduledHangup && callSid) {
+      const lowerText = text.toLowerCase();
+      const saidGoodbye =
+        lowerText.includes("have a great day") ||
+        lowerText.includes("have a wonderful day") ||
+        lowerText.includes("take care");
+
+      if (saidGoodbye) {
+        hasScheduledHangup = true;
+        console.log("[AI-Desk] Goodbye phrase detected in outbound call — hanging up in 2.5s. callSid=%s", callSid);
+
+        setTimeout(async () => {
+          try {
+            const client = twilioLib.getClientForTenant(tenant);
+            if (client && callSid) {
+              await client.calls(callSid).update({ status: "completed" });
+              console.log("[AI-Desk] Goodbye hangup completed callSid=%s", callSid);
+            }
+          } catch (e) {
+            console.error("[AI-Desk] Goodbye hangup error:", e.message);
           }
-        }
+          clearSilenceTimers();
+          if (openaiSocket?.readyState === WebSocket.OPEN) openaiSocket.close();
+          if (twilioSocket.readyState === WebSocket.OPEN) twilioSocket.close();
+
+          await safeUpdateCallSummary(callId, {
+            status: "completed",
+            disposition: hasBooked ? "booked" : "goodbye_hangup",
+            transcript,
+            metadata: { leadCapture: currentLeadCapture, hangup_reason: "ai_goodbye_detected" },
+            markEnded: true,
+          });
+        }, 2500);
       }
+    }
+  }
+}
 
       if (data.type === "response.function_call_arguments.done") {
         const { name, arguments: argsJson } = data;

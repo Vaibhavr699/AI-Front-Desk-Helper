@@ -10,6 +10,10 @@
 
 const express  = require("express");
 const router   = express.Router();
+router.use((req, res, next) => {
+  console.log("[Reviews Router] HIT:", req.method, req.path);
+  next();
+});
 const db       = require("../lib/db");
 const { getTenantIdFromQuery } = require("../lib/auth");
 const { fetchReviewsForTenant } = require("../services/reviewScheduler");

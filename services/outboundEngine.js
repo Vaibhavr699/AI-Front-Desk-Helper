@@ -155,10 +155,29 @@ async function initiateOutboundCall(campaign, contact, scriptId = null) {
   if (scriptId) callbackUrl += `&scriptId=${scriptId}`;
 
   try {
+    // ─────────────────────────────────────────────────────────────────
+    // AMD (Answering Machine Detection) — Apr 27, 2026 fix
+    //
+    // machineDetection: "Enable" → Twilio listens to the called party's
+    // first audio and determines human vs machine.  Result is sent back
+    // as `AnsweredBy` parameter on the TwiML callback URL.
+    //
+    // asyncAmd: false → Twilio WAITS for AMD result before firing the
+    // callback URL.  This is critical because routes/twilio.js /outbound
+    // reads AnsweredBy on the initial request.  If async, AnsweredBy
+    // would arrive on a separate webhook later, after we'd already
+    // connected Alex to the voicemail.
+    //
+    // Without these flags, AnsweredBy is always empty, and the AMD
+    // handling code in routes/twilio.js was dead.
+    // ─────────────────────────────────────────────────────────────────
     const call = await client.calls.create({
       url: callbackUrl,
       to: contact.phone,
       from: fromNumber,
+      machineDetection: "Enable",
+      machineDetectionTimeout: 30,
+      asyncAmd: false,
     });
 
     await db.query(

@@ -310,6 +310,19 @@ async function getNetworkRevenueTile(tenantIds, days, parentCreatedAt) {
 // ═══════════════════════════════════════════════════════════════════════════
 // TILE 4 — REVIEWS HEALTH
 // ═══════════════════════════════════════════════════════════════════════════
+// CONNECTION CHECK FIX — Apr 27, 2026
+//
+// Old check: required google_access_token AND google_location_id both NOT NULL.
+// That's wrong because:
+//   1. google_access_token expires hourly and is minted on-demand from
+//      google_refresh_token by lib/reviewsHelper.js — so it's often NULL in DB
+//      even when the integration is fully working.
+//   2. The /api/reviews/status endpoint (the source of truth that the
+//      dashboard's Reviews page uses) only requires the refresh_token + plan
+//      access (Elite or addon).
+//
+// New check: requires google_refresh_token NOT NULL AND (Elite OR addon flag).
+// This matches how routes/reviews.js actually determines connection state.
 async function getReviewsHealthTile(tenantIds) {
   if (tenantIds.length === 0) {
     return {
@@ -332,8 +345,11 @@ async function getReviewsHealthTile(tenantIds) {
        )::int AS prominent_alert_count,
        (SELECT COUNT(*)::int FROM tenants
          WHERE id = ANY($1::uuid[])
-           AND google_access_token IS NOT NULL
-           AND google_location_id IS NOT NULL
+           AND google_refresh_token IS NOT NULL
+           AND (
+             plan = 'elite'
+             OR reviews_addon_active = true
+           )
        ) AS oauth_connected_count,
        $2::int AS total_tenant_count
      FROM google_reviews r
@@ -683,21 +699,6 @@ async function getRevenueGoalsPanel(tenantIds) {
 // ═══════════════════════════════════════════════════════════════════════════
 // CALL OUTCOMES PANEL — Apr 24 SIMPLIFIED
 // ═══════════════════════════════════════════════════════════════════════════
-// 4-bucket version based on what raw `calls` data reliably supports. Does NOT
-// try to match Metrics.jsx's 5-bucket model because Metrics computes
-// calls_hung_up / calls_confused via transcript analysis in /api/metrics
-// that we don't have access to mirror here. Honest over fake.
-//
-// Buckets (mutually exclusive, checked in precedence order):
-//   1. Booked       — disposition = 'booked'
-//   2. Transferred  — disposition = 'transferred' OR transferred = true
-//   3. Spam         — disposition = 'spam'
-//   4. Other        — everything else (completed, NULL, anything unclassified)
-//
-// "Other" is intentionally vague — it's honest. Some of those calls are
-// successful conversations, some are hang-ups, some are confused. We don't
-// have the data to distinguish them on raw disposition alone. Users can
-// drill into per-location Metrics for the fuller breakdown.
 async function getCallOutcomesPanel(tenantIds, days) {
   if (tenantIds.length === 0) {
     return {
@@ -832,6 +833,8 @@ async function getReviewsAlertsList(tenantIds) {
 // ═══════════════════════════════════════════════════════════════════════════
 // LOCATION TABLE
 // ═══════════════════════════════════════════════════════════════════════════
+// Apr 27 fix: oauth_connected check now uses google_refresh_token + plan/addon,
+// matching the corrected Reviews Health tile logic.
 async function getLocationTable(tenantIds, days, sort, dir) {
   if (tenantIds.length === 0) {
     return { locations: [], sort, dir };
@@ -847,7 +850,10 @@ async function getLocationTable(tenantIds, days, sort, dir) {
       SELECT
         t.id AS tenant_id,
         COALESCE(t.company_name, t.name, 'Unknown') AS tenant_name,
-        (t.google_access_token IS NOT NULL AND t.google_location_id IS NOT NULL) AS oauth_connected
+        (
+          t.google_refresh_token IS NOT NULL
+          AND (t.plan = 'elite' OR t.reviews_addon_active = true)
+        ) AS oauth_connected
       FROM tenants t
       WHERE t.id = ANY($1::uuid[])
     ),

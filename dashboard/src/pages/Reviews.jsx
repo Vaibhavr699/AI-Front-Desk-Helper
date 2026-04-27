@@ -7,12 +7,25 @@ const hdrs = () => ({
   "Content-Type": "application/json",
 });
 
-// Always-fresh fetch options for status endpoints. Browsers were serving
-// stale 304s from a previous "connected" state even after the DB had been
-// wiped, which made the page show "Connected" UI on tenants that hadn't
-// completed OAuth. cache:"no-store" + a timestamp param breaks all caches.
+// Cache-busting helpers — the browser was serving 304 stale responses for
+// /api/reviews/status from a previous "connected" state, which made the page
+// show "Connected" UI on tenants whose tokens had been wiped. cache:"no-store"
+// + a timestamp param breaks all caches.
 const NO_CACHE = { headers: hdrs(), cache: "no-store" };
 const cacheBust = () => `&_t=${Date.now()}`;
+
+// Fetch with a hard timeout so a slow/hanging endpoint can't lock up the UI.
+// Used for /api/dashboard/tenant which has been observed taking 70+ seconds
+// in production and triggering 499 client-aborted responses.
+async function fetchWithTimeout(url, opts = {}, timeoutMs = 8000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...opts, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 const STARS = ["", "★", "★★", "★★★", "★★★★", "★★★★★"];
 const STAR_COLORS = ["", "#dc2626", "#f97316", "#eab308", "#84cc16", "#16a34a"];
@@ -100,10 +113,7 @@ export default function Reviews({ tenantId }) {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // Check for OAuth/Stripe redirect query params on mount. After OAuth or
-  // Stripe finishes, the URL will look like /reviews?connected=true or
-  // /reviews?subscribed=true — both of which need a fresh status fetch
-  // (not a cached response).
+  // Handle redirect query params on mount (Stripe + OAuth callbacks).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("subscribed") === "true") {
@@ -124,19 +134,56 @@ export default function Reviews({ tenantId }) {
     }
   }, []);
 
+  // Load /api/reviews/status. This MUST complete (or fail-fast) before the
+  // page renders the connected/connect/paywall UI. Tenant plan is loaded
+  // separately so a slow tenant endpoint can't block the page.
   const loadStatus = useCallback(async () => {
+    if (!tenantId) {
+      console.warn("[Reviews UI] loadStatus called with no tenantId — page will be stuck");
+      return;
+    }
+    console.log("[Reviews UI] loadStatus starting tenant=" + tenantId);
+
+    let statusData = null;
+    try {
+      const statusRes = await fetchWithTimeout(
+        `${API_BASE}/api/reviews/status?tenant_id=${tenantId}${cacheBust()}`,
+        NO_CACHE,
+        10000
+      );
+      console.log("[Reviews UI] /status responded", statusRes.status);
+      statusData = await statusRes.json();
+      console.log("[Reviews UI] /status data:", statusData);
+    } catch (e) {
+      console.error("[Reviews UI] /status failed:", e);
+      statusData = { connected: false, addon_active: false };
+    }
+
+    // Always set status so the page renders SOMETHING. Failure case falls
+    // through to paywall, which is the correct conservative default.
+    setStatus(statusData);
+  }, [tenantId]);
+
+  // Best-effort tenant fetch. Failure here MUST NOT block the page.
+  // /api/dashboard/tenant has been observed timing out (499 / 71s) in
+  // production. Hard 8s timeout, fallback to "basic". The status
+  // endpoint already tells us addon_active so the only thing missing
+  // tenant.plan affects is the "elite" detection — but if status.addon_active
+  // is true, the user has access either way.
+  const loadTenantPlan = useCallback(async () => {
     if (!tenantId) return;
     try {
-      const [statusRes, tenantRes] = await Promise.all([
-        fetch(`${API_BASE}/api/reviews/status?tenant_id=${tenantId}${cacheBust()}`, NO_CACHE),
-        fetch(`${API_BASE}/api/dashboard/tenant?tenant_id=${tenantId}${cacheBust()}`, NO_CACHE),
-      ]);
-      const statusData = await statusRes.json();
-      const tenantData = await tenantRes.json().catch(() => ({}));
-      setStatus(statusData);
-      setTenantPlan(tenantData?.plan || "basic");
-    } catch {
-      setStatus({ connected: false, addon_active: false });
+      const res = await fetchWithTimeout(
+        `${API_BASE}/api/dashboard/tenant?tenant_id=${tenantId}${cacheBust()}`,
+        NO_CACHE,
+        8000
+      );
+      const data = await res.json();
+      setTenantPlan(data?.plan || "basic");
+      console.log("[Reviews UI] tenant plan:", data?.plan);
+    } catch (e) {
+      console.warn("[Reviews UI] tenant plan fetch failed (non-fatal):", e?.message || e);
+      setTenantPlan("basic");
     }
   }, [tenantId]);
 
@@ -154,15 +201,17 @@ export default function Reviews({ tenantId }) {
     finally { setLoading(false); }
   }, [tenantId, filter]);
 
-  // Always load status first
-  useEffect(() => { loadStatus(); }, [loadStatus]);
-
-  // Only load reviews if BOTH access AND a real Google connection exist.
-  // Previously this only checked addon_active/elite, which made Elite
-  // tenants try to load reviews even before OAuth — masking real
-  // connection issues with empty state.
+  // Run status + plan in parallel but don't await Promise.all.
+  // Each updates its own piece of state independently so a hang in one
+  // can't block the other.
   useEffect(() => {
-    if (status === null) return; // still loading status
+    loadStatus();
+    loadTenantPlan();
+  }, [loadStatus, loadTenantPlan]);
+
+  // Only load reviews when the user has access AND a real OAuth connection.
+  useEffect(() => {
+    if (status === null) return;
     const hasAccess = status?.addon_active || tenantPlan === "elite";
     if (hasAccess && status?.connected) {
       loadReviews();
@@ -181,7 +230,7 @@ export default function Reviews({ tenantId }) {
       if (data.url) {
         window.location.href = data.url;
       } else {
-        showToast("Failed to get OAuth URL", "error");
+        showToast(data.error || "Failed to get OAuth URL", "error");
       }
     } catch { showToast("Failed to connect Google", "error"); }
   }
@@ -194,7 +243,7 @@ export default function Reviews({ tenantId }) {
         { method: "DELETE", headers: hdrs() }
       );
       showToast("Google disconnected");
-      // Force fresh status fetch from server, don't trust local state
+      // Re-fetch status from server, don't trust local state
       await loadStatus();
     } catch { showToast("Disconnect failed", "error"); }
   }
@@ -270,8 +319,6 @@ export default function Reviews({ tenantId }) {
   const hasAccess = isElite || status?.addon_active;
 
   // ── Initial loading state ─────────────────────────────────────────────────
-  // Don't render anything decisive until we know the real status. Prevents
-  // the brief flash of wrong UI on page load.
   if (status === null) {
     return (
       <div style={s.page}>

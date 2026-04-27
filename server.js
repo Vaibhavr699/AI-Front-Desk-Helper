@@ -217,6 +217,18 @@ app.get("/dashboard/chat-widget.js", (req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, "public")));
+// Compliance pages — served as static HTML so Twilio reviewers + crawlers
+// can read them without executing JavaScript. Apr 25 fix for 30896 rejection.
+// Must be registered AFTER express.static and BEFORE the SPA wildcard.
+app.get("/privacy-policy", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "privacy-policy.html"));
+});
+app.get("/sms-terms", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "sms-terms.html"));
+});
+app.get("/sms-consent", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "sms-consent.html"));
+});
 // Increase body size limits slightly to support small logo uploads (e.g. base64 images) in dashboard settings.
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 app.use(express.json({ limit: "2mb" }));

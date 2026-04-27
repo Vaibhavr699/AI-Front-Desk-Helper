@@ -7,6 +7,13 @@ const hdrs = () => ({
   "Content-Type": "application/json",
 });
 
+// Always-fresh fetch options for status endpoints. Browsers were serving
+// stale 304s from a previous "connected" state even after the DB had been
+// wiped, which made the page show "Connected" UI on tenants that hadn't
+// completed OAuth. cache:"no-store" + a timestamp param breaks all caches.
+const NO_CACHE = { headers: hdrs(), cache: "no-store" };
+const cacheBust = () => `&_t=${Date.now()}`;
+
 const STARS = ["", "★", "★★", "★★★", "★★★★", "★★★★★"];
 const STAR_COLORS = ["", "#dc2626", "#f97316", "#eab308", "#84cc16", "#16a34a"];
 
@@ -93,7 +100,10 @@ export default function Reviews({ tenantId }) {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // Check for Stripe redirect
+  // Check for OAuth/Stripe redirect query params on mount. After OAuth or
+  // Stripe finishes, the URL will look like /reviews?connected=true or
+  // /reviews?subscribed=true — both of which need a fresh status fetch
+  // (not a cached response).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("subscribed") === "true") {
@@ -104,26 +114,39 @@ export default function Reviews({ tenantId }) {
       showToast("Checkout cancelled.", "error");
       window.history.replaceState({}, "", "/reviews");
     }
+    if (params.get("connected") === "true") {
+      showToast("Google Business Profile connected ✓");
+      window.history.replaceState({}, "", "/reviews");
+    }
+    if (params.get("error") === "oauth_failed") {
+      showToast("Google connection failed. Please try again.", "error");
+      window.history.replaceState({}, "", "/reviews");
+    }
   }, []);
 
   const loadStatus = useCallback(async () => {
     if (!tenantId) return;
     try {
       const [statusRes, tenantRes] = await Promise.all([
-        fetch(`${API_BASE}/api/reviews/status?tenant_id=${tenantId}`, { headers: hdrs() }),
-        fetch(`${API_BASE}/api/dashboard/tenant?tenant_id=${tenantId}`, { headers: hdrs() }),
+        fetch(`${API_BASE}/api/reviews/status?tenant_id=${tenantId}${cacheBust()}`, NO_CACHE),
+        fetch(`${API_BASE}/api/dashboard/tenant?tenant_id=${tenantId}${cacheBust()}`, NO_CACHE),
       ]);
       const statusData = await statusRes.json();
       const tenantData = await tenantRes.json().catch(() => ({}));
       setStatus(statusData);
       setTenantPlan(tenantData?.plan || "basic");
-    } catch { setStatus({ connected: false, addon_active: false }); }
+    } catch {
+      setStatus({ connected: false, addon_active: false });
+    }
   }, [tenantId]);
 
   const loadReviews = useCallback(async () => {
     if (!tenantId) return;
     try {
-      const res = await fetch(`${API_BASE}/api/reviews?tenant_id=${tenantId}&status=${filter}`, { headers: hdrs() });
+      const res = await fetch(
+        `${API_BASE}/api/reviews?tenant_id=${tenantId}&status=${filter}${cacheBust()}`,
+        NO_CACHE
+      );
       const data = await res.json();
       setReviews(data.reviews || []);
       setPendingCount(data.pending_count || 0);
@@ -131,30 +154,68 @@ export default function Reviews({ tenantId }) {
     finally { setLoading(false); }
   }, [tenantId, filter]);
 
+  // Always load status first
   useEffect(() => { loadStatus(); }, [loadStatus]);
-  useEffect(() => { if (status?.addon_active || tenantPlan === "elite") loadReviews(); else setLoading(false); }, [loadReviews, status, tenantPlan, filter]);
+
+  // Only load reviews if BOTH access AND a real Google connection exist.
+  // Previously this only checked addon_active/elite, which made Elite
+  // tenants try to load reviews even before OAuth — masking real
+  // connection issues with empty state.
+  useEffect(() => {
+    if (status === null) return; // still loading status
+    const hasAccess = status?.addon_active || tenantPlan === "elite";
+    if (hasAccess && status?.connected) {
+      loadReviews();
+    } else {
+      setLoading(false);
+    }
+  }, [loadReviews, status, tenantPlan, filter]);
 
   async function handleConnect() {
     try {
-      const res = await fetch(`${API_BASE}/api/reviews/oauth/url?tenant_id=${tenantId}`, { headers: hdrs() });
+      const res = await fetch(
+        `${API_BASE}/api/reviews/oauth/url?tenant_id=${tenantId}${cacheBust()}`,
+        NO_CACHE
+      );
       const data = await res.json();
-      window.location.href = data.url;
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        showToast("Failed to get OAuth URL", "error");
+      }
     } catch { showToast("Failed to connect Google", "error"); }
   }
 
   async function handleDisconnect() {
     if (!confirm("Disconnect Google Business Profile?")) return;
-    await fetch(`${API_BASE}/api/reviews/disconnect?tenant_id=${tenantId}`, { method: "DELETE", headers: hdrs() });
-    setStatus(prev => ({ ...prev, connected: false }));
-    showToast("Google disconnected");
+    try {
+      await fetch(
+        `${API_BASE}/api/reviews/disconnect?tenant_id=${tenantId}`,
+        { method: "DELETE", headers: hdrs() }
+      );
+      showToast("Google disconnected");
+      // Force fresh status fetch from server, don't trust local state
+      await loadStatus();
+    } catch { showToast("Disconnect failed", "error"); }
   }
 
   async function handlePoll() {
     setPolling(true);
     try {
-      const res = await fetch(`${API_BASE}/api/reviews/poll?tenant_id=${tenantId}`, { method: "POST", headers: hdrs() });
+      const res = await fetch(
+        `${API_BASE}/api/reviews/poll?tenant_id=${tenantId}`,
+        { method: "POST", headers: hdrs() }
+      );
       const data = await res.json();
-      showToast(data.new_reviews > 0 ? `${data.new_reviews} new review${data.new_reviews > 1 ? "s" : ""} found` : "No new reviews");
+      if (!res.ok) {
+        showToast(data.error || "Poll failed", "error");
+      } else {
+        showToast(
+          data.new_reviews > 0
+            ? `${data.new_reviews} new review${data.new_reviews > 1 ? "s" : ""} found`
+            : "No new reviews"
+        );
+      }
       loadReviews();
     } catch { showToast("Poll failed", "error"); }
     finally { setPolling(false); }
@@ -167,7 +228,10 @@ export default function Reviews({ tenantId }) {
       const res = await fetch(`${API_BASE}/api/reviews/${review.id}/approve?tenant_id=${tenantId}`, {
         method: "POST", headers: hdrs(), body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error("Failed to post");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to post");
+      }
       showToast("Response posted to Google ✓");
       setActiveId(null); setEditText("");
       loadReviews();
@@ -205,8 +269,27 @@ export default function Reviews({ tenantId }) {
   const isElite = tenantPlan === "elite";
   const hasAccess = isElite || status?.addon_active;
 
-  // ── Paywall ───────────────────────────────────────────────────────────────
-  if (status !== null && !hasAccess) {
+  // ── Initial loading state ─────────────────────────────────────────────────
+  // Don't render anything decisive until we know the real status. Prevents
+  // the brief flash of wrong UI on page load.
+  if (status === null) {
+    return (
+      <div style={s.page}>
+        <div style={s.topbar}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#1a1a1a" }}>Google Reviews</div>
+            <div style={{ fontSize: 11, color: "#888" }}>Loading...</div>
+          </div>
+        </div>
+        <div style={{ ...s.wrap, textAlign: "center", padding: 40, color: "#bbb", fontSize: 13 }}>
+          Loading Reviews...
+        </div>
+      </div>
+    );
+  }
+
+  // ── Paywall (no access at all) ────────────────────────────────────────────
+  if (!hasAccess) {
     return (
       <div style={s.page}>
         <div style={s.topbar}>
@@ -225,10 +308,15 @@ export default function Reviews({ tenantId }) {
     );
   }
 
-  // ── Not connected (has access but no Google linked) ───────────────────────
-  if (status !== null && hasAccess && !status.connected) {
+  // ── Has access but no Google linked → show Connect button ─────────────────
+  if (!status.connected) {
     return (
       <div style={s.page}>
+        {toast && (
+          <div style={{ position: "fixed", top: 20, right: 20, zIndex: 100, background: toast.type === "error" ? "#fef2f2" : "#f0fdf4", border: `1px solid ${toast.type === "error" ? "#fecaca" : "#bbf7d0"}`, borderRadius: 10, padding: "10px 18px", fontSize: 12, fontWeight: 600, color: toast.type === "error" ? "#dc2626" : "#16a34a", boxShadow: "0 4px 12px rgba(0,0,0,0.08)" }}>
+            {toast.msg}
+          </div>
+        )}
         <div style={s.topbar}>
           <div>
             <div style={{ fontSize: 18, fontWeight: 700, color: "#1a1a1a" }}>Google Reviews</div>

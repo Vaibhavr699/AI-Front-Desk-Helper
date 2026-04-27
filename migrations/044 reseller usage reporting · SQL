@@ -1,0 +1,91 @@
+-- ============================================================================
+-- Migration 044: Reseller usage reporting infrastructure
+-- ============================================================================
+-- Apr 27, 2026 — Reseller pricing rebuild Day 4 (cron infrastructure)
+--
+-- Adds:
+--   1. tenants.last_usage_reported_through  — pointer for daily-incremental
+--      cron. Cron computes usage from this timestamp to now(), reports the
+--      delta to Stripe, and advances the pointer.
+--
+--   2. reseller_usage_reports                — audit log of every cron run.
+--      One row per (tenant × billing period × metric) per cron execution.
+--      Used for (a) idempotency (skip if already reported today),
+--      (b) reconciliation when customers dispute charges,
+--      (c) debugging missing Stripe meter events.
+--
+-- Designed for cron/reportResellerUsage.js running once per day at 03:00 UTC.
+-- ============================================================================
+
+BEGIN;
+
+-- ── 1. Pointer column on tenants ─────────────────────────────────────────
+-- NULL = never reported (treat as "report from start of current billing
+-- month"). Once set, cron reports usage from this timestamp forward.
+ALTER TABLE tenants
+  ADD COLUMN IF NOT EXISTS last_usage_reported_through TIMESTAMPTZ;
+
+COMMENT ON COLUMN tenants.last_usage_reported_through IS
+  'Reseller cron pointer: usage data is current through this timestamp. NULL means never reported. Updated by cron/reportResellerUsage.js after successful Stripe meter event POST.';
+
+-- ── 2. Audit table ───────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS reseller_usage_reports (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id                UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+
+  -- Billing period this report covers (always a calendar month, identified
+  -- by year + month for easy human reading + simple WHERE clauses)
+  billing_year             INT  NOT NULL,
+  billing_month            INT  NOT NULL CHECK (billing_month BETWEEN 1 AND 12),
+
+  -- The window of raw usage data this report drew from
+  period_start             TIMESTAMPTZ NOT NULL,
+  period_end               TIMESTAMPTZ NOT NULL,
+
+  -- Aggregated raw usage across all child tenants in this window
+  total_voice_minutes      NUMERIC(12,2) NOT NULL DEFAULT 0,
+  total_sms                INT NOT NULL DEFAULT 0,
+
+  -- Cap that was in effect for this tier at report time (denormalized so
+  -- audit reads don't depend on tier config staying constant)
+  cap_voice_minutes        INT NOT NULL,
+  cap_sms                  INT NOT NULL,
+
+  -- Overage amounts (only these get reported to Stripe)
+  overage_voice_minutes    NUMERIC(12,2) NOT NULL DEFAULT 0,
+  overage_sms              INT NOT NULL DEFAULT 0,
+
+  -- Stripe meter event identifiers (for tracing if a charge is disputed)
+  stripe_voice_event_id    TEXT,
+  stripe_sms_event_id      TEXT,
+
+  -- Outcome flags. Cron sets `success` only after BOTH meter events are
+  -- accepted by Stripe (or skipped because no overage to report).
+  voice_reported           BOOLEAN NOT NULL DEFAULT false,
+  sms_reported             BOOLEAN NOT NULL DEFAULT false,
+  success                  BOOLEAN NOT NULL DEFAULT false,
+  error_message            TEXT,
+
+  reported_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Idempotency guard: at most one SUCCESSFUL report per tenant per
+-- billing month per cron-day. Multiple failed retries are allowed.
+-- (Daily cron may attempt many times if Stripe API is flaky; partial
+-- index ensures success rows are unique per day, retries are not blocked.)
+CREATE UNIQUE INDEX IF NOT EXISTS reseller_usage_reports_unique_success
+  ON reseller_usage_reports (tenant_id, billing_year, billing_month, (DATE(reported_at)))
+  WHERE success = true;
+
+-- Fast lookup: latest report per tenant
+CREATE INDEX IF NOT EXISTS reseller_usage_reports_tenant_recent
+  ON reseller_usage_reports (tenant_id, reported_at DESC);
+
+-- Fast lookup: all reports in a billing period
+CREATE INDEX IF NOT EXISTS reseller_usage_reports_period
+  ON reseller_usage_reports (billing_year, billing_month, tenant_id);
+
+COMMENT ON TABLE reseller_usage_reports IS
+  'Audit log of cron/reportResellerUsage.js runs. One row per (tenant, billing month, cron execution). Only overage_voice_minutes and overage_sms are sent to Stripe; total_* fields are denormalized for audit reads.';
+
+COMMIT;

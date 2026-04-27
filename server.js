@@ -60,6 +60,7 @@ const leadRoutes = require("./routes/leads");
 const billingRoutes = require("./routes/billing");
 const outboundRoutes = require("./routes/outbound");
 const { startOutboundEngine } = require("./services/outboundEngine");
+const { startResellerUsageReporter } = require("./services/reportResellerUsage");
 const { authMiddleware, requireSuperAdmin } = require("./lib/auth");
 const notificationsService = require("./services/notifications");
 const metricAlerts = require("./services/metricAlerts");
@@ -4725,5 +4726,6 @@ loadTenants().then(() => {
   server.listen(PORT, () => {
     console.log(`AI front desk backend listening on port ${PORT}`);
     startOutboundEngine().catch(e => console.error("Outbound Engine start failed:", e));
+    startResellerUsageReporter();
   });
 });

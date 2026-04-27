@@ -1,0 +1,30 @@
+-- ============================================================================
+-- Migration 045: Reseller cap warning thresholds
+-- ============================================================================
+-- Apr 27, 2026 — Cap enforcement emails (80% / 100% thresholds)
+--
+-- Adds 4 boolean flags to reseller_usage_reports so cron can track which
+-- threshold warnings have already fired this billing month per reseller.
+-- This is the audit-table side of the idempotency guard — once a threshold
+-- is set true, it stays true for the rest of the billing month, preventing
+-- daily duplicate emails.
+--
+-- All 4 flags default false. Cron reads the most-recent report row in the
+-- billing month to find the prior state, then ORs in any newly-fired
+-- thresholds when writing the next audit row.
+-- ============================================================================
+
+BEGIN;
+
+ALTER TABLE reseller_usage_reports
+  ADD COLUMN IF NOT EXISTS threshold_voice_80_notified  BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS threshold_voice_100_notified BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS threshold_sms_80_notified    BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS threshold_sms_100_notified   BOOLEAN NOT NULL DEFAULT false;
+
+COMMENT ON COLUMN reseller_usage_reports.threshold_voice_80_notified  IS '80% voice cap warning email + bell sent this billing month. Set by services/reportResellerUsage.js cron.';
+COMMENT ON COLUMN reseller_usage_reports.threshold_voice_100_notified IS '100% voice cap (over-cap) warning email + bell sent this billing month.';
+COMMENT ON COLUMN reseller_usage_reports.threshold_sms_80_notified    IS '80% SMS cap warning email + bell sent this billing month.';
+COMMENT ON COLUMN reseller_usage_reports.threshold_sms_100_notified   IS '100% SMS cap (over-cap) warning email + bell sent this billing month.';
+
+COMMIT;

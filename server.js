@@ -436,14 +436,14 @@ app.use("/api/franchisee", require("./routes/franchisee"));
 app.use('/api/reseller-public', require('./routes/reseller-public'));
 app.use('/api/reseller/usage', authMiddleware, require('./routes/resellerUsage'));
 app.use("/api/churn-public", require("./routes/churn-public"));
+app.use("/api/reviews", require("./routes/reviews"));
+app.use('/api/reseller', require('./routes/reseller'));
 app.use("/api", authMiddleware, dashboardRoutes);
 app.use("/auth/google/calendar", require("./routes/google-calendar"));
 app.use("/api/google-calendar", authMiddleware, require("./routes/google-calendar"));
 app.use("/webhooks", require("./routes/webhooks"));
 app.use("/api/coaching", authMiddleware, require("./routes/coaching"));
 app.use("/api/ai-coach", authMiddleware, require("./routes/aicoach"));
-app.use("/api/reviews", require("./routes/reviews"));
-app.use('/api/reseller', require('./routes/reseller'));
 app.use('/api/rollup-v5', authMiddleware, require('./routes/rollupV5'));
 app.use('/churn', require('./routes/churnPublic'));
 

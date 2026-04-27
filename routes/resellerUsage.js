@@ -10,11 +10,16 @@
  * Computes live from `calls` + `messages` tables — no separate metering
  * table because (a) zero current resellers, (b) on-demand SQL is fast
  * enough at our scale, (c) eliminates drift from missed event hooks.
+ *
+ * Apr 27, 2026: Switched import from lib/resellerTiers (deleted) to
+ * lib/resellerPlans (merged). The merged file re-exports getTier as an
+ * alias so this file's contract is unchanged. Caps + overage rates still
+ * come from the DB (override) first, then fall back to the tier defaults.
  */
 
 const express  = require("express");
 const db       = require("../lib/db");
-const { getTier } = require("../lib/resellerTiers");
+const { getTier } = require("../lib/resellerPlans");
 
 const router = express.Router();
 

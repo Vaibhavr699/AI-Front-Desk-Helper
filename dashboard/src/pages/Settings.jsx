@@ -473,6 +473,17 @@ export default function Settings({ tenantId }) {
     loading: false
   });
 
+   // ── Reseller-tab guard (Apr 28, 2026) ─────────────────────────────
+  // The Usage & Billing tab is filtered out of the sidebar for resellers
+  // (see TABS.filter() below), but if a reseller bookmarks /settings?tab=billing
+  // or has the tab cached in localStorage, they'd land on a page rendering
+  // wrong-tier billing data. Bounce them to "numbers" instead.
+  useEffect(() => {
+    if (tenant?.reseller_tier && activeTab === "billing") {
+      setActiveTab("numbers");
+    }
+  }, [tenant?.reseller_tier, activeTab]);
+  
   const loadTenant = async () => {
     if (!tenantId) return;
     setLoading(true);
@@ -1098,7 +1109,15 @@ export default function Settings({ tenantId }) {
         {/* Tabs Sidebar */}
         <aside className="lg:w-64 shrink-0">
           <nav className="flex flex-row lg:flex-col gap-1 p-1 bg-gray-100/50 rounded-2xl md:p-1.5 lg:bg-transparent lg:p-0">
-            {TABS.filter((tab) => tab.id !== "nurturing" || tenant?.has_nurturing_referral).map((tab) => (
+            {TABS.filter((tab) => {
+              // Nurturing is gated behind a feature flag (existing logic)
+              if (tab.id === "nurturing" && !tenant?.has_nurturing_referral) return false;
+              // Apr 28, 2026: Usage & Billing hidden for resellers — they see
+              // network-wide usage on /reseller via ResellerUsageCard with
+              // correct reseller-tier rates ($0.15/min vs $0.30/min Basic).
+              if (tab.id === "billing" && tenant?.reseller_tier) return false;
+              return true;
+            }).map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}

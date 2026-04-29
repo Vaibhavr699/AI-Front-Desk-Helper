@@ -7,6 +7,7 @@ import SmsConsent from "./pages/SmsConsent";
 import Contact from "./pages/Contact";
 import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, Outbound, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy, Team, Locations, FranchiseeInvite, Welcome, RollupV5 } from "./pages";
 import FranchisePaywall from "./pages/FranchisePaywall";
+import HqLocations from "./pages/HqLocations";
 import { ToastProvider } from "./components/ui/Toast";
 import "./App.css";
 import Reviews from "./pages/Reviews";
@@ -176,6 +177,7 @@ export default function App() {
             <Route path="/settings" element={<SettingsWithContext />} />
             <Route path="/tenants" element={<Tenants />} />
             <Route path="/rollup-v5" element={<RollupV5WithContext />} />
+            <Route path="/hq-locations" element={<HqLocations />} />
             <Route path="/admin" element={<Navigate to="/admin/tenants" replace />} />
             <Route path="/admin/tenants" element={<AdminWithContext view="tenants" />} />
             <Route path="/admin/admins" element={<AdminWithContext view="admins" />} />

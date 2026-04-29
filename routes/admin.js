@@ -694,11 +694,11 @@ router.post("/tenants/franchise-zee", async (req, res) => {
     const tenantResult = await db.query(
       `INSERT INTO tenants (
          name, company_name, slug,
-         plan, parent_tenant_id, brand_mode,
+         plan, parent_id, brand_mode,
          plan_overrides, billing_owner
        )
        VALUES ($1, $1, $2, 'franchise', $3, 'white_label', $4, 'direct')
-       RETURNING id, name, slug, plan, parent_tenant_id, brand_mode, plan_overrides, created_at`,
+       RETURNING id, name, slug, plan, parent_id, brand_mode, plan_overrides, created_at`,
       [trimmedName, slug, hq_tenant_id, planOverrides]
     );
     const tenant = tenantResult.rows[0];
@@ -761,14 +761,14 @@ router.get("/tenants/:hqId/zees", async (req, res) => {
       `SELECT
          t.id, t.name, t.slug, t.company_name, t.plan,
          t.subscription_status, t.brand_mode,
-         t.plan_overrides, t.parent_tenant_id,
+         t.plan_overrides, t.parent_id,
          t.is_suspended, t.suspended_reason,
          t.stripe_customer_id, t.stripe_subscription_id,
          t.created_at,
          (SELECT COUNT(*) FROM calls WHERE tenant_id = t.id) as total_calls,
          (SELECT COUNT(*) FROM bookings WHERE tenant_id = t.id) as total_bookings
        FROM tenants t
-       WHERE t.parent_tenant_id = $1 AND t.plan = 'franchise'
+       WHERE t.parent_id = $1 AND t.plan = 'franchise'
        ORDER BY t.created_at DESC`,
       [req.params.hqId]
     );

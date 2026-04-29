@@ -415,6 +415,21 @@ export function createAddonNumberCheckout(tenantId) {
   });
 }
 
+// ── Franchise zee subscribe (Apr 29, 2026) ────────────────────────────────
+// Phase 6 Franchise. Initiates Stripe Checkout for a zee paying their own
+// subscription. Returns { url, type } where url is the Stripe checkout URL
+// (or billing portal URL if already subscribed) — redirect window.location.
+// Throws on attempt to call when zee is on manual billing.
+export function createFranchiseCheckout(tenantId, returnUrl) {
+  return api("/api/stripe/franchise-checkout", {
+    method: "POST",
+    body: JSON.stringify({
+      tenant_id: tenantId,
+      return_url: returnUrl || window.location.origin + "/dashboard",
+    }),
+  });
+}
+
 export function openBillingPortal(tenantId) {
   return api("/api/stripe/portal", {
     method: "POST",
@@ -495,8 +510,8 @@ export function createFranchiseZee(body) {
 
 // List all franchise zees under a given HQ tenant.
 // Returns { zees: [...] } — each zee includes effective_monthly,
-// override_active, outbound_*_enabled, outbound_daily_max for the HQ
-// Locations table UI.
+// override_active, outbound_*_enabled, outbound_daily_max, billing_mode
+// for the HQ Locations table UI.
 export function listFranchiseZees(hqId) {
   return api(`/api/admin/tenants/${hqId}/zees`);
 }

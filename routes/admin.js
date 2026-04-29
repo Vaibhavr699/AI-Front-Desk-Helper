@@ -629,18 +629,22 @@ router.post("/tenants/franchise-zee", async (req, res) => {
       }
     }
 
-    // Verify HQ exists and is a valid parent
+   // Verify HQ exists and is a valid parent.
+    // Apr 29, 2026 — switched from parent_mode check to HQ plan tier check.
+    // parent_mode defaults to 'operating_hq' on every tenant row, so it's
+    // not a reliable signal. An HQ is defined by paying for an HQ-tier plan.
+    const HQ_PLAN_IDS = ["hq_starter", "hq_growth", "hq_enterprise"];
     const hqResult = await db.query(
-      `SELECT id, name, parent_mode, brand_mode FROM tenants WHERE id = $1`,
+      `SELECT id, name, plan, brand_mode FROM tenants WHERE id = $1`,
       [hq_tenant_id]
     );
     if (hqResult.rows.length === 0) {
       return res.status(404).json({ error: "HQ tenant not found" });
     }
     const hq = hqResult.rows[0];
-    if (!["operating_hq", "rollup_only"].includes(hq.parent_mode)) {
+    if (!HQ_PLAN_IDS.includes(hq.plan)) {
       return res.status(400).json({
-        error: "hq_tenant_id is not a valid HQ parent (parent_mode must be operating_hq or rollup_only)",
+        error: `hq_tenant_id is not a valid HQ — tenant must be on an HQ tier plan (hq_starter, hq_growth, or hq_enterprise). Current plan: ${hq.plan}`,
       });
     }
 

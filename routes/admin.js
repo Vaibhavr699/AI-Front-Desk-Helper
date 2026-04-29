@@ -84,6 +84,7 @@ router.get("/tenants", async (req, res) => {
         t.promo_label, t.promo_expires_at, t.promo_notes,
         t.is_suspended, t.suspended_reason,
         t.brand_mode,
+        t.parent_mode,
         t.created_at,
         (SELECT COUNT(*) FROM calls WHERE tenant_id = t.id) as total_calls,
         (SELECT COUNT(*) FROM bookings WHERE tenant_id = t.id) as total_bookings,

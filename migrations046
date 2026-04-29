@@ -1,0 +1,39 @@
+-- Migration 046 (Apr 29, 2026)
+-- Drop and recreate tenants_plan_check to match lib/plans.js source of truth.
+-- Adds: franchise, hq_starter, hq_growth, hq_enterprise, nurturing_addon.
+-- Preserves: basic, pro, elite.
+
+BEGIN;
+
+-- Sanity check: confirm no existing rows would be orphaned by the new constraint
+DO $$
+DECLARE
+  bad_count int;
+BEGIN
+  SELECT COUNT(*) INTO bad_count
+  FROM tenants
+  WHERE plan IS NOT NULL
+    AND plan NOT IN (
+      'basic', 'pro', 'elite',
+      'franchise',
+      'hq_starter', 'hq_growth', 'hq_enterprise',
+      'nurturing_addon'
+    );
+  IF bad_count > 0 THEN
+    RAISE EXCEPTION 'Found % rows with plan values outside the new whitelist. Aborting.', bad_count;
+  END IF;
+END $$;
+
+ALTER TABLE tenants DROP CONSTRAINT IF EXISTS tenants_plan_check;
+
+ALTER TABLE tenants ADD CONSTRAINT tenants_plan_check
+  CHECK (
+    plan IS NULL OR plan IN (
+      'basic', 'pro', 'elite',
+      'franchise',
+      'hq_starter', 'hq_growth', 'hq_enterprise',
+      'nurturing_addon'
+    )
+  );
+
+COMMIT;

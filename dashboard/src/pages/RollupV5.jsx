@@ -9,7 +9,7 @@ import {
   Crown,
   Phone,
   PhoneCall,
-  PhoneMissed,
+  PhoneMissed,async function resolveParent() {
   Moon,
   TrendingUp,
   TrendingDown,
@@ -159,13 +159,25 @@ export default function RollupV5() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
-  async function resolveParent() {
+ async function resolveParent() {
     setLoading(true);
     setError("");
     try {
+      // Apr 29, 2026 — respect impersonation. When a superadmin impersonates
+      // a tenant from the admin console, impersonate_tenant_id is set in
+      // localStorage. Use that as the authoritative HQ ID; otherwise fall
+      // back to the user's primary tenant.
+      const impersonatedId = localStorage.getItem("impersonate_tenant_id");
+
       const tenantsResponse = await getTenants();
       const list = tenantsResponse?.tenants || [];
-      const primary = list[0];
+
+      let primary;
+      if (impersonatedId) {
+        primary = list.find((t) => t.id === impersonatedId) || list[0];
+      } else {
+        primary = list[0];
+      }
 
       if (!primary?.id) {
         setError("No tenant found for this user.");

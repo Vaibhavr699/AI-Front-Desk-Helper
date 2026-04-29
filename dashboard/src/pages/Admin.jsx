@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import CreateResellerModal from "../components/CreateResellerModal";
+import CreateZeeModal from "../components/CreateZeeModal";
 
 const PLAN_COLORS = {
   basic: { bg: "rgba(156,163,175,0.1)", text: "#6b7280", border: "rgba(156,163,175,0.2)", dot: "#9ca3af", gradient: "from-gray-400 to-gray-500" },
@@ -59,6 +60,7 @@ function centsToMRR(cents) {
 export default function Admin({ view: initialView = "tenants" }) {
   const [activeView, setActiveView] = useState(initialView);
   const [isCreateResellerOpen, setIsCreateResellerOpen] = useState(false);
+  const [isCreateZeeOpen, setIsCreateZeeOpen] = useState(false);
   const [stats, setStats] = useState(null);
   const [tenants, setTenants] = useState([]);
   const [admins, setAdmins] = useState([]);
@@ -436,13 +438,20 @@ export default function Admin({ view: initialView = "tenants" }) {
                   <h2 className="text-2xl font-black text-slate-900 tracking-tight">Tenants</h2>
                   <p className="text-xs text-slate-500 font-medium">Manage business accounts and pricing</p>
                 </div>
-                <div className="flex items-center gap-3 w-full md:w-auto">
+              <div className="flex items-center gap-3 w-full md:w-auto">
                   <button
-            onClick={() => setIsCreateResellerOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-[11px] font-black uppercase tracking-wider hover:bg-black transition-all shadow-sm shadow-slate-900/10 whitespace-nowrap"
-          >
-            + Create Reseller
-          </button>
+                    onClick={() => setIsCreateResellerOpen(true)}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 text-white rounded-xl text-[11px] font-black uppercase tracking-wider hover:bg-black transition-all shadow-sm shadow-slate-900/10 whitespace-nowrap"
+                  >
+                    + Create Reseller
+                  </button>
+                  <button
+                    onClick={() => setIsCreateZeeOpen(true)}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-white border border-slate-200 text-slate-900 rounded-xl text-[11px] font-black uppercase tracking-wider hover:bg-slate-50 hover:border-slate-300 transition-all shadow-sm whitespace-nowrap"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                    + Create Zee
+                  </button>
                   <div className="relative flex-1 md:w-72">
                     <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
                     <input
@@ -1061,10 +1070,17 @@ export default function Admin({ view: initialView = "tenants" }) {
         )}
       </AnimatePresence>
       
-      {/* Create Reseller Modal — Step 8 */}
+     {/* Create Reseller Modal — Step 8 */}
       <CreateResellerModal
         isOpen={isCreateResellerOpen}
         onClose={() => setIsCreateResellerOpen(false)}
+        onCreated={() => loadData()}
+      />
+
+      {/* Create Franchise Zee Modal — Phase 6 (Apr 29, 2026) */}
+      <CreateZeeModal
+        isOpen={isCreateZeeOpen}
+        onClose={() => setIsCreateZeeOpen(false)}
         onCreated={() => loadData()}
       />
     </div>

@@ -9,7 +9,7 @@ import {
   Crown,
   Phone,
   PhoneCall,
-  PhoneMissed,async function resolveParent() {
+  PhoneMissed,
   Moon,
   TrendingUp,
   TrendingDown,
@@ -159,7 +159,7 @@ export default function RollupV5() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
- async function resolveParent() {
+  async function resolveParent() {
     setLoading(true);
     setError("");
     try {

@@ -6,6 +6,7 @@ import SmsTerms from "./pages/SmsTerms";
 import SmsConsent from "./pages/SmsConsent";
 import Contact from "./pages/Contact";
 import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, Outbound, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy, Team, Locations, FranchiseeInvite, Welcome, RollupV5 } from "./pages";
+import FranchisePaywall from "./pages/FranchisePaywall";
 import { ToastProvider } from "./components/ui/Toast";
 import "./App.css";
 import Reviews from "./pages/Reviews";
@@ -102,6 +103,21 @@ function AuthenticatedRoot() {
     return <Navigate to="/reseller" replace />;
   }
 
+  // Franchise zee paywall guard (Apr 29, 2026 — Phase 6).
+  // Zees on plan='franchise' without an active subscription get redirected
+  // to /franchise-paywall. Manual-billing zees bypass via plan_overrides.billing_mode.
+  // Superadmin impersonation also bypasses (so Drew can view any zee dashboard).
+  if (
+    tenantLoaded &&
+    activeTenant?.plan === "franchise" &&
+    activeTenant?.subscription_status !== "active" &&
+    activeTenant?.plan_overrides?.billing_mode !== "manual" &&
+    !isImpersonating &&
+    pathname !== "/franchise-paywall"
+  ) {
+    return <Navigate to="/franchise-paywall" replace />;
+  }
+
   return (
     <Protected>
       <DashboardLayout />
@@ -134,6 +150,7 @@ export default function App() {
           <Route path="/churn/setup-direct-billing/:token" element={<ChurnSetupDirectBilling />} />
           <Route path="/churn/welcome" element={<ChurnWelcome />} />
           <Route path="/welcome" element={<Welcome />} />
+          <Route path="/franchise-paywall" element={<Protected><FranchisePaywall /></Protected>} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/sms-terms" element={<SmsTerms />} />
           <Route path="/sms-consent" element={<SmsConsent />} />

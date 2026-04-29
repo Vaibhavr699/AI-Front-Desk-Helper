@@ -5,7 +5,7 @@ const db = require("../lib/db");
 const auth = require("../lib/auth");
 const emailService = require("../services/email");
 const stripeService = require("../lib/stripe");
-const { getPlan, listPlans } = require("../lib/plans");
+const { getPlan, listPlans, ADMIN_PLAN_IDS } = require("../lib/plans");
 const crypto = require("crypto");
 const { generateUniqueResellerCode } = require("../lib/resellerBilling");
 const { getResellerTier } = require("../lib/resellerPlans");
@@ -280,8 +280,11 @@ router.patch("/tenants/:id/pricing", async (req, res) => {
       values.push(promo_notes || null);
     }
     if (plan !== undefined) {
-      if (!["basic", "pro", "elite"].includes(plan)) {
-        return res.status(400).json({ error: "plan must be basic, pro, or elite" });
+      // Apr 29, 2026 — switched from hardcoded ["basic","pro","elite"] to
+      // ADMIN_PLAN_IDS so admin endpoints can assign hidden tiers (franchise,
+      // hq_*, etc). Public /api/plans still filters via listPlans().
+      if (!ADMIN_PLAN_IDS.includes(plan)) {
+        return res.status(400).json({ error: `Invalid plan: ${plan}` });
       }
       updates.push(`plan = $${idx++}`);
       values.push(plan);
@@ -575,6 +578,224 @@ const tenantResult = await db.query(
   } catch (e) {
     console.error("[Admin] Create reseller error:", e.message);
     res.status(500).json({ error: e.message || "Server error" });
+  }
+});
+
+// -------------------- Create Franchise Zee --------------------
+//
+// Apr 29, 2026 — Phase 6 Franchise Account Type.
+// Superadmin-only provisioning flow for creating a zee tenant under an
+// existing HQ. Mirrors the reseller create pattern but scoped to the
+// franchise plan tier (hidden from public /api/plans, admin-only).
+//
+// Defaults outbound gates OFF in plan_overrides.addons — HQ admin can
+// flip them per-zee via PATCH /pricing later. brand_mode defaults to
+// white_label since franchise zees inherit HQ branding.
+//
+// Stripe subscription creation is intentionally NOT done here — it
+// happens via the existing PATCH /pricing sync path once
+// STRIPE_PRICE_FRANCHISE is wired. This keeps demo zee creation possible
+// without a real Stripe price configured.
+router.post("/tenants/franchise-zee", async (req, res) => {
+  try {
+    const {
+      hq_tenant_id,
+      company_name,
+      owner_email,
+      monthly_override_cents,
+    } = req.body || {};
+
+    // Validation
+    if (!hq_tenant_id || !company_name || !owner_email) {
+      return res.status(400).json({
+        error: "hq_tenant_id, company_name, and owner_email are required",
+      });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(owner_email)) {
+      return res.status(400).json({ error: "Invalid email format" });
+    }
+    const trimmedName = String(company_name).trim();
+    if (trimmedName.length < 2 || trimmedName.length > 100) {
+      return res.status(400).json({ error: "company_name must be 2-100 characters" });
+    }
+    let overrideCents = null;
+    if (monthly_override_cents !== undefined && monthly_override_cents !== null) {
+      overrideCents = parseInt(monthly_override_cents, 10);
+      if (!Number.isFinite(overrideCents) || overrideCents < 0) {
+        return res.status(400).json({
+          error: "monthly_override_cents must be a non-negative integer",
+        });
+      }
+    }
+
+    // Verify HQ exists and is a valid parent
+    const hqResult = await db.query(
+      `SELECT id, name, parent_mode, brand_mode FROM tenants WHERE id = $1`,
+      [hq_tenant_id]
+    );
+    if (hqResult.rows.length === 0) {
+      return res.status(404).json({ error: "HQ tenant not found" });
+    }
+    const hq = hqResult.rows[0];
+    if (!["operating_hq", "rollup_only"].includes(hq.parent_mode)) {
+      return res.status(400).json({
+        error: "hq_tenant_id is not a valid HQ parent (parent_mode must be operating_hq or rollup_only)",
+      });
+    }
+
+    const normalizedEmail = owner_email.trim().toLowerCase();
+
+    // Email collision check
+    const existingUser = await auth.findUserByEmail(normalizedEmail);
+    if (existingUser) {
+      return res.status(409).json({
+        error: "A user with this email already exists",
+      });
+    }
+
+    // Slug generation with collision suffix
+    function toSlug(s) {
+      return (
+        String(s)
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .slice(0, 50) || "zee"
+      );
+    }
+    let slug = toSlug(trimmedName);
+    for (let i = 0; i < 5; i++) {
+      const { rows } = await db.query("SELECT id FROM tenants WHERE slug = $1", [slug]);
+      if (rows.length === 0) break;
+      slug = `${toSlug(trimmedName)}-${crypto.randomBytes(2).toString("hex")}`;
+    }
+
+    // Build plan_overrides:
+    // - addons.* gates outbound features OFF by default
+    // - franchise.monthly is the per-zee negotiated rate (e.g. 22500 for Groovy Hues)
+    const planOverrides = {
+      addons: {
+        outbound_followup: false,
+        outbound_lists: false,
+        outbound_daily_max: 0,
+      },
+    };
+    if (overrideCents != null) {
+      planOverrides.franchise = { monthly: overrideCents };
+    }
+
+    // Create tenant row.
+    // - plan='franchise' identifies as a zee (hidden tier, admin-only)
+    // - parent_tenant_id links to HQ
+    // - brand_mode='white_label' — zees inherit HQ chrome by default
+    // - subscription_status left NULL until Stripe sync runs
+    const tenantResult = await db.query(
+      `INSERT INTO tenants (
+         name, company_name, slug,
+         plan, parent_tenant_id, brand_mode,
+         plan_overrides, billing_owner
+       )
+       VALUES ($1, $1, $2, 'franchise', $3, 'white_label', $4, 'direct')
+       RETURNING id, name, slug, plan, parent_tenant_id, brand_mode, plan_overrides, created_at`,
+      [trimmedName, slug, hq_tenant_id, planOverrides]
+    );
+    const tenant = tenantResult.rows[0];
+
+    // Create owner dashboard_user (random password, set via reset link)
+    const tempPass = crypto.randomBytes(16).toString("hex");
+    const hash = await auth.hashPassword(tempPass);
+    const userResult = await db.query(
+      `INSERT INTO dashboard_users (email, password_hash, tenant_id, role)
+       VALUES ($1, $2, $3, 'owner')
+       RETURNING id, email`,
+      [normalizedEmail, hash, tenant.id]
+    );
+    const user = userResult.rows[0];
+
+    // Password-set token (48h expiry — matches admin/reseller invite flow)
+    const token = auth.generateResetToken();
+    const expires = new Date(Date.now() + 48 * 3600000);
+    await auth.saveResetToken(user.email, token, expires);
+
+    // Send invite (non-blocking)
+    const base = (process.env.DASHBOARD_URL || process.env.BASE_URL || "").replace(/\/$/, "");
+    const inviteLink = `${base}/reset-password?token=${token}`;
+    try {
+      await emailService.sendAdminInvitationEmail(user.email, inviteLink);
+    } catch (emailErr) {
+      console.error("[Admin] Franchise zee invite email failed:", emailErr.message);
+    }
+
+    console.log(
+      "[Admin] Created franchise zee tenantId=%s hq=%s owner=%s override=%s by=%s",
+      tenant.id,
+      hq_tenant_id,
+      user.email,
+      overrideCents != null ? `${overrideCents}c` : "none",
+      req.user.email
+    );
+
+    res.status(201).json({
+      success: true,
+      tenant,
+      hq: { id: hq.id, name: hq.name },
+      invite_link: inviteLink,
+    });
+  } catch (e) {
+    console.error("[Admin] Create franchise zee error:", e.message);
+    res.status(500).json({ error: e.message || "Server error" });
+  }
+});
+
+// -------------------- List Franchise Zees Under HQ --------------------
+//
+// Apr 29, 2026 — Powers the HQ Locations tab in the dashboard.
+// Returns child tenants with plan='franchise' under the given HQ, plus
+// computed effective_monthly and per-zee outbound gate state for the
+// HQ Locations table UI.
+router.get("/tenants/:hqId/zees", async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT
+         t.id, t.name, t.slug, t.company_name, t.plan,
+         t.subscription_status, t.brand_mode,
+         t.plan_overrides, t.parent_tenant_id,
+         t.is_suspended, t.suspended_reason,
+         t.stripe_customer_id, t.stripe_subscription_id,
+         t.created_at,
+         (SELECT COUNT(*) FROM calls WHERE tenant_id = t.id) as total_calls,
+         (SELECT COUNT(*) FROM bookings WHERE tenant_id = t.id) as total_bookings
+       FROM tenants t
+       WHERE t.parent_tenant_id = $1 AND t.plan = 'franchise'
+       ORDER BY t.created_at DESC`,
+      [req.params.hqId]
+    );
+
+    const zees = r.rows.map((t) => {
+      const plan = getPlan(t.plan);
+      const overrides = t.plan_overrides || {};
+      const planOverride = overrides[t.plan] || {};
+      const addons = overrides.addons || {};
+
+      return {
+        ...t,
+        total_calls: parseInt(t.total_calls, 10),
+        total_bookings: parseInt(t.total_bookings, 10),
+        default_monthly: plan.priceMonthly,
+        effective_monthly:
+          planOverride.monthly != null ? planOverride.monthly : plan.priceMonthly,
+        override_active: planOverride.monthly != null,
+        outbound_followup_enabled: !!addons.outbound_followup,
+        outbound_lists_enabled: !!addons.outbound_lists,
+        outbound_daily_max: addons.outbound_daily_max || 0,
+      };
+    });
+
+    res.json({ zees });
+  } catch (e) {
+    console.error("[Admin] List franchise zees error:", e.message);
+    res.status(500).json({ error: "Server error" });
   }
 });
 

@@ -501,17 +501,19 @@ export function listFranchiseZees(hqId) {
   return api(`/api/admin/tenants/${hqId}/zees`);
 }
 
-// List HQ-eligible tenants (parent_mode = operating_hq | rollup_only).
+// List HQ-eligible tenants (paying for an HQ tier plan).
+// Apr 29, 2026 — switched from parent_mode filter to HQ plan filter.
+// parent_mode defaults to 'operating_hq' on every tenant row, so it's
+// not a reliable HQ signal. Plan tier is the authoritative source —
+// an HQ is a tenant that pays for hq_starter / hq_growth / hq_enterprise.
+//
 // Powers the HQ dropdown in CreateZeeModal. Filters client-side from the
 // existing /api/admin/tenants response — no new backend endpoint needed.
-// Returns an array of tenant objects with at minimum: id, name,
-// company_name, parent_mode.
+const HQ_PLAN_IDS = ["hq_starter", "hq_growth", "hq_enterprise"];
 export async function listHqTenants() {
   const data = await api("/api/admin/tenants");
   const tenants = Array.isArray(data?.tenants) ? data.tenants : [];
-  return tenants.filter(
-    (t) => t.parent_mode === "operating_hq" || t.parent_mode === "rollup_only"
-  );
+  return tenants.filter((t) => HQ_PLAN_IDS.includes(t.plan));
 }
 
 export function forgotPassword(email) {

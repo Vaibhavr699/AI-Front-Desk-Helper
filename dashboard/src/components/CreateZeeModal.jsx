@@ -311,11 +311,11 @@ export default function CreateZeeModal({ isOpen, onClose, onCreated }) {
                           disabled={loading}
                         >
                           <option value="">— Select HQ —</option>
-                          {hqTenants.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.company_name || t.name} ({t.parent_mode})
-                            </option>
-                          ))}
+                         {hqTenants.map((t) => (
+                          <option key={t.id} value={t.id}>
+                          {t.company_name || t.name} ({t.plan})
+                        </option>
+                      ))}
                         </select>
                       </div>
                     )}

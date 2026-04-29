@@ -695,15 +695,15 @@ router.post("/tenants/franchise-zee", async (req, res) => {
     // - parent_tenant_id links to HQ
     // - brand_mode='white_label' — zees inherit HQ chrome by default
     // - subscription_status left NULL until Stripe sync runs
-    const tenantResult = await db.query(
+   const tenantResult = await db.query(
       `INSERT INTO tenants (
          name, company_name, slug,
          plan, parent_id, brand_mode,
-         plan_overrides, billing_owner
+         plan_overrides, billing_owner, primary_email
        )
-       VALUES ($1, $1, $2, 'franchise', $3, 'white_label', $4, 'direct')
+       VALUES ($1, $1, $2, 'franchise', $3, 'white_label', $4, 'direct', $5)
        RETURNING id, name, slug, plan, parent_id, brand_mode, plan_overrides, created_at`,
-      [trimmedName, slug, hq_tenant_id, planOverrides]
+      [trimmedName, slug, hq_tenant_id, planOverrides, normalizedEmail]
     );
     const tenant = tenantResult.rows[0];
 

@@ -12,6 +12,17 @@ export async function api(path, options = {}) {
   const token = getToken();
   const headers = { "Content-Type": "application/json", ...options.headers };
   if (token) headers.Authorization = `Bearer ${token}`;
+
+  // Apr 29, 2026 — superadmin impersonation. When impersonating a tenant
+  // from the admin console, send the impersonated tenant ID as a header so
+  // the backend (lib/auth.js getTenantIdFromQuery) can scope every request
+  // to that tenant. Backend only honors this header when req.user.is_super_admin
+  // is true — non-superadmins setting this manually will be ignored.
+  const impersonatedTenantId = localStorage.getItem("impersonate_tenant_id");
+  if (impersonatedTenantId) {
+    headers["x-impersonate-tenant-id"] = impersonatedTenantId;
+  }
+
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (res.status === 401) {
     const isAuthAttempt = path === "/api/auth/login" || path === "/api/auth/signup";
@@ -111,8 +122,31 @@ export function getUser() {
   }
 }
 
-export function getTenants() {
-  return api("/api/tenants");
+// Apr 29, 2026 — superadmin impersonation aware.
+// When impersonating, the backend's /api/tenants list still returns only the
+// real user's accessible tenants (Drew's tenants, not Demo Painting Co). To
+// make pages like RollupV5 + HqLocations resolve correctly, we fetch the
+// impersonated tenant directly and prepend it to the list.
+//
+// Non-impersonation path is unchanged — single API call, same response shape.
+export async function getTenants() {
+  const data = await api("/api/tenants");
+  const list = Array.isArray(data?.tenants) ? data.tenants : [];
+
+  const impersonatedId = localStorage.getItem("impersonate_tenant_id");
+  if (impersonatedId && !list.some((t) => t.id === impersonatedId)) {
+    try {
+      const impersonatedTenant = await api(`/api/tenants/${impersonatedId}`);
+      // Prepend so list[0] resolves to the impersonated tenant in pages
+      // that rely on getTenants()[0] as the "primary".
+      return { ...data, tenants: [impersonatedTenant, ...list] };
+    } catch (e) {
+      // Couldn't fetch — fall through with original list. Pages will
+      // fall back to list[0] (the user's own primary tenant).
+      console.warn("[api] Failed to fetch impersonated tenant:", e.message);
+    }
+  }
+  return data;
 }
 
 export async function createTenant(body) {

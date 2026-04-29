@@ -516,6 +516,17 @@ export function listFranchiseZees(hqId) {
   return api(`/api/admin/tenants/${hqId}/zees`);
 }
 
+// Update a franchise zee's outbound gates (Apr 29, 2026 — Phase 6).
+// body: { outbound_followup?, outbound_lists?, outbound_daily_max? }
+// All fields optional — only provided fields get updated.
+// Returns { success, addons } with the post-update gate state.
+export function updateZeeOutboundGates(zeeId, body) {
+  return api(`/api/admin/tenants/${zeeId}/outbound-gates`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
 // List HQ-eligible tenants (paying for an HQ tier plan).
 // Apr 29, 2026 — switched from parent_mode filter to HQ plan filter.
 // parent_mode defaults to 'operating_hq' on every tenant row, so it's

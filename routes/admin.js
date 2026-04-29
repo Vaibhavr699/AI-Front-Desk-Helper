@@ -860,4 +860,96 @@ router.patch("/tenants/:id/outbound-gates", async (req, res) => {
   }
 });
 
+// -------------------- List Franchise Zees Under HQ --------------------
+//
+// Apr 29, 2026 — Phase 6 Franchise.
+// Powers the HQ Locations management page (HqLocations.jsx).
+// Returns all franchise zees under a given HQ tenant with billing,
+// activity, and outbound gate state for the management UI.
+//
+// Performance notes:
+// - Single query with subqueries instead of N+1 per zee
+// - parent_id has idx_tenants_parent_id (verified Apr 29, 2026 — 1ms scan)
+// - Activity counts use simple COUNT(*) — fine for tenants under ~1000 calls
+// - effective_monthly computed in JS, not SQL (matches /tenants list pattern)
+//
+// Auth: requireSuperAdmin (gated at router mount in server.js)
+router.get("/tenants/:hqId/zees", async (req, res) => {
+  try {
+    const hqId = req.params.hqId;
+
+    // Verify HQ exists and is on an HQ-tier plan (defense in depth — the
+    // frontend already gates this, but other admin tools could call us).
+    const HQ_PLAN_IDS = ["hq_starter", "hq_growth", "hq_enterprise"];
+    const hqResult = await db.query(
+      `SELECT id, name, plan FROM tenants WHERE id = $1`,
+      [hqId]
+    );
+    if (hqResult.rows.length === 0) {
+      return res.status(404).json({ error: "HQ tenant not found" });
+    }
+    const hq = hqResult.rows[0];
+    if (!HQ_PLAN_IDS.includes(hq.plan)) {
+      return res.status(400).json({
+        error: `Tenant ${hqId} is not an HQ — plan must be hq_starter, hq_growth, or hq_enterprise. Current: ${hq.plan}`,
+      });
+    }
+
+    // Single query: zees + per-zee aggregates. parent_id is indexed.
+    const zeesResult = await db.query(
+      `SELECT
+         t.id, t.name, t.slug, t.company_name, t.plan,
+         t.subscription_status, t.is_suspended,
+         t.plan_overrides, t.brand_mode,
+         t.created_at,
+         (SELECT COUNT(*) FROM calls    WHERE tenant_id = t.id) AS total_calls,
+         (SELECT COUNT(*) FROM bookings WHERE tenant_id = t.id) AS total_bookings
+       FROM tenants t
+       WHERE t.parent_id = $1
+         AND t.plan = 'franchise'
+       ORDER BY t.created_at DESC`,
+      [hqId]
+    );
+
+    // Compute effective_monthly + addon flags per zee in JS (matches
+    // /tenants list pattern — keeps SQL simple).
+    const FRANCHISE_DEFAULT_MONTHLY_CENTS = 19700; // $197 default; HQ can override per-zee
+    const zees = zeesResult.rows.map((z) => {
+      const overrides = z.plan_overrides || {};
+      const franchiseOverride = overrides.franchise || {};
+      const addons = overrides.addons || {};
+
+      const overrideCents = franchiseOverride.monthly;
+      const overrideActive = overrideCents != null;
+      const effectiveMonthly = overrideActive
+        ? overrideCents
+        : FRANCHISE_DEFAULT_MONTHLY_CENTS;
+
+      return {
+        id: z.id,
+        name: z.name,
+        slug: z.slug,
+        company_name: z.company_name,
+        plan: z.plan,
+        subscription_status: z.subscription_status,
+        is_suspended: !!z.is_suspended,
+        brand_mode: z.brand_mode,
+        billing_mode: overrides.billing_mode || "stripe",
+        effective_monthly: effectiveMonthly,
+        override_active: overrideActive,
+        outbound_followup_enabled: !!addons.outbound_followup,
+        outbound_lists_enabled: !!addons.outbound_lists,
+        outbound_daily_max: addons.outbound_daily_max || 0,
+        total_calls: parseInt(z.total_calls, 10),
+        total_bookings: parseInt(z.total_bookings, 10),
+        created_at: z.created_at,
+      };
+    });
+
+    res.json({ zees, hq: { id: hq.id, name: hq.name, plan: hq.plan } });
+  } catch (e) {
+    console.error("[Admin] List zees error:", e.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
 module.exports = router;

@@ -1396,6 +1396,13 @@ function LocationTable({ locations, sort, dir, onSort, onRowClick }) {
             {formatNum(locations.length)} location{locations.length !== 1 ? "s" : ""} · sorted by {SORT_LABELS[sort]} {dir} · click a row to view
           </p>
         </div>
+        <Link
+          to="/hq-locations"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-50 text-orange-700 hover:bg-orange-100 text-[11px] font-black uppercase tracking-wider rounded-lg border border-orange-200/50 transition-all"
+        >
+          <Building2 className="w-3.5 h-3.5" />
+          Manage
+        </Link>
       </div>
 
       <div className="overflow-x-auto">

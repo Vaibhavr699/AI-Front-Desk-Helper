@@ -593,10 +593,13 @@ const tenantResult = await db.query(
 // flip them per-zee via PATCH /pricing later. brand_mode defaults to
 // white_label since franchise zees inherit HQ branding.
 //
-// Stripe subscription creation is intentionally NOT done here — it
-// happens via the existing PATCH /pricing sync path once
-// STRIPE_PRICE_FRANCHISE is wired. This keeps demo zee creation possible
-// without a real Stripe price configured.
+// Stripe subscription creation is intentionally NOT done here — the zee
+// will hit a paywall on first dashboard visit and self-subscribe via
+// POST /api/stripe/franchise-checkout. Until they pay, subscription_status
+// stays NULL and the paywall middleware blocks dashboard access.
+//
+// primary_email is written so lib/stripe.js getOrCreateCustomer can find
+// the email directly without falling back to dashboard_users lookup.
 router.post("/tenants/franchise-zee", async (req, res) => {
   try {
     const {
@@ -629,7 +632,7 @@ router.post("/tenants/franchise-zee", async (req, res) => {
       }
     }
 
-   // Verify HQ exists and is a valid parent.
+    // Verify HQ exists and is a valid parent.
     // Apr 29, 2026 — switched from parent_mode check to HQ plan tier check.
     // parent_mode defaults to 'operating_hq' on every tenant row, so it's
     // not a reliable signal. An HQ is defined by paying for an HQ-tier plan.
@@ -679,6 +682,8 @@ router.post("/tenants/franchise-zee", async (req, res) => {
     // Build plan_overrides:
     // - addons.* gates outbound features OFF by default
     // - franchise.monthly is the per-zee negotiated rate (e.g. 22500 for Groovy Hues)
+    // - billing_mode defaults to 'stripe' (omitted; absence means stripe)
+    //   superadmin can flip to 'manual' via PATCH /pricing for exceptions
     const planOverrides = {
       addons: {
         outbound_followup: false,
@@ -692,10 +697,11 @@ router.post("/tenants/franchise-zee", async (req, res) => {
 
     // Create tenant row.
     // - plan='franchise' identifies as a zee (hidden tier, admin-only)
-    // - parent_tenant_id links to HQ
+    // - parent_id links to HQ
     // - brand_mode='white_label' — zees inherit HQ chrome by default
-    // - subscription_status left NULL until Stripe sync runs
-   const tenantResult = await db.query(
+    // - subscription_status left NULL until zee completes Stripe checkout
+    // - primary_email set so getOrCreateCustomer finds it directly
+    const tenantResult = await db.query(
       `INSERT INTO tenants (
          name, company_name, slug,
          plan, parent_id, brand_mode,
@@ -794,6 +800,7 @@ router.get("/tenants/:hqId/zees", async (req, res) => {
         outbound_followup_enabled: !!addons.outbound_followup,
         outbound_lists_enabled: !!addons.outbound_lists,
         outbound_daily_max: addons.outbound_daily_max || 0,
+        billing_mode: overrides.billing_mode || "stripe",
       };
     });
 

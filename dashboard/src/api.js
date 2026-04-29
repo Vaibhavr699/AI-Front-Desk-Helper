@@ -482,6 +482,38 @@ export function removeAdmin(id) {
   });
 }
 
+// ── Admin: create franchise zee (Apr 29, 2026) ────────────────────────────
+// Phase 6 Franchise. Provisions a zee tenant under an existing HQ.
+// body: { hq_tenant_id, company_name, owner_email, monthly_override_cents? }
+// Returns { success, tenant, hq, invite_link }.
+export function createFranchiseZee(body) {
+  return api("/api/admin/tenants/franchise-zee", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+// List all franchise zees under a given HQ tenant.
+// Returns { zees: [...] } — each zee includes effective_monthly,
+// override_active, outbound_*_enabled, outbound_daily_max for the HQ
+// Locations table UI.
+export function listFranchiseZees(hqId) {
+  return api(`/api/admin/tenants/${hqId}/zees`);
+}
+
+// List HQ-eligible tenants (parent_mode = operating_hq | rollup_only).
+// Powers the HQ dropdown in CreateZeeModal. Filters client-side from the
+// existing /api/admin/tenants response — no new backend endpoint needed.
+// Returns an array of tenant objects with at minimum: id, name,
+// company_name, parent_mode.
+export async function listHqTenants() {
+  const data = await api("/api/admin/tenants");
+  const tenants = Array.isArray(data?.tenants) ? data.tenants : [];
+  return tenants.filter(
+    (t) => t.parent_mode === "operating_hq" || t.parent_mode === "rollup_only"
+  );
+}
+
 export function forgotPassword(email) {
   return api("/api/auth/forgot-password", {
     method: "POST",

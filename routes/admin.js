@@ -759,54 +759,103 @@ router.post("/tenants/franchise-zee", async (req, res) => {
   }
 });
 
-// -------------------- List Franchise Zees Under HQ --------------------
+// -------------------- Update Zee Outbound Gates --------------------
 //
-// Apr 29, 2026 — Powers the HQ Locations tab in the dashboard.
-// Returns child tenants with plan='franchise' under the given HQ, plus
-// computed effective_monthly and per-zee outbound gate state for the
-// HQ Locations table UI.
-router.get("/tenants/:hqId/zees", async (req, res) => {
+// Apr 29, 2026 — Phase 6 Franchise.
+// Powers per-zee toggles in the HQ Locations management page. HQ admins
+// can enable/disable outbound followup, outbound lists, and adjust the
+// daily call cap without superadmin involvement.
+//
+// Body: { outbound_followup?, outbound_lists?, outbound_daily_max? }
+// Each field is optional. Only provided fields get updated. Writes into
+// tenants.plan_overrides.addons JSONB. Reads in services/outboundEngine.js
+// pick up immediately on next call (no cache to invalidate).
+//
+// Validation: zee must be plan='franchise' (admin endpoint, but defense
+// in depth — prevents accidentally toggling addons on non-franchise tenants).
+router.patch("/tenants/:id/outbound-gates", async (req, res) => {
   try {
-    const r = await db.query(
-      `SELECT
-         t.id, t.name, t.slug, t.company_name, t.plan,
-         t.subscription_status, t.brand_mode,
-         t.plan_overrides, t.parent_id,
-         t.is_suspended, t.suspended_reason,
-         t.stripe_customer_id, t.stripe_subscription_id,
-         t.created_at,
-         (SELECT COUNT(*) FROM calls WHERE tenant_id = t.id) as total_calls,
-         (SELECT COUNT(*) FROM bookings WHERE tenant_id = t.id) as total_bookings
-       FROM tenants t
-       WHERE t.parent_id = $1 AND t.plan = 'franchise'
-       ORDER BY t.created_at DESC`,
-      [req.params.hqId]
+    const id = req.params.id;
+    const { outbound_followup, outbound_lists, outbound_daily_max } = req.body || {};
+
+    // At least one field must be provided
+    if (
+      outbound_followup === undefined &&
+      outbound_lists === undefined &&
+      outbound_daily_max === undefined
+    ) {
+      return res.status(400).json({
+        error: "At least one of outbound_followup, outbound_lists, outbound_daily_max required",
+      });
+    }
+
+    // Type validation
+    if (outbound_followup !== undefined && typeof outbound_followup !== "boolean") {
+      return res.status(400).json({ error: "outbound_followup must be boolean" });
+    }
+    if (outbound_lists !== undefined && typeof outbound_lists !== "boolean") {
+      return res.status(400).json({ error: "outbound_lists must be boolean" });
+    }
+    if (outbound_daily_max !== undefined) {
+      const max = parseInt(outbound_daily_max, 10);
+      if (!Number.isFinite(max) || max < 0 || max > 1000) {
+        return res.status(400).json({
+          error: "outbound_daily_max must be an integer between 0 and 1000",
+        });
+      }
+    }
+
+    // Load tenant + verify it's a franchise zee
+    const existing = await db.query(
+      "SELECT id, plan, plan_overrides FROM tenants WHERE id = $1",
+      [id]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: "Tenant not found" });
+    }
+    const tenant = existing.rows[0];
+    if (tenant.plan !== "franchise") {
+      return res.status(400).json({
+        error: "Outbound gates can only be set on franchise-tier tenants",
+      });
+    }
+
+    // Merge into plan_overrides.addons (preserve other addons fields)
+    const overrides = tenant.plan_overrides || {};
+    const addons = { ...(overrides.addons || {}) };
+    if (outbound_followup !== undefined) addons.outbound_followup = outbound_followup;
+    if (outbound_lists !== undefined) addons.outbound_lists = outbound_lists;
+    if (outbound_daily_max !== undefined) {
+      addons.outbound_daily_max = parseInt(outbound_daily_max, 10);
+    }
+
+    const newOverrides = { ...overrides, addons };
+
+    await db.query(
+      `UPDATE tenants
+          SET plan_overrides = $1,
+              updated_at = now()
+        WHERE id = $2`,
+      [newOverrides, id]
     );
 
-    const zees = r.rows.map((t) => {
-      const plan = getPlan(t.plan);
-      const overrides = t.plan_overrides || {};
-      const planOverride = overrides[t.plan] || {};
-      const addons = overrides.addons || {};
+    console.log(
+      "[Admin] Outbound gates updated tenantId=%s gates=%j by=%s",
+      id,
+      addons,
+      req.user.email
+    );
 
-      return {
-        ...t,
-        total_calls: parseInt(t.total_calls, 10),
-        total_bookings: parseInt(t.total_bookings, 10),
-        default_monthly: plan.priceMonthly,
-        effective_monthly:
-          planOverride.monthly != null ? planOverride.monthly : plan.priceMonthly,
-        override_active: planOverride.monthly != null,
-        outbound_followup_enabled: !!addons.outbound_followup,
-        outbound_lists_enabled: !!addons.outbound_lists,
+    res.json({
+      success: true,
+      addons: {
+        outbound_followup: !!addons.outbound_followup,
+        outbound_lists: !!addons.outbound_lists,
         outbound_daily_max: addons.outbound_daily_max || 0,
-        billing_mode: overrides.billing_mode || "stripe",
-      };
+      },
     });
-
-    res.json({ zees });
   } catch (e) {
-    console.error("[Admin] List franchise zees error:", e.message);
+    console.error("[Admin] Outbound gates update error:", e.message);
     res.status(500).json({ error: "Server error" });
   }
 });

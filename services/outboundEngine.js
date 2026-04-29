@@ -4,10 +4,16 @@ const db = require("../lib/db");
 const twilio = require("twilio");
 const cron = require("node-cron");
 const { evolveScripts } = require("./outbound");
+const {
+  canRunOutboundFollowup,
+  canRunOutboundLists,
+  getOutboundDailyMax,
+} = require("../lib/plans");
 
 /**
  * Background worker that processes active outbound campaigns.
- * Respects calling hours, max attempts, and tenant minute balance.
+ * Respects calling hours, max attempts, tenant minute balance,
+ * and per-tenant outbound gates (followup / lists / daily-max).
  */
 async function startOutboundEngine() {
   console.log("[Outbound] Engine started.");
@@ -33,16 +39,74 @@ async function processActiveCampaigns() {
       // 2. CHECK: Calling Hours
       if (!isWithinCallingHours(campaign)) continue;
 
-      // 3. CHECK: Tenant Minute Balance
-      const balance = await getTenantMinuteBalance(campaign.tenant_id);
+      // 3. Load tenant once with all the columns the rest of this iteration
+      // needs. plan_overrides is critical — without it, gate helpers fall
+      // back to defaults always and per-zee overrides do nothing.
+      // (Apr 29, 2026 — fixes Bug 2 from Phase 6 build.)
+      const tenantRes = await db.query(
+        `SELECT id, plan, plan_overrides, bundle_minutes_balance,
+                twilio_account_sid, twilio_auth_token
+           FROM tenants WHERE id = $1`,
+        [campaign.tenant_id]
+      );
+      const tenant = tenantRes.rows[0];
+      if (!tenant) {
+        console.warn("[Outbound] Tenant %s missing, skipping campaign %s", campaign.tenant_id, campaign.name);
+        continue;
+      }
+
+      // 4. CHECK: Outbound feature gates (Apr 29, 2026 — Phase 6 Franchise).
+      // auto mode = AI-driven estimate/lead followup → gated by followup flag.
+      // any other mode = bulk list dialing → gated by lists flag.
+      // Both gated checks happen before script generation or Twilio cost.
+      if (campaign.mode === "auto") {
+        if (!canRunOutboundFollowup(tenant)) {
+          console.warn(
+            "[Outbound] Skipping campaign %s: tenant %s has outbound_followup disabled",
+            campaign.name,
+            tenant.id
+          );
+          continue;
+        }
+      } else {
+        if (!canRunOutboundLists(tenant)) {
+          console.warn(
+            "[Outbound] Skipping campaign %s: tenant %s has outbound_lists disabled",
+            campaign.name,
+            tenant.id
+          );
+          continue;
+        }
+      }
+
+      // 5. CHECK: Daily call cap.
+      // Franchise zees default to 50/day. HQ can override per-zee.
+      // Non-franchise tenants default to Infinity (no cap).
+      const dailyMax = getOutboundDailyMax(tenant);
+      if (Number.isFinite(dailyMax)) {
+        const todayCount = await getTodayCallCount(tenant.id);
+        if (todayCount >= dailyMax) {
+          console.warn(
+            "[Outbound] Skipping campaign %s: tenant %s hit daily cap (%d/%d)",
+            campaign.name,
+            tenant.id,
+            todayCount,
+            dailyMax
+          );
+          continue;
+        }
+      }
+
+      // 6. CHECK: Tenant Minute Balance
+      const balance = await getTenantMinuteBalance(tenant);
       if (balance <= 0) {
-        console.warn("[Outbound] Pausing campaign %s: Tenant %s out of minutes.", campaign.name, campaign.tenant_id);
+        console.warn("[Outbound] Pausing campaign %s: Tenant %s out of minutes.", campaign.name, tenant.id);
         await db.query("UPDATE outbound_campaigns SET status = 'paused' WHERE id = $1", [campaign.id]);
         // TODO: Send alert to user
         continue;
       }
 
-      // 4. Find next contact to call
+      // 7. Find next contact to call
       const contact = await findNextContact(campaign);
       if (!contact) {
         console.log("[Outbound] Campaign %s finished all contacts.", campaign.name);
@@ -50,7 +114,7 @@ async function processActiveCampaigns() {
         continue;
       }
 
-      // 5. Pick a script (for Auto mode)
+      // 8. Pick a script (for Auto mode)
       let scriptId = null;
       if (campaign.mode === 'auto') {
         const scriptRes = await db.query(
@@ -75,8 +139,8 @@ async function processActiveCampaigns() {
         scriptId = randomScript.id;
       }
 
-      // 6. Initiate Call
-      await initiateOutboundCall(campaign, contact, scriptId);
+      // 9. Initiate Call (pass tenant — already loaded above)
+      await initiateOutboundCall(campaign, contact, scriptId, tenant);
     } catch (e) {
       console.error("[Outbound] Error processing campaign %s:", campaign.id, e.message);
     }
@@ -89,12 +153,39 @@ function isWithinCallingHours(campaign) {
   return timeStr >= campaign.calling_hours_start && timeStr <= campaign.calling_hours_end;
 }
 
-async function getTenantMinuteBalance(tenantId) {
+/**
+ * Count outbound calls already attempted today for this tenant.
+ * Uses outbound_contacts.last_attempt_at joined to campaigns by tenant.
+ * Apr 29, 2026 — added for franchise daily-cap enforcement.
+ *
+ * NOTE: If you have a dedicated outbound_call_log or calls table that
+ * tracks outbound separately, swap this query — outbound_contacts only
+ * captures the LAST attempt per contact, so a contact called 3x today
+ * still counts as 1 here. Acceptable for soft cap enforcement on the
+ * franchise tier; tighten later if needed.
+ */
+async function getTodayCallCount(tenantId) {
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+  const res = await db.query(
+    `SELECT COUNT(*) as cnt
+       FROM outbound_contacts oc
+       JOIN outbound_campaigns ocp ON ocp.id = oc.campaign_id
+      WHERE ocp.tenant_id = $1
+        AND oc.last_attempt_at >= $2`,
+    [tenantId, startOfDay]
+  );
+  return parseInt(res.rows[0]?.cnt || "0", 10);
+}
+
+/**
+ * Get tenant's remaining minute balance for the month.
+ * Now accepts a tenant object so caller can avoid double-querying.
+ */
+async function getTenantMinuteBalance(tenant) {
   // Plan limits (duplicated here for speed, better in a shared lib)
-  const PLAN_LIMITS = { basic: 500, pro: 1200, elite: 3000 };
-  
-  const tenantRes = await db.query("SELECT plan, bundle_minutes_balance FROM tenants WHERE id = $1", [tenantId]);
-  const tenant = tenantRes.rows[0];
+  const PLAN_LIMITS = { basic: 500, pro: 1200, elite: 3000, franchise: 500 };
+
   if (!tenant) return 0;
 
   const startOfMonth = new Date();
@@ -103,7 +194,7 @@ async function getTenantMinuteBalance(tenantId) {
 
   const usageRes = await db.query(
     "SELECT COALESCE(SUM(duration_sec), 0) as total_sec FROM recordings WHERE tenant_id = $1 AND created_at >= $2",
-    [tenantId, startOfMonth]
+    [tenant.id, startOfMonth]
   );
   
   const usedMinutes = Math.ceil(usageRes.rows[0].total_sec / 60);
@@ -128,12 +219,14 @@ async function findNextContact(campaign) {
   return res.rows[0] || null;
 }
 
-async function initiateOutboundCall(campaign, contact, scriptId = null) {
-  const tenantRes = await db.query(
-    "SELECT id, twilio_account_sid, twilio_auth_token FROM tenants WHERE id = $1", 
-    [campaign.tenant_id]
-  );
-  const tenant = tenantRes.rows[0];
+/**
+ * Initiate the actual Twilio call.
+ * @param {object} campaign - campaign row
+ * @param {object} contact - contact row
+ * @param {string|null} scriptId - script to use (auto mode)
+ * @param {object} tenant - already-loaded tenant (avoids redundant SELECT)
+ */
+async function initiateOutboundCall(campaign, contact, scriptId, tenant) {
   if (!tenant || !tenant.twilio_account_sid) return;
 
   const client = twilio(tenant.twilio_account_sid, tenant.twilio_auth_token);

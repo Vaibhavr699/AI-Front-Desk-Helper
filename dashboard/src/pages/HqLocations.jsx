@@ -55,13 +55,24 @@ export default function HqLocations() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
-  async function resolveHq() {
+ async function resolveHq() {
     setLoading(true);
     setError("");
     try {
+      // Apr 29, 2026 — respect superadmin impersonation. impersonate_tenant_id
+      // takes precedence over the user's primary tenant when set.
+      const impersonatedId = localStorage.getItem("impersonate_tenant_id");
+
       const data = await getTenants();
       const list = data?.tenants || [];
-      const primary = list[0];
+
+      let primary;
+      if (impersonatedId) {
+        primary = list.find((t) => t.id === impersonatedId) || list[0];
+      } else {
+        primary = list[0];
+      }
+
       if (!primary?.id) {
         setError("No tenant found for this user.");
         setLoading(false);

@@ -44,6 +44,12 @@ const PLAN_COLORS = {
   basic: { bg: "rgba(156,163,175,0.1)", text: "#6b7280", border: "rgba(156,163,175,0.2)", dot: "#9ca3af", gradient: "from-gray-400 to-gray-500" },
   pro: { bg: "rgba(59,130,246,0.08)", text: "#2563eb", border: "rgba(59,130,246,0.15)", dot: "#3b82f6", gradient: "from-blue-500 to-blue-600" },
   elite: { bg: "rgba(139,92,246,0.08)", text: "#7c3aed", border: "rgba(139,92,246,0.15)", dot: "#8b5cf6", gradient: "from-violet-500 to-purple-600" },
+  // Apr 30, 2026 — Phase 6 Franchise + HQ tier badges. Orange for franchise zees,
+  // indigo for HQ tiers (matches Locations dashboard accent in HqLocations.jsx).
+  franchise: { bg: "rgba(249,115,22,0.08)", text: "#ea580c", border: "rgba(249,115,22,0.2)", dot: "#f97316", gradient: "from-orange-500 to-orange-600" },
+  hq_starter: { bg: "rgba(99,102,241,0.08)", text: "#4f46e5", border: "rgba(99,102,241,0.2)", dot: "#6366f1", gradient: "from-indigo-500 to-indigo-600" },
+  hq_growth: { bg: "rgba(99,102,241,0.08)", text: "#4f46e5", border: "rgba(99,102,241,0.2)", dot: "#6366f1", gradient: "from-indigo-500 to-indigo-600" },
+  hq_enterprise: { bg: "rgba(99,102,241,0.08)", text: "#4f46e5", border: "rgba(99,102,241,0.2)", dot: "#6366f1", gradient: "from-indigo-500 to-indigo-600" },
 };
 
 function centsToDisplay(cents) {
@@ -462,16 +468,20 @@ export default function Admin({ view: initialView = "tenants" }) {
                       onChange={(e) => setSearchQuery(e.target.value)}
                     />
                   </div>
-                  <select
-                    value={filterPlan}
-                    onChange={(e) => setFilterPlan(e.target.value)}
-                    className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:ring-2 focus:ring-slate-900 focus:border-transparent outline-none transition-all"
-                  >
-                    <option value="all">All Plans</option>
-                    <option value="basic">Basic</option>
-                    <option value="pro">Pro</option>
-                    <option value="elite">Elite</option>
-                  </select>
+                <select
+  value={filterPlan}
+  onChange={(e) => setFilterPlan(e.target.value)}
+  className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:ring-2 focus:ring-slate-900 focus:border-transparent outline-none transition-all"
+>
+  <option value="all">All Plans</option>
+  <option value="basic">Basic</option>
+  <option value="pro">Pro</option>
+  <option value="elite">Elite</option>
+  <option value="franchise">Franchise</option>
+  <option value="hq_starter">HQ Starter</option>
+  <option value="hq_growth">HQ Growth</option>
+  <option value="hq_enterprise">HQ Enterprise</option>
+</select>
                 </div>
               </div>
 

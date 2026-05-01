@@ -2675,10 +2675,10 @@ export default function Settings({ tenantId }) {
                       <Calculator className="w-6 h-6" strokeWidth={2.5} />
                     </div>
                     <div>
-                      <h3 className={`text-lg font-black tracking-tight mb-1 flex items-center gap-2 ${
+                     <h3 className={`text-lg font-black tracking-tight mb-1 flex items-center gap-2 ${
                         form.estimator_widget_enabled ? "text-white" : "text-gray-900"
                       }`}>
-                        Ballpark Pricing Widget
+                        Estimator in chat
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
                           form.estimator_widget_enabled
                             ? "bg-emerald-500/20 text-emerald-300 border border-emerald-400/30"
@@ -2691,8 +2691,8 @@ export default function Settings({ tenantId }) {
                         form.estimator_widget_enabled ? "text-slate-300" : "text-gray-500"
                       }`}>
                         {form.estimator_widget_enabled
-                          ? "The widget is live on any site running your embed snippet. Homeowners see the floating CTA bottom-left."
-                          : "Turn on to enable the widget on websites running your embed snippet."}
+                          ? "Adds a \"💰 Quick Quote\" button to your chat widget. Homeowners get a ballpark range and you get a lead with full project details."
+                          : "Turn on to add a \"💰 Quick Quote\" button to your chat widget."}
                       </p>
                     </div>
                   </div>
@@ -2707,36 +2707,6 @@ export default function Settings({ tenantId }) {
                   >
                     <div className={`absolute top-1 w-7 h-7 rounded-full bg-white shadow-lg transition-transform ${
                       form.estimator_widget_enabled ? "translate-x-8" : "translate-x-1"
-                    }`} />
-                  </button>
-                </div>
-              </section>
-
-              {/* Proactive popup toggle */}
-              <section className={`pt-2 ${!form.estimator_widget_enabled ? "opacity-40 pointer-events-none" : ""}`}>
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
-                      <Zap className="w-4 h-4 text-primary" />
-                      Proactive auto-open
-                    </h3>
-                    <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-xl">
-                      Automatically open the widget after a few seconds when a homeowner lands on your site.
-                      Higher engagement, but more intrusive — leave off if you prefer a passive CTA.
-                      <span className="block text-xs text-amber-600 italic mt-1">Coming soon — toggle persists, behavior wires in V2.</span>
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleUpdateForm("estimator_pop_enabled", !form.estimator_pop_enabled)}
-                    className={`relative w-12 h-7 rounded-full transition-colors shrink-0 ${
-                      form.estimator_pop_enabled ? "bg-gray-900" : "bg-gray-300"
-                    }`}
-                    aria-pressed={form.estimator_pop_enabled}
-                    aria-label="Toggle proactive popup"
-                  >
-                    <div className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${
-                      form.estimator_pop_enabled ? "translate-x-5" : "translate-x-0.5"
                     }`} />
                   </button>
                 </div>
@@ -2813,13 +2783,6 @@ export default function Settings({ tenantId }) {
                 )}
               </section>
 
-              {/* Embed snippet */}
-              <section className="pt-4 border-t border-gray-100">
-                <div className="mb-4">
-                  <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
-                    <LinkIcon className="w-4 h-4 text-primary" />
-                    Embed on your website
-                  </h3>
                   <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-xl">
                     Paste this script tag before the closing <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs">&lt;/body&gt;</code> tag on every page where you want the widget to appear.
                   </p>

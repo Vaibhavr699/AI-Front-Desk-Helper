@@ -1007,7 +1007,7 @@ export default function Settings({ tenantId }) {
       ring_first_enabled: form.ring_first_enabled,
       ring_first_phone: form.ring_first_phone.trim() || null,
       ring_first_timeout_seconds: form.ring_first_timeout_seconds,
-      voicemail_message_url: form.voicemail_message_url.trim() || null
+      voicemail_message_url: form.voicemail_message_url.trim() || null,
       estimator_widget_enabled: form.estimator_widget_enabled,
       estimator_pop_enabled: form.estimator_pop_enabled,
       cost_region: form.cost_region || null,

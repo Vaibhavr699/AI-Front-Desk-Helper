@@ -422,6 +422,7 @@ app.post("/api/public/contact", async (req, res) => {
   }
 });
 app.use("/api/public", require("./routes/public"));
+app.use("/api/estimator", require("./routes/estimator"));
 app.use("/twilio", twilioRoutes);
 app.use("/api/webhooks", require("./routes/webhooks"));
 app.use("/api/auth", authRoutes);
@@ -431,6 +432,7 @@ app.use("/api/leads", leadRoutes);
 app.use("/api/notifications", require("./routes/notifications"));
 app.use("/api/stripe", authMiddleware, require("./routes/stripe"));
 app.use("/api/admin", authMiddleware, requireSuperAdmin, require("./routes/admin"));
+app.use("/api/admin/estimator", authMiddleware, requireSuperAdmin, require("./routes/estimatorAdmin"));
 app.use("/api/team", authMiddleware, require("./routes/team"));
 app.use("/api/audit-logs", authMiddleware, auditLogsRouter);
 app.use("/api/franchisee", require("./routes/franchisee"));

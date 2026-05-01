@@ -577,7 +577,7 @@ export default function Settings({ tenantId }) {
         ring_first_enabled: t.ring_first_enabled === true,
         ring_first_phone: t.ring_first_phone || "",
         ring_first_timeout_seconds: t.ring_first_timeout_seconds || 20,
-        voicemail_message_url: t.voicemail_message_url || ""
+        voicemail_message_url: t.voicemail_message_url || "",
          estimator_widget_enabled: t.estimator_widget_enabled === true,
         estimator_pop_enabled: t.estimator_pop_enabled === true,
         cost_region: t.cost_region || null,

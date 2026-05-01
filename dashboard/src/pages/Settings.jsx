@@ -3894,7 +3894,71 @@ Thanks!`;
             </div>
           )}
              {activeTab === "plans" && (
-             <Plans tenantId={tenantId} />
+             <div className="space-y-8">
+               {/* Phase 7 — Estimator Add-On upsell card */}
+               {(tenant?.plan === "basic" || tenant?.plan === "pro") && !tenant?.estimator_addon_purchased && (
+                 <div className="relative overflow-hidden bg-gradient-to-br from-emerald-50 to-emerald-50/30 border-2 border-emerald-200 rounded-3xl p-6 md:p-8">
+                   <div className="absolute top-0 right-0 p-8 opacity-[0.06] pointer-events-none">
+                     <Calculator className="w-32 h-32" />
+                   </div>
+                   <div className="relative z-10 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+                     <div className="flex items-start gap-4 flex-1">
+                       <div className="w-12 h-12 rounded-2xl bg-emerald-600 flex items-center justify-center text-white shadow-lg shadow-emerald-600/20 shrink-0">
+                         <Calculator className="w-6 h-6" strokeWidth={2.5} />
+                       </div>
+                       <div className="flex-1">
+                         <div className="flex items-center gap-2 mb-1 flex-wrap">
+                           <h3 className="text-lg font-black text-emerald-900 tracking-tight">Estimator Add-On</h3>
+                           <span className="px-2 py-0.5 bg-emerald-600 text-white text-[10px] font-black uppercase tracking-widest rounded-md shadow-sm">
+                             $15/mo
+                           </span>
+                         </div>
+                         <p className="text-sm text-emerald-900/80 leading-relaxed mb-3 max-w-xl">
+                           Add a "💰 Quick Quote" button to your chat widget. Homeowners get an instant ballpark range, you get a qualified lead with full project details — service type, room counts, square footage, and the calculated quote.
+                         </p>
+                         <div className="flex flex-wrap gap-3 text-[11px] text-emerald-700 font-bold">
+                           <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" />4 services included</span>
+                           <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" />State-based regional pricing</span>
+                           <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" />Lead capture built in</span>
+                         </div>
+                       </div>
+                     </div>
+                     <button
+                       type="button"
+                       onClick={async () => {
+                         try {
+                           const { createEstimatorAddonCheckout } = await import("../api");
+                           const res = await createEstimatorAddonCheckout(tenantId);
+                           if (res.url) {
+                             window.location.href = res.url;
+                           }
+                         } catch (e) {
+                           toastError(`Checkout failed: ${e.message}`);
+                         }
+                       }}
+                       className="px-6 py-3.5 bg-emerald-600 text-white rounded-xl font-black text-xs uppercase tracking-widest shadow-lg shadow-emerald-600/30 hover:bg-emerald-700 transition-all active:scale-95 whitespace-nowrap"
+                     >
+                       Add to Plan →
+                     </button>
+                   </div>
+                 </div>
+               )}
+
+               {/* Confirmation banner if just purchased */}
+               {(tenant?.plan === "basic" || tenant?.plan === "pro") && tenant?.estimator_addon_purchased && (
+                 <div className="p-5 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-3">
+                   <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                   <div className="flex-1">
+                     <h3 className="text-sm font-bold text-emerald-900">Estimator Add-On active</h3>
+                     <p className="text-xs text-emerald-800 mt-0.5 leading-relaxed">
+                       The Quick Quote button is live in your chat widget. Configure it in the <strong>Estimator</strong> tab. Manage billing via the Stripe portal in the section below.
+                     </p>
+                   </div>
+                 </div>
+               )}
+
+               <Plans tenantId={tenantId} />
+             </div>
           )}
           
            {activeTab === "billing" && (

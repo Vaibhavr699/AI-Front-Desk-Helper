@@ -1329,7 +1329,7 @@ router.patch("/tenants/:id", async (req, res) => {
 
   let allowed = [
       "name", "company_name", "timezone", "website", "logo_url",
-      "welcome_message", "voice_welcome_message", "chat_welcome_message", "instructions", "transfer_numbers", "transfer_sms_brief",
+      "welcome_message", "voice_welcome_message", "chat_welcome_message", "instructions", "sms_instructions", "transfer_numbers", "transfer_sms_brief",
       "crm_webhook_url", "crm_type", "follow_up_enabled", "plan", 
       "twilio_account_sid", "twilio_auth_token", "facebook_page_id", "facebook_page_access_token",
       "tone_of_voice", "objection_handling_config", "business_hours", "afterhours_behavior", 
@@ -1343,7 +1343,12 @@ router.patch("/tenants/:id", async (req, res) => {
       // AI Control (mig 040) — tenant-wide routing fields. Apr 23, 2026.
       "ai_master_enabled", "ai_answers_after_hours",
       "ring_first_enabled", "ring_first_phone", "ring_first_timeout_seconds",
-      "voicemail_message_url"
+      "voicemail_message_url",
+      // Phase 7 V1 estimator fields (mig 047). May 1, 2026.
+      // Without these, Settings.jsx Estimator tab silently drops saves
+      // for all 4 estimator config fields. UI shows success, DB unchanged.
+      "estimator_widget_enabled", "estimator_pop_enabled",
+      "cost_region", "cost_custom_percentage"
     ];
    
     try {

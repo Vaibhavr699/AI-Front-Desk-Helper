@@ -179,6 +179,126 @@ router.post("/lead", async (req, res) => {
       quote_result?.specialized || false
     );
 
+    // ─────────────────────────────────────────────────────────────
+    // CRM FORWARDING — added May 1, 2026 (Phase 7 V1.5 critical fix)
+    // 
+    // Without this, estimator leads landed in the leads table but
+    // never reached DripJobs/Zapier. Tenants would see leads in
+    // /leads dashboard but their actual sales workflow had no idea
+    // they existed. Mirrors the pattern from processSmsConversation
+    // in server.js.
+    // ─────────────────────────────────────────────────────────────
+    try {
+      // Build the CRM payload from estimator data + contact info.
+      // Using direct require (not server.js import) to avoid circular deps.
+      const crmWebhookPayload = require("../lib/crmWebhookPayload");
+      
+      // Format the quote range for project_details if we have one
+      let projectDetailsText = "";
+      if (quote_result && !quote_result.specialized) {
+        const minDollars = Math.round(quote_result.range_min_cents / 100);
+        const maxDollars = Math.round(quote_result.range_max_cents / 100);
+        projectDetailsText = `Estimator quote range: $${minDollars.toLocaleString()} - $${maxDollars.toLocaleString()}`;
+        if (estimator_payload.rooms && estimator_payload.rooms.length > 0) {
+          const roomSummary = estimator_payload.rooms
+            .filter(r => r.count > 0)
+            .map(r => `${r.count} ${r.size || "medium"} ${r.type || "rooms"}`)
+            .join(", ");
+          if (roomSummary) projectDetailsText += ` | ${roomSummary}`;
+        }
+      } else if (quote_result?.specialized) {
+        projectDetailsText = `Specialized project — needs in-person walkthrough. Reason: ${quote_result.reason || "(not provided)"}`;
+      }
+
+      const nameParts = crmWebhookPayload.splitDisplayName(name || "");
+      const phoneNorm = crmWebhookPayload.normalizePhoneForCrm(phone) || phone;
+
+      const crmPayload = {
+        event_type: "lead_capture",
+        source: "estimator_widget",
+        full_name: nameParts.full_name || name || "",
+        first_name: nameParts.first_name,
+        last_name: nameParts.last_name,
+        contact_name: name || "",
+        phone: phoneNorm,
+        contact_phone: phoneNorm,
+        email: email || "",
+        address: address || "",
+        job_type: project_type || "",
+        project_type: project_type || "",
+        project_details: projectDetailsText,
+        appointment_details: projectDetailsText,
+        lead_type: "INQUIRY",
+        timestamp: new Date().toISOString(),
+        tenant_id: tenant_id,
+      };
+
+      // Look up tenant CRM webhooks and POST. Inline implementation
+      // because sendToCRM lives in server.js and isn't exported.
+      const tenantRow = await db.query(
+        "SELECT crm_webhook_url, zapier_webhook_url, name, company_name FROM tenants WHERE id = $1",
+        [tenant_id]
+      ).then(r => r.rows[0]);
+
+      const webhookUrls = [];
+      if (tenantRow?.crm_webhook_url?.trim()) webhookUrls.push(tenantRow.crm_webhook_url.trim());
+      if (tenantRow?.zapier_webhook_url?.trim()) webhookUrls.push(tenantRow.zapier_webhook_url.trim());
+
+      if (webhookUrls.length === 0) {
+        console.warn("[Estimator] No CRM webhook configured for tenant %s. Lead saved but not forwarded.", tenant_id);
+      } else {
+        crmPayload.tenant_name = tenantRow.name;
+        crmPayload.company_name = tenantRow.company_name;
+
+        // Smart fallbacks matching sendToCRM behavior
+        if (!crmPayload.first_name) crmPayload.first_name = "New Lead";
+        if (!crmPayload.last_name) crmPayload.last_name = ".";
+        if (!crmPayload.email) {
+          crmPayload.email = `lead-${phoneNorm.replace(/\D/g, "").slice(-10)}@placeholder.local`;
+        }
+        if (!crmPayload.address) crmPayload.address = "Not provided";
+        crmPayload.city = "Omaha";
+        crmPayload.state = "NE";
+        crmPayload.zip = "00000";
+        crmPayload.preferred_date = new Date().toISOString().split("T")[0];
+
+        console.log("[Estimator] Forwarding lead to %d CRM webhook(s)", webhookUrls.length);
+        for (const url of webhookUrls) {
+          try {
+            const resp = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(crmPayload),
+            });
+            if (resp.ok) {
+              console.log("[Estimator] CRM forward SUCCESS url=%s tenantId=%s leadId=%s", url, tenant_id, lead.id);
+            } else {
+              const errBody = await resp.text();
+              console.error("[Estimator] CRM forward FAILED url=%s status=%d body=%s", url, resp.status, errBody.slice(0, 200));
+            }
+          } catch (fwdErr) {
+            console.error("[Estimator] CRM forward error url=%s error=%s", url, fwdErr.message);
+          }
+        }
+      }
+    } catch (crmErr) {
+      // CRM failure must NOT break the lead capture. Log and proceed.
+      console.error("[Estimator] CRM forwarding error (non-fatal):", crmErr.message);
+    }
+
+    // Bell notification — matches notification pattern from book_appointment
+    try {
+      const notificationsService = require("../services/notifications");
+      await notificationsService.createNotification(tenant_id, {
+        type: 'lead_captured',
+        title: 'New Estimator Lead',
+        body: `${name || "A new lead"} requested a quote${quote_result?.specialized ? ' (specialized project)' : quote_result ? ` — range $${Math.round(quote_result.range_min_cents/100).toLocaleString()}-$${Math.round(quote_result.range_max_cents/100).toLocaleString()}` : ''}.`,
+        data: { lead_id: lead.id, source: 'estimator_widget', phone, project_type, quote_result }
+      });
+    } catch (notifErr) {
+      console.error("[Estimator] Notification failed (non-fatal):", notifErr.message);
+    }
+
     res.json({ success: true, lead_id: lead.id });
   } catch (e) {
     console.error("[Estimator] /lead error:", e.message);

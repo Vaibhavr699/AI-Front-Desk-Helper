@@ -38,10 +38,25 @@
   let hasWelcomed        = false;
   let isOpen             = false;
 
-  // ── Mobile detection (Apr 21, 2026 — mobile sizing fix) ───────────────────
-  // Single source of truth for breakpoint. 640px matches Tailwind's `sm:`.
-  // Re-evaluated on every resize/orientationchange so rotating a tablet into
-  // phone width doesn't leave the widget in a stale desktop layout.
+  // ── Estimator state (Phase 7 V1 — May 2, 2026) ────────────────────────────
+  // Inline estimator flow rendered as chat messages. Triggered by the
+  // "💰 Quick Quote" button pinned above the input area. Coexists with
+  // normal Alex chat — if user types mid-flow, Alex responds normally and
+  // estimator state pauses (can be resumed by tapping a previous card).
+  let estimatorEnabled   = false;        // From /api/estimator/tenant-config
+  let estimatorConfig    = null;         // services + questions + options
+  let estimatorActive    = false;        // True when in mid-flow
+  const estimatorState = {
+    service_slug: null,
+    inputs: {},
+    rooms: [],
+    _roomSize: "medium",
+    quote_result: null,
+    contact: { name: "", phone: "", email: "", address: "" },
+    _step: null    // Tracks which question we're currently rendering
+  };
+
+  // ── Mobile detection ──────────────────────────────────────────────────────
   const MOBILE_BP = 640;
   function isMobile() {
     return window.innerWidth <= MOBILE_BP;
@@ -56,6 +71,10 @@
       const b   = Math.min(255, (num & 0xff) + amount);
       return "#" + ((r << 16) | (g << 8) | b).toString(16).padStart(6, "0");
     } catch { return hex; }
+  }
+
+  function formatCents(cents) {
+    return "$" + Math.round(cents / 100).toLocaleString();
   }
 
   // ── Visitor tracking ───────────────────────────────────────────────────────
@@ -80,7 +99,7 @@
     } catch (err) { console.warn("[AI Widget] Lead capture failed:", err); }
   }
 
-  // ── Init: fetch tenant branding config ────────────────────────────────────
+  // ── Init: fetch tenant branding + estimator config in parallel ────────────
   async function initWidget() {
     if (!tenantId) {
       console.error("[AI-Widget] No tenantId found. Script tag must have data-tenant-id attribute.");
@@ -90,28 +109,36 @@
 
     try {
       console.log("[AI-Widget] Fetching configuration...");
-      const res = await fetch(`${apiBase}/api/public-tenant/${tenantId}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.company_name || data.name) companyName       = data.company_name || data.name;
-        // Apr 21, 2026: prefer chat_welcome_message (channel-specific, set in
-        // Settings → AI behavior → "Chat widget greeting"). Falls back to the
-        // legacy welcome_message field, then to the hardcoded default above.
-        if (data.chat_welcome_message)      welcomeMessage    = data.chat_welcome_message;
-        else if (data.welcome_message)      welcomeMessage    = data.welcome_message;
-        if (data.brand_color)               brandColor        = data.brand_color;
-        if (data.logo_url)                  logoUrl           = data.logo_url;
-        if (data.twilio_phone_number)       twilioPhoneNumber = data.twilio_phone_number;
+      const [brandingRes, estimatorRes] = await Promise.all([
+        fetch(`${apiBase}/api/public-tenant/${tenantId}`).then(r => r.ok ? r.json() : null),
+        fetch(`${apiBase}/api/estimator/tenant-config/${tenantId}`).then(r => r.ok ? r.json() : null)
+      ]);
+
+      if (brandingRes) {
+        if (brandingRes.company_name || brandingRes.name) companyName = brandingRes.company_name || brandingRes.name;
+        if (brandingRes.chat_welcome_message)              welcomeMessage = brandingRes.chat_welcome_message;
+        else if (brandingRes.welcome_message)              welcomeMessage = brandingRes.welcome_message;
+        if (brandingRes.brand_color)                        brandColor = brandingRes.brand_color;
+        if (brandingRes.logo_url)                           logoUrl    = brandingRes.logo_url;
+        if (brandingRes.twilio_phone_number)                twilioPhoneNumber = brandingRes.twilio_phone_number;
         console.log("[AI-Widget] Loaded config for:", companyName, "| color:", brandColor);
       } else {
         console.warn("[AI-Widget] Failed to load config, using defaults.");
+      }
+
+      if (estimatorRes) {
+        estimatorConfig = estimatorRes;
+        estimatorEnabled = true;
+        console.log("[AI-Widget] Estimator enabled. Services:", estimatorConfig.services?.length || 0);
+      } else {
+        console.log("[AI-Widget] Estimator not enabled for this tenant.");
       }
     } catch (err) {
       console.error("[AI-Widget] Init error:", err);
     }
   }
 
-  // ── Build the UI (called after config loaded) ─────────────────────────────
+  // ── Build the UI ──────────────────────────────────────────────────────────
   function createUI() {
     if (!document.body) {
       setTimeout(createUI, 50);
@@ -121,9 +148,6 @@
 
     const hoverColor = lightenColor(brandColor, 20);
 
-    // Animations + mobile-specific media query rules.
-    // Apr 21, 2026: Added @media block for mobile-specific CSS that can't be
-    // expressed inline (viewport-relative sizing depends on being in CSS, not JS).
     const style = document.createElement("style");
     style.innerHTML = `
       @keyframes ai-fadeIn   { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
@@ -139,10 +163,41 @@
       .ai-typing-dot:nth-child(3) { animation-delay:0.4s; }
       #ai-chat-toggle:hover { opacity:0.9; transform:scale(1.05) !important; }
 
-      /* Mobile-specific rules (applied on ≤640px) */
+      /* Estimator inline UI elements */
+      .ai-est-card-btn {
+        display: block; width: 100%; padding: 10px 12px;
+        margin: 4px 0; background: #fff; border: 1.5px solid #e0e0e0;
+        border-radius: 10px; cursor: pointer; text-align: left;
+        font-family: inherit; font-size: 13px; color: #222;
+        transition: all 0.15s; font-weight: 500;
+      }
+      .ai-est-card-btn:hover { border-color: ${brandColor}; background: ${brandColor}08; }
+      .ai-est-card-btn.selected { border-color: ${brandColor}; background: ${brandColor}15; }
+      .ai-est-card-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+      .ai-est-input {
+        width: 100%; padding: 9px 12px; border: 1.5px solid #e0e0e0;
+        border-radius: 8px; font-size: 14px; outline: none;
+        font-family: inherit; box-sizing: border-box; background: #fff;
+        transition: border-color 0.15s;
+      }
+      .ai-est-input:focus { border-color: ${brandColor}; }
+
+      .ai-est-counter-row {
+        display: flex; align-items: center; gap: 8px;
+        padding: 6px 8px; border-radius: 6px; background: #fafafa;
+        border: 1px solid #eee; margin: 3px 0;
+      }
+      .ai-est-counter-btn {
+        width: 26px; height: 26px; border: 1px solid #ddd;
+        background: #fff; border-radius: 5px; cursor: pointer;
+        font-size: 14px; font-family: inherit;
+        display: flex; align-items: center; justify-content: center;
+      }
+
+      /* Mobile-specific rules (≤640px) */
       @media (max-width: 640px) {
         #ai-chat-container {
-          /* 100dvh respects iOS/Android keyboard; falls back to 100vh on old browsers */
           width: calc(100vw - 16px) !important;
           max-width: calc(100vw - 16px) !important;
           height: calc(100vh - 16px) !important;
@@ -153,7 +208,6 @@
           border-radius: 14px !important;
         }
         #ai-chat-toggle {
-          /* Bubble-only on mobile — circular icon instead of pill */
           width: 56px !important;
           height: 56px !important;
           padding: 0 !important;
@@ -166,11 +220,9 @@
           justify-content: center !important;
         }
         #ai-chat-callout {
-          /* Hide callout on mobile — screen real estate too precious */
           display: none !important;
         }
         #ai-sms-modal {
-          /* Lift SMS modal out of its container on mobile so it's not clipped */
           position: fixed !important;
           top: 0 !important; left: 0 !important;
           width: 100vw !important; height: 100vh !important;
@@ -184,7 +236,6 @@
     const toggle = document.createElement("div");
     toggle.id = "ai-chat-toggle";
     toggle.className = "ai-slide-in";
-    // Text content set dynamically by applyResponsiveLayout() depending on mobile state
     Object.assign(toggle.style, {
       position: "fixed", bottom: "30px", right: "30px",
       background: brandColor,
@@ -198,9 +249,13 @@
     document.body.appendChild(toggle);
 
     // ── Callout bubble ───────────────────────────────────────────────────────
+    // Phase 7: switched copy from "Need a quick quote?" to estimator-aware
+    // language when estimator is enabled. Otherwise keeps original copy.
     const callout = document.createElement("div");
     callout.id = "ai-chat-callout";
-    callout.innerHTML = `👋 Need a quick quote?`;
+    callout.innerHTML = estimatorEnabled
+      ? `💰 Get a quick quote!`
+      : `👋 Need a quick quote?`;
     Object.assign(callout.style, {
       position: "fixed", bottom: "95px", right: "30px",
       background: "#fff", color: "#111", padding: "10px 32px 10px 16px",
@@ -209,8 +264,10 @@
       fontSize: "14px", fontWeight: "500", display: "none",
       opacity: "0", transform: "translateY(10px)",
       transition: "all 0.4s cubic-bezier(0.4,0,0.2,1)",
-      border: "1px solid #eee"
+      border: "1px solid #eee",
+      cursor: "pointer"
     });
+    callout.onclick = () => { if (!isOpen) openChat(); };
     document.body.appendChild(callout);
 
     const calloutArrow = document.createElement("div");
@@ -233,7 +290,7 @@
     callout.appendChild(calloutClose);
 
     function showCallout() {
-      if (isOpen || isMobile()) return; // Don't show callout on mobile
+      if (isOpen || isMobile()) return;
       callout.style.display = "block";
       setTimeout(() => { callout.style.opacity = "1"; callout.style.transform = "translateY(0)"; }, 100);
     }
@@ -270,7 +327,6 @@
       gap: "10px", flexShrink: "0"
     });
 
-    // Logo or initial avatar
     const avatar = document.createElement("div");
     if (logoUrl) {
       const img = document.createElement("img");
@@ -292,10 +348,9 @@
     }
     header.appendChild(avatar);
 
-    // Title + status
     const headerInfo = document.createElement("div");
     headerInfo.style.flex = "1";
-    headerInfo.style.minWidth = "0"; // Enables text-overflow ellipsis on mobile
+    headerInfo.style.minWidth = "0";
     const headerTitle = document.createElement("div");
     headerTitle.innerText = companyName;
     Object.assign(headerTitle.style, {
@@ -309,8 +364,6 @@
     headerInfo.appendChild(headerStatus);
     header.appendChild(headerInfo);
 
-    // Close button for header (mobile + desktop — clearer UX than clicking the floating toggle)
-    // Apr 21, 2026: added so mobile users have an obvious way to close full-screen chat.
     const closeBtn = document.createElement("button");
     closeBtn.innerHTML = "&times;";
     closeBtn.type = "button";
@@ -323,7 +376,6 @@
       flexShrink: "0", padding: "0"
     });
 
-    // SMS button
     const smsBtn = document.createElement("button");
     smsBtn.innerText = "SMS";
     smsBtn.title = "Text us instead";
@@ -338,7 +390,6 @@
     smsBtn.onclick = () => { smsModal.style.display = "flex"; smsPhoneInput.focus(); };
     header.appendChild(smsBtn);
 
-    // Help (?) button
     const helpBtn = document.createElement("button");
     helpBtn.innerText = "?";
     helpBtn.type = "button";
@@ -368,7 +419,6 @@
       } else {
         if (!tooltip.parentNode) document.body.appendChild(tooltip);
         const r = helpBtn.getBoundingClientRect();
-        // Apr 21: clamp tooltip to viewport on mobile so it doesn't hang off screen
         const tooltipWidth = Math.min(300, window.innerWidth - 16);
         tooltip.style.width = tooltipWidth + "px";
         tooltip.style.left = Math.max(8, Math.min(window.innerWidth - tooltipWidth - 8, r.right - tooltipWidth)) + "px";
@@ -382,7 +432,7 @@
       }
     });
     header.appendChild(helpBtn);
-    header.appendChild(closeBtn); // Close button last so it's right-most
+    header.appendChild(closeBtn);
     container.appendChild(header);
 
     // ── Messages area ────────────────────────────────────────────────────────
@@ -391,28 +441,60 @@
       flex: "1", padding: "16px", overflowY: "auto",
       display: "flex", flexDirection: "column", gap: "10px",
       background: "#fafafa",
-      // Apr 21: smooth scroll + momentum scroll for iOS
       WebkitOverflowScrolling: "touch"
     });
     container.appendChild(messagesBody);
+
+    // ── Quick Quote button (Phase 7 — pinned above input area) ──────────────
+    // Only rendered when estimatorEnabled = true. Always visible while chat
+    // is open. Tappable any time, even mid-conversation.
+    const quickQuoteRow = document.createElement("div");
+    quickQuoteRow.style.display = "none"; // Default hidden, shown if estimator enabled
+    Object.assign(quickQuoteRow.style, {
+      padding: "8px 14px 0 14px", background: "#fff",
+      borderTop: "1px solid #f0f0f0", flexShrink: "0"
+    });
+    const quickQuoteBtn = document.createElement("button");
+    quickQuoteBtn.type = "button";
+    quickQuoteBtn.innerText = "💰 Quick Quote";
+    Object.assign(quickQuoteBtn.style, {
+      width: "100%", padding: "10px 14px",
+      background: `linear-gradient(135deg, ${brandColor} 0%, ${lightenColor(brandColor, -20)} 100%)`,
+      color: "#fff", border: "none", borderRadius: "10px",
+      cursor: "pointer", fontSize: "13px", fontWeight: "700",
+      letterSpacing: "0.3px",
+      boxShadow: `0 2px 8px ${brandColor}33`,
+      fontFamily: "inherit",
+      transition: "transform 0.15s, box-shadow 0.15s"
+    });
+    quickQuoteBtn.onmouseenter = () => {
+      quickQuoteBtn.style.transform = "translateY(-1px)";
+      quickQuoteBtn.style.boxShadow = `0 4px 12px ${brandColor}55`;
+    };
+    quickQuoteBtn.onmouseleave = () => {
+      quickQuoteBtn.style.transform = "translateY(0)";
+      quickQuoteBtn.style.boxShadow = `0 2px 8px ${brandColor}33`;
+    };
+    quickQuoteBtn.onclick = () => startEstimatorFlow();
+    quickQuoteRow.appendChild(quickQuoteBtn);
+    container.appendChild(quickQuoteRow);
 
     // ── Input area ───────────────────────────────────────────────────────────
     const inputArea = document.createElement("div");
     Object.assign(inputArea.style, {
       display: "flex", padding: "12px 14px", borderTop: "1px solid #eee",
       background: "#fff", alignItems: "center", gap: "8px",
-      flexShrink: "0" // Apr 21: prevent input row from being squeezed when messages overflow
+      flexShrink: "0"
     });
     container.appendChild(inputArea);
 
     const input = document.createElement("input");
     input.placeholder = "Type a message...";
-    // Apr 21: 16px font prevents iOS Safari from zooming on focus
     Object.assign(input.style, {
       flex: "1", border: "1.5px solid #eee", outline: "none", fontSize: "16px",
       padding: "9px 12px", background: "#f7f7f7", borderRadius: "20px",
       color: "#111", transition: "border-color 0.2s",
-      minWidth: "0" // Prevents input from overflowing flex container on small screens
+      minWidth: "0"
     });
     input.addEventListener("focus",  () => { input.style.borderColor = brandColor; });
     input.addEventListener("blur",   () => { input.style.borderColor = "#eee"; });
@@ -430,7 +512,7 @@
     sendBtn.onmouseleave = () => { sendBtn.style.opacity = "1"; };
     inputArea.appendChild(sendBtn);
 
-    // ── Message bubble helper ─────────────────────────────────────────────────
+    // ── Message bubble helpers ───────────────────────────────────────────────
     function addMsg(text, isUser) {
       const bubble = document.createElement("div");
       bubble.className = "ai-chat-bubble";
@@ -448,9 +530,27 @@
       else        bubble.style.borderBottomLeftRadius  = "4px";
       messagesBody.appendChild(bubble);
       messagesBody.scrollTop = messagesBody.scrollHeight;
+      return bubble;
     }
 
-    // ── Typing indicator ──────────────────────────────────────────────────────
+    // Special bubble that holds an interactive component (form, buttons, etc.)
+    function addInteractiveBubble(buildContent) {
+      const bubble = document.createElement("div");
+      bubble.className = "ai-chat-bubble";
+      Object.assign(bubble.style, {
+        padding: "12px 14px", borderRadius: "16px", borderBottomLeftRadius: "4px",
+        fontSize: "14px", maxWidth: "92%", alignSelf: "flex-start",
+        background: "#fff", color: "#222",
+        boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+        border: "1px solid #efefef", lineHeight: "1.5",
+        wordBreak: "break-word"
+      });
+      buildContent(bubble);
+      messagesBody.appendChild(bubble);
+      messagesBody.scrollTop = messagesBody.scrollHeight;
+      return bubble;
+    }
+
     function showTyping() {
       const typing = document.createElement("div");
       typing.id = "ai-typing-indicator";
@@ -469,9 +569,574 @@
       if (t) t.remove();
     }
 
-    // ── Responsive layout — called on mount, resize, and orientationchange ───
-    // Apr 21, 2026: keeps the toggle button text in sync with viewport size.
-    // Desktop: full "Chat with X" / "Close". Mobile: icon only (💬 / ×).
+    // ════════════════════════════════════════════════════════════════════════
+    // ESTIMATOR FLOW (Phase 7 V1 — May 2, 2026)
+    // ════════════════════════════════════════════════════════════════════════
+
+    function startEstimatorFlow() {
+      if (!estimatorEnabled || !estimatorConfig) return;
+      // Reset state
+      estimatorActive = true;
+      estimatorState.service_slug = null;
+      estimatorState.inputs = {};
+      estimatorState.rooms = [];
+      estimatorState._roomSize = "medium";
+      estimatorState.quote_result = null;
+      estimatorState.contact = { name: "", phone: "", email: "", address: "" };
+      estimatorState._step = "service_picker";
+
+      trackVisitor("estimator_started");
+
+      // Intro message
+      addMsg("Great! I'll ask you a few quick questions to give you a ballpark range. This is just an estimate — final pricing requires an in-person walkthrough.", false);
+      setTimeout(() => renderServicePicker(), 600);
+    }
+
+    function renderServicePicker() {
+      const services = (estimatorConfig.services || []).filter(s => !s.is_specialized);
+      const serviceIcons = {
+        interior:   "🏠",
+        exterior:   "🎨",
+        cabinets:   "🚪",
+        deck_fence: "🪵"
+      };
+
+      addInteractiveBubble((bubble) => {
+        const label = document.createElement("div");
+        label.innerText = "What kind of project?";
+        label.style.fontWeight = "600";
+        label.style.marginBottom = "8px";
+        label.style.fontSize = "13px";
+        bubble.appendChild(label);
+
+        services.forEach(svc => {
+          const btn = document.createElement("button");
+          btn.className = "ai-est-card-btn";
+          btn.type = "button";
+          const icon = serviceIcons[svc.service_slug] || "✨";
+          btn.innerHTML = `<span style="font-size:18px;margin-right:8px;vertical-align:middle">${icon}</span><span style="vertical-align:middle">${svc.display_name}</span>`;
+          btn.onclick = () => {
+            estimatorState.service_slug = svc.service_slug;
+            // Disable all buttons in this bubble (lock the answer)
+            bubble.querySelectorAll("button").forEach(b => b.disabled = true);
+            btn.classList.add("selected");
+            // Echo selection as user message
+            addMsg(svc.display_name, true);
+            setTimeout(() => renderQuestionsForService(svc.service_slug), 400);
+          };
+          bubble.appendChild(btn);
+        });
+
+        // Specialized
+        const spec = document.createElement("button");
+        spec.className = "ai-est-card-btn";
+        spec.type = "button";
+        spec.innerHTML = `<span style="font-size:18px;margin-right:8px;vertical-align:middle">🛠️</span><span style="vertical-align:middle">Specialized project</span>`;
+        spec.onclick = () => {
+          estimatorState.service_slug = "specialized";
+          bubble.querySelectorAll("button").forEach(b => b.disabled = true);
+          spec.classList.add("selected");
+          addMsg("Specialized project", true);
+          estimatorState.quote_result = {
+            specialized: true,
+            reason: "Specialized projects need an in-person walkthrough so we can see the details that affect pricing.",
+            quote: null
+          };
+          setTimeout(() => renderSpecializedResult(), 400);
+        };
+        bubble.appendChild(spec);
+      });
+    }
+
+    function getQuestionsForService(serviceSlug) {
+      return (estimatorConfig.questions || []).filter(q =>
+        q.service_slug === serviceSlug ||
+        (q.service_slug === null && q.question_slug !== "service_type" && q.question_slug !== "special_notes")
+      );
+    }
+
+    // Render all questions for a service as a single interactive bubble.
+    // Multi-question forms in one bubble = less scroll churn than one-per-message.
+    function renderQuestionsForService(serviceSlug) {
+      const questions = getQuestionsForService(serviceSlug);
+      if (questions.length === 0) {
+        // Shouldn't happen for valid services, but defensive
+        submitEstimatorQuote();
+        return;
+      }
+
+      addInteractiveBubble((bubble) => {
+        const intro = document.createElement("div");
+        intro.innerText = "Tell me a bit more:";
+        intro.style.fontWeight = "600";
+        intro.style.marginBottom = "10px";
+        intro.style.fontSize = "13px";
+        bubble.appendChild(intro);
+
+        questions.forEach((q, idx) => {
+          const block = renderQuestionBlock(q);
+          if (block) {
+            if (idx > 0) block.style.marginTop = "12px";
+            bubble.appendChild(block);
+          }
+        });
+
+        // Submit button at bottom of the form bubble
+        const submitWrap = document.createElement("div");
+        submitWrap.style.marginTop = "14px";
+        const submitBtn = document.createElement("button");
+        submitBtn.type = "button";
+        submitBtn.innerText = "Get my ballpark range →";
+        Object.assign(submitBtn.style, {
+          width: "100%", padding: "10px",
+          background: brandColor, color: "#fff", border: "none",
+          borderRadius: "8px", cursor: "pointer", fontSize: "13px",
+          fontWeight: "700", fontFamily: "inherit"
+        });
+        submitBtn.onclick = () => {
+          // Lock all inputs in the bubble
+          bubble.querySelectorAll("input, select, button").forEach(el => el.disabled = true);
+          submitBtn.innerText = "Calculating...";
+          submitEstimatorQuote();
+        };
+        submitWrap.appendChild(submitBtn);
+        bubble.appendChild(submitWrap);
+      });
+    }
+
+    function renderQuestionBlock(q) {
+      const wrap = document.createElement("div");
+
+      const label = document.createElement("div");
+      label.innerText = q.label + (q.required ? " *" : "");
+      Object.assign(label.style, {
+        fontWeight: "600", fontSize: "12px", color: "#444",
+        marginBottom: "4px"
+      });
+      wrap.appendChild(label);
+
+      if (q.helper_text) {
+        const helper = document.createElement("div");
+        helper.innerText = q.helper_text;
+        Object.assign(helper.style, { fontSize: "11px", color: "#888", marginBottom: "5px", lineHeight: "1.4" });
+        wrap.appendChild(helper);
+      }
+
+      if (q.question_type === "select") {
+        const sel = document.createElement("select");
+        sel.className = "ai-est-input";
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.innerText = "— select —";
+        sel.appendChild(placeholder);
+        (q.options || []).forEach(opt => {
+          const o = document.createElement("option");
+          o.value = opt.value;
+          o.innerText = opt.label;
+          sel.appendChild(o);
+        });
+        sel.onchange = () => { estimatorState.inputs[q.question_slug] = sel.value; };
+        wrap.appendChild(sel);
+
+      } else if (q.question_type === "yes_no") {
+        const row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.gap = "6px";
+        (q.options || []).forEach(opt => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "ai-est-card-btn";
+          btn.innerText = opt.label;
+          btn.style.flex = "1";
+          btn.style.textAlign = "center";
+          btn.style.margin = "0";
+          btn.style.padding = "8px";
+          btn.onclick = () => {
+            estimatorState.inputs[q.question_slug] = opt.value;
+            row.querySelectorAll(".ai-est-card-btn").forEach(b => b.classList.remove("selected"));
+            btn.classList.add("selected");
+          };
+          row.appendChild(btn);
+        });
+        wrap.appendChild(row);
+
+      } else if (q.question_type === "multi_select") {
+        const grid = document.createElement("div");
+        grid.style.display = "flex";
+        grid.style.flexDirection = "column";
+        grid.style.gap = "3px";
+        const selected = estimatorState.inputs[q.question_slug] || [];
+        (q.options || []).forEach(opt => {
+          const row = document.createElement("label");
+          Object.assign(row.style, {
+            display: "flex", alignItems: "center", gap: "8px",
+            padding: "6px 8px", borderRadius: "6px", cursor: "pointer",
+            fontSize: "13px", color: "#222"
+          });
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.value = opt.value;
+          cb.checked = selected.includes(opt.value);
+          cb.style.accentColor = brandColor;
+          cb.style.width = "16px";
+          cb.style.height = "16px";
+          cb.onchange = () => {
+            const cur = estimatorState.inputs[q.question_slug] || [];
+            if (cb.checked) {
+              if (!cur.includes(opt.value)) cur.push(opt.value);
+            } else {
+              const i = cur.indexOf(opt.value);
+              if (i >= 0) cur.splice(i, 1);
+            }
+            estimatorState.inputs[q.question_slug] = cur;
+          };
+          row.appendChild(cb);
+          row.appendChild(document.createTextNode(opt.label));
+          grid.appendChild(row);
+        });
+        wrap.appendChild(grid);
+
+      } else if (q.question_type === "multi_select_with_count") {
+        const grid = document.createElement("div");
+        grid.style.display = "flex";
+        grid.style.flexDirection = "column";
+        grid.style.gap = "4px";
+        (q.options || []).forEach(opt => {
+          const row = document.createElement("div");
+          row.className = "ai-est-counter-row";
+          const lbl = document.createElement("div");
+          lbl.innerText = opt.label;
+          lbl.style.flex = "1";
+          lbl.style.fontSize = "13px";
+          const minus = document.createElement("button");
+          minus.className = "ai-est-counter-btn";
+          minus.type = "button";
+          minus.innerText = "−";
+          const count = document.createElement("span");
+          count.innerText = "0";
+          Object.assign(count.style, { minWidth: "18px", textAlign: "center", fontWeight: "600", fontSize: "13px" });
+          const plus = document.createElement("button");
+          plus.className = "ai-est-counter-btn";
+          plus.type = "button";
+          plus.innerText = "+";
+          minus.onclick = () => {
+            const r = estimatorState.rooms.find(r => r.type === opt.value);
+            if (r && r.count > 0) {
+              r.count--;
+              if (r.count === 0) estimatorState.rooms = estimatorState.rooms.filter(rr => rr.type !== opt.value);
+            }
+            const r2 = estimatorState.rooms.find(r => r.type === opt.value);
+            count.innerText = r2 ? r2.count : 0;
+          };
+          plus.onclick = () => {
+            let r = estimatorState.rooms.find(r => r.type === opt.value);
+            if (!r) {
+              r = { type: opt.value, count: 0, size: estimatorState._roomSize };
+              estimatorState.rooms.push(r);
+            }
+            r.count++;
+            count.innerText = r.count;
+          };
+          row.appendChild(lbl);
+          row.appendChild(minus);
+          row.appendChild(count);
+          row.appendChild(plus);
+          grid.appendChild(row);
+        });
+        wrap.appendChild(grid);
+
+        // Average size selector
+        const sizeWrap = document.createElement("div");
+        sizeWrap.style.marginTop = "8px";
+        const sizeLbl = document.createElement("div");
+        sizeLbl.innerText = "Average room size:";
+        Object.assign(sizeLbl.style, { fontSize: "11px", color: "#888", marginBottom: "4px" });
+        sizeWrap.appendChild(sizeLbl);
+        const sizeRow = document.createElement("div");
+        sizeRow.style.display = "flex";
+        sizeRow.style.gap = "4px";
+        ["small", "medium", "large", "xl"].forEach(size => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "ai-est-card-btn";
+          btn.innerText = size === "xl" ? "XL" : size.charAt(0).toUpperCase() + size.slice(1);
+          btn.style.flex = "1";
+          btn.style.padding = "6px";
+          btn.style.fontSize = "11px";
+          btn.style.textAlign = "center";
+          btn.style.margin = "0";
+          if (estimatorState._roomSize === size) btn.classList.add("selected");
+          btn.onclick = () => {
+            estimatorState._roomSize = size;
+            estimatorState.rooms.forEach(r => r.size = size);
+            sizeRow.querySelectorAll(".ai-est-card-btn").forEach(b => b.classList.remove("selected"));
+            btn.classList.add("selected");
+          };
+          sizeRow.appendChild(btn);
+        });
+        sizeWrap.appendChild(sizeRow);
+        wrap.appendChild(sizeWrap);
+
+      } else if (q.question_type === "number") {
+        const inp = document.createElement("input");
+        inp.type = "number";
+        inp.className = "ai-est-input";
+        const opts = q.options || {};
+        if (opts.min !== undefined)  inp.min  = opts.min;
+        if (opts.max !== undefined)  inp.max  = opts.max;
+        if (opts.step !== undefined) inp.step = opts.step;
+        if (opts.unit) inp.placeholder = opts.unit;
+        inp.oninput = () => { estimatorState.inputs[q.question_slug] = parseFloat(inp.value) || 0; };
+        wrap.appendChild(inp);
+
+      } else if (q.question_type === "year_input") {
+        const inp = document.createElement("input");
+        inp.type = "number";
+        inp.className = "ai-est-input";
+        inp.placeholder = "YYYY";
+        const opts = q.options || {};
+        inp.min = opts.min || 1850;
+        inp.max = opts.max || new Date().getFullYear();
+        inp.oninput = () => {
+          const y = parseInt(inp.value, 10);
+          if (!y) return;
+          let bucket = "1978_2000";
+          if (y < 1978) bucket = "pre_1978";
+          else if (y >= 2000) bucket = "2000_plus";
+          estimatorState.inputs[q.question_slug] = bucket;
+        };
+        wrap.appendChild(inp);
+
+      } else if (q.question_type === "size_bucket") {
+        const row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.gap = "4px";
+        row.style.flexWrap = "wrap";
+        (q.options || []).forEach(opt => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "ai-est-card-btn";
+          btn.innerText = opt.label;
+          btn.style.flex = "1";
+          btn.style.minWidth = "80px";
+          btn.style.padding = "8px";
+          btn.style.fontSize = "11px";
+          btn.style.textAlign = "center";
+          btn.style.margin = "0";
+          btn.onclick = () => {
+            estimatorState.inputs[q.question_slug] = opt.value;
+            row.querySelectorAll(".ai-est-card-btn").forEach(b => b.classList.remove("selected"));
+            btn.classList.add("selected");
+          };
+          row.appendChild(btn);
+        });
+        wrap.appendChild(row);
+
+      } else if (q.question_type === "text") {
+        const ta = document.createElement("textarea");
+        ta.className = "ai-est-input";
+        ta.rows = 2;
+        ta.style.resize = "vertical";
+        ta.oninput = () => { estimatorState.inputs[q.question_slug] = ta.value; };
+        wrap.appendChild(ta);
+
+      } else {
+        return null;
+      }
+
+      return wrap;
+    }
+
+    async function submitEstimatorQuote() {
+      showTyping();
+      const inputs = { ...estimatorState.inputs };
+      if (estimatorState.service_slug === "interior") {
+        inputs.rooms = estimatorState.rooms
+          .filter(r => r.count > 0)
+          .map(r => ({ size: r.size || estimatorState._roomSize, count: r.count }));
+      }
+
+      try {
+        const res = await fetch(`${apiBase}/api/estimator/quote`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tenant_id: tenantId,
+            service_slug: estimatorState.service_slug,
+            inputs
+          })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `Server returned ${res.status}`);
+        }
+        const data = await res.json();
+        estimatorState.quote_result = data;
+        hideTyping();
+
+        if (data.specialized) {
+          renderSpecializedResult();
+        } else {
+          renderQuoteResult();
+        }
+      } catch (err) {
+        hideTyping();
+        console.error("[AI-Widget] Estimator quote error:", err);
+        addMsg("Hmm, something went wrong calculating your range. Mind trying again? Or just give us a call.", false);
+        estimatorActive = false;
+      }
+    }
+
+    function renderQuoteResult() {
+      const r = estimatorState.quote_result;
+      addInteractiveBubble((bubble) => {
+        const title = document.createElement("div");
+        title.innerText = "Your Ballpark Range";
+        Object.assign(title.style, { fontSize: "12px", color: "#888", fontWeight: "600", textAlign: "center", marginBottom: "4px" });
+        bubble.appendChild(title);
+
+        const range = document.createElement("div");
+        const minStr = formatCents(r.range_min_cents);
+        const maxStr = formatCents(r.range_max_cents);
+        range.innerText = (r.range_min_cents === r.range_max_cents) ? minStr : `${minStr} – ${maxStr}`;
+        Object.assign(range.style, {
+          fontSize: "26px", fontWeight: "800", color: "#1a1a1a",
+          textAlign: "center", margin: "4px 0 8px 0", letterSpacing: "-0.5px"
+        });
+        bubble.appendChild(range);
+
+        const disclaimer = document.createElement("div");
+        Object.assign(disclaimer.style, {
+          background: "#fff8e1", border: "1px solid #ffe082", borderRadius: "8px",
+          padding: "8px 10px", marginTop: "4px", fontSize: "11px", color: "#7a5b00", lineHeight: "1.5"
+        });
+        disclaimer.innerHTML = `⚠️ <strong>This is a ballpark, not a final quote.</strong> Final pricing requires an in-person walkthrough.`;
+        bubble.appendChild(disclaimer);
+      });
+
+      // Follow-up CTA message
+      setTimeout(() => {
+        addMsg("Want me to schedule a free in-person walkthrough? Usually within 24 hours.", false);
+        setTimeout(() => renderContactForm(false), 500);
+      }, 800);
+    }
+
+    function renderSpecializedResult() {
+      const r = estimatorState.quote_result;
+      addMsg(r.reason || "This kind of project needs an in-person walkthrough so we can give you accurate pricing.", false);
+      setTimeout(() => {
+        addMsg("Want me to schedule a free walkthrough? Usually within 24 hours.", false);
+        setTimeout(() => renderContactForm(true), 500);
+      }, 800);
+    }
+
+    function renderContactForm(isSpecialized) {
+      addInteractiveBubble((bubble) => {
+        const intro = document.createElement("div");
+        intro.innerText = "Quick contact info:";
+        Object.assign(intro.style, { fontWeight: "600", marginBottom: "8px", fontSize: "13px" });
+        bubble.appendChild(intro);
+
+        const fields = [
+          { key: "name",    label: "Name *",    type: "text",  placeholder: "First and last" },
+          { key: "phone",   label: "Phone *",   type: "tel",   placeholder: "(555) 555-5555" },
+          { key: "email",   label: "Email *",   type: "email", placeholder: "you@example.com" },
+          { key: "address", label: "Address (optional)", type: "text", placeholder: "Street, city, ZIP" }
+        ];
+
+        const inputs = {};
+        fields.forEach(f => {
+          const w = document.createElement("div");
+          w.style.marginBottom = "8px";
+          const lbl = document.createElement("div");
+          lbl.innerText = f.label;
+          Object.assign(lbl.style, { fontSize: "11px", fontWeight: "600", color: "#444", marginBottom: "3px" });
+          w.appendChild(lbl);
+          const inp = document.createElement("input");
+          inp.type = f.type;
+          inp.className = "ai-est-input";
+          inp.placeholder = f.placeholder;
+          inp.oninput = () => { estimatorState.contact[f.key] = inp.value; };
+          w.appendChild(inp);
+          inputs[f.key] = inp;
+          bubble.appendChild(w);
+        });
+
+        const errBox = document.createElement("div");
+        Object.assign(errBox.style, { display: "none", color: "#c00", fontSize: "11px", marginBottom: "6px" });
+        bubble.appendChild(errBox);
+
+        const submit = document.createElement("button");
+        submit.type = "button";
+        submit.innerText = isSpecialized ? "Schedule walkthrough" : "Yes, schedule it";
+        Object.assign(submit.style, {
+          width: "100%", padding: "10px",
+          background: brandColor, color: "#fff", border: "none",
+          borderRadius: "8px", cursor: "pointer", fontSize: "13px",
+          fontWeight: "700", fontFamily: "inherit", marginTop: "4px"
+        });
+        submit.onclick = async () => {
+          const c = estimatorState.contact;
+          const errs = [];
+          if (!c.name || c.name.trim().length < 2) errs.push("Please enter your name.");
+          if (!c.phone || c.phone.replace(/\D/g, "").length < 10) errs.push("Please enter a valid phone.");
+          if (!c.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email)) errs.push("Please enter a valid email.");
+          if (errs.length) {
+            errBox.innerText = errs.join(" ");
+            errBox.style.display = "block";
+            return;
+          }
+          errBox.style.display = "none";
+          submit.disabled = true;
+          submit.innerText = "Sending...";
+
+          try {
+            const res = await fetch(`${apiBase}/api/estimator/lead`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                tenant_id: tenantId,
+                phone: c.phone,
+                name: c.name,
+                email: c.email,
+                address: c.address || null,
+                project_type: estimatorState.service_slug,
+                estimator_payload: {
+                  service_slug: estimatorState.service_slug,
+                  inputs: estimatorState.inputs,
+                  rooms: estimatorState.rooms,
+                  session_id: sessionId
+                },
+                quote_result: estimatorState.quote_result
+              })
+            });
+            if (!res.ok) throw new Error(`Server returned ${res.status}`);
+            // Lock all inputs
+            bubble.querySelectorAll("input, button").forEach(el => el.disabled = true);
+            // Echo as a user-side confirmation
+            addMsg(`${c.name} • ${c.phone}`, true);
+            setTimeout(() => {
+              addMsg(`✅ You're all set! Someone from ${companyName} will reach out within 24 hours to schedule your walkthrough.`, false);
+              estimatorActive = false;
+              trackVisitor("estimator_lead_captured");
+            }, 400);
+          } catch (err) {
+            console.error("[AI-Widget] Lead capture error:", err);
+            errBox.innerText = "Something went wrong. Please try again or just text us.";
+            errBox.style.display = "block";
+            submit.disabled = false;
+            submit.innerText = isSpecialized ? "Schedule walkthrough" : "Yes, schedule it";
+          }
+        };
+        bubble.appendChild(submit);
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // END ESTIMATOR FLOW
+    // ════════════════════════════════════════════════════════════════════════
+
+    // ── Responsive layout — called on mount, resize, orientationchange ──────
     function applyResponsiveLayout() {
       const mobile = isMobile();
       if (!isOpen) {
@@ -504,6 +1169,10 @@
       setTimeout(() => { container.style.opacity = "1"; container.style.transform = "translateY(0)"; }, 10);
       toggle.style.background = "#444";
       applyResponsiveLayout();
+      // Show Quick Quote button if estimator enabled
+      if (estimatorEnabled) {
+        quickQuoteRow.style.display = "block";
+      }
       if (!hasWelcomed) { addMsg(welcomeMessage, false); hasWelcomed = true; }
       setTimeout(() => input.focus(), 400);
     }
@@ -526,7 +1195,7 @@
       background: "rgba(255,255,255,0.98)", zIndex: "2147483648",
       display: "none", flexDirection: "column", padding: "28px 20px",
       boxSizing: "border-box", textAlign: "center", fontFamily: "'Inter', sans-serif",
-      overflowY: "auto" // Apr 21: allow scrolling on short mobile viewports
+      overflowY: "auto"
     });
     container.appendChild(smsModal);
 
@@ -536,7 +1205,7 @@
       position: "absolute", top: "14px", right: "18px", fontSize: "28px",
       cursor: "pointer", color: "#999", lineHeight: "1",
       width: "32px", height: "32px", display: "flex",
-      alignItems: "center", justifyContent: "center" // Larger tap target
+      alignItems: "center", justifyContent: "center"
     });
     smsClose.onclick = () => { smsModal.style.display = "none"; };
     smsModal.appendChild(smsClose);
@@ -555,7 +1224,6 @@
     const smsPhoneInput = document.createElement("input");
     smsPhoneInput.type = "tel";
     smsPhoneInput.placeholder = "(555) 000-0000";
-    // Apr 21: 16px font prevents iOS zoom on focus
     Object.assign(smsPhoneInput.style, {
       width: "100%", padding: "12px", borderRadius: "10px",
       border: `1.5px solid ${brandColor}`, fontSize: "16px",
@@ -572,7 +1240,6 @@
     consentCheck.type = "checkbox";
     consentCheck.style.marginTop = "3px";
     consentCheck.style.accentColor = brandColor;
-    // Apr 21: bigger tap target on mobile
     consentCheck.style.width = "18px";
     consentCheck.style.height = "18px";
     consentCheck.style.flexShrink = "0";
@@ -620,7 +1287,6 @@
       }
     };
 
-    // Show SMS button once phone number loaded
     const checkPhone = setInterval(() => {
       if (twilioPhoneNumber) {
         clearInterval(checkPhone);

@@ -707,7 +707,8 @@
           // Lock all inputs in the bubble
           bubble.querySelectorAll("input, select, button").forEach(el => el.disabled = true);
           submitBtn.innerText = "Calculating...";
-          submitEstimatorQuote();
+          // Pass bubble ref so submitEstimatorQuote can update button text on completion
+          submitEstimatorQuote(submitBtn);
         };
         submitWrap.appendChild(submitBtn);
         bubble.appendChild(submitWrap);
@@ -957,7 +958,7 @@
       return wrap;
     }
 
-    async function submitEstimatorQuote() {
+    async function submitEstimatorQuote(submitBtn) {
       showTyping();
       const inputs = { ...estimatorState.inputs };
       if (estimatorState.service_slug === "interior") {
@@ -984,6 +985,7 @@
         estimatorState.quote_result = data;
         hideTyping();
 
+        if (submitBtn) submitBtn.innerText = "✓ Submitted";
         if (data.specialized) {
           renderSpecializedResult();
         } else {
@@ -992,6 +994,17 @@
       } catch (err) {
         hideTyping();
         console.error("[AI-Widget] Estimator quote error:", err);
+        // Re-enable the form bubble so user can retry instead of being stuck
+        if (submitBtn) {
+          submitBtn.innerText = "Try again";
+          submitBtn.disabled = false;
+          // Re-enable inputs in the same bubble as the button
+          const bubble = submitBtn.closest(".ai-chat-bubble");
+          if (bubble) {
+            bubble.querySelectorAll("input, select").forEach(el => el.disabled = false);
+            bubble.querySelectorAll("button").forEach(b => { if (b !== submitBtn) b.disabled = false; });
+          }
+        }
         addMsg("Hmm, something went wrong calculating your range. Mind trying again? Or just give us a call.", false);
         estimatorActive = false;
       }

@@ -449,6 +449,21 @@ export function createAddonNumberCheckout(tenantId) {
   });
 }
 
+// ── Estimator Add-On (May 1, 2026) ────────────────────────────────────────
+// Phase 7. Initiates Stripe Checkout for the $15/mo Estimator Add-On.
+// Only relevant for Basic/Pro tier tenants — Elite/Franchise/HQ get it
+// included by default. Returns { url, type } where url is the Stripe
+// checkout URL — redirect window.location to it.
+export function createEstimatorAddonCheckout(tenantId) {
+  return api("/api/stripe/checkout-estimator-addon", {
+    method: "POST",
+    body: JSON.stringify({
+      tenant_id: tenantId,
+      return_url: window.location.origin + "/settings?tab=plans",
+    }),
+  });
+}
+
 // ── Franchise zee subscribe (Apr 29, 2026) ────────────────────────────────
 // Phase 6 Franchise. Initiates Stripe Checkout for a zee paying their own
 // subscription. Returns { url, type } where url is the Stripe checkout URL

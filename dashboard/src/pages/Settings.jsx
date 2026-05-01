@@ -2858,7 +2858,6 @@ Thanks!`;
                     Copy Email for Developer
                   </button>
                 </div>
-              </section>
 
               {/* Save reminder */}
               <div className="pt-4 border-t border-gray-100">

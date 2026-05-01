@@ -74,6 +74,7 @@ import {
   Mic,
   AlertTriangle,
   Calculator,
+  MapPin,
 } from "lucide-react";
 
 // ═══════════════════════════════════════════════════════════════════

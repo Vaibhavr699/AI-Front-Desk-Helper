@@ -73,6 +73,7 @@ import {
   PhoneForwarded,
   Mic,
   AlertTriangle
+  Calculator
 } from "lucide-react";
 
 // ═══════════════════════════════════════════════════════════════════
@@ -369,12 +370,16 @@ const TABS = [
  { id: "branding",     label: "Branding",             icon: Palette    },
  { id: "ai",           label: "AI behavior",          icon: Bot        },
  { id: "knowledge",    label: "Knowledge base",       icon: BookOpen   },
+ { id: "estimator",    label: "Estimator",            icon: Calculator },
  { id: "ai-control",   label: "AI Control",           icon: SlidersHorizontal },
  { id: "nurturing",    label: "Nurturing & referrals", icon: UserPlus  },
  { id: "integrations", label: "Integrations",         icon: LinkIcon   },
  { id: "plans",        label: "Plans",                icon: CreditCard },
  { id: "billing",      label: "Usage & Billing",      icon: BarChart3  },
 ];
+
+// PHASE 7 — Plan tiers that include estimator addon by default
+const ESTIMATOR_INCLUDED_PLANS = ["elite", "franchise", "hq_starter", "hq_growth", "hq_enterprise"];
 
 export default function Settings({ tenantId }) {
   const { success, error: toastError } = useToast();
@@ -440,6 +445,10 @@ export default function Settings({ tenantId }) {
     ring_first_phone: "",
     ring_first_timeout_seconds: 20,
     voicemail_message_url: ""
+    estimator_widget_enabled: false,
+    estimator_pop_enabled: false,
+    cost_region: null,
+    cost_custom_percentage: null
   });
 
   // Phone numbers state
@@ -569,6 +578,10 @@ export default function Settings({ tenantId }) {
         ring_first_phone: t.ring_first_phone || "",
         ring_first_timeout_seconds: t.ring_first_timeout_seconds || 20,
         voicemail_message_url: t.voicemail_message_url || ""
+         estimator_widget_enabled: t.estimator_widget_enabled === true,
+        estimator_pop_enabled: t.estimator_pop_enabled === true,
+        cost_region: t.cost_region || null,
+        cost_custom_percentage: t.cost_custom_percentage ?? null
       });
     } catch (e) {
       toastError(`Failed to load tenant: ${e.message}`);
@@ -941,6 +954,15 @@ export default function Settings({ tenantId }) {
         console.log("[Settings] Auto-detected timezone:", autoDetectedTimezone);
       }
     }
+    // PHASE 7 — validate cost_custom_percentage when cost_region is "custom"
+    if (form.cost_region === "custom") {
+      const cp = Number(form.cost_custom_percentage);
+      if (!Number.isFinite(cp) || cp < -50 || cp > 100) {
+        toastError("Custom percentage must be between -50 and +100.");
+        setSaving(false);
+        return;
+      }
+    }
     const payload = {
       // Branding
       company_name: form.company_name.trim() || null,
@@ -986,6 +1008,10 @@ export default function Settings({ tenantId }) {
       ring_first_phone: form.ring_first_phone.trim() || null,
       ring_first_timeout_seconds: form.ring_first_timeout_seconds,
       voicemail_message_url: form.voicemail_message_url.trim() || null
+      estimator_widget_enabled: form.estimator_widget_enabled,
+      estimator_pop_enabled: form.estimator_pop_enabled,
+      cost_region: form.cost_region || null,
+      cost_custom_percentage: form.cost_region === "custom" ? form.cost_custom_percentage : null
     };
 
     if (form.facebook_page_access_token) payload.facebook_page_access_token = form.facebook_page_access_token;
@@ -1116,6 +1142,10 @@ export default function Settings({ tenantId }) {
               // network-wide usage on /reseller via ResellerUsageCard with
               // correct reseller-tier rates ($0.15/min vs $0.30/min Basic).
               if (tab.id === "billing" && tenant?.reseller_tier) return false;
+               if (tab.id === "estimator" && tenant?.reseller_tier) return false;
+              if (tab.id === "estimator" &&
+                  !tenant?.estimator_addon_purchased &&
+                  !ESTIMATOR_INCLUDED_PLANS.includes(tenant?.plan)) return false;
               return true;
             }).map((tab) => (
               <button
@@ -2612,6 +2642,274 @@ export default function Settings({ tenantId }) {
             </div>
           )}
 
+          {activeTab === "estimator" && (
+            <div className="space-y-10 animate-in fade-in slide-in-from-right-4 duration-500">
+
+              {/* Tab header */}
+              <div>
+                <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                  <Calculator className="text-primary w-5 h-5" />
+                  Estimator
+                </h2>
+                <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-2xl">
+                  A standalone popup widget that gives homeowners ballpark pricing on your website.
+                  Captures leads with full project details — including the calculated range — straight into your dashboard.
+                </p>
+              </div>
+
+              {/* Master toggle (hero card matching ai-control style) */}
+              <section className={`relative overflow-hidden rounded-3xl p-8 transition-all border-2 ${
+                form.estimator_widget_enabled
+                  ? "bg-slate-900 border-slate-900 shadow-2xl shadow-slate-900/20"
+                  : "bg-gray-50 border-gray-200"
+              }`}>
+                <div className="absolute top-0 right-0 p-8 opacity-[0.06] pointer-events-none">
+                  <Calculator className="w-32 h-32" />
+                </div>
+                <div className="relative z-10 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+                  <div className="flex items-start gap-4">
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
+                      form.estimator_widget_enabled ? "bg-emerald-500/20 text-emerald-400" : "bg-white text-gray-400"
+                    }`}>
+                      <Calculator className="w-6 h-6" strokeWidth={2.5} />
+                    </div>
+                    <div>
+                      <h3 className={`text-lg font-black tracking-tight mb-1 flex items-center gap-2 ${
+                        form.estimator_widget_enabled ? "text-white" : "text-gray-900"
+                      }`}>
+                        Ballpark Pricing Widget
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
+                          form.estimator_widget_enabled
+                            ? "bg-emerald-500/20 text-emerald-300 border border-emerald-400/30"
+                            : "bg-gray-200 text-gray-600 border border-gray-300"
+                        }`}>
+                          {form.estimator_widget_enabled ? "Live" : "Off"}
+                        </span>
+                      </h3>
+                      <p className={`text-sm leading-relaxed max-w-lg ${
+                        form.estimator_widget_enabled ? "text-slate-300" : "text-gray-500"
+                      }`}>
+                        {form.estimator_widget_enabled
+                          ? "The widget is live on any site running your embed snippet. Homeowners see the floating CTA bottom-left."
+                          : "Turn on to enable the widget on websites running your embed snippet."}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateForm("estimator_widget_enabled", !form.estimator_widget_enabled)}
+                    className={`relative w-16 h-9 rounded-full transition-colors shrink-0 ${
+                      form.estimator_widget_enabled ? "bg-emerald-500" : "bg-gray-300"
+                    }`}
+                    aria-pressed={form.estimator_widget_enabled}
+                    aria-label="Toggle estimator widget"
+                  >
+                    <div className={`absolute top-1 w-7 h-7 rounded-full bg-white shadow-lg transition-transform ${
+                      form.estimator_widget_enabled ? "translate-x-8" : "translate-x-1"
+                    }`} />
+                  </button>
+                </div>
+              </section>
+
+              {/* Proactive popup toggle */}
+              <section className={`pt-2 ${!form.estimator_widget_enabled ? "opacity-40 pointer-events-none" : ""}`}>
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
+                      <Zap className="w-4 h-4 text-primary" />
+                      Proactive auto-open
+                    </h3>
+                    <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-xl">
+                      Automatically open the widget after a few seconds when a homeowner lands on your site.
+                      Higher engagement, but more intrusive — leave off if you prefer a passive CTA.
+                      <span className="block text-xs text-amber-600 italic mt-1">Coming soon — toggle persists, behavior wires in V2.</span>
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateForm("estimator_pop_enabled", !form.estimator_pop_enabled)}
+                    className={`relative w-12 h-7 rounded-full transition-colors shrink-0 ${
+                      form.estimator_pop_enabled ? "bg-gray-900" : "bg-gray-300"
+                    }`}
+                    aria-pressed={form.estimator_pop_enabled}
+                    aria-label="Toggle proactive popup"
+                  >
+                    <div className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${
+                      form.estimator_pop_enabled ? "translate-x-5" : "translate-x-0.5"
+                    }`} />
+                  </button>
+                </div>
+              </section>
+
+              {/* Cost region selector */}
+              <section className="pt-4 border-t border-gray-100">
+                <div className="mb-4">
+                  <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
+                    <MapPin className="w-4 h-4 text-primary" />
+                    Cost region
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-xl">
+                    Adjusts the ballpark range to match your local market. Auto-detect uses your business state.
+                    Override if your specific market doesn't match the state-wide average.
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                  {[
+                    { value: null,     label: "Auto",   sub: "Detect from state" },
+                    { value: "high",   label: "High",   sub: "+50% over baseline" },
+                    { value: "mid",    label: "Mid",    sub: "Baseline rates" },
+                    { value: "low",    label: "Low",    sub: "−15% from baseline" },
+                    { value: "custom", label: "Custom", sub: "Set your own %" }
+                  ].map((opt) => {
+                    const selected = form.cost_region === opt.value || (opt.value === null && !form.cost_region);
+                    return (
+                      <button
+                        key={opt.label}
+                        type="button"
+                        onClick={() => handleUpdateForm("cost_region", opt.value)}
+                        className={`flex flex-col items-start gap-1 p-4 rounded-2xl border-2 transition-all text-left ${
+                          selected
+                            ? "border-gray-900 bg-gray-900 text-white shadow-lg scale-[1.01]"
+                            : "border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300 hover:bg-gray-100"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 w-full">
+                          <h4 className="text-sm font-black uppercase tracking-wide">{opt.label}</h4>
+                          {selected && <CheckCircle2 className="w-4 h-4 text-emerald-400 ml-auto" />}
+                        </div>
+                        <p className={`text-[11px] leading-relaxed ${selected ? "text-slate-300" : "text-gray-500"}`}>
+                          {opt.sub}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Custom percentage input — appears only when "Custom" is selected */}
+                {form.cost_region === "custom" && (
+                  <div className="mt-5 p-5 bg-amber-50 border border-amber-200 rounded-2xl animate-in fade-in slide-in-from-top-2 duration-300">
+                    <label className="block text-xs font-black text-amber-800 uppercase tracking-widest mb-2">
+                      Custom adjustment (%)
+                    </label>
+                    <div className="flex items-center gap-3 max-w-xs">
+                      <input
+                        type="number"
+                        min={-50}
+                        max={100}
+                        step={1}
+                        value={form.cost_custom_percentage ?? ""}
+                        onChange={(e) => handleUpdateForm("cost_custom_percentage", e.target.value === "" ? null : parseFloat(e.target.value))}
+                        placeholder="e.g. 18"
+                        className="flex-1 px-4 py-3 bg-white border border-amber-300 rounded-xl font-bold text-lg focus:ring-4 focus:ring-amber-500/10 transition-all outline-none text-center"
+                      />
+                      <span className="text-sm font-black text-amber-800">%</span>
+                    </div>
+                    <p className="text-xs text-amber-800 mt-2 italic leading-relaxed">
+                      Range: −50 to +100. Applied as a multiplier on top of the baseline (mid) rates.
+                      For example, 18 = +18% over baseline.
+                    </p>
+                  </div>
+                )}
+              </section>
+
+              {/* Embed snippet */}
+              <section className="pt-4 border-t border-gray-100">
+                <div className="mb-4">
+                  <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
+                    <LinkIcon className="w-4 h-4 text-primary" />
+                    Embed on your website
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-xl">
+                    Paste this script tag before the closing <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs">&lt;/body&gt;</code> tag on every page where you want the widget to appear.
+                  </p>
+                </div>
+
+                {/* Snippet display + copy */}
+                <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-6 shadow-xl border border-slate-700 mb-4">
+                  <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+                    <span className="text-[10px] font-black text-emerald-400 uppercase tracking-[0.2em]">Estimator Widget Snippet</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const snippet = `<script src="${import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}/estimator-widget.js" data-tenant-id="${tenant?.id}" async></script>`;
+                        navigator.clipboard.writeText(snippet);
+                        success("Estimator widget snippet copied!");
+                      }}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-900 rounded-lg text-[10px] font-black uppercase tracking-widest shadow-lg shadow-emerald-500/20 transition-all active:scale-95"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      Copy Snippet
+                    </button>
+                  </div>
+                  <code className="block p-4 bg-black/40 rounded-xl text-xs font-mono text-emerald-400 break-all border border-emerald-500/20 leading-relaxed">
+                    {`<script src="${import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}/estimator-widget.js" data-tenant-id="${tenant?.id}" async></script>`}
+                  </code>
+                  <p className="text-[10px] text-slate-400 font-medium italic mt-3 leading-relaxed">
+                    💡 Coexists with the chat widget. Chat lives bottom-right, estimator bottom-left. Both can run on the same page.
+                  </p>
+                </div>
+
+                {/* Send to Developer email button */}
+                <div className="p-6 bg-gradient-to-br from-primary/5 to-primary/10 border-2 border-primary/20 rounded-2xl">
+                  <h4 className="text-sm font-bold text-gray-900 mb-2 flex items-center gap-2">
+                    <Mail className="w-4 h-4 text-primary" />
+                    Send install instructions to your developer
+                  </h4>
+                  <p className="text-sm text-gray-700 leading-relaxed mb-4">
+                    Don't install it yourself? This button copies a ready-to-forward email with the script tag, install instructions for every major platform, and verification steps.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const snippet = `<script src="${import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}/estimator-widget.js" data-tenant-id="${tenant?.id}" async></script>`;
+                      const companyName = tenant?.company_name || tenant?.name || "our business";
+                      const emailBody = `Subject: Install our new ballpark pricing widget
+
+Hi,
+
+We just enabled an estimator widget that gives our website visitors instant ballpark pricing for their projects, with full lead capture into our dashboard. Please install this script tag on every page of ${companyName}'s website, just before the closing </body> tag:
+
+${snippet}
+
+Alternative: the script can also go inside the <head> tag — the "async" attribute prevents it from blocking page load.
+
+Platform-specific install paths:
+• Webflow → Project Settings → Custom Code → Footer Code → Save & Publish
+• WordPress → "Insert Headers and Footers" plugin → Footer → Save
+• Wix → Settings → Custom Code → Add New Code → Apply to All Pages → Body End
+• Shopify → Online Store → Themes → Edit Code → theme.liquid → before </body>
+• Squarespace → Settings → Advanced → Code Injection → Footer → Save
+• Custom HTML → paste before </body> on every page
+
+Once installed, a "Get Ballpark Pricing" button should appear in the bottom-LEFT corner of every page. (It coexists with our chat widget on the bottom-right — both should be visible.)
+
+Verification:
+1. Floating "Get Ballpark Pricing" button visible bottom-left
+2. Click opens a modal with our brand colors
+3. Picking a service shows the question form
+4. Submitting produces a ballpark range and lead capture form
+
+Thanks!`;
+                      navigator.clipboard.writeText(emailBody);
+                      success("Developer email copied to clipboard!");
+                    }}
+                    className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-emerald-600 text-white rounded-xl font-black text-xs uppercase tracking-widest shadow-lg shadow-emerald-600/30 hover:bg-emerald-700 transition-all active:scale-95"
+                  >
+                    <Mail className="w-4 h-4" />
+                    Copy Email for Developer
+                  </button>
+                </div>
+              </section>
+
+              {/* Save reminder */}
+              <div className="pt-4 border-t border-gray-100">
+                <p className="text-xs text-gray-500 italic flex items-center gap-2">
+                  <Save className="w-3.5 h-3.5" />
+                  Click "Save Changes" at the top to apply these settings.
+                </p>
+              </div>
+            </div>
+          )}
           {activeTab === "nurturing" && (
             <div className="space-y-10 max-w-4xl">
               <div>

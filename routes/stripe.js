@@ -85,6 +85,30 @@ router.post("/checkout-addon-number", async (req, res) => {
 });
 
 /**
+ * POST /api/stripe/checkout-estimator-addon
+ * Create a Stripe Checkout session for the $15/mo Estimator Add-On.
+ * Body: { tenant_id, return_url? }
+ *
+ * May 1, 2026 — Phase 7. Adds the in-chat Quick Quote estimator to Basic/Pro
+ * plans. Elite/Franchise/HQ tiers get it included by default — no checkout
+ * needed for them. Webhook flips estimator_addon_purchased=true on completion.
+ */
+router.post("/checkout-estimator-addon", async (req, res) => {
+    try {
+        const tenant_id = getGuaranteedTenantId(req);
+        const { return_url } = req.body || {};
+        if (!tenant_id) return res.status(400).json({ error: "tenant_id required" });
+
+        const { createEstimatorAddonCheckoutSession } = require("../lib/stripe");
+        const result = await createEstimatorAddonCheckoutSession(tenant_id, return_url);
+        res.json(result);
+    } catch (e) {
+        console.error("[Stripe] Estimator addon checkout error:", e.message);
+        res.status(400).json({ error: e.message });
+    }
+});
+
+/**
  * POST /api/stripe/franchise-checkout
  * Create a Stripe Checkout session for a franchise zee paying their subscription.
  * Body: { tenant_id, return_url? }

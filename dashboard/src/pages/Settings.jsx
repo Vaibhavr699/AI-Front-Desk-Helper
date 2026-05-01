@@ -2783,11 +2783,6 @@ export default function Settings({ tenantId }) {
                 )}
               </section>
 
-                  <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-xl">
-                    Paste this script tag before the closing <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs">&lt;/body&gt;</code> tag on every page where you want the widget to appear.
-                  </p>
-                </div>
-
                 {/* Snippet display + copy */}
                 <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-6 shadow-xl border border-slate-700 mb-4">
                   <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">

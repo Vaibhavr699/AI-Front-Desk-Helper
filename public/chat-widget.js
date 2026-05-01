@@ -459,7 +459,7 @@
     quickQuoteBtn.innerText = "💰 Quick Quote";
     Object.assign(quickQuoteBtn.style, {
       width: "100%", padding: "10px 14px",
-      background: `linear-gradient(135deg, ${brandColor} 0%, ${lightenColor(brandColor, -20)} 100%)`,
+      background: brandColor,
       color: "#fff", border: "none", borderRadius: "10px",
       cursor: "pointer", fontSize: "13px", fontWeight: "700",
       letterSpacing: "0.3px",

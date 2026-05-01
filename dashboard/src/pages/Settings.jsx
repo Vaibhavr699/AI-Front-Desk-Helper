@@ -444,7 +444,7 @@ export default function Settings({ tenantId }) {
     ring_first_enabled: false,
     ring_first_phone: "",
     ring_first_timeout_seconds: 20,
-    voicemail_message_url: ""
+    voicemail_message_url: "",
     estimator_widget_enabled: false,
     estimator_pop_enabled: false,
     cost_region: null,

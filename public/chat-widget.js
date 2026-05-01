@@ -38,6 +38,16 @@
   let hasWelcomed        = false;
   let isOpen             = false;
 
+    // ── What's included by service (Phase 7 V1 — hardcoded for V1) ────────────
+  // V2: move to vertical_services.includes_text DB column for per-tenant override
+  const INCLUDES_BY_SERVICE = {
+    interior:    "walls, ceilings, trim, and doors",
+    exterior:    "siding, soffits, eaves, trim, and garage door",
+    cabinets:    "doors, drawer fronts, and frames",
+    deck_fence:  "all paintable surfaces",
+    specialized: null
+  };
+  
   // ── Estimator state (Phase 7 V1 — May 2, 2026) ────────────────────────────
   // Inline estimator flow rendered as chat messages. Triggered by the
   // "💰 Quick Quote" button pinned above the input area. Coexists with
@@ -1004,6 +1014,19 @@
           textAlign: "center", margin: "4px 0 8px 0", letterSpacing: "-0.5px"
         });
         bubble.appendChild(range);
+
+        // What's included
+        const includes = INCLUDES_BY_SERVICE[estimatorState.service_slug];
+        if (includes) {
+          const includesBox = document.createElement("div");
+          Object.assign(includesBox.style, {
+            background: "#f0f7ff", border: "1px solid #cfe3ff", borderRadius: "8px",
+            padding: "8px 10px", marginTop: "4px", marginBottom: "6px",
+            fontSize: "11px", color: "#1e3a5f", lineHeight: "1.5"
+          });
+          includesBox.innerHTML = `📋 <strong>Includes:</strong> ${includes}`;
+          bubble.appendChild(includesBox);
+        }
 
         const disclaimer = document.createElement("div");
         Object.assign(disclaimer.style, {

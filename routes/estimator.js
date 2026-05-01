@@ -171,7 +171,7 @@ router.post("/lead", async (req, res) => {
       ]
     );
 
-    console.log(
+   console.log(
       "[Estimator] /lead captured tenantId=%s leadId=%s service=%s specialized=%s",
       tenant_id,
       lead.id,
@@ -181,28 +181,47 @@ router.post("/lead", async (req, res) => {
 
     // ─────────────────────────────────────────────────────────────
     // CRM FORWARDING — added May 1, 2026 (Phase 7 V1.5 critical fix)
-    // 
+    //
     // Without this, estimator leads landed in the leads table but
     // never reached DripJobs/Zapier. Tenants would see leads in
     // /leads dashboard but their actual sales workflow had no idea
     // they existed. Mirrors the pattern from processSmsConversation
-    // in server.js.
+    // in server.js, but inlined to keep this route self-contained.
     // ─────────────────────────────────────────────────────────────
     try {
-      // Build the CRM payload from estimator data + contact info.
-      // Using direct require (not server.js import) to avoid circular deps.
-      const crmWebhookPayload = require("../lib/crmWebhookPayload");
-      
-      // Format the quote range for project_details if we have one
+      // Inline helpers — keep this route self-contained
+      const splitName = (fullName) => {
+        const trimmed = String(fullName || "").trim();
+        if (!trimmed) return { first_name: "", last_name: "", full_name: "" };
+        const parts = trimmed.split(/\s+/);
+        if (parts.length === 1) return { first_name: parts[0], last_name: ".", full_name: trimmed };
+        return {
+          first_name: parts[0],
+          last_name: parts.slice(1).join(" "),
+          full_name: trimmed,
+        };
+      };
+      const normalizePhone = (raw) => {
+        if (!raw) return "";
+        const digits = String(raw).replace(/\D/g, "");
+        if (digits.length === 10) return `+1${digits}`;
+        if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+        if (String(raw).startsWith("+") && digits.length >= 10) return `+${digits}`;
+        return String(raw).trim();
+      };
+
+      // Build human-readable project_details with quote range
       let projectDetailsText = "";
       if (quote_result && !quote_result.specialized) {
         const minDollars = Math.round(quote_result.range_min_cents / 100);
         const maxDollars = Math.round(quote_result.range_max_cents / 100);
-        projectDetailsText = `Estimator quote range: $${minDollars.toLocaleString()} - $${maxDollars.toLocaleString()}`;
+        projectDetailsText = (minDollars === maxDollars)
+          ? `Estimator quote: $${minDollars.toLocaleString()}`
+          : `Estimator quote range: $${minDollars.toLocaleString()} - $${maxDollars.toLocaleString()}`;
         if (estimator_payload.rooms && estimator_payload.rooms.length > 0) {
           const roomSummary = estimator_payload.rooms
             .filter(r => r.count > 0)
-            .map(r => `${r.count} ${r.size || "medium"} ${r.type || "rooms"}`)
+            .map(r => `${r.count} ${r.size || "medium"} ${r.type || "room(s)"}`)
             .join(", ");
           if (roomSummary) projectDetailsText += ` | ${roomSummary}`;
         }
@@ -210,31 +229,10 @@ router.post("/lead", async (req, res) => {
         projectDetailsText = `Specialized project — needs in-person walkthrough. Reason: ${quote_result.reason || "(not provided)"}`;
       }
 
-      const nameParts = crmWebhookPayload.splitDisplayName(name || "");
-      const phoneNorm = crmWebhookPayload.normalizePhoneForCrm(phone) || phone;
+      const nameParts = splitName(name);
+      const phoneNorm = normalizePhone(phone);
 
-      const crmPayload = {
-        event_type: "lead_capture",
-        source: "estimator_widget",
-        full_name: nameParts.full_name || name || "",
-        first_name: nameParts.first_name,
-        last_name: nameParts.last_name,
-        contact_name: name || "",
-        phone: phoneNorm,
-        contact_phone: phoneNorm,
-        email: email || "",
-        address: address || "",
-        job_type: project_type || "",
-        project_type: project_type || "",
-        project_details: projectDetailsText,
-        appointment_details: projectDetailsText,
-        lead_type: "INQUIRY",
-        timestamp: new Date().toISOString(),
-        tenant_id: tenant_id,
-      };
-
-      // Look up tenant CRM webhooks and POST. Inline implementation
-      // because sendToCRM lives in server.js and isn't exported.
+      // Look up tenant CRM webhooks
       const tenantRow = await db.query(
         "SELECT crm_webhook_url, zapier_webhook_url, name, company_name FROM tenants WHERE id = $1",
         [tenant_id]
@@ -247,31 +245,47 @@ router.post("/lead", async (req, res) => {
       if (webhookUrls.length === 0) {
         console.warn("[Estimator] No CRM webhook configured for tenant %s. Lead saved but not forwarded.", tenant_id);
       } else {
-        crmPayload.tenant_name = tenantRow.name;
-        crmPayload.company_name = tenantRow.company_name;
+        // Smart fallbacks matching sendToCRM behavior in server.js
+        const crmPayload = {
+          event_type: "lead_capture",
+          source: "estimator_widget",
+          full_name: nameParts.full_name || "New Lead",
+          first_name: nameParts.first_name || "New Lead",
+          last_name: nameParts.last_name || ".",
+          contact_name: nameParts.full_name || "New Lead",
+          phone: phoneNorm,
+          contact_phone: phoneNorm,
+          email: email || `lead-${phoneNorm.replace(/\D/g, "").slice(-10)}@placeholder.local`,
+          contact_email: email || `lead-${phoneNorm.replace(/\D/g, "").slice(-10)}@placeholder.local`,
+          address: address || "Not provided",
+          city: "Omaha",
+          state: "NE",
+          zip: "00000",
+          job_type: project_type || "Residential",
+          project_type: project_type || "",
+          project_details: projectDetailsText,
+          appointment_details: projectDetailsText,
+          preferred_date: new Date().toISOString().split("T")[0],
+          lead_type: "INQUIRY",
+          timestamp: new Date().toISOString(),
+          tenant_id: tenant_id,
+          tenant_name: tenantRow?.name || null,
+          company_name: tenantRow?.company_name || null,
+        };
 
-        // Smart fallbacks matching sendToCRM behavior
-        if (!crmPayload.first_name) crmPayload.first_name = "New Lead";
-        if (!crmPayload.last_name) crmPayload.last_name = ".";
-        if (!crmPayload.email) {
-          crmPayload.email = `lead-${phoneNorm.replace(/\D/g, "").slice(-10)}@placeholder.local`;
-        }
-        if (!crmPayload.address) crmPayload.address = "Not provided";
-        crmPayload.city = "Omaha";
-        crmPayload.state = "NE";
-        crmPayload.zip = "00000";
-        crmPayload.preferred_date = new Date().toISOString().split("T")[0];
+        // Use built-in fetch (Node 18+). Fallback to global if not present.
+        const fetchFn = (typeof fetch !== "undefined") ? fetch : require("node-fetch");
 
-        console.log("[Estimator] Forwarding lead to %d CRM webhook(s)", webhookUrls.length);
+        console.log("[Estimator] Forwarding lead to %d CRM webhook(s) tenantId=%s leadId=%s", webhookUrls.length, tenant_id, lead.id);
         for (const url of webhookUrls) {
           try {
-            const resp = await fetch(url, {
+            const resp = await fetchFn(url, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(crmPayload),
             });
             if (resp.ok) {
-              console.log("[Estimator] CRM forward SUCCESS url=%s tenantId=%s leadId=%s", url, tenant_id, lead.id);
+              console.log("[Estimator] CRM forward SUCCESS url=%s leadId=%s", url, lead.id);
             } else {
               const errBody = await resp.text();
               console.error("[Estimator] CRM forward FAILED url=%s status=%d body=%s", url, resp.status, errBody.slice(0, 200));
@@ -286,13 +300,27 @@ router.post("/lead", async (req, res) => {
       console.error("[Estimator] CRM forwarding error (non-fatal):", crmErr.message);
     }
 
-    // Bell notification — matches notification pattern from book_appointment
+    // Bell notification — matches notification pattern from book_appointment in server.js
     try {
       const notificationsService = require("../services/notifications");
+      const notifTitle = "New Estimator Lead";
+      let notifBody;
+      if (quote_result?.specialized) {
+        notifBody = `${name || "A new lead"} requested a quote (specialized project — needs walkthrough).`;
+      } else if (quote_result) {
+        const minDollars = Math.round(quote_result.range_min_cents / 100);
+        const maxDollars = Math.round(quote_result.range_max_cents / 100);
+        const rangeStr = (minDollars === maxDollars)
+          ? `$${minDollars.toLocaleString()}`
+          : `$${minDollars.toLocaleString()} - $${maxDollars.toLocaleString()}`;
+        notifBody = `${name || "A new lead"} requested a quote — range ${rangeStr}.`;
+      } else {
+        notifBody = `${name || "A new lead"} requested a quote.`;
+      }
       await notificationsService.createNotification(tenant_id, {
         type: 'lead_captured',
-        title: 'New Estimator Lead',
-        body: `${name || "A new lead"} requested a quote${quote_result?.specialized ? ' (specialized project)' : quote_result ? ` — range $${Math.round(quote_result.range_min_cents/100).toLocaleString()}-$${Math.round(quote_result.range_max_cents/100).toLocaleString()}` : ''}.`,
+        title: notifTitle,
+        body: notifBody,
         data: { lead_id: lead.id, source: 'estimator_widget', phone, project_type, quote_result }
       });
     } catch (notifErr) {
@@ -305,5 +333,4 @@ router.post("/lead", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
-
 module.exports = router;

@@ -72,8 +72,8 @@ import {
   Power,
   PhoneForwarded,
   Mic,
-  AlertTriangle
-  Calculator
+  AlertTriangle,
+  Calculator,
 } from "lucide-react";
 
 // ═══════════════════════════════════════════════════════════════════

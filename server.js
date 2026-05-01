@@ -1206,9 +1206,15 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
   ].join("\n");
 
   // 2. TENANT CUSTOM INSTRUCTIONS
+  // May 1, 2026 — Phase 7.5. Prefer sms_instructions if set (channel-specific
+  // policy: SMS can promote Quick Quote tool, voice keeps deflecting pricing).
+  // Falls back to instructions for tenants who haven't customized SMS prompt yet.
   let combinedInstructions = coreSmsRules;
-  if (tenant?.instructions) {
-    combinedInstructions += "\n\nBUSINESS SPECIFIC INSTRUCTIONS:\n" + tenant.instructions;
+  const tenantPrompt = (tenant?.sms_instructions && tenant.sms_instructions.trim())
+    ? tenant.sms_instructions
+    : tenant?.instructions;
+  if (tenantPrompt) {
+    combinedInstructions += "\n\nBUSINESS SPECIFIC INSTRUCTIONS:\n" + tenantPrompt;
   }
 
   // 3. CALENDAR CONTEXT (if available)

@@ -333,4 +333,89 @@ router.post("/lead", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
+// -------------------- POST /log-events --------------------
+//
+// Body: { tenant_id, lead_id, events: [{event_type, content, timestamp}] }
+//
+// Phase 7 V1.5 — May 1, 2026. Writes synthetic messages to the messages
+// table representing key estimator flow events, so the Conversations
+// dashboard shows the full estimator interaction (service selected, quote
+// shown, contact captured) alongside normal Alex chat.
+//
+// Called by chat-widget.js immediately after /lead succeeds. Events are
+// buffered client-side so they all share the same lead_id and write in one
+// batch. If this POST fails, the lead is still captured — events are a
+// secondary record for dashboard visibility, not a revenue-critical path.
+router.post("/log-events", async (req, res) => {
+  try {
+    const { tenant_id, lead_id, events } = req.body || {};
+
+    if (!tenant_id || !lead_id || !Array.isArray(events)) {
+      return res.status(400).json({ error: "tenant_id, lead_id, and events array required" });
+    }
+    if (events.length === 0 || events.length > 10) {
+      return res.status(400).json({ error: "events must be 1-10 items" });
+    }
+
+    // Verify lead belongs to this tenant — prevents cross-tenant injection
+    const leadCheck = await db.query(
+      "SELECT id FROM leads WHERE id = $1 AND tenant_id = $2",
+      [lead_id, tenant_id]
+    );
+    if (leadCheck.rows.length === 0) {
+      return res.status(404).json({ error: "Lead not found for this tenant" });
+    }
+
+    // Insert each event as a message row. Direction is 'inbound' for
+    // user actions (selected service, submitted form) and 'outbound' for
+    // system responses (quote shown). Channel always 'website' since this
+    // flow only runs in the chat widget on the marketing site.
+    let inserted = 0;
+    for (const evt of events) {
+      const eventType = String(evt.event_type || "").trim();
+      const content = String(evt.content || "").trim();
+      const timestamp = evt.timestamp ? new Date(evt.timestamp) : new Date();
+
+      if (!eventType || !content) continue;
+      if (content.length > 2000) continue;
+
+      // Map event type to direction
+      let direction = "inbound";
+      if (eventType === "quote_shown" || eventType === "estimator_started") {
+        direction = "outbound";  // System-driven events
+      }
+
+      try {
+        await db.query(
+          `INSERT INTO messages (tenant_id, lead_id, channel, direction, body, metadata, created_at)
+           VALUES ($1, $2, 'website', $3, $4, $5, $6)`,
+          [
+            tenant_id,
+            lead_id,
+            direction,
+            content,
+            JSON.stringify({
+              source: "estimator_widget",
+              event_type: eventType,
+              synthetic: true,
+            }),
+            timestamp,
+          ]
+        );
+        inserted++;
+      } catch (insertErr) {
+        console.error("[Estimator] log-events insert failed event=%s error=%s", eventType, insertErr.message);
+        // Continue with next event — partial success is acceptable
+      }
+    }
+
+    console.log("[Estimator] /log-events tenantId=%s leadId=%s inserted=%d/%d", tenant_id, lead_id, inserted, events.length);
+    res.json({ success: true, inserted });
+  } catch (e) {
+    console.error("[Estimator] /log-events error:", e.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 module.exports = router;

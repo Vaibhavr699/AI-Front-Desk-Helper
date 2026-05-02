@@ -63,8 +63,19 @@
     _roomSize: "medium",
     quote_result: null,
     contact: { name: "", phone: "", email: "", address: "" },
-    _step: null    // Tracks which question we're currently rendering
+    _step: null,   // Tracks which question we're currently rendering
+    eventLog: []   // Phase 7 V1.5: buffered events for /log-events POST
   };
+
+  // Helper: push an event into the log buffer with timestamp.
+  // Buffered until lead is captured, then POSTed in batch.
+  function logEstimatorEvent(eventType, content) {
+    estimatorState.eventLog.push({
+      event_type: eventType,
+      content: content,
+      timestamp: new Date().toISOString()
+    });
+  }
 
   // ── Mobile detection ──────────────────────────────────────────────────────
   const MOBILE_BP = 640;
@@ -594,8 +605,10 @@
       estimatorState.quote_result = null;
       estimatorState.contact = { name: "", phone: "", email: "", address: "" };
       estimatorState._step = "service_picker";
+      estimatorState.eventLog = [];   // Reset event buffer
 
       trackVisitor("estimator_started");
+      logEstimatorEvent("estimator_started", "[Quick Quote] Customer started estimator flow");
 
       // Intro message
       addMsg("Great! I'll ask you a few quick questions to give you a ballpark range. This is just an estimate — final pricing requires an in-person walkthrough.", false);
@@ -632,6 +645,7 @@
             btn.classList.add("selected");
             // Echo selection as user message
             addMsg(svc.display_name, true);
+            logEstimatorEvent("service_selected", `[Quick Quote] Selected service: ${svc.display_name}`);
             setTimeout(() => renderQuestionsForService(svc.service_slug), 400);
           };
           bubble.appendChild(btn);
@@ -647,6 +661,7 @@
           bubble.querySelectorAll("button").forEach(b => b.disabled = true);
           spec.classList.add("selected");
           addMsg("Specialized project", true);
+          logEstimatorEvent("service_selected", "[Quick Quote] Selected service: Specialized project (needs walkthrough)");
           estimatorState.quote_result = {
             specialized: true,
             reason: "Specialized projects need an in-person walkthrough so we can see the details that affect pricing.",
@@ -1010,8 +1025,20 @@
       }
     }
 
-    function renderQuoteResult() {
+   function renderQuoteResult() {
       const r = estimatorState.quote_result;
+      // Log the quote shown event before rendering
+      const minDollars = Math.round(r.range_min_cents / 100);
+      const maxDollars = Math.round(r.range_max_cents / 100);
+      const rangeText = (r.range_min_cents === r.range_max_cents)
+        ? `$${minDollars.toLocaleString()}`
+        : `$${minDollars.toLocaleString()} - $${maxDollars.toLocaleString()}`;
+      const inputSummary = JSON.stringify({
+        service: estimatorState.service_slug,
+        inputs: estimatorState.inputs,
+        rooms: estimatorState.rooms.filter(rm => rm.count > 0)
+      });
+      logEstimatorEvent("quote_shown", `[Quick Quote] Showed quote range: ${rangeText} — Inputs: ${inputSummary}`);
       addInteractiveBubble((bubble) => {
         const title = document.createElement("div");
         title.innerText = "Your Ballpark Range";
@@ -1059,6 +1086,7 @@
 
     function renderSpecializedResult() {
       const r = estimatorState.quote_result;
+      logEstimatorEvent("quote_shown", `[Quick Quote] Specialized project — ${r.reason || "needs in-person walkthrough"}`);
       addMsg(r.reason || "This kind of project needs an in-person walkthrough so we can give you accurate pricing.", false);
       setTimeout(() => {
         addMsg("Want me to schedule a free walkthrough? Usually within 24 hours.", false);
@@ -1147,10 +1175,41 @@
               })
             });
             if (!res.ok) throw new Error(`Server returned ${res.status}`);
+            const leadResp = await res.json();
+            const newLeadId = leadResp.lead_id;
+
             // Lock all inputs
             bubble.querySelectorAll("input, button").forEach(el => el.disabled = true);
             // Echo as a user-side confirmation
             addMsg(`${c.name} • ${c.phone}`, true);
+
+            // Log final event + flush all buffered events to /log-events
+            logEstimatorEvent("lead_captured",
+              `[Quick Quote] Lead captured — Name: ${c.name} | Phone: ${c.phone} | Email: ${c.email}${c.address ? ' | Address: ' + c.address : ''}`
+            );
+
+            // Fire-and-forget: synthetic conversation messages for dashboard visibility.
+            // Wrapped in its own try/catch so failure doesn't break the user flow.
+            if (newLeadId && estimatorState.eventLog.length > 0) {
+              fetch(`${apiBase}/api/estimator/log-events`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  tenant_id: tenantId,
+                  lead_id: newLeadId,
+                  events: estimatorState.eventLog
+                })
+              }).then(r => {
+                if (r.ok) {
+                  console.log("[AI-Widget] Logged %d estimator events to backend", estimatorState.eventLog.length);
+                } else {
+                  console.warn("[AI-Widget] Event log POST returned %d", r.status);
+                }
+              }).catch(err => {
+                console.warn("[AI-Widget] Event log POST failed:", err.message);
+              });
+            }
+
             setTimeout(() => {
               addMsg(`✅ You're all set! Someone from ${companyName} will reach out within 24 hours to schedule your walkthrough.`, false);
               estimatorActive = false;

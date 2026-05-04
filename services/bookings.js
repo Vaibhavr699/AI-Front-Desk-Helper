@@ -3,6 +3,7 @@
 const db = require("../lib/db");
 const crm = require("./crm");
 const emailService = require("./email");
+const smsService = require("./sms"); // Phase 2 Cancellation Flow (May 4, 2026)
 const { getTenantById } = require("../lib/tenant");
 const followUp = require("./followUp");
 const calendar = require("../calendar");
@@ -214,16 +215,31 @@ async function updateBooking(bookingId, data) {
 
 /**
  * Cancel a booking. Updates status + cancellation metadata, fires owner email,
- * fires bell notification, and syncs to CRM.
+ * fires bell notification, fires customer SMS, and syncs to CRM.
  *
- * Phase 1 of cancellation flow (May 4, 2026): owner email + bell notification.
- * Phase 2 will add: customer SMS, lead status flip, recovery cancel.
- * Phase 3 will add: Google Calendar event deletion + CRM event_type override.
+ * Phase 1 (May 4, 2026) — SHIPPED: owner email + bell notification + status
+ *   metadata (cancelled_at, cancelled_via, cancellation_reason).
+ * Phase 2 (May 4, 2026) — SHIPPED: customer SMS via services/sms.js +
+ *   cancellation_sms_sent_at audit column (Mig 054).
+ * Phase 3 — DEFERRED: lead status flip to 'Cancelled', recovery cancel
+ *   chain (cancel any active estimate_recoveries for this booking).
+ * Phase 4 — DEFERRED: Google Calendar event deletion (using
+ *   bookings.google_event_id from Mig 053), CRM event_type override,
+ *   voice + SMS callsite wiring (so AI agents can cancel on the customer's
+ *   behalf during a call/text conversation).
+ *
+ * Side effects are all fire-and-forget — none of them can fail the
+ * cancellation itself. Order is intentional: CRM first (so the source of
+ * truth syncs externally even if our other touchpoints lag), then owner
+ * email (so Drew knows immediately), then bell (in-app), then customer SMS
+ * (the most-likely-to-fail step, since it depends on Twilio + a valid
+ * customer phone number).
  *
  * @param {string} bookingId - The booking UUID
  * @param {object} options - Optional metadata about the cancellation
  * @param {string} options.cancelled_via - 'voice' | 'sms' | 'dashboard' | 'crm'
- * @param {string} options.cancellation_reason - Free-text reason
+ * @param {string} options.cancellation_reason - Free-text reason (internal only,
+ *                                               NOT surfaced to customer SMS)
  * @returns {object|null} The updated booking row, or null if not found
  */
 async function cancelBooking(bookingId, options = {}) {
@@ -270,6 +286,12 @@ async function cancelBooking(bookingId, options = {}) {
       lead_id:       booking.lead_id,
       cancelled_via,
     }).catch(e => console.error("[Cancel] Notification failed:", e.message));
+
+    // Customer SMS — Phase 2 (May 4, 2026). Fire and forget. Never throws
+    // (services/sms.js wraps Twilio errors and returns { ok: false }).
+    // Cancellation reason is intentionally NOT passed — internal-only.
+    smsService.sendBookingCancellationSms(tenant, booking)
+      .catch(e => console.error("[Cancel] Customer SMS failed:", e.message));
   }
 
   return booking;

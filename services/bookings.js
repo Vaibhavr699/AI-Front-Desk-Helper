@@ -224,13 +224,12 @@ async function updateBooking(bookingId, data) {
  *   cancellation_sms_sent_at audit column (Mig 054).
  * Phase 3 (May 4, 2026) — SHIPPED: lead status flip to 'New' (so the lead
  *   re-enters the follow-up queue and can be re-engaged for a reschedule)
- *   + cancel ALL active estimate_recoveries linked to this lead OR booking
- *   (so the AI stops texting/calling about an estimate that's no longer
- *   on the books).
- * Phase 4 — DEFERRED: Google Calendar event deletion (using
- *   bookings.google_event_id from Mig 053), CRM event_type override,
- *   voice + SMS callsite wiring (so AI agents can cancel on the customer's
- *   behalf during a call/text conversation).
+ *   + cancel ALL active estimate_recoveries linked to this lead OR booking.
+ * Phase 4B (May 4, 2026) — SHIPPED: voice cancellation callsite. The AI
+ *   agent on a live call can cancel using the cancel_appointment tool,
+ *   which routes through this function with cancelled_via='voice'. The
+ *   resolver helpers below (findUpcomingBookingsByPhone +
+ *   formatBookingForVoiceConfirm) power the lookup-then-confirm flow.
  *
  * Side effects are all fire-and-forget — none of them can fail the
  * cancellation itself. Order is intentional:
@@ -377,4 +376,158 @@ async function findLatestBookingByPhone(tenantId, phone) {
   return res.rows[0] || null;
 }
 
-module.exports = { createBooking, updateBooking, cancelBooking, findLatestBookingByPhone };
+// ═════════════════════════════════════════════════════════════════════
+// Phase 4B — voice cancellation resolver helpers (May 4, 2026)
+//
+// findUpcomingBookingsByPhone: returns ALL upcoming, non-cancelled
+//   bookings for a given phone number. The AI uses this to resolve
+//   "I want to cancel my appointment" against a single specific row,
+//   or to ask the caller to disambiguate when multiple match.
+//
+// formatBookingForVoiceConfirm: turns a booking row into a natural-
+//   language phrase like "Friday, May 15th at 10 AM" that the AI can
+//   read back to confirm.
+//
+// Phone matching uses last-10-digit comparison so callers from
+// +14025551234, 14025551234, 4025551234, or "(402) 555-1234" all
+// match a stored contact_phone in any of those formats. Matches the
+// robustness of the SMS Phase 2 sender which uses the stored value
+// verbatim — but here we can't rely on exact format because we're
+// comparing the call's E.164 From: against whatever the AI captured
+// when the booking was created.
+// ═════════════════════════════════════════════════════════════════════
+
+/**
+ * Extract the last 10 digits of a phone string. Strips all non-digit
+ * characters first. Returns "" if input has fewer than 10 digits.
+ */
+function getLast10Digits(phone) {
+  if (!phone) return "";
+  const digits = String(phone).replace(/\D/g, "");
+  return digits.length >= 10 ? digits.slice(-10) : "";
+}
+
+/**
+ * Find all UPCOMING, non-cancelled bookings matching a phone number for
+ * a tenant. Used by the voice cancellation flow to:
+ *   - 0 results → transfer to human (no booking found, or wrong number)
+ *   - 1 result  → confirm the date with caller, then cancel
+ *   - 2+ results → ask which one
+ *
+ * "Upcoming" = preferred_date >= today. Bookings without a preferred_date
+ * are excluded — the AI can't confirm "your appointment on (no date)".
+ *
+ * "Non-cancelled" excludes status IN ('Cancelled', 'Completed') so that
+ * already-cancelled rows can't be cancelled twice and past-completed
+ * rows aren't surfaced.
+ *
+ * @param {string} tenantId
+ * @param {string} phone   - E.164 or any other format (we match last 10)
+ * @returns {Promise<Array>} array of booking rows, sorted by date asc
+ */
+async function findUpcomingBookingsByPhone(tenantId, phone) {
+  const last10 = getLast10Digits(phone);
+  if (!tenantId || !last10) return [];
+
+  const res = await db.query(
+    `SELECT *
+       FROM bookings
+      WHERE tenant_id = $1
+        AND status NOT IN ('Cancelled', 'Completed')
+        AND preferred_date IS NOT NULL
+        AND preferred_date >= CURRENT_DATE
+        AND (
+          contact_phone = $2
+          OR right(regexp_replace(COALESCE(contact_phone, ''), '[^0-9]', '', 'g'), 10) = $3
+        )
+      ORDER BY preferred_date ASC, appointment_time ASC NULLS LAST
+      LIMIT 10`,
+    [tenantId, phone, last10]
+  );
+  return res.rows;
+}
+
+/**
+ * Format a booking's date + time as a natural-language phrase for the AI
+ * to read back to a caller. Examples:
+ *   "Friday, May 15th at 10 AM"
+ *   "Friday, May 15th at 10:30 AM"
+ *   "Friday, May 15th"               (when appointment_time is missing)
+ *   "your scheduled appointment"     (when preferred_date is missing/bad)
+ *
+ * Used by the voice + SMS cancellation flows. Mirrors the date phrasing
+ * in services/sms.js sendBookingCancellationSms but adds time-of-day.
+ */
+function formatBookingForVoiceConfirm(booking) {
+  if (!booking || !booking.preferred_date) return "your scheduled appointment";
+
+  // Date part — same trick as Bookings.jsx: append T00:00:00 to date-only
+  // strings so JS parses them as local midnight, not UTC midnight.
+  const dateStr = typeof booking.preferred_date === "string" && !booking.preferred_date.includes("T")
+    ? `${booking.preferred_date}T00:00:00`
+    : booking.preferred_date;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "your scheduled appointment";
+
+  const weekday = d.toLocaleDateString("en-US", { weekday: "long" });
+  const month   = d.toLocaleDateString("en-US", { month: "long" });
+  const day     = d.getDate();
+
+  const suffix = (n) => {
+    if (n >= 11 && n <= 13) return "th";
+    switch (n % 10) {
+      case 1:  return "st";
+      case 2:  return "nd";
+      case 3:  return "rd";
+      default: return "th";
+    }
+  };
+
+  const datePart = `${weekday}, ${month} ${day}${suffix(day)}`;
+
+  // Time part — appointment_time can be "10:00:00", "10:00", "10:00 AM", etc.
+  // We try to parse HH:MM and convert to 12-hour with AM/PM. Anything we
+  // can't parse cleanly, we omit (date-only is acceptable).
+  if (!booking.appointment_time) return datePart;
+
+  const raw = String(booking.appointment_time).trim();
+
+  // Already 12-hour? "10:00 AM" — pass through but normalize "10:00 AM" → "10 AM"
+  const ampmMatch = raw.match(/^(\d{1,2})(?::(\d{2}))?\s*([ap]m)$/i);
+  if (ampmMatch) {
+    const hour = parseInt(ampmMatch[1], 10);
+    const min  = ampmMatch[2] || "00";
+    const ampm = ampmMatch[3].toUpperCase();
+    const timePart = min === "00" ? `${hour} ${ampm}` : `${hour}:${min} ${ampm}`;
+    return `${datePart} at ${timePart}`;
+  }
+
+  // 24-hour? "10:00:00" or "10:00" — convert to 12-hour
+  const twentyFourHr = raw.match(/^(\d{1,2}):(\d{2})/);
+  if (twentyFourHr) {
+    let hour = parseInt(twentyFourHr[1], 10);
+    const min = twentyFourHr[2];
+    if (hour < 0 || hour > 23) return datePart;
+
+    const ampm = hour >= 12 ? "PM" : "AM";
+    if (hour === 0) hour = 12;
+    else if (hour > 12) hour -= 12;
+
+    const timePart = min === "00" ? `${hour} ${ampm}` : `${hour}:${min} ${ampm}`;
+    return `${datePart} at ${timePart}`;
+  }
+
+  // Couldn't parse — return date only
+  return datePart;
+}
+
+module.exports = {
+  createBooking,
+  updateBooking,
+  cancelBooking,
+  findLatestBookingByPhone,
+  // Phase 4B helpers — also used by Phase 4C SMS callsite
+  findUpcomingBookingsByPhone,
+  formatBookingForVoiceConfirm,
+  getLast10Digits,
+};

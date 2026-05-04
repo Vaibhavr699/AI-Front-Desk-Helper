@@ -332,6 +332,17 @@ export async function updateBooking(id, data) {
   });
 }
 
+/**
+ * Cancel a booking with optional reason.
+ * Phase 1 Cancellation Flow (May 4, 2026) — fires owner email + bell on success.
+ */
+export async function cancelBooking(id, reason = null) {
+  return api(`/api/bookings/${id}/cancel`, {
+    method: "POST",
+    body: JSON.stringify({ reason: reason || null }),
+  });
+}
+
 export async function getTechnicians(tenantId) {
   return api(`/api/technicians?tenant_id=${tenantId}`);
 }

@@ -1347,7 +1347,9 @@ router.patch("/tenants/:id", async (req, res) => {
       // Phase 7 V1 estimator fields (mig 047). May 1, 2026.
       // Without these, Settings.jsx Estimator tab silently drops saves
       // for all 4 estimator config fields. UI shows success, DB unchanged.
-      "estimator_widget_enabled", "estimator_pop_enabled",
+      // Phase 7 V1.5 — May 4, 2026: estimator_widget_enabled renamed to
+      // estimator_enabled (master toggle, not widget-only).
+      "estimator_enabled", "estimator_pop_enabled",
       "cost_region", "cost_custom_percentage"
     ];
    

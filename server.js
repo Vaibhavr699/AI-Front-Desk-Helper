@@ -440,6 +440,7 @@ app.use('/api/reseller-public', require('./routes/reseller-public'));
 app.use('/api/reseller/usage', authMiddleware, require('./routes/resellerUsage'));
 app.use("/api/churn-public", require("./routes/churn-public"));
 app.use("/api/reviews", require("./routes/reviews"));
+app.use("/", require("./routes/estimateLink"))
 app.use('/api/reseller', require('./routes/reseller'));
 app.use("/api", authMiddleware, dashboardRoutes);
 app.use("/auth/google/calendar", require("./routes/google-calendar"));
@@ -3550,6 +3551,64 @@ sendToOpenAI(sessionUpdate);
                   ? "That time is available. You can proceed with book_appointment." 
                   : `That time is unfortunately taken. I found these available slots on ${appointment_date}: ${av.suggestedTimes.join(", ")}. Please suggest these to the caller or ask for another time.` 
               });
+               } else if (name === "send_estimate_link" && tenant && callId) {
+              // ─────────────────────────────────────────────────────────
+              // Phase E1 (May 4, 2026) — outbound estimate link SMS.
+              //
+              // Replaces the bug where the AI verbally described "let me
+              // send you a quick link" but no SMS actually fired (because
+              // no tool existed). Now: tool exists, AI calls it, SMS goes
+              // out, customer taps link, lands on /q/:tenantId, widget
+              // auto-opens to estimator with call_id attribution.
+              //
+              // Unlike cancel_appointment, we DO use args.caller_phone
+              // (not just `from`). Legitimate use case: caller wants the
+              // link sent to their spouse's phone instead. AI passes the
+              // alternate number, we send there.
+              // ─────────────────────────────────────────────────────────
+              const phone = args.caller_phone || from;
+ 
+              if (!phone) {
+                console.warn("[AI-Desk] send_estimate_link: no phone available (args=%s, from=%s)",
+                  args.caller_phone || "missing", from || "missing");
+                output = JSON.stringify({
+                  success: false,
+                  message: "I don't have a phone number to text the link to. Tell the caller: 'I'll need a number to text the link to — what's the best one?' Then ask them and call this tool again with caller_phone set to the number they give you.",
+                });
+              } else {
+                // Build the link. PUBLIC_BACKEND_URL env var lets ops
+                // override the host in case we move off Render or use a
+                // CNAME. Falls back to the current Render hostname.
+                const baseUrl = (process.env.PUBLIC_BACKEND_URL || "https://ai-front-desk-backend.onrender.com").replace(/\/+$/, "");
+                const link = `${baseUrl}/q/${tenant.id}?call_id=${encodeURIComponent(callId)}`;
+ 
+                try {
+                  const smsService = require("./services/sms");
+                  const result = await smsService.sendEstimateLinkSms(tenant, phone, link, callId);
+ 
+                  if (result.ok) {
+                    console.log("[AI-Desk] send_estimate_link success call_id=%s tenant=%s to=%s sid=%s",
+                      callId, tenant.id, phone, result.sid);
+                    output = JSON.stringify({
+                      success: true,
+                      message: "Link sent successfully. Tell the caller: 'Just sent it — should be in your messages now. Fill it out and you'll get an instant ballpark range, then you can book a walkthrough right from there.' Briefly confirm they got it.",
+                    });
+                  } else {
+                    console.error("[AI-Desk] send_estimate_link failed call_id=%s err=%s",
+                      callId, result.error || result.skipped || "unknown");
+                    output = JSON.stringify({
+                      success: false,
+                      message: "Couldn't send the link. Tell the caller: 'I'm having trouble sending the text right now — let me get someone to follow up with you instead.' Then call request_human_transfer with reason='caller_requested_human'.",
+                    });
+                  }
+                } catch (err) {
+                  console.error("[AI-Desk] send_estimate_link unexpected error:", err.message);
+                  output = JSON.stringify({
+                    success: false,
+                    message: "Something went wrong. Tell the caller: 'I'm having a technical issue sending the link — let me transfer you.' Then call request_human_transfer with reason='caller_requested_human'.",
+                  });
+                }
+              }
            } else if (name === "cancel_appointment" && tenant && callId) {
               // ─────────────────────────────────────────────────────────
               // Phase 4B (May 4, 2026) — voice cancellation flow.

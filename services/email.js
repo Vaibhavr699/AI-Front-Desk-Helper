@@ -116,6 +116,83 @@ async function sendBookingConfirmationEmail(tenant, booking) {
   });
 }
 
+async function sendBookingCancellationEmail(tenant, booking, cancelledVia = null, cancellationReason = null) {
+  // Owner email is required — this email is primarily an owner alert.
+  const ownerEmail = await getTenantOwnerEmail(tenant);
+  if (!ownerEmail) {
+    console.warn("[Email] Cancellation email skipped: no owner email for tenant %s", tenant.id);
+    return { ok: false, reason: "no_owner_email" };
+  }
+
+  // Fetch tenant phone for display
+  let phone = "";
+  try {
+    const phoneRes = await db.query(
+      "SELECT phone FROM phone_numbers WHERE tenant_id = $1 ORDER BY is_primary DESC NULLS LAST LIMIT 1",
+      [tenant.id]
+    );
+    if (phoneRes.rows.length > 0) phone = phoneRes.rows[0].phone;
+  } catch (err) {
+    console.error("[Email] Failed to fetch tenant phone:", err.message);
+  }
+
+  const customerName = booking.contact_name || "Unknown customer";
+  const customerPhone = booking.contact_phone || "—";
+  const customerEmail = booking.contact_email || "—";
+
+  // Format date for display
+  let dateDisplay = "—";
+  if (booking.preferred_date) {
+    try {
+      const d = new Date(booking.preferred_date);
+      dateDisplay = d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+    } catch (e) {
+      dateDisplay = booking.preferred_date;
+    }
+  }
+
+  // Cancellation source label
+  const sourceLabels = {
+    voice: "Voice call (AI handled)",
+    sms: "SMS reply (AI handled)",
+    dashboard: "Dashboard (manual)",
+    crm: "CRM webhook",
+  };
+  const sourceLabel = sourceLabels[cancelledVia] || cancelledVia || "Unknown source";
+
+  const company = tenant.company_name || tenant.name || "—";
+
+  const html = `
+    <h2 style="margin:0 0 16px;color:#dc2626;">❌ Appointment cancelled</h2>
+    <p>An appointment for <strong>${escapeHtml(company)}</strong> has been cancelled.</p>
+
+    <div style="margin: 20px 0; padding: 15px; background-color: #fef2f2; border-radius: 8px; border-left: 4px solid #dc2626;">
+      <p style="margin: 0 0 8px; font-size: 15px; font-weight: 600; color: #1e293b;">📅 Original appointment</p>
+      <p style="margin: 4px 0; font-size: 14px; color: #475569;">Date: ${escapeHtml(dateDisplay)}</p>
+      <p style="margin: 4px 0; font-size: 14px; color: #475569;">Time: ${escapeHtml(booking.appointment_time || "Not specified")}</p>
+    </div>
+
+    <table style="border-collapse:collapse;font-size:14px;line-height:1.6;width:100%;margin-top:16px">
+      <tr><td style="padding:8px 0;border-bottom:1px solid #eee;font-weight:bold;width:160px">Customer</td><td style="padding:8px 0;border-bottom:1px solid #eee">${escapeHtml(customerName)}</td></tr>
+      <tr><td style="padding:8px 0;border-bottom:1px solid #eee;font-weight:bold">Phone</td><td style="padding:8px 0;border-bottom:1px solid #eee">${escapeHtml(customerPhone)}</td></tr>
+      <tr><td style="padding:8px 0;border-bottom:1px solid #eee;font-weight:bold">Email</td><td style="padding:8px 0;border-bottom:1px solid #eee">${escapeHtml(customerEmail)}</td></tr>
+      <tr><td style="padding:8px 0;border-bottom:1px solid #eee;font-weight:bold">Cancelled via</td><td style="padding:8px 0;border-bottom:1px solid #eee">${escapeHtml(sourceLabel)}</td></tr>
+      ${cancellationReason ? `<tr><td style="padding:8px 0;border-bottom:1px solid #eee;font-weight:bold">Reason</td><td style="padding:8px 0;border-bottom:1px solid #eee">${escapeHtml(cancellationReason)}</td></tr>` : ""}
+      <tr><td style="padding:8px 0;border-bottom:1px solid #eee;font-weight:bold">Cancelled at</td><td style="padding:8px 0;border-bottom:1px solid #eee">${new Date().toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</td></tr>
+    </table>
+
+    <p style="margin-top:20px;font-size:14px;color:#1e293b;">Consider reaching out to the customer at <strong>${escapeHtml(customerPhone)}</strong> to see if you can reschedule or save the booking.</p>
+
+    <p style="margin-top:24px;font-size:13px;color:#6b7280;">— ${escapeHtml(company)}</p>
+  `;
+
+  return sendEmail({
+    to: ownerEmail,
+    subject: `❌ Cancelled: ${customerName} (${dateDisplay}) — ${company}`,
+    html,
+  });
+}
+
 async function sendTransferNotificationEmail(tenant, call, reason, summary, extras = {}) {
   const to = process.env.TRANSFER_NOTIFICATION_EMAIL;
   if (!to) return { ok: false };
@@ -930,6 +1007,7 @@ function escapeHtml(s) {
 module.exports = {
   sendEmail,
   sendBookingConfirmationEmail,
+  sendBookingCancellationEmail,
   sendTransferNotificationEmail,
   sendPasswordResetEmail,
   sendTechnicianAssignmentEmail,

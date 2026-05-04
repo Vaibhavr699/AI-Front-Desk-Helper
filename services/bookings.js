@@ -215,25 +215,31 @@ async function updateBooking(bookingId, data) {
 
 /**
  * Cancel a booking. Updates status + cancellation metadata, fires owner email,
- * fires bell notification, fires customer SMS, and syncs to CRM.
+ * fires bell notification, fires customer SMS, syncs to CRM, flips the linked
+ * lead back to 'New', and cancels any active estimate recoveries for that lead.
  *
  * Phase 1 (May 4, 2026) — SHIPPED: owner email + bell notification + status
  *   metadata (cancelled_at, cancelled_via, cancellation_reason).
  * Phase 2 (May 4, 2026) — SHIPPED: customer SMS via services/sms.js +
  *   cancellation_sms_sent_at audit column (Mig 054).
- * Phase 3 — DEFERRED: lead status flip to 'Cancelled', recovery cancel
- *   chain (cancel any active estimate_recoveries for this booking).
+ * Phase 3 (May 4, 2026) — SHIPPED: lead status flip to 'New' (so the lead
+ *   re-enters the follow-up queue and can be re-engaged for a reschedule)
+ *   + cancel ALL active estimate_recoveries linked to this lead OR booking
+ *   (so the AI stops texting/calling about an estimate that's no longer
+ *   on the books).
  * Phase 4 — DEFERRED: Google Calendar event deletion (using
  *   bookings.google_event_id from Mig 053), CRM event_type override,
  *   voice + SMS callsite wiring (so AI agents can cancel on the customer's
  *   behalf during a call/text conversation).
  *
  * Side effects are all fire-and-forget — none of them can fail the
- * cancellation itself. Order is intentional: CRM first (so the source of
- * truth syncs externally even if our other touchpoints lag), then owner
- * email (so Drew knows immediately), then bell (in-app), then customer SMS
- * (the most-likely-to-fail step, since it depends on Twilio + a valid
- * customer phone number).
+ * cancellation itself. Order is intentional:
+ *   1. CRM sync first (external source of truth)
+ *   2. Owner email (Drew gets immediate notice)
+ *   3. Bell notification (in-app)
+ *   4. Customer SMS (most-likely-to-fail step)
+ *   5. Lead status flip (downstream pipeline state)
+ *   6. Recovery cancel chain (stops future AI outreach)
  *
  * @param {string} bookingId - The booking UUID
  * @param {object} options - Optional metadata about the cancellation
@@ -293,6 +299,72 @@ async function cancelBooking(bookingId, options = {}) {
     smsService.sendBookingCancellationSms(tenant, booking)
       .catch(e => console.error("[Cancel] Customer SMS failed:", e.message));
   }
+
+  // ── Phase 3 (May 4, 2026) ─────────────────────────────────────────────
+  // Lead status flip + recovery cancel chain. Both fire-and-forget — wrapped
+  // in IIFE so any await inside doesn't block the function return.
+  //
+  // We do these AFTER the tenant-dependent side effects above because they
+  // operate purely on our own DB and don't need the tenant row. Skipping
+  // the full async/await chain inside cancelBooking keeps this function
+  // returning quickly to the dashboard.
+  (async () => {
+    // Flip the lead back to 'New' so it re-enters the follow-up queue.
+    // Drew's reasoning (May 4, 2026): a cancelled booking often becomes a
+    // reschedule, so 'Lost' would be too aggressive — we want this lead
+    // visible in the pipeline for re-engagement.
+    if (booking.lead_id) {
+      try {
+        await db.query(
+          `UPDATE leads
+              SET status = 'New',
+                  updated_at = now()
+            WHERE id = $1`,
+          [booking.lead_id]
+        );
+        console.log("[Cancel] Lead %s flipped to 'New'", booking.lead_id);
+      } catch (e) {
+        console.error("[Cancel] Lead status flip failed leadId=%s err=%s",
+          booking.lead_id, e.message);
+      }
+    }
+
+    // Cancel ALL active estimate recoveries linked to this booking OR lead.
+    // We match on either side because:
+    //   - estimateRecovery.startRecovery() sets booking_id + lead_id
+    //   - estimateRecovery.startEstimateRecovery() / startInquiryRecovery()
+    //     set lead_id but NOT booking_id (they fire before any booking
+    //     exists)
+    // If the cancelled booking's lead has a recovery that pre-dates the
+    // booking itself, we still want to stop it. The OR covers both paths.
+    //
+    // status='cancelled' is what the recovery cron checks via
+    // `WHERE status='active'` — flipping it here guarantees no further
+    // SMS or AI calls fire for this customer about this estimate.
+    try {
+      const cancelClause = booking.lead_id
+        ? `WHERE status = 'active' AND (booking_id = $1 OR lead_id = $2)`
+        : `WHERE status = 'active' AND booking_id = $1`;
+      const cancelParams = booking.lead_id
+        ? [booking.id, booking.lead_id]
+        : [booking.id];
+      const recRes = await db.query(
+        `UPDATE estimate_recoveries
+            SET status = 'cancelled',
+                updated_at = now()
+          ${cancelClause}
+          RETURNING id`,
+        cancelParams
+      );
+      if (recRes.rowCount > 0) {
+        console.log("[Cancel] Cancelled %d active recoveries for booking=%s lead=%s",
+          recRes.rowCount, booking.id, booking.lead_id || "(none)");
+      }
+    } catch (e) {
+      console.error("[Cancel] Recovery cancel chain failed bookingId=%s err=%s",
+        booking.id, e.message);
+    }
+  })().catch(e => console.error("[Cancel] Phase 3 IIFE crashed:", e.message));
 
   return booking;
 }

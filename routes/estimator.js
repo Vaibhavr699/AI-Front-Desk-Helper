@@ -83,15 +83,16 @@ router.get("/tenant-config/:tenantId", async (req, res) => {
     if (!tenantId) {
       return res.status(400).json({ error: "tenantId required" });
     }
-    const config = await estimator.getVerticalConfig(tenantId);
+   const config = await estimator.getVerticalConfig(tenantId);
 
-    // Gate: only return config if widget is actually enabled for this tenant.
+    // Gate: only return config if estimator is actually enabled for this tenant.
     // Prevents widget from rendering on tenants who haven't activated the addon.
-    if (!config.tenant.widget_enabled) {
-      return res.status(403).json({ error: "Estimator widget not enabled for this tenant" });
+    // Phase 7 V1.5 — renamed widget_enabled → estimator_enabled (master toggle).
+    if (!config.tenant.estimator_enabled) {
+      return res.status(403).json({ error: "Estimator not enabled for this tenant" });
     }
 
-    res.json(config);
+    res.json(config); 
   } catch (e) {
     console.error("[Estimator] /tenant-config error:", e.message);
     if (e.message && e.message.includes("not found")) {

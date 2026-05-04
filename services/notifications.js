@@ -146,6 +146,48 @@ async function notifyNewBooking(tenantId, { customer_name, service_date, booking
 }
 
 /**
+ * Fires when a booking is cancelled (via voice, SMS, dashboard, or CRM webhook).
+ * Dedup'd by booking_id so we don't double-bell if cancelBooking is called twice.
+ */
+async function notifyBookingCancellation(tenantId, { customer_name, service_date, booking_id, lead_id, cancelled_via }) {
+  try {
+    if (!tenantId || !booking_id) return null;
+
+    const existing = await db.query(
+      `SELECT id FROM notifications
+       WHERE tenant_id = $1 AND type = 'booking_cancelled'
+       AND data->>'booking_id' = $2
+       LIMIT 1`,
+      [tenantId, String(booking_id)]
+    );
+    if (existing.rows.length > 0) return null;
+
+    const dateStr = service_date
+      ? new Date(service_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      : null;
+
+    const sourceLabel = {
+      voice:     'AI voice call',
+      sms:       'SMS reply',
+      dashboard: 'Dashboard',
+      crm:       'CRM',
+    }[cancelled_via] || 'Unknown source';
+
+    return await createNotification(tenantId, {
+      type: 'booking_cancelled',
+      title: 'Appointment Cancelled',
+      body: customer_name
+        ? `${customer_name} cancelled their ${dateStr || 'upcoming'} appointment via ${sourceLabel}.`
+        : `An appointment was cancelled via ${sourceLabel}.`,
+      data: { customer_name, service_date, booking_id, lead_id, cancelled_via },
+    });
+  } catch (err) {
+    console.error("[Notification] notifyBookingCancellation failed:", err.message);
+    return null;
+  }
+}
+
+/**
  * Fires when a new lead is captured. Skips auto-created CRM leads.
  */
 async function notifyNewLead(tenantId, { customer_name, phone, source, lead_id }) {
@@ -473,6 +515,7 @@ module.exports = {
   // Event-driven notifications
   notifyRevenueRecovered,
   notifyNewBooking,
+  notifyBookingCancellation,
   notifyNewLead,
   notifyHotLead,
   notifyEstimateRecoveryStarted,

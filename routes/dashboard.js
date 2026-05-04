@@ -10,6 +10,7 @@ const { configurePhoneWebhook, getClientForTenant, purchaseNewNumber, fetchAvail
 
 const router = express.Router();
 const estimateRecovery = require("../services/estimateRecovery");
+const bookingsService = require("../services/bookings");
 const emailService = require("../services/email");
 const nurturingService = require("../services/nurturing");
 const notificationsService = require("../services/notifications");
@@ -106,6 +107,34 @@ router.get("/bookings", async (req, res) => {
 router.patch("/bookings/:id", async (req, res) => {
   try {
     const { status, technician_id, preferred_date, appointment_time, notes } = req.body || {};
+
+    // Phase 1 Cancellation Flow (May 4, 2026): when this PATCH would set
+    // status='Cancelled', route through bookingsService.cancelBooking()
+    // so owner email + bell notification + cancelled_at metadata fire.
+    // Other fields in the same request are intentionally ignored when
+    // cancelling — cancellation is the primary action.
+    if (typeof status === "string" && status.toLowerCase() === "cancelled") {
+      const reason = (req.body.cancellation_reason || "").trim() || null;
+      const booking = await bookingsService.cancelBooking(req.params.id, {
+        cancelled_via: "dashboard",
+        cancellation_reason: reason,
+      });
+      if (!booking) return res.status(404).json({ error: "Not found" });
+
+      await logAction({
+        organization_id: String(booking.tenant_id),
+        user_id: req.user?.sub ? String(req.user.sub) : null,
+        action: "booking_cancelled",
+        entity_type: "booking",
+        entity_id: String(booking.id),
+        new_value: { cancelled_via: "dashboard", cancellation_reason: reason },
+        ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+        user_agent: req.get("user-agent") || null,
+      }).catch(() => {});
+
+      return res.json(booking);
+    }
+
     const allowed = ["status", "technician_id", "preferred_date", "appointment_time", "notes"];
     const setParts = [];
     const values = [];
@@ -170,12 +199,47 @@ router.patch("/bookings/:id", async (req, res) => {
       );
     }
 
-    res.json(booking);
+   res.json(booking);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error" });
   }
 });
+
+/**
+ * POST /bookings/:id/cancel
+ * Phase 1 Cancellation Flow (May 4, 2026): dedicated endpoint for the
+ * "Cancel Booking" button. Accepts optional reason in body. Fires owner
+ * email + bell notification via shared bookingsService.cancelBooking().
+ */
+router.post("/bookings/:id/cancel", async (req, res) => {
+  try {
+    const reason = (req.body?.reason || req.body?.cancellation_reason || "").trim() || null;
+    const booking = await bookingsService.cancelBooking(req.params.id, {
+      cancelled_via: "dashboard",
+      cancellation_reason: reason,
+    });
+    if (!booking) return res.status(404).json({ error: "Not found" });
+
+    await logAction({
+      organization_id: String(booking.tenant_id),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "booking_cancelled",
+      entity_type: "booking",
+      entity_id: String(booking.id),
+      new_value: { cancelled_via: "dashboard", cancellation_reason: reason },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
+
+    res.json(booking);
+  } catch (e) {
+    console.error("[bookings/cancel] error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// Everything below this requires at least Staff-level access
 
 // Everything below this requires at least Staff-level access
 router.use((req, res, next) => {

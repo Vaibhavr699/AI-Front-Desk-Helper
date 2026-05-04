@@ -38,15 +38,17 @@
   let hasWelcomed        = false;
   let isOpen             = false;
 
-    // ── What's included by service (Phase 7 V1 — hardcoded for V1) ────────────
-  // V2: move to vertical_services.includes_text DB column for per-tenant override
-  const INCLUDES_BY_SERVICE = {
-    interior:    "walls, ceilings, trim, and doors",
-    exterior:    "siding, soffits, eaves, trim, and garage door",
-    cabinets:    "doors, drawer fronts, and frames",
-    deck_fence:  "all paintable surfaces",
-    specialized: null
-  };
+   // ── What's included by service (Phase 7 V1.5 — May 5, 2026) ──────────────
+  // Migration 051 moved this to vertical_services.includes_text. Helper now
+  // reads from estimatorConfig (loaded via /tenant-config) so painters with
+  // custom includes text see it, and V2 verticals (roof, fence) can ship
+  // their own without code changes.
+  function getIncludesText(serviceSlug) {
+    if (!serviceSlug || serviceSlug === "specialized") return null;
+    if (!estimatorConfig || !Array.isArray(estimatorConfig.services)) return null;
+    const svc = estimatorConfig.services.find(s => s.service_slug === serviceSlug);
+    return svc?.includes_text || null;
+  }
   
   // ── Estimator state (Phase 7 V1 — May 2, 2026) ────────────────────────────
   // Inline estimator flow rendered as chat messages. Triggered by the
@@ -1055,8 +1057,8 @@
         });
         bubble.appendChild(range);
 
-        // What's included
-        const includes = INCLUDES_BY_SERVICE[estimatorState.service_slug];
+        // What's included — sourced from vertical_services.includes_text via /tenant-config
+        const includes = getIncludesText(estimatorState.service_slug);
         if (includes) {
           const includesBox = document.createElement("div");
           Object.assign(includesBox.style, {

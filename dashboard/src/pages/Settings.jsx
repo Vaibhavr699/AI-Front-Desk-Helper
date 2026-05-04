@@ -17,6 +17,8 @@ import {
   updateFollowupStatus,
   disconnectGoogleCalendar,
   createAddonNumberCheckout,
+  getServiceRateOverrides,
+  updateServiceRateOverride,
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import { ConfirmationModal } from "../components/ConfirmationModal";
@@ -483,6 +485,14 @@ export default function Settings({ tenantId }) {
     loading: false
   });
 
+  // Phase 7 V1.5 — Per-service rate overrides (May 4, 2026)
+  // Map of service_slug → percentage_adjustment (number) or undefined.
+  // undefined means "use default rate." Numbers stored as decimals
+  // (0.20 = +20%) but displayed/edited as whole percentages in UI.
+  const [rateOverrides, setRateOverrides] = useState({});
+  const [overridesLoading, setOverridesLoading] = useState(false);
+  const [overrideSaving, setOverrideSaving] = useState({}); // service_slug → bool
+
    // ── Reseller-tab guard (Apr 28, 2026) ─────────────────────────────
   // The Usage & Billing tab is filtered out of the sidebar for resellers
   // (see TABS.filter() below), but if a reseller bookmarks /settings?tab=billing
@@ -622,7 +632,7 @@ export default function Settings({ tenantId }) {
     }
   };
 
-  useEffect(() => {
+ useEffect(() => {
     loadTenant();
     fetchPhoneNumbers();
     fetchSuggestedNumbers();
@@ -632,6 +642,25 @@ export default function Settings({ tenantId }) {
         .catch(() => { });
     }
   }, [tenantId]);
+
+  // Phase 7 V1.5 — Load per-service rate overrides when Estimator tab is active
+  useEffect(() => {
+    if (activeTab !== "estimator" || !tenantId) return;
+    setOverridesLoading(true);
+    getServiceRateOverrides(tenantId)
+      .then((data) => {
+        const map = {};
+        for (const [slug, info] of Object.entries(data?.overrides || {})) {
+          map[slug] = info.percentage_adjustment;
+        }
+        setRateOverrides(map);
+      })
+      .catch((e) => {
+        console.warn("[Settings] Failed to load rate overrides:", e.message);
+        // Non-fatal — UI shows defaults if load fails
+      })
+      .finally(() => setOverridesLoading(false));
+  }, [activeTab, tenantId]);
 
   const hasActiveSub = subscriptionStatus && ["active", "trialing"].includes(subscriptionStatus.subscription_status);
 
@@ -780,7 +809,47 @@ export default function Settings({ tenantId }) {
     }));
   };
 
-  const MAX_OBJECTION_CASES = 5;
+ const MAX_OBJECTION_CASES = 5;
+
+  // Phase 7 V1.5 — Save or reset a per-service rate override
+  // newPercentageWhole: number like 20 (meaning +20%), or null/empty to reset
+  const handleUpdateRateOverride = async (serviceSlug, newPercentageWhole) => {
+    setOverrideSaving((prev) => ({ ...prev, [serviceSlug]: true }));
+    try {
+      let decimalAdjustment = null;
+      if (newPercentageWhole !== null && newPercentageWhole !== undefined && newPercentageWhole !== "") {
+        const whole = Number(newPercentageWhole);
+        if (!Number.isFinite(whole)) {
+          toastError("Override must be a valid number.");
+          return;
+        }
+        if (whole < -50 || whole > 100) {
+          toastError("Override must be between -50% and +100%.");
+          return;
+        }
+        decimalAdjustment = whole / 100;
+      }
+
+      await updateServiceRateOverride(tenantId, serviceSlug, decimalAdjustment);
+
+      // Update local state to match server
+      setRateOverrides((prev) => {
+        const next = { ...prev };
+        if (decimalAdjustment === null) {
+          delete next[serviceSlug];
+        } else {
+          next[serviceSlug] = decimalAdjustment;
+        }
+        return next;
+      });
+
+      success(decimalAdjustment === null ? "Override reset to default." : "Override saved.");
+    } catch (e) {
+      toastError(`Failed to update override: ${e.message}`);
+    } finally {
+      setOverrideSaving((prev) => ({ ...prev, [serviceSlug]: false }));
+    }
+  };
 
   const handleAddObjectionCase = () => {
     setForm(prev => ({
@@ -2783,11 +2852,129 @@ export default function Settings({ tenantId }) {
                 )}
               </section>
 
+              {/* ─────────────────────────────────────────────────────────────
+                   Per-Service Rate Overrides (Phase 7 V1.5, May 4, 2026)
+                  ───────────────────────────────────────────────────────────── */}
+              <section className="pt-4 border-t border-gray-100">
+                <div className="mb-4">
+                  <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
+                    <DollarSign className="w-4 h-4 text-primary" />
+                    Service rate adjustments
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-xl">
+                    Run premium pricing? Run discount pricing? Tune each service up or down
+                    from the default rate without touching the cost region. Applied as a
+                    percentage to all unit rates in that service. Leave at 0% to use the default.
+                  </p>
+                </div>
+
+                {overridesLoading ? (
+                  <div className="p-4 text-center text-xs text-gray-400 italic">
+                    Loading overrides…
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {[
+                      { slug: "interior",   label: "Interior painting",  unit: "per room (size-bucketed)" },
+                      { slug: "exterior",   label: "Exterior painting",  unit: "per paintable sqft" },
+                      { slug: "cabinets",   label: "Cabinets",           unit: "per door/drawer facing" },
+                      { slug: "deck_fence", label: "Deck & Fence",       unit: "per sqft / per linear ft" },
+                    ].map((svc) => {
+                      const currentDecimal = rateOverrides[svc.slug];
+                      const currentWhole = currentDecimal === undefined
+                        ? ""
+                        : Math.round(currentDecimal * 100);
+                      const isOverriding = currentDecimal !== undefined && currentDecimal !== 0;
+                      const isSaving = overrideSaving[svc.slug];
+
+                      return (
+                        <div
+                          key={svc.slug}
+                          className={`p-4 rounded-2xl border-2 transition-all ${
+                            isOverriding
+                              ? "border-emerald-200 bg-emerald-50/40"
+                              : "border-gray-200 bg-gray-50"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-4 flex-wrap">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <h4 className="text-sm font-black text-gray-900">{svc.label}</h4>
+                                {isOverriding && (
+                                  <span className="px-2 py-0.5 bg-emerald-600 text-white text-[9px] font-black uppercase tracking-widest rounded-md">
+                                    {currentDecimal > 0 ? `+${currentWhole}%` : `${currentWhole}%`}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-gray-500 mt-0.5">
+                                Default ({svc.unit}). Negative = discount. Positive = premium.
+                              </p>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <div className="relative">
+                                <input
+                                  type="number"
+                                  min={-50}
+                                  max={100}
+                                  step={1}
+                                  defaultValue={currentWhole}
+                                  key={`${svc.slug}-${currentWhole}`}
+                                  onBlur={(e) => {
+                                    const newVal = e.target.value;
+                                    if (String(newVal) !== String(currentWhole)) {
+                                      handleUpdateRateOverride(svc.slug, newVal === "" ? null : newVal);
+                                    }
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") e.target.blur();
+                                  }}
+                                  disabled={isSaving}
+                                  placeholder="0"
+                                  className="w-20 px-3 py-2 bg-white border border-gray-200 rounded-lg font-bold text-sm text-center focus:ring-4 focus:ring-primary/5 transition-all outline-none disabled:opacity-50"
+                                />
+                                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-black text-gray-400 pointer-events-none">
+                                  %
+                                </span>
+                              </div>
+
+                              {isOverriding && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateRateOverride(svc.slug, null)}
+                                  disabled={isSaving}
+                                  className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-gray-900 hover:border-gray-300 transition-all disabled:opacity-50"
+                                  title="Reset to default rate"
+                                >
+                                  Reset
+                                </button>
+                              )}
+
+                              {isSaving && (
+                                <RefreshCw className="w-3.5 h-3.5 text-gray-400 animate-spin" />
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="mt-4 p-3 bg-blue-50/50 border border-blue-100 rounded-xl">
+                  <p className="text-[11px] text-blue-700 leading-relaxed">
+                    <strong>How it works:</strong> Adjustments save instantly (no need to click Save Changes).
+                    Applied to base rates BEFORE size/feature modifiers and BEFORE the cost region multiplier.
+                    Range: −50% to +100%.
+                  </p>
+                </div>
+              </section>
+
               {/* Save reminder */}
               <div className="pt-4 border-t border-gray-100">
                 <p className="text-xs text-gray-500 italic flex items-center gap-2">
                   <Save className="w-3.5 h-3.5" />
-                  Click "Save Changes" at the top to apply these settings.
+                  Click "Save Changes" at the top to apply other estimator settings.
                 </p>
               </div>
             </div>

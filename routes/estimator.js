@@ -418,4 +418,108 @@ router.post("/log-events", async (req, res) => {
   }
 });
 
+// -------------------- GET /rate-overrides/:tenantId --------------------
+//
+// Returns per-service rate overrides for a tenant. Used by Settings UI
+// to populate the override inputs. Returns empty object if no overrides set.
+//
+// Phase 7 V1.5 (May 4, 2026).
+//
+// NOTE: This endpoint is unauthenticated to match other /tenant-config calls.
+// In V2 hardening, gate behind auth so only tenant owner/admin can read.
+router.get("/rate-overrides/:tenantId", async (req, res) => {
+  try {
+    const tenantId = req.params.tenantId;
+    if (!tenantId) {
+      return res.status(400).json({ error: "tenantId required" });
+    }
+
+    const result = await db.query(
+      `SELECT service_slug, percentage_adjustment, updated_at
+         FROM tenant_service_rate_overrides
+        WHERE tenant_id = $1`,
+      [tenantId]
+    );
+
+    // Return as object keyed by service_slug for easy UI consumption
+    const overrides = {};
+    for (const row of result.rows) {
+      overrides[row.service_slug] = {
+        percentage_adjustment: Number(row.percentage_adjustment),
+        updated_at: row.updated_at,
+      };
+    }
+
+    res.json({ overrides });
+  } catch (e) {
+    console.error("[Estimator] /rate-overrides GET error:", e.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// -------------------- PATCH /rate-overrides/:tenantId --------------------
+//
+// Body: { service_slug, percentage_adjustment | null }
+//
+// Upsert one override. Pass null/undefined percentage_adjustment to delete
+// the row (revert to default for that service).
+//
+// Phase 7 V1.5 (May 4, 2026).
+//
+// SECURITY: Currently unauthenticated to match the rest of /api/estimator.
+// V2 hardening: validate JWT + ensure caller owns this tenant.
+router.patch("/rate-overrides/:tenantId", async (req, res) => {
+  try {
+    const tenantId = req.params.tenantId;
+    const { service_slug, percentage_adjustment } = req.body || {};
+
+    if (!tenantId || !service_slug) {
+      return res.status(400).json({ error: "tenantId and service_slug required" });
+    }
+
+    // Validate service_slug — must be one this vertical supports
+    const validSlugs = ["interior", "exterior", "cabinets", "deck_fence"];
+    if (!validSlugs.includes(service_slug)) {
+      return res.status(400).json({ error: `service_slug must be one of: ${validSlugs.join(", ")}` });
+    }
+
+    // null/undefined → delete the override row
+    if (percentage_adjustment === null || percentage_adjustment === undefined) {
+      await db.query(
+        `DELETE FROM tenant_service_rate_overrides
+          WHERE tenant_id = $1 AND service_slug = $2`,
+        [tenantId, service_slug]
+      );
+      console.log("[Estimator] Reset rate override tenantId=%s service=%s", tenantId, service_slug);
+      return res.json({ success: true, deleted: true });
+    }
+
+    // Validate range
+    const pct = Number(percentage_adjustment);
+    if (!Number.isFinite(pct)) {
+      return res.status(400).json({ error: "percentage_adjustment must be a number" });
+    }
+    if (pct < -0.50 || pct > 1.00) {
+      return res.status(400).json({ error: "percentage_adjustment must be between -0.50 and +1.00 (-50% to +100%)" });
+    }
+
+    // Upsert
+    await db.query(
+      `INSERT INTO tenant_service_rate_overrides (tenant_id, service_slug, percentage_adjustment, updated_at)
+       VALUES ($1, $2, $3, now())
+       ON CONFLICT (tenant_id, service_slug)
+       DO UPDATE SET
+         percentage_adjustment = EXCLUDED.percentage_adjustment,
+         updated_at = now()`,
+      [tenantId, service_slug, pct]
+    );
+
+    console.log("[Estimator] Set rate override tenantId=%s service=%s pct=%s", tenantId, service_slug, pct);
+    res.json({ success: true, service_slug, percentage_adjustment: pct });
+  } catch (e) {
+    console.error("[Estimator] /rate-overrides PATCH error:", e.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 module.exports = router;

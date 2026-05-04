@@ -1,307 +1,526 @@
 "use strict";
 
-/**
- * routes/estimateLink.js
- *
- * Hosted landing page for the SMS estimate link sent by the voice AI's
- * send_estimate_link tool. Phase E1 (May 4, 2026).
- *
- * Flow:
- *   1. Caller asks for a price quote on a phone call.
- *   2. AI (after confirming the cell number) calls send_estimate_link.
- *   3. Backend builds URL: https://<host>/q/<tenantId>?call_id=<callId>
- *   4. SMS goes out: "Tap to get your free instant estimate: <link>"
- *   5. Customer taps link → lands here.
- *   6. We render a minimal page that loads chat-widget.js with auto-open
- *      + auto-start-estimator flags via window.__aiWidgetAutoStart. The
- *      widget reads that object (and ?call_id=) for attribution back to
- *      the originating phone call, then forwards source_call_id on lead
- *      capture.
- *
- * Why a backend-hosted page (Option A) instead of redirecting to the
- * tenant's website (Option B): works universally regardless of whether
- * the tenant has the widget embedded on their site, and doesn't depend
- * on a website_url column being populated. Drew picked A as the MVP
- * (May 4, 2026).
- *
- * The page is intentionally minimal — branding comes from the widget
- * itself once it loads (company_name, brand_color, logo_url all pulled
- * from /api/public-tenant/<id>). We only need the company name in the
- * <title> and as a static header for SEO/sharing previews.
- *
- * The widget's contract (chat-widget.js, May 4, 2026):
- *
- *   window.__aiWidgetAutoStart = {
- *     openChat: true,        // open the chat panel automatically
- *     startEstimator: true,  // trigger startEstimatorFlow() after open
- *     callId: "<uuid>"       // optional — for source_call_id attribution
- *   };
- *
- * This must be set BEFORE the chat-widget.js script tag so the module
- * picks it up at IIFE time. We render it inline above the script tag.
- */
+// ============================================================================
+// routes/estimator.js
+// ============================================================================
+// Phase 7 V1 — Public estimator endpoints. Called by widget JS from painter
+// websites (cross-origin). NO auth — these are widget-facing.
+//
+// Endpoints (mounted at /api/estimator):
+//   POST /quote                    → calculate price range
+//   POST /validate                 → input validation only
+//   GET  /tenant-config/:tenantId  → widget config bundle
+//   POST /lead                     → capture estimator_payload to leads
+//
+// Admin-only endpoint (GET /vertical/:slug) lives in routes/estimatorAdmin.js
+// and mounts at /api/admin/estimator with requireSuperAdmin gate.
+// ============================================================================
 
 const express = require("express");
-const router  = express.Router();
-const db      = require("../lib/db");
+const db = require("../lib/db");
+const estimator = require("../lib/estimator");
+const leadsService = require("../services/leads");
 
-/**
- * GET /q/:tenantId?call_id=<uuid>
- *
- * Returns a self-contained HTML page that loads chat-widget.js with
- * auto-open + auto-start-estimator flags. Validates that the tenant
- * exists and has estimator_enabled=true.
- *
- * Status codes:
- *   200 — valid tenant, estimator enabled, page rendered
- *   404 — tenant not found OR estimator not enabled
- *   500 — DB error
- */
-router.get("/q/:tenantId", async (req, res) => {
-  const { tenantId } = req.params;
-  const callId = req.query.call_id || null;
+const router = express.Router();
 
-  // Reject obviously malformed tenant IDs early. Real tenant IDs are
-  // UUIDs — the loose regex catches typos and prevents a DB hit on junk.
-  if (!/^[0-9a-f-]{32,36}$/i.test(tenantId)) {
-    return res.status(404).type("html").send(renderErrorPage("Estimator not found"));
-  }
-
-  let tenant;
+// -------------------- POST /quote --------------------
+//
+// Body: { tenant_id, service_slug, inputs }
+// Returns either a quote with range_min_cents/range_max_cents, OR a
+// specialized routing object with reason/trigger.
+router.post("/quote", async (req, res) => {
   try {
-    const result = await db.query(
-      `SELECT id, company_name, name, brand_color, estimator_enabled
-         FROM tenants
-        WHERE id = $1
-        LIMIT 1`,
-      [tenantId]
-    );
-    tenant = result.rows[0];
+    const { tenant_id, service_slug, inputs } = req.body || {};
+
+    if (!tenant_id || !service_slug) {
+      return res.status(400).json({ error: "tenant_id and service_slug are required" });
+    }
+
+    // Validate first — surface input errors before hitting DB
+    const validation = estimator.validateInputs(service_slug, inputs || {});
+    if (!validation.valid) {
+      return res.status(400).json({
+        error: "Invalid inputs",
+        validation_errors: validation.errors,
+      });
+    }
+
+    const result = await estimator.calculateRange(tenant_id, service_slug, inputs || {});
+    res.json(result);
   } catch (e) {
-    console.error("[Estimate Link Page] DB error tenantId=%s err=%s", tenantId, e.message);
-    return res.status(500).type("html").send(renderErrorPage("Something went wrong on our end"));
+    console.error("[Estimator] /quote error:", e.message);
+    res.status(500).json({ error: e.message || "Server error" });
   }
-
-  if (!tenant) {
-    console.log("[Estimate Link Page] Tenant not found id=%s", tenantId);
-    return res.status(404).type("html").send(renderErrorPage("Estimator not found"));
-  }
-
-  if (!tenant.estimator_enabled) {
-    console.log("[Estimate Link Page] Estimator not enabled for tenant=%s", tenantId);
-    return res.status(404).type("html").send(renderErrorPage("This estimator isn't set up yet"));
-  }
-
-  const companyName = tenant.company_name || tenant.name || "Your Contractor";
-  const brandColor  = tenant.brand_color  || "#E8702A";
-
-  // Build the widget script URL from the current request. req.protocol
-  // respects X-Forwarded-Proto when app.set("trust proxy", true) is set
-  // in server.js (Render needs this; default is true in our app).
-  const widgetScriptUrl = `${req.protocol}://${req.get("host")}/chat-widget.js`;
-
-  console.log("[Estimate Link Page] Served tenant=%s call_id=%s", tenantId, callId || "(none)");
-
-  res.set("Content-Type", "text/html; charset=utf-8");
-  // Don't cache — the widget script may change tenant config dynamically
-  // and we want the freshest data each visit.
-  res.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
-
-  res.send(renderEstimatePage({
-    tenantId,
-    companyName,
-    brandColor,
-    widgetScriptUrl,
-    callId,
-  }));
 });
 
-// ─────────────────────────────────────────────────────────────────────
-// HTML renderers
-// ─────────────────────────────────────────────────────────────────────
+// -------------------- POST /validate --------------------
+//
+// Body: { service_slug, inputs }
+// Returns { valid, errors }. No DB access — pure input validation.
+// Useful for live widget feedback as the user fills out the form.
+router.post("/validate", async (req, res) => {
+  try {
+    const { service_slug, inputs } = req.body || {};
+    if (!service_slug) {
+      return res.status(400).json({ error: "service_slug is required" });
+    }
+    const result = estimator.validateInputs(service_slug, inputs || {});
+    res.json(result);
+  } catch (e) {
+    console.error("[Estimator] /validate error:", e.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
 
-function renderEstimatePage({ tenantId, companyName, brandColor, widgetScriptUrl, callId }) {
-  // Keep the page lean — heavy lifting is in chat-widget.js. We:
-  //   - set the <title> for SEO + sharing previews
-  //   - render a centered loading state while the widget initializes
-  //   - hide the widget's toggle button + callout (we auto-open)
-  //   - reposition + resize the widget container to feel like a full app
-  //   - on mobile, hide the static header and let the widget go fullscreen
-  //   - set window.__aiWidgetAutoStart BEFORE the script loads
-  //
-  // We embed the autostart hint as a JSON literal — JSON.stringify
-  // produces safe JS for any string inputs and avoids template-string
-  // escaping issues with single quotes / newlines / Unicode in callId.
-  const autoStartJson = JSON.stringify({
-    openChat: true,
-    startEstimator: true,
-    ...(callId ? { callId } : {}),
-  });
+// -------------------- GET /tenant-config/:tenantId --------------------
+//
+// Returns full vertical config for widget rendering: services, modifiers,
+// junction, questions. Widget calls this once on load, then renders forms
+// dynamically without further DB hits until /quote.
+router.get("/tenant-config/:tenantId", async (req, res) => {
+  try {
+    const tenantId = req.params.tenantId;
+    if (!tenantId) {
+      return res.status(400).json({ error: "tenantId required" });
+    }
+   const config = await estimator.getVerticalConfig(tenantId);
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="robots" content="noindex, nofollow">
-  <meta name="theme-color" content="${escapeAttr(brandColor)}">
-  <title>Free Estimate · ${escapeHtml(companyName)}</title>
-  <link rel="icon" href="data:," />
-  <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      background: linear-gradient(135deg, #f5f7fa 0%, #e6ebf2 100%);
-      min-height: 100vh;
-      min-height: 100dvh;
-      color: #1a1a1a;
-      -webkit-font-smoothing: antialiased;
-    }
-    .wrapper {
-      min-height: 100vh;
-      min-height: 100dvh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 24px 16px;
-    }
-    .header {
-      text-align: center;
-      max-width: 480px;
-      margin-bottom: 24px;
-      animation: fadeIn 0.5s ease-out;
-    }
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(8px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    .header h1 {
-      font-size: 26px;
-      margin: 0 0 10px 0;
-      font-weight: 800;
-      letter-spacing: -0.5px;
-      line-height: 1.2;
-    }
-    .brand-name {
-      color: ${escapeAttr(brandColor)};
-    }
-    .header p {
-      font-size: 15px;
-      color: #555;
-      margin: 0 0 12px 0;
-      line-height: 1.5;
-    }
-    .loader {
-      display: inline-block;
-      width: 32px;
-      height: 32px;
-      border: 3px solid rgba(0,0,0,0.08);
-      border-top-color: ${escapeAttr(brandColor)};
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      margin-top: 8px;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    /* Widget overrides — make it the centerpiece on desktop, hide toggle */
-    #ai-chat-toggle, #ai-chat-callout {
-      display: none !important;
-    }
-    #ai-chat-container {
-      bottom: auto !important;
-      right: auto !important;
-      top: 50% !important;
-      left: 50% !important;
-      transform: translate(-50%, -50%) !important;
-      width: min(440px, calc(100vw - 32px)) !important;
-      height: min(680px, calc(100vh - 32px)) !important;
-      height: min(680px, calc(100dvh - 32px)) !important;
-      box-shadow: 0 25px 80px rgba(0,0,0,0.25) !important;
+    // Gate: only return config if estimator is actually enabled for this tenant.
+    // Prevents widget from rendering on tenants who haven't activated the addon.
+    // Phase 7 V1.5 — renamed widget_enabled → estimator_enabled (master toggle).
+    if (!config.tenant.estimator_enabled) {
+      return res.status(403).json({ error: "Estimator not enabled for this tenant" });
     }
 
-    /* On mobile, hide the static header and let the widget go fullscreen
-       using its existing CSS. The widget's mobile media query uses
-       !important so it'll override our desktop overrides above. */
-    @media (max-width: 640px) {
-      .header { display: none; }
-      .wrapper { padding: 0; }
+    res.json(config); 
+  } catch (e) {
+    console.error("[Estimator] /tenant-config error:", e.message);
+    if (e.message && e.message.includes("not found")) {
+      return res.status(404).json({ error: e.message });
     }
-  </style>
-</head>
-<body>
-  <div class="wrapper">
-    <div class="header">
-      <h1>Free Estimate · <span class="brand-name">${escapeHtml(companyName)}</span></h1>
-      <p>Answer a few quick questions to get an instant ballpark range.<br>Takes about 60 seconds.</p>
-      <div class="loader" aria-hidden="true"></div>
-    </div>
-  </div>
+    res.status(500).json({ error: "Server error" });
+  }
+});
 
-  <script>
-    // Phase E1 (May 4, 2026): tell chat-widget.js to auto-open + auto-start
-    // the estimator on this hosted landing page. The widget reads this
-    // object at IIFE time, so it MUST be set before the script tag below.
-    // The widget also reads ?call_id=... from the URL as a fallback, but
-    // we set callId here too so the URL stays clean.
-    window.__aiWidgetAutoStart = ${autoStartJson};
-  </script>
-  <script src="${escapeAttr(widgetScriptUrl)}" data-tenant-id="${escapeAttr(tenantId)}"></script>
-</body>
-</html>`;
-}
+// -------------------- POST /lead --------------------
+//
+// Body: { tenant_id, phone, name?, email?, address?, project_type?,
+//         estimator_payload, quote_result? }
+// Captures the homeowner's contact info + full estimator scope into the
+// leads table. Uses getOrCreateLead pattern for cross-channel dedup
+// (matches /lead-capture and /api/widget/start-sms behavior).
+//
+// estimator_payload is the full submission state (service, inputs, modifier
+// selections). quote_result is the calculateRange output (range, breakdown).
+// Both stored as JSONB on leads.estimator_payload column.
+router.post("/lead", async (req, res) => {
+  try {
+    const {
+      tenant_id,
+      phone,
+      name,
+      email,
+      address,
+      project_type,
+      estimator_payload,
+      quote_result,
+    } = req.body || {};
 
-function renderErrorPage(message) {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="robots" content="noindex">
-  <title>Not Found</title>
-  <style>
-    body {
-      margin: 0;
-      padding: 60px 24px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      text-align: center;
-      color: #444;
-      background: #f9f9fb;
-      min-height: 100vh;
-      box-sizing: border-box;
+    if (!tenant_id || !phone) {
+      return res.status(400).json({ error: "tenant_id and phone are required" });
     }
-    h1 { color: #1a1a1a; margin: 0 0 12px 0; font-size: 26px; }
-    p  { font-size: 15px; line-height: 1.5; max-width: 380px; margin: 0 auto 12px auto; }
-  </style>
-</head>
-<body>
-  <h1>Hmm</h1>
-  <p>${escapeHtml(message)}.</p>
-  <p>Please give us a call directly to get your estimate.</p>
-</body>
-</html>`;
-}
+    if (!estimator_payload || typeof estimator_payload !== "object") {
+      return res.status(400).json({ error: "estimator_payload object required" });
+    }
 
-// HTML-escape a string for use as text content. Used on company_name
-// and any other tenant-supplied data to prevent stored XSS in the
-// hosted page.
-function escapeHtml(s) {
-  if (s == null) return "";
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
+    // Find or create lead — matches existing widget patterns
+    const lead = await leadsService.getOrCreateLead(
+      tenant_id,
+      phone,
+      name || null,
+      "estimator_widget",
+      "web_form"
+    );
+    if (!lead) {
+      return res.status(500).json({ error: "Failed to create lead" });
+    }
 
-// HTML-escape a string for use inside a quoted attribute. Slightly more
-// permissive than escapeHtml — only need to escape what would break out
-// of a "..." attribute. We use the same helper for safety.
-function escapeAttr(s) {
-  return escapeHtml(s);
-}
+    // Build the full estimator payload — includes both inputs and computed quote
+    const fullPayload = {
+      ...estimator_payload,
+      quote_result: quote_result || null,
+      submitted_at: new Date().toISOString(),
+    };
+
+    // Update lead with contact info + estimator payload in one query
+    await db.query(
+      `UPDATE leads
+          SET name              = COALESCE($2, name),
+              email             = COALESCE($3, email),
+              address           = COALESCE($4, address),
+              project_type      = COALESCE($5, project_type),
+              estimator_payload = $6,
+              updated_at        = now()
+        WHERE id = $1`,
+      [
+        lead.id,
+        name || null,
+        email || null,
+        address || null,
+        project_type || null,
+        JSON.stringify(fullPayload),
+      ]
+    );
+
+   console.log(
+      "[Estimator] /lead captured tenantId=%s leadId=%s service=%s specialized=%s",
+      tenant_id,
+      lead.id,
+      estimator_payload.service_slug || "(none)",
+      quote_result?.specialized || false
+    );
+
+    // ─────────────────────────────────────────────────────────────
+    // CRM FORWARDING — added May 1, 2026 (Phase 7 V1.5 critical fix)
+    //
+    // Without this, estimator leads landed in the leads table but
+    // never reached DripJobs/Zapier. Tenants would see leads in
+    // /leads dashboard but their actual sales workflow had no idea
+    // they existed. Mirrors the pattern from processSmsConversation
+    // in server.js, but inlined to keep this route self-contained.
+    // ─────────────────────────────────────────────────────────────
+    try {
+      // Inline helpers — keep this route self-contained
+      const splitName = (fullName) => {
+        const trimmed = String(fullName || "").trim();
+        if (!trimmed) return { first_name: "", last_name: "", full_name: "" };
+        const parts = trimmed.split(/\s+/);
+        if (parts.length === 1) return { first_name: parts[0], last_name: ".", full_name: trimmed };
+        return {
+          first_name: parts[0],
+          last_name: parts.slice(1).join(" "),
+          full_name: trimmed,
+        };
+      };
+      const normalizePhone = (raw) => {
+        if (!raw) return "";
+        const digits = String(raw).replace(/\D/g, "");
+        if (digits.length === 10) return `+1${digits}`;
+        if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+        if (String(raw).startsWith("+") && digits.length >= 10) return `+${digits}`;
+        return String(raw).trim();
+      };
+
+      // Build human-readable project_details with quote range
+      let projectDetailsText = "";
+      if (quote_result && !quote_result.specialized) {
+        const minDollars = Math.round(quote_result.range_min_cents / 100);
+        const maxDollars = Math.round(quote_result.range_max_cents / 100);
+        projectDetailsText = (minDollars === maxDollars)
+          ? `Estimator quote: $${minDollars.toLocaleString()}`
+          : `Estimator quote range: $${minDollars.toLocaleString()} - $${maxDollars.toLocaleString()}`;
+        if (estimator_payload.rooms && estimator_payload.rooms.length > 0) {
+          const roomSummary = estimator_payload.rooms
+            .filter(r => r.count > 0)
+            .map(r => `${r.count} ${r.size || "medium"} ${r.type || "room(s)"}`)
+            .join(", ");
+          if (roomSummary) projectDetailsText += ` | ${roomSummary}`;
+        }
+      } else if (quote_result?.specialized) {
+        projectDetailsText = `Specialized project — needs in-person walkthrough. Reason: ${quote_result.reason || "(not provided)"}`;
+      }
+
+      const nameParts = splitName(name);
+      const phoneNorm = normalizePhone(phone);
+
+      // Look up tenant CRM webhooks
+      const tenantRow = await db.query(
+        "SELECT crm_webhook_url, zapier_webhook_url, name, company_name FROM tenants WHERE id = $1",
+        [tenant_id]
+      ).then(r => r.rows[0]);
+
+      const webhookUrls = [];
+      if (tenantRow?.crm_webhook_url?.trim()) webhookUrls.push(tenantRow.crm_webhook_url.trim());
+      if (tenantRow?.zapier_webhook_url?.trim()) webhookUrls.push(tenantRow.zapier_webhook_url.trim());
+
+      if (webhookUrls.length === 0) {
+        console.warn("[Estimator] No CRM webhook configured for tenant %s. Lead saved but not forwarded.", tenant_id);
+      } else {
+        // Smart fallbacks matching sendToCRM behavior in server.js
+        const crmPayload = {
+          event_type: "lead_capture",
+          source: "estimator_widget",
+          full_name: nameParts.full_name || "New Lead",
+          first_name: nameParts.first_name || "New Lead",
+          last_name: nameParts.last_name || ".",
+          contact_name: nameParts.full_name || "New Lead",
+          phone: phoneNorm,
+          contact_phone: phoneNorm,
+          email: email || `lead-${phoneNorm.replace(/\D/g, "").slice(-10)}@placeholder.local`,
+          contact_email: email || `lead-${phoneNorm.replace(/\D/g, "").slice(-10)}@placeholder.local`,
+          address: address || "Not provided",
+          city: "Omaha",
+          state: "NE",
+          zip: "00000",
+          job_type: project_type || "Residential",
+          project_type: project_type || "",
+          project_details: projectDetailsText,
+          appointment_details: projectDetailsText,
+          preferred_date: new Date().toISOString().split("T")[0],
+          lead_type: "INQUIRY",
+          timestamp: new Date().toISOString(),
+          tenant_id: tenant_id,
+          tenant_name: tenantRow?.name || null,
+          company_name: tenantRow?.company_name || null,
+        };
+
+        // Use built-in fetch (Node 18+). Fallback to global if not present.
+        const fetchFn = (typeof fetch !== "undefined") ? fetch : require("node-fetch");
+
+        console.log("[Estimator] Forwarding lead to %d CRM webhook(s) tenantId=%s leadId=%s", webhookUrls.length, tenant_id, lead.id);
+        for (const url of webhookUrls) {
+          try {
+            const resp = await fetchFn(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(crmPayload),
+            });
+            if (resp.ok) {
+              console.log("[Estimator] CRM forward SUCCESS url=%s leadId=%s", url, lead.id);
+            } else {
+              const errBody = await resp.text();
+              console.error("[Estimator] CRM forward FAILED url=%s status=%d body=%s", url, resp.status, errBody.slice(0, 200));
+            }
+          } catch (fwdErr) {
+            console.error("[Estimator] CRM forward error url=%s error=%s", url, fwdErr.message);
+          }
+        }
+      }
+    } catch (crmErr) {
+      // CRM failure must NOT break the lead capture. Log and proceed.
+      console.error("[Estimator] CRM forwarding error (non-fatal):", crmErr.message);
+    }
+
+    // Bell notification — matches notification pattern from book_appointment in server.js
+    try {
+      const notificationsService = require("../services/notifications");
+      const notifTitle = "New Estimator Lead";
+      let notifBody;
+      if (quote_result?.specialized) {
+        notifBody = `${name || "A new lead"} requested a quote (specialized project — needs walkthrough).`;
+      } else if (quote_result) {
+        const minDollars = Math.round(quote_result.range_min_cents / 100);
+        const maxDollars = Math.round(quote_result.range_max_cents / 100);
+        const rangeStr = (minDollars === maxDollars)
+          ? `$${minDollars.toLocaleString()}`
+          : `$${minDollars.toLocaleString()} - $${maxDollars.toLocaleString()}`;
+        notifBody = `${name || "A new lead"} requested a quote — range ${rangeStr}.`;
+      } else {
+        notifBody = `${name || "A new lead"} requested a quote.`;
+      }
+      await notificationsService.createNotification(tenant_id, {
+        type: 'lead_captured',
+        title: notifTitle,
+        body: notifBody,
+        data: { lead_id: lead.id, source: 'estimator_widget', phone, project_type, quote_result }
+      });
+    } catch (notifErr) {
+      console.error("[Estimator] Notification failed (non-fatal):", notifErr.message);
+    }
+
+    res.json({ success: true, lead_id: lead.id });
+  } catch (e) {
+    console.error("[Estimator] /lead error:", e.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// -------------------- POST /log-events --------------------
+//
+// Body: { tenant_id, lead_id, events: [{event_type, content, timestamp}] }
+//
+// Phase 7 V1.5 — May 1, 2026. Writes synthetic messages to the messages
+// table representing key estimator flow events, so the Conversations
+// dashboard shows the full estimator interaction (service selected, quote
+// shown, contact captured) alongside normal Alex chat.
+//
+// Called by chat-widget.js immediately after /lead succeeds. Events are
+// buffered client-side so they all share the same lead_id and write in one
+// batch. If this POST fails, the lead is still captured — events are a
+// secondary record for dashboard visibility, not a revenue-critical path.
+router.post("/log-events", async (req, res) => {
+  try {
+    const { tenant_id, lead_id, events } = req.body || {};
+
+    if (!tenant_id || !lead_id || !Array.isArray(events)) {
+      return res.status(400).json({ error: "tenant_id, lead_id, and events array required" });
+    }
+    if (events.length === 0 || events.length > 10) {
+      return res.status(400).json({ error: "events must be 1-10 items" });
+    }
+
+    // Verify lead belongs to this tenant — prevents cross-tenant injection
+    const leadCheck = await db.query(
+      "SELECT id FROM leads WHERE id = $1 AND tenant_id = $2",
+      [lead_id, tenant_id]
+    );
+    if (leadCheck.rows.length === 0) {
+      return res.status(404).json({ error: "Lead not found for this tenant" });
+    }
+
+    // Insert each event as a message row. Direction is 'inbound' for
+    // user actions (selected service, submitted form) and 'outbound' for
+    // system responses (quote shown). Channel always 'website' since this
+    // flow only runs in the chat widget on the marketing site.
+    let inserted = 0;
+    for (const evt of events) {
+      const eventType = String(evt.event_type || "").trim();
+      const content = String(evt.content || "").trim();
+      const timestamp = evt.timestamp ? new Date(evt.timestamp) : new Date();
+
+      if (!eventType || !content) continue;
+      if (content.length > 2000) continue;
+
+      // Map event type to direction
+      let direction = "inbound";
+      if (eventType === "quote_shown" || eventType === "estimator_started") {
+        direction = "outbound";  // System-driven events
+      }
+
+      try {
+        await db.query(
+          `INSERT INTO messages (tenant_id, lead_id, channel, direction, body, metadata, created_at)
+           VALUES ($1, $2, 'website', $3, $4, $5, $6)`,
+          [
+            tenant_id,
+            lead_id,
+            direction,
+            content,
+            JSON.stringify({
+              source: "estimator_widget",
+              event_type: eventType,
+              synthetic: true,
+            }),
+            timestamp,
+          ]
+        );
+        inserted++;
+      } catch (insertErr) {
+        console.error("[Estimator] log-events insert failed event=%s error=%s", eventType, insertErr.message);
+        // Continue with next event — partial success is acceptable
+      }
+    }
+
+    console.log("[Estimator] /log-events tenantId=%s leadId=%s inserted=%d/%d", tenant_id, lead_id, inserted, events.length);
+    res.json({ success: true, inserted });
+  } catch (e) {
+    console.error("[Estimator] /log-events error:", e.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// -------------------- GET /rate-overrides/:tenantId --------------------
+//
+// Returns per-service rate overrides for a tenant. Used by Settings UI
+// to populate the override inputs. Returns empty object if no overrides set.
+//
+// Phase 7 V1.5 (May 4, 2026).
+//
+// NOTE: This endpoint is unauthenticated to match other /tenant-config calls.
+// In V2 hardening, gate behind auth so only tenant owner/admin can read.
+router.get("/rate-overrides/:tenantId", async (req, res) => {
+  try {
+    const tenantId = req.params.tenantId;
+    if (!tenantId) {
+      return res.status(400).json({ error: "tenantId required" });
+    }
+
+    const result = await db.query(
+      `SELECT service_slug, percentage_adjustment, updated_at
+         FROM tenant_service_rate_overrides
+        WHERE tenant_id = $1`,
+      [tenantId]
+    );
+
+    // Return as object keyed by service_slug for easy UI consumption
+    const overrides = {};
+    for (const row of result.rows) {
+      overrides[row.service_slug] = {
+        percentage_adjustment: Number(row.percentage_adjustment),
+        updated_at: row.updated_at,
+      };
+    }
+
+    res.json({ overrides });
+  } catch (e) {
+    console.error("[Estimator] /rate-overrides GET error:", e.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// -------------------- PATCH /rate-overrides/:tenantId --------------------
+//
+// Body: { service_slug, percentage_adjustment | null }
+//
+// Upsert one override. Pass null/undefined percentage_adjustment to delete
+// the row (revert to default for that service).
+//
+// Phase 7 V1.5 (May 4, 2026).
+//
+// SECURITY: Currently unauthenticated to match the rest of /api/estimator.
+// V2 hardening: validate JWT + ensure caller owns this tenant.
+router.patch("/rate-overrides/:tenantId", async (req, res) => {
+  try {
+    const tenantId = req.params.tenantId;
+    const { service_slug, percentage_adjustment } = req.body || {};
+
+    if (!tenantId || !service_slug) {
+      return res.status(400).json({ error: "tenantId and service_slug required" });
+    }
+
+    // Validate service_slug — must be one this vertical supports
+    const validSlugs = ["interior", "exterior", "cabinets", "deck_fence"];
+    if (!validSlugs.includes(service_slug)) {
+      return res.status(400).json({ error: `service_slug must be one of: ${validSlugs.join(", ")}` });
+    }
+
+    // null/undefined → delete the override row
+    if (percentage_adjustment === null || percentage_adjustment === undefined) {
+      await db.query(
+        `DELETE FROM tenant_service_rate_overrides
+          WHERE tenant_id = $1 AND service_slug = $2`,
+        [tenantId, service_slug]
+      );
+      console.log("[Estimator] Reset rate override tenantId=%s service=%s", tenantId, service_slug);
+      return res.json({ success: true, deleted: true });
+    }
+
+    // Validate range
+    const pct = Number(percentage_adjustment);
+    if (!Number.isFinite(pct)) {
+      return res.status(400).json({ error: "percentage_adjustment must be a number" });
+    }
+    if (pct < -0.50 || pct > 1.00) {
+      return res.status(400).json({ error: "percentage_adjustment must be between -0.50 and +1.00 (-50% to +100%)" });
+    }
+
+    // Upsert
+    await db.query(
+      `INSERT INTO tenant_service_rate_overrides (tenant_id, service_slug, percentage_adjustment, updated_at)
+       VALUES ($1, $2, $3, now())
+       ON CONFLICT (tenant_id, service_slug)
+       DO UPDATE SET
+         percentage_adjustment = EXCLUDED.percentage_adjustment,
+         updated_at = now()`,
+      [tenantId, service_slug, pct]
+    );
+
+    console.log("[Estimator] Set rate override tenantId=%s service=%s pct=%s", tenantId, service_slug, pct);
+    res.json({ success: true, service_slug, percentage_adjustment: pct });
+  } catch (e) {
+    console.error("[Estimator] /rate-overrides PATCH error:", e.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
 
 module.exports = router;

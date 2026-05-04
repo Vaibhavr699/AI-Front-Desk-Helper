@@ -212,19 +212,66 @@ async function updateBooking(bookingId, data) {
   return booking;
 }
 
-async function cancelBooking(bookingId) {
-  console.log("[AI-Desk] Booking cancel id=%s", bookingId);
+/**
+ * Cancel a booking. Updates status + cancellation metadata, fires owner email,
+ * fires bell notification, and syncs to CRM.
+ *
+ * Phase 1 of cancellation flow (May 4, 2026): owner email + bell notification.
+ * Phase 2 will add: customer SMS, lead status flip, recovery cancel.
+ * Phase 3 will add: Google Calendar event deletion + CRM event_type override.
+ *
+ * @param {string} bookingId - The booking UUID
+ * @param {object} options - Optional metadata about the cancellation
+ * @param {string} options.cancelled_via - 'voice' | 'sms' | 'dashboard' | 'crm'
+ * @param {string} options.cancellation_reason - Free-text reason
+ * @returns {object|null} The updated booking row, or null if not found
+ */
+async function cancelBooking(bookingId, options = {}) {
+  const cancelled_via = options.cancelled_via || null;
+  const cancellation_reason = options.cancellation_reason || null;
+
+  console.log("[AI-Desk] Booking cancel id=%s via=%s", bookingId, cancelled_via || "unknown");
+
+  // Update the booking row with status + cancellation metadata
   const res = await db.query(
-    `UPDATE bookings SET status = 'Cancelled', updated_at = now() WHERE id = $1 RETURNING *`,
-    [bookingId]
+    `UPDATE bookings
+     SET status = 'Cancelled',
+         cancelled_at = now(),
+         cancelled_via = $2,
+         cancellation_reason = $3,
+         updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [bookingId, cancelled_via, cancellation_reason]
   );
   const booking = res.rows[0];
-  if (booking) {
-    const tenant = await getTenantById(booking.tenant_id);
-    if (tenant) {
-      crm.syncBookingToCrm(booking.tenant_id, booking).catch(e => console.error("CRM Sync:", e));
-    }
+
+  if (!booking) {
+    console.warn("[AI-Desk] Cancel: booking not found id=%s", bookingId);
+    return null;
   }
+
+  const tenant = await getTenantById(booking.tenant_id);
+
+  if (tenant) {
+    // CRM sync (existing behavior — fire and forget)
+    crm.syncBookingToCrm(booking.tenant_id, booking)
+      .catch(e => console.error("[Cancel] CRM Sync:", e.message));
+
+    // Owner email — fire and forget (must never block the cancellation)
+    emailService.sendBookingCancellationEmail(tenant, booking, cancelled_via, cancellation_reason)
+      .catch(e => console.error("[Cancel] Email failed:", e.message));
+
+    // Bell notification — fire and forget
+    notificationService.notifyBookingCancellation(booking.tenant_id, {
+      customer_name: booking.contact_name,
+      service_date:  booking.preferred_date,
+      booking_id:    booking.id,
+      lead_id:       booking.lead_id,
+      cancelled_via,
+    }).catch(e => console.error("[Cancel] Notification failed:", e.message));
+  }
+
   return booking;
 }
 

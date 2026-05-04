@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { getBookings, updateBooking, getTechnicians, getUser } from "../api";
+import { getBookings, updateBooking, cancelBooking, getTechnicians, getUser } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import {
   Calendar, List, Users, Clock, CheckCircle2, AlertCircle,
@@ -30,6 +30,17 @@ export default function Bookings({ tenantId }) {
   const [limit, setLimit] = useState(15);
   const [total, setTotal] = useState(0);
 
+  // Cancellation flow state — Phase 1 Cancellation Flow (May 4, 2026)
+  const [cancelMode, setCancelMode] = useState(null); // null | 'confirm' | 'submitting'
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelError, setCancelError] = useState('');
+
+  // Reset cancel state whenever user opens/closes the modal
+  useEffect(() => {
+    setCancelMode(null);
+    setCancelReason('');
+    setCancelError('');
+  }, [selectedBooking?.id]);
   useEffect(() => {
     if (!tenantId) return;
     getTechnicians(tenantId)
@@ -99,6 +110,22 @@ export default function Bookings({ tenantId }) {
       }
     } catch (e) {
       alert("Failed to update status: " + e.message);
+    }
+  }
+
+ async function handleCancelBooking() {
+    if (!selectedBooking) return;
+    setCancelMode('submitting');
+    setCancelError('');
+    try {
+      const updated = await cancelBooking(selectedBooking.id, cancelReason.trim() || null);
+      setBookings(prev => prev.map(b => b.id === updated.id ? { ...b, ...updated } : b));
+      setSelectedBooking(null);
+      setCancelMode(null);
+      setCancelReason('');
+    } catch (e) {
+      setCancelError(e.message || 'Failed to cancel booking');
+      setCancelMode('confirm');
     }
   }
 
@@ -496,6 +523,56 @@ export default function Bookings({ tenantId }) {
                   </select>
                 </div>
               </div>
+              {selectedBooking.status?.toLowerCase() !== 'cancelled' && (
+                <div className="pt-4 border-t border-stone-100">
+                  {cancelMode === null && (
+                    <button
+                      onClick={() => setCancelMode('confirm')}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 font-semibold text-sm rounded-xl transition-all"
+                    >
+                      <X className="w-4 h-4" />
+                      Cancel Booking
+                    </button>
+                  )}
+                  {(cancelMode === 'confirm' || cancelMode === 'submitting') && (
+                    <div className="space-y-3 p-4 bg-red-50 border border-red-200 rounded-xl">
+                      <div>
+                        <label className="text-[10px] font-black uppercase tracking-widest text-red-700">Cancel this booking?</label>
+                        <p className="text-xs text-red-600 mt-1">
+                          {selectedBooking.contact_name || 'The customer'}'s appointment will be marked as cancelled. You'll get an email summary so you can follow up.
+                        </p>
+                      </div>
+                      <textarea
+                        value={cancelReason}
+                        onChange={(e) => setCancelReason(e.target.value)}
+                        placeholder="Reason for cancellation (optional)..."
+                        rows={2}
+                        disabled={cancelMode === 'submitting'}
+                        className="w-full text-sm bg-white border border-red-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-red-200 placeholder:text-red-400 text-stone-700 disabled:opacity-50"
+                      />
+                      {cancelError && (
+                        <p className="text-xs text-red-700 font-medium">{cancelError}</p>
+                      )}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => { setCancelMode(null); setCancelReason(''); setCancelError(''); }}
+                          disabled={cancelMode === 'submitting'}
+                          className="flex-1 px-4 py-2 bg-white border border-stone-200 text-stone-700 hover:border-stone-300 font-semibold text-xs rounded-lg transition-all disabled:opacity-50"
+                        >
+                          Keep booking
+                        </button>
+                        <button
+                          onClick={handleCancelBooking}
+                          disabled={cancelMode === 'submitting'}
+                          className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold text-xs rounded-lg transition-all disabled:opacity-50"
+                        >
+                          {cancelMode === 'submitting' ? 'Cancelling...' : 'Confirm cancellation'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="p-6 bg-stone-900 flex items-center justify-between">

@@ -464,6 +464,35 @@ export function createEstimatorAddonCheckout(tenantId) {
   });
 }
 
+// ── Per-service rate overrides (May 4, 2026) ──────────────────────────────
+// Phase 7 V1.5. Lets tenants tune their estimator rates from Settings without
+// SQL access. Each override is a percentage adjustment applied to default rates.
+
+/**
+ * Get all per-service rate overrides for a tenant.
+ * Returns { overrides: { interior: { percentage_adjustment, updated_at }, ... } }
+ * Empty object if no overrides set.
+ */
+export function getServiceRateOverrides(tenantId) {
+  return api(`/api/estimator/rate-overrides/${tenantId}`);
+}
+
+/**
+ * Set or reset a single service rate override.
+ * @param {string} tenantId
+ * @param {string} serviceSlug - 'interior' | 'exterior' | 'cabinets' | 'deck_fence'
+ * @param {number|null} percentageAdjustment - decimal (0.20 = +20%) or null to reset
+ */
+export function updateServiceRateOverride(tenantId, serviceSlug, percentageAdjustment) {
+  return api(`/api/estimator/rate-overrides/${tenantId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      service_slug: serviceSlug,
+      percentage_adjustment: percentageAdjustment,
+    }),
+  });
+}
+
 // ── Franchise zee subscribe (Apr 29, 2026) ────────────────────────────────
 // Phase 6 Franchise. Initiates Stripe Checkout for a zee paying their own
 // subscription. Returns { url, type } where url is the Stripe checkout URL

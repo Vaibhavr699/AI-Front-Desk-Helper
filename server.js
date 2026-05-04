@@ -3494,14 +3494,120 @@ sendToOpenAI(sessionUpdate);
                   ? "That time is available. You can proceed with book_appointment." 
                   : `That time is unfortunately taken. I found these available slots on ${appointment_date}: ${av.suggestedTimes.join(", ")}. Please suggest these to the caller or ask for another time.` 
               });
-            } else if (name === "cancel_appointment" && tenant && callId) {
-              const { contact_phone, reason } = args;
-              const booking = await bookingsService.findLatestBookingByPhone(tenant.id, contact_phone);
-              if (!booking) {
-                output = JSON.stringify({ success: false, message: "No appointment found for this phone number." });
+           } else if (name === "cancel_appointment" && tenant && callId) {
+              // ─────────────────────────────────────────────────────────
+              // Phase 4B (May 4, 2026) — voice cancellation flow.
+              //
+              // Two-phase protocol: AI calls Phase 1 with caller_phone to
+              // look up upcoming bookings, then Phase 2 with confirmed=true
+              // + target_booking_id after caller confirms.
+              //
+              // CRITICAL: we ignore args.caller_phone for the actual lookup
+              // and use the WS-handshake `from` variable instead. This
+              // prevents the AI from being talked into looking up someone
+              // else's appointments by a caller who claims a different
+              // number.
+              // ─────────────────────────────────────────────────────────
+              const { confirmed, target_booking_id, cancellation_reason } = args;
+              const lookupPhone = from; // call's actual From: — never trust args
+ 
+              if (!lookupPhone) {
+                console.warn("[AI-Desk] cancel_appointment: no From: on call — falling back to transfer");
+                output = JSON.stringify({
+                  success: false,
+                  action: "transfer_to_human",
+                  message: "I can't identify your number on this call. Tell the caller: 'I'm having trouble looking up your appointment — let me transfer you to someone who can help.' Then call request_human_transfer with reason='caller_requested_human'.",
+                });
+              } else if (confirmed && target_booking_id) {
+                // ── Phase 2: actually cancel ─────────────────────────
+                try {
+                  const booking = await bookingsService.cancelBooking(target_booking_id, {
+                    cancelled_via: "voice",
+                    cancellation_reason: cancellation_reason || null,
+                  });
+                  if (!booking) {
+                    console.warn("[AI-Desk] cancel_appointment phase 2: booking not found id=%s", target_booking_id);
+                    output = JSON.stringify({
+                      success: false,
+                      action: "transfer_to_human",
+                      message: "I couldn't find that appointment to cancel. Tell the caller: 'I'm having trouble cancelling that one — let me transfer you to someone who can help.' Then call request_human_transfer with reason='caller_requested_human'.",
+                    });
+                  } else {
+                    // Verify the booking actually belonged to this tenant.
+                    // Defense-in-depth — target_booking_id from the AI
+                    // could in theory be tampered with mid-conversation.
+                    if (booking.tenant_id !== tenant.id) {
+                      console.error("[AI-Desk] cancel_appointment phase 2: tenant mismatch! booking=%s tenant=%s expected=%s",
+                        booking.id, booking.tenant_id, tenant.id);
+                      output = JSON.stringify({
+                        success: false,
+                        action: "transfer_to_human",
+                        message: "Something went wrong with that cancellation. Transfer the caller using request_human_transfer with reason='caller_requested_human'.",
+                      });
+                    } else {
+                      console.log("[AI-Desk] cancel_appointment phase 2: cancelled booking=%s tenant=%s reason=%s",
+                        booking.id, tenant.id, cancellation_reason ? "captured" : "none");
+                      output = JSON.stringify({
+                        success: true,
+                        message: "Appointment cancelled. The customer will receive a text confirmation in a moment. Now ask the caller: 'Got it — you'll get a text confirmation in a moment. Would you like to set up a new time, or just leave things for now?' If they want to reschedule, start the booking flow. If not, say something warm and brief — do NOT call hang_up.",
+                      });
+                    }
+                  }
+                } catch (err) {
+                  console.error("[AI-Desk] cancel_appointment phase 2 error:", err.message);
+                  output = JSON.stringify({
+                    success: false,
+                    action: "transfer_to_human",
+                    message: "Something went wrong with that cancellation. Tell the caller: 'I'm having a technical issue — let me transfer you.' Then call request_human_transfer with reason='caller_requested_human'.",
+                  });
+                }
               } else {
-                await bookingsService.cancelBooking(booking.id);
-                output = JSON.stringify({ success: true, message: "Appointment cancelled successfully." });
+                // ── Phase 1: look up upcoming bookings ───────────────
+                try {
+                  const upcoming = await bookingsService.findUpcomingBookingsByPhone(tenant.id, lookupPhone);
+ 
+                  if (upcoming.length === 0) {
+                    console.log("[AI-Desk] cancel_appointment phase 1: no upcoming bookings for from=%s tenant=%s", lookupPhone, tenant.id);
+                    output = JSON.stringify({
+                      success: false,
+                      action: "transfer_to_human",
+                      message: "No upcoming appointments under this number. Tell the caller: 'I don't see any upcoming appointments under this number — let me transfer you to someone who can help.' Then call request_human_transfer with reason='caller_requested_human'.",
+                    });
+                  } else if (upcoming.length === 1) {
+                    const b = upcoming[0];
+                    const friendly = bookingsService.formatBookingForVoiceConfirm(b);
+                    console.log("[AI-Desk] cancel_appointment phase 1: 1 booking found id=%s friendly=%s", b.id, friendly);
+                    output = JSON.stringify({
+                      success: true,
+                      action: "confirm_with_caller",
+                      booking_id: b.id,
+                      friendly,
+                      message: `Found one upcoming appointment: ${friendly}. Repeat back the date and time exactly: 'I see you have an appointment ${friendly} — should I go ahead and cancel that for you?' Wait for an EXPLICIT yes (yes / yeah / correct / please / go ahead). If they say no or hesitate, do NOT cancel — clarify what they want instead. After explicit yes, casually ask: 'No problem — was there anything specific that came up, just so we can let the team know?' (don't push if they decline). Then call cancel_appointment AGAIN with confirmed=true, target_booking_id="${b.id}", caller_phone="${lookupPhone}", and cancellation_reason set to whatever the caller shared (omit if they declined).`,
+                    });
+                  } else {
+                    const items = upcoming.map((b) => ({
+                      id: b.id,
+                      friendly: bookingsService.formatBookingForVoiceConfirm(b),
+                    }));
+                    const listForAi = items
+                      .map((it, i) => `${i + 1}) ${it.friendly} (id: ${it.id})`)
+                      .join("; ");
+                    console.log("[AI-Desk] cancel_appointment phase 1: %d bookings found for from=%s", upcoming.length, lookupPhone);
+                    output = JSON.stringify({
+                      success: true,
+                      action: "ask_which_booking",
+                      bookings: items,
+                      message: `Found ${upcoming.length} upcoming appointments: ${listForAi}. Tell the caller naturally: 'I see a few appointments under this number — the first one is [friendly1], the second is [friendly2]. Which one would you like to cancel?' After they pick, CONFIRM by repeating back: 'Just to make sure, you want to cancel the [chosen friendly] one — is that right?' Wait for explicit yes. Then casually ask for a reason. Then call cancel_appointment AGAIN with confirmed=true, target_booking_id=<the chosen booking's id from above>, caller_phone="${lookupPhone}", and cancellation_reason if captured.`,
+                    });
+                  }
+                } catch (err) {
+                  console.error("[AI-Desk] cancel_appointment phase 1 lookup error:", err.message);
+                  output = JSON.stringify({
+                    success: false,
+                    action: "transfer_to_human",
+                    message: "Lookup failed. Tell the caller: 'I'm having trouble looking that up — let me transfer you to someone who can help.' Then call request_human_transfer with reason='caller_requested_human'.",
+                  });
+                }
               }
             } else if (name === "reschedule_appointment" && tenant && callId) {
               const { contact_phone, new_date, new_time, notes } = args;

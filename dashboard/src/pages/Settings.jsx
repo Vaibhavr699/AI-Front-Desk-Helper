@@ -448,7 +448,7 @@ export default function Settings({ tenantId }) {
     ring_first_phone: "",
     ring_first_timeout_seconds: 20,
     voicemail_message_url: "",
-    estimator_widget_enabled: false,
+    estimator_enabled: false,
     estimator_pop_enabled: false,
     cost_region: null,
     cost_custom_percentage: null
@@ -589,7 +589,7 @@ export default function Settings({ tenantId }) {
         ring_first_phone: t.ring_first_phone || "",
         ring_first_timeout_seconds: t.ring_first_timeout_seconds || 20,
         voicemail_message_url: t.voicemail_message_url || "",
-         estimator_widget_enabled: t.estimator_widget_enabled === true,
+         estimator_enabled: t.estimator_enabled === true,
         estimator_pop_enabled: t.estimator_pop_enabled === true,
         cost_region: t.cost_region || null,
         cost_custom_percentage: t.cost_custom_percentage ?? null
@@ -1078,7 +1078,7 @@ export default function Settings({ tenantId }) {
       ring_first_phone: form.ring_first_phone.trim() || null,
       ring_first_timeout_seconds: form.ring_first_timeout_seconds,
       voicemail_message_url: form.voicemail_message_url.trim() || null,
-      estimator_widget_enabled: form.estimator_widget_enabled,
+      estimator_enabled: form.estimator_enabled,
       estimator_pop_enabled: form.estimator_pop_enabled,
       cost_region: form.cost_region || null,
       cost_custom_percentage: form.cost_region === "custom" ? form.cost_custom_percentage : null
@@ -2727,9 +2727,9 @@ export default function Settings({ tenantId }) {
                 </p>
               </div>
 
-              {/* Master toggle (hero card matching ai-control style) */}
+             {/* Master toggle (hero card matching ai-control style) */}
               <section className={`relative overflow-hidden rounded-3xl p-8 transition-all border-2 ${
-                form.estimator_widget_enabled
+                form.estimator_enabled
                   ? "bg-slate-900 border-slate-900 shadow-2xl shadow-slate-900/20"
                   : "bg-gray-50 border-gray-200"
               }`}>
@@ -2739,27 +2739,27 @@ export default function Settings({ tenantId }) {
                 <div className="relative z-10 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
                   <div className="flex items-start gap-4">
                     <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
-                      form.estimator_widget_enabled ? "bg-emerald-500/20 text-emerald-400" : "bg-white text-gray-400"
+                      form.estimator_enabled ? "bg-emerald-500/20 text-emerald-400" : "bg-white text-gray-400"
                     }`}>
                       <Calculator className="w-6 h-6" strokeWidth={2.5} />
                     </div>
                     <div>
                      <h3 className={`text-lg font-black tracking-tight mb-1 flex items-center gap-2 ${
-                        form.estimator_widget_enabled ? "text-white" : "text-gray-900"
+                        form.estimator_enabled ? "text-white" : "text-gray-900"
                       }`}>
                         Estimator in chat
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
-                          form.estimator_widget_enabled
+                          form.estimator_enabled
                             ? "bg-emerald-500/20 text-emerald-300 border border-emerald-400/30"
                             : "bg-gray-200 text-gray-600 border border-gray-300"
                         }`}>
-                          {form.estimator_widget_enabled ? "Live" : "Off"}
+                          {form.estimator_enabled ? "Live" : "Off"}
                         </span>
                       </h3>
                       <p className={`text-sm leading-relaxed max-w-lg ${
-                        form.estimator_widget_enabled ? "text-slate-300" : "text-gray-500"
+                        form.estimator_enabled ? "text-slate-300" : "text-gray-500"
                       }`}>
-                        {form.estimator_widget_enabled
+                        {form.estimator_enabled
                           ? "Adds a \"💰 Quick Quote\" button to your chat widget. Homeowners get a ballpark range and you get a lead with full project details."
                           : "Turn on to add a \"💰 Quick Quote\" button to your chat widget."}
                       </p>
@@ -2767,15 +2767,15 @@ export default function Settings({ tenantId }) {
                   </div>
                   <button
                     type="button"
-                    onClick={() => handleUpdateForm("estimator_widget_enabled", !form.estimator_widget_enabled)}
+                    onClick={() => handleUpdateForm("estimator_enabled", !form.estimator_enabled)}
                     className={`relative w-16 h-9 rounded-full transition-colors shrink-0 ${
-                      form.estimator_widget_enabled ? "bg-emerald-500" : "bg-gray-300"
+                      form.estimator_enabled ? "bg-emerald-500" : "bg-gray-300"
                     }`}
-                    aria-pressed={form.estimator_widget_enabled}
+                    aria-pressed={form.estimator_enabled}
                     aria-label="Toggle estimator widget"
                   >
                     <div className={`absolute top-1 w-7 h-7 rounded-full bg-white shadow-lg transition-transform ${
-                      form.estimator_widget_enabled ? "translate-x-8" : "translate-x-1"
+                      form.estimator_enabled ? "translate-x-8" : "translate-x-1"
                     }`} />
                   </button>
                 </div>

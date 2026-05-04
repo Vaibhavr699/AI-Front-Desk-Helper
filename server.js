@@ -1104,7 +1104,7 @@ function getOrCreateSmsThread(phone) {
   const existing = smsThreads.get(normalizedPhone);
   if (existing) return existing;
 
-  const created = {
+ const created = {
     phone: normalizedPhone,
     history: [],
     leadCapture: {},
@@ -1116,8 +1116,16 @@ function getOrCreateSmsThread(phone) {
     channel: normalizedPhone.startsWith("fb-") ? "facebook" : (normalizedPhone.startsWith("web-") ? "website" : "sms"),
     lastInboundAt: null,
     lastOutboundAt: null,
-    crmLeadSent: false
-  };
+    crmLeadSent: false,
+    // Phase 4C (May 4, 2026) — SMS cancellation state machine.
+    // null until customer asks to cancel; then awaiting_choice (multiple
+    // bookings to disambiguate), awaiting_confirm (single booking, need
+    // explicit YES), or awaiting_reason (asking why before firing cancel).
+    // See services/sms.js handleSmsCancellationIncoming for transitions.
+    cancelState: null,
+    pendingCancelBookingId: null,
+    pendingCancelBookingsList: null,
+  }; 
   smsThreads.set(normalizedPhone, created);
   return created;
 }
@@ -1395,14 +1403,28 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
     return null;
   }
 
-  // HANDLE CANCELLATION
+ 
+  // HANDLE CANCELLATION — Phase 4C (May 4, 2026)
+  //
+  // Initiate the multi-turn cancellation flow. initiateSmsCancellation
+  // looks up upcoming bookings, sets thread.cancelState appropriately
+  // (awaiting_confirm if 1 booking, awaiting_choice if multiple), and
+  // returns the prompt SMS. Subsequent inbound messages are handled by
+  // handleSmsCancellationIncoming in processSmsConversation BEFORE the
+  // AI orchestrator runs (see Change 2 above).
+  //
+  // This replaces the old single-shot cancel which:
+  //   - did exact phone-match only (missed (402)555-1234 vs +14025551234)
+  //   - cancelled without explicit customer confirmation
+  //   - didn't pass cancelled_via='sms' to cancelBooking
+  //   - didn't capture a reason
+  //   - couldn't disambiguate when a customer had multiple bookings
   if (ai.should_cancel) {
-    const booking = await bookingsService.findLatestBookingByPhone(tenant.id, thread.leadCapture?.phone || thread.phone);
-    if (!booking) return "I couldn't find an appointment for this phone number to cancel. Could you double-check the number?";
-    
-    await bookingsService.cancelBooking(booking.id);
-    return "✅ Your appointment has been successfully cancelled.";
+    const smsService = require("./services/sms");
+    const init = await smsService.initiateSmsCancellation(thread, tenant);
+    return init.reply;
   }
+ 
 
   // HANDLE RESCHEDULING
   if (ai.should_reschedule && ai.appointment_date && ai.appointment_time) {
@@ -1598,7 +1620,41 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
       }
     }
   }
-
+ // ─────────────────────────────────────────────────────────────────────
+  // Phase 4C (May 4, 2026) — SMS cancellation state machine.
+  //
+  // If we're mid-cancel-flow, bypass the AI orchestrator entirely and run
+  // the structured state machine in services/sms.js. This guarantees the
+  // customer's YES/NO/numbered choices are interpreted exactly as we
+  // expect, without the AI paraphrasing or missing the intent. Only kicks
+  // in when thread.cancelState !== null AND a tenant is resolved (no
+  // tenant = no booking lookup possible).
+  //
+  // The state machine returns { reply } when it handled the message, or
+  // null if the state was unknown/corrupt (which it resets, then we fall
+  // through to the AI orchestrator path).
+  // ─────────────────────────────────────────────────────────────────────
+  if (thread.cancelState && tenant) {
+    const smsService = require("./services/sms");
+    const cancelResult = await smsService.handleSmsCancellationIncoming(thread, incomingText, tenant);
+    if (cancelResult) {
+      // Mirror the bookkeeping the normal flow does at the end —
+      // we're returning EARLY so we have to do it here.
+      thread.history.push({ role: "assistant", text: cancelResult.reply, at: new Date().toISOString() });
+      thread.lastOutboundAt = Date.now();
+      if (thread.leadId) {
+        messagesService.saveMessage(tenant.id, thread.leadId, thread.channel || "sms", "outbound", cancelResult.reply);
+      }
+      // Reset followUpCount — customer just engaged
+      thread.followUpCount = 0;
+      return {
+        reply: cancelResult.reply,
+        lead_capture: {},
+        booking_confirmed: null,
+      };
+    }
+  }
+ 
   let ai;
   try {
     if (thread.referralReplyHandled) {

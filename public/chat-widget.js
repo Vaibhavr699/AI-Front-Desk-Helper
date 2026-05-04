@@ -29,6 +29,35 @@
     localStorage.setItem("ai_session_id", sessionId);
   }
 
+  // ── Voice → estimator attribution (Phase 7 V2 — May 4, 2026) ──────────────
+  // When the customer arrives via an SMS link from a phone call (sent by the
+  // AI's send_estimate_link tool), the wrapper page at /q/:tenantId injects
+  // window.__aiWidgetAutoStart with a callId. We capture it here at module
+  // scope so it survives estimator state resets, and pass it through to
+  // /api/estimator/lead in estimator_payload.source_call_id when the lead
+  // is captured. Drew can later report on the "voice → estimate → booking"
+  // funnel by joining on this id.
+  //
+  // We accept the callId from two sources, in priority order:
+  //   1. window.__aiWidgetAutoStart.callId (set by the wrapper page)
+  //   2. ?call_id=... query param (fallback for direct deep links)
+  let sourceCallId = null;
+  try {
+    if (window.__aiWidgetAutoStart && typeof window.__aiWidgetAutoStart.callId === "string") {
+      sourceCallId = window.__aiWidgetAutoStart.callId;
+    } else {
+      const urlParams = new URLSearchParams(window.location.search);
+      const cid = urlParams.get("call_id");
+      // Defensive: cap length to avoid pathological values in the URL
+      if (cid && cid.length > 0 && cid.length < 100) sourceCallId = cid;
+    }
+  } catch (e) {
+    // URLSearchParams not supported in very old browsers — silently skip
+  }
+  if (sourceCallId) {
+    console.log("[AI-Widget] Source call ID detected:", sourceCallId);
+  }
+
   // ── Branding defaults (overridden by tenant config) ───────────────────────
   let companyName        = "Front Desk";
   let welcomeMessage     = "Hi there 👋 Need a quick estimate or have a question? I can help you schedule in seconds.";
@@ -49,7 +78,7 @@
     const svc = estimatorConfig.services.find(s => s.service_slug === serviceSlug);
     return svc?.includes_text || null;
   }
-  
+
   // ── Estimator state (Phase 7 V1 — May 2, 2026) ────────────────────────────
   // Inline estimator flow rendered as chat messages. Triggered by the
   // "💰 Quick Quote" button pinned above the input area. Coexists with
@@ -128,7 +157,7 @@
       console.error("[AI-Widget] No tenantId found. Script tag must have data-tenant-id attribute.");
       return;
     }
-    trackVisitor("widget_loaded");
+    trackVisitor("widget_loaded", sourceCallId ? { source_call_id: sourceCallId } : {});
 
     try {
       console.log("[AI-Widget] Fetching configuration...");
@@ -598,7 +627,8 @@
 
     function startEstimatorFlow() {
       if (!estimatorEnabled || !estimatorConfig) return;
-      // Reset state
+      // Reset state. NOTE: sourceCallId is module-scoped (NOT in estimatorState),
+      // so it survives this reset and gets attached to the lead at capture time.
       estimatorActive = true;
       estimatorState.service_slug = null;
       estimatorState.inputs = {};
@@ -609,8 +639,9 @@
       estimatorState._step = "service_picker";
       estimatorState.eventLog = [];   // Reset event buffer
 
-      trackVisitor("estimator_started");
-      logEstimatorEvent("estimator_started", "[Quick Quote] Customer started estimator flow");
+      const startedVia = sourceCallId ? `voice link (call_id=${sourceCallId})` : "Quick Quote button";
+      trackVisitor("estimator_started", sourceCallId ? { source_call_id: sourceCallId } : {});
+      logEstimatorEvent("estimator_started", `[Quick Quote] Customer started estimator flow via ${startedVia}`);
 
       // Intro message
       addMsg("Great! I'll ask you a few quick questions to give you a ballpark range. This is just an estimate — final pricing requires an in-person walkthrough.", false);
@@ -1171,7 +1202,11 @@
                   service_slug: estimatorState.service_slug,
                   inputs: estimatorState.inputs,
                   rooms: estimatorState.rooms,
-                  session_id: sessionId
+                  session_id: sessionId,
+                  // Phase 7 V2 (May 4, 2026) — voice attribution. Set when
+                  // the customer arrived via an SMS link from a phone call.
+                  // Will be null for organic widget traffic.
+                  source_call_id: sourceCallId
                 },
                 quote_result: estimatorState.quote_result
               })
@@ -1187,7 +1222,7 @@
 
             // Log final event + flush all buffered events to /log-events
             logEstimatorEvent("lead_captured",
-              `[Quick Quote] Lead captured — Name: ${c.name} | Phone: ${c.phone} | Email: ${c.email}${c.address ? ' | Address: ' + c.address : ''}`
+              `[Quick Quote] Lead captured — Name: ${c.name} | Phone: ${c.phone} | Email: ${c.email}${c.address ? ' | Address: ' + c.address : ''}${sourceCallId ? ' | Voice attribution: call_id=' + sourceCallId : ''}`
             );
 
             // Fire-and-forget: synthetic conversation messages for dashboard visibility.
@@ -1215,7 +1250,7 @@
             setTimeout(() => {
               addMsg(`✅ You're all set! Someone from ${companyName} will reach out within 24 hours to schedule your walkthrough.`, false);
               estimatorActive = false;
-              trackVisitor("estimator_lead_captured");
+              trackVisitor("estimator_lead_captured", sourceCallId ? { source_call_id: sourceCallId } : {});
             }, 400);
           } catch (err) {
             console.error("[AI-Widget] Lead capture error:", err);
@@ -1259,7 +1294,7 @@
     // ── Open/close logic ─────────────────────────────────────────────────────
     function openChat() {
       isOpen = true;
-      trackVisitor("chat_opened");
+      trackVisitor("chat_opened", sourceCallId ? { source_call_id: sourceCallId } : {});
       hideCallout();
       toggle.classList.remove("ai-pulse-anim");
       container.style.display = "flex";
@@ -1421,6 +1456,38 @@
     sendBtn.onclick  = handleSend;
     input.onkeypress = (e) => { if (e.key === "Enter") handleSend(); };
     console.log("[AI-Widget] UI ready.");
+
+    // ── Auto-start (Phase 7 V2 — May 4, 2026) ────────────────────────────────
+    // When the customer arrives via the /q/:tenantId hosted landing page
+    // (sent by AI's send_estimate_link voice tool), the wrapper page has
+    // injected window.__aiWidgetAutoStart BEFORE this script loaded. Read
+    // it now and auto-open + auto-trigger the estimator flow.
+    //
+    // Defensive: requires both flags. Auto-start without auto-open would
+    // start the estimator behind a closed chat window — bad UX. Auto-open
+    // without auto-start just opens the chat, which is fine for other flows.
+    if (window.__aiWidgetAutoStart) {
+      const auto = window.__aiWidgetAutoStart;
+      console.log("[AI-Widget] Auto-start hint received:", auto);
+      if (auto.openChat) {
+        // Small delay so the animations + container layout settle before
+        // we trigger the open transition. Without this, the chat window
+        // can render in a weird half-state on slow devices.
+        setTimeout(() => {
+          openChat();
+          if (auto.startEstimator) {
+            if (estimatorEnabled) {
+              // Wait for the welcome message bubble to render before kicking
+              // off the estimator flow — avoids a janky "two bubbles appear
+              // at once" effect. 700ms matches the welcome's natural cadence.
+              setTimeout(() => startEstimatorFlow(), 700);
+            } else {
+              console.warn("[AI-Widget] Auto-start requested estimator but estimatorEnabled=false (tenant config missing or 404)");
+            }
+          }
+        }, 250);
+      }
+    }
   }
 
   // ── Boot ───────────────────────────────────────────────────────────────────

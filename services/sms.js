@@ -3,41 +3,38 @@
 /**
  * services/sms.js
  *
- * Customer-facing transactional SMS messages.
+ * Customer-facing transactional SMS messages + the multi-turn SMS
+ * cancellation conversation flow + outbound estimate link sender.
  *
- * Phase 2 Cancellation Flow (May 4, 2026): sendBookingCancellationSms.
+ * Phase 2 (May 4, 2026): sendBookingCancellationSms — formal confirmation
+ *   SMS fired from cancelBooking() when cancellation comes from the
+ *   dashboard, voice, or any non-SMS callsite.
  *
- * Pattern: each function takes a booking and a tenant, looks up the tenant's
- * primary phone number from phone_numbers, sends via Twilio, and updates an
- * audit column on the booking row. All functions are fire-and-forget — they
- * never throw, so callers don't need a try/catch.
+ * Phase 4C (May 4, 2026): initiateSmsCancellation +
+ *   handleSmsCancellationIncoming — multi-turn state machine that lets a
+ *   customer cancel their appointment by texting "I want to cancel". The
+ *   AI orchestrator detects intent (sets should_cancel=true) and we drive
+ *   the rest deterministically: lookup → confirm date/time → capture
+ *   reason → fire cancelBooking with cancelled_via='sms'. State lives on
+ *   the in-memory SMS thread (server.js getOrCreateSmsThread).
  *
- * Why a dedicated service file (instead of folding into crm.js or
- * notifications.js): customer SMS is a separate concern from CRM webhooks
- * and from in-app bell notifications. Keeping it here means future
- * transactional SMS (reschedule confirmation, day-of reminder, etc.) can
- * land alongside cancellation without bloating other files.
+ * Phase E1 (May 4, 2026): sendEstimateLinkSms — fires when the voice AI
+ *   calls the send_estimate_link tool during a phone call. Sends the
+ *   caller a vertical-agnostic SMS with a link to the hosted estimator
+ *   page (routes/estimateLink.js). Link includes ?call_id=<callId> for
+ *   attribution back to the originating call.
  */
 
 const db = require("../lib/db");
 const twilio = require("../lib/twilio");
 
-/**
- * Format a YYYY-MM-DD or full ISO date string as a friendly natural-language
- * phrase like "Friday, May 15th". Used in the SMS body so the customer
- * immediately recognizes which appointment was cancelled.
- *
- * Falls back to "your scheduled" if the date is missing or unparseable —
- * matching the "your scheduled appointment has been cancelled" phrasing
- * works when there's no concrete date.
- */
+// ─────────────────────────────────────────────────────────────────────
+// Helpers — formatting + phone lookup
+// ─────────────────────────────────────────────────────────────────────
+
 function formatFriendlyDate(dateValue) {
   if (!dateValue) return "your scheduled";
   try {
-    // Handle both YYYY-MM-DD (date-only) and full ISO timestamps.
-    // The Bookings.jsx page uses the same trick — appending T00:00:00 to
-    // date-only strings prevents JS from interpreting them as UTC midnight
-    // and shifting the displayed date by a day in negative timezones.
     const dateStr = typeof dateValue === "string" && !dateValue.includes("T")
       ? `${dateValue}T00:00:00`
       : dateValue;
@@ -48,7 +45,6 @@ function formatFriendlyDate(dateValue) {
     const month   = d.toLocaleDateString("en-US", { month: "long" });
     const day     = d.getDate();
 
-    // Ordinal suffix (1st, 2nd, 3rd, 4th...). Special-case 11/12/13.
     const suffix = (n) => {
       if (n >= 11 && n <= 13) return "th";
       switch (n % 10) {
@@ -65,11 +61,6 @@ function formatFriendlyDate(dateValue) {
   }
 }
 
-/**
- * Extract first name from a full name string. Falls back to "there" so the
- * SMS doesn't read awkwardly when contact_name is missing.
- * Mirrors estimateRecovery.getFirstName.
- */
 function getFirstName(fullName) {
   if (!fullName || typeof fullName !== "string") return "there";
   const parts = fullName.trim().split(/\s+/);
@@ -77,13 +68,10 @@ function getFirstName(fullName) {
 }
 
 /**
- * Look up the tenant's primary phone number for outbound SMS. This is both
- * the From: and the callback number we embed in the message body so the
- * customer can call/reply to the same line they already have saved.
- *
- * Ordering rule mirrors estimateRecovery.executeStep:
- *   primary first, then oldest. Guarantees a stable choice even if no
- *   number is flagged is_primary.
+ * Look up the tenant's primary phone number for outbound SMS. Used as
+ * both the From: number and (sometimes) embedded in body as a callback
+ * number. Mirrors the ordering rule from estimateRecovery.executeStep:
+ * primary first, then oldest.
  */
 async function getTenantPrimaryPhone(tenantId) {
   const res = await db.query(
@@ -96,60 +84,34 @@ async function getTenantPrimaryPhone(tenantId) {
   return res.rows[0]?.phone || null;
 }
 
-/**
- * Send the customer a transactional SMS confirming their booking has been
- * cancelled. Fire-and-forget — never throws. Updates
- * bookings.cancellation_sms_sent_at on success.
- *
- * Phase 2 Cancellation Flow (May 4, 2026).
- *
- * Why this function never throws: it's called from cancelBooking() after
- * the booking row has already been updated to status='Cancelled'. If SMS
- * fails, the cancellation itself must still succeed — the customer's
- * appointment is already off the books, so a failed SMS is just a missed
- * notification, not a data integrity problem.
- *
- * Skip cases (return { ok: false, skipped: <reason> }):
- *   - missing tenant or booking
- *   - booking has no contact_phone
- *   - tenant has no Twilio credentials
- *   - tenant has no primary phone configured
- *
- * The cancellation_reason from the dashboard textarea is intentionally NOT
- * surfaced to the customer — reasons are often candid internal notes
- * ("customer was rude", "double-booked"). If Drew wants to share context,
- * he can send a follow-up message manually.
- *
- * @param {object} tenant  - Tenant row (must have id, company_name OR name)
- * @param {object} booking - Booking row (must have id, contact_phone,
- *                           contact_name, preferred_date)
- * @returns {Promise<{ok: boolean, sid?: string, error?: string, skipped?: string}>}
- */
+// ─────────────────────────────────────────────────────────────────────
+// Phase 2: transactional cancellation SMS
+// ─────────────────────────────────────────────────────────────────────
+
 async function sendBookingCancellationSms(tenant, booking) {
   if (!tenant || !booking) {
     console.warn("[SMS Cancel] Missing tenant or booking, skipping");
     return { ok: false, skipped: "missing_args" };
   }
 
-  // Skip silently if no customer phone — common for legacy/manual bookings
-  // entered without a phone number. Logs as warning so it's visible if
-  // we're seeing a lot of skips.
+  // Phase 4C dedup: if cancellation came via SMS flow itself, skip the
+  // formal SMS (customer is already mid-conversation with us).
+  if (booking.cancelled_via === "sms") {
+    console.log("[SMS Cancel] Skipping — cancelled_via=sms (avoid duplicate SMS in same thread) bookingId=%s", booking.id);
+    return { ok: false, skipped: "cancelled_via_sms" };
+  }
+
   if (!booking.contact_phone) {
     console.warn("[SMS Cancel] No contact_phone for booking=%s, skipping", booking.id);
     return { ok: false, skipped: "no_phone" };
   }
 
-  // Twilio client — uses tenant's BYOT creds if set, else platform creds.
-  // Same pattern as estimateRecovery.sendRecoverySms.
   const client = twilio.getClientForTenant(tenant);
   if (!client) {
     console.warn("[SMS Cancel] No Twilio client for tenant=%s", tenant.id);
     return { ok: false, skipped: "no_twilio_client" };
   }
 
-  // Tenant's primary phone is both From: and the callback number in body.
-  // Customer sees the SMS from the same number they already have saved as
-  // "Gladiators Painting" (or whatever).
   const fromPhone = await getTenantPrimaryPhone(tenant.id);
   if (!fromPhone) {
     console.warn("[SMS Cancel] No primary phone for tenant=%s", tenant.id);
@@ -160,14 +122,6 @@ async function sendBookingCancellationSms(tenant, booking) {
   const companyName  = tenant.company_name || tenant.name || "your contractor";
   const friendlyDate = formatFriendlyDate(booking.preferred_date);
 
-  // Message format locked by Drew (May 4, 2026):
-  //   Hi {first}, this is {company}. Your {date} appointment has been
-  //   cancelled. If this was a mistake or you'd like to reschedule, reply
-  //   to this message or call {phone}. — {company}
-  //
-  // Branded bookends (company name top + bottom) so the customer
-  // immediately recognizes who it's from even before reading. Reschedule
-  // path is explicit so they don't think they need to start over.
   const body =
     `Hi ${firstName}, this is ${companyName}. ` +
     `Your ${friendlyDate} appointment has been cancelled. ` +
@@ -181,9 +135,6 @@ async function sendBookingCancellationSms(tenant, booking) {
       body,
     });
 
-    // Audit column added by Mig 054 (May 4, 2026). Stamps the moment we
-    // successfully handed the SMS off to Twilio. Doesn't track delivery —
-    // that would require a status callback, which is a Phase 3 concern.
     await db.query(
       "UPDATE bookings SET cancellation_sms_sent_at = now() WHERE id = $1",
       [booking.id]
@@ -198,17 +149,316 @@ async function sendBookingCancellationSms(tenant, booking) {
     );
     return { ok: true, sid: message.sid };
   } catch (e) {
-    // Common Twilio failures: invalid number (21211), unsubscribed (21610),
-    // unverified trial number (21608). All non-fatal — log and move on.
     console.error("[SMS Cancel] Twilio send failed bookingId=%s code=%s error=%s",
       booking.id, e.code || "unknown", e.message);
     return { ok: false, error: e.message };
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Phase E1 (May 4, 2026): outbound estimate link SMS
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Send the caller an SMS with a link to the hosted estimator page. Fired
+ * from server.js when the voice AI calls the send_estimate_link tool
+ * during a phone call.
+ *
+ * Vertical-agnostic by design — body says "free instant estimate" rather
+ * than "painting estimate" so the same code works for painting, roofing,
+ * fencing, HVAC, etc. The estimator page itself adapts to the tenant's
+ * configured vertical (Phase 7 V1).
+ *
+ * Why this lives in services/sms.js (not lib/twilio.js or a new file):
+ * the Twilio client lookup, primary-phone lookup, and structured logging
+ * are already battle-tested here. Reusing them keeps behavior consistent
+ * across all our customer-facing SMS — same tenant credentials, same
+ * From: number, same error handling.
+ *
+ * Never throws. Returns { ok, sid?, error? }. The dispatcher in server.js
+ * checks ok and either confirms to the AI or instructs it to apologize +
+ * transfer.
+ *
+ * @param {object} tenant       - Tenant row (must have id, company_name OR name)
+ * @param {string} toPhone      - Recipient phone (E.164 or any format Twilio accepts)
+ * @param {string} link         - Full estimator URL with call_id query param
+ * @param {string} sourceCallId - Originating call ID (for log only — already in link)
+ * @returns {Promise<{ok: boolean, sid?: string, error?: string, skipped?: string}>}
+ */
+async function sendEstimateLinkSms(tenant, toPhone, link, sourceCallId = null) {
+  if (!tenant || !toPhone || !link) {
+    console.warn("[Estimate Link] Missing args tenant=%s phone=%s link=%s",
+      tenant ? "ok" : "MISSING", toPhone || "MISSING", link || "MISSING");
+    return { ok: false, error: "missing_args" };
+  }
+
+  const client = twilio.getClientForTenant(tenant);
+  if (!client) {
+    console.warn("[Estimate Link] No Twilio client for tenant=%s", tenant.id);
+    return { ok: false, error: "no_twilio_client" };
+  }
+
+  const fromPhone = await getTenantPrimaryPhone(tenant.id);
+  if (!fromPhone) {
+    console.warn("[Estimate Link] No primary phone for tenant=%s", tenant.id);
+    return { ok: false, error: "no_from_phone" };
+  }
+
+  const companyName = tenant.company_name || tenant.name || "us";
+
+  // Body locked May 4, 2026 (Drew, Phase E1):
+  //   Vertical-agnostic — works for painting, roofing, fencing, etc.
+  //   Includes the "what happens next" close ("fill it out and book
+  //   right from there") which matches what the voice AI says verbally.
+  //   Single line for SMS readability.
+  const body =
+    `Hi from ${companyName}! Tap to get your free instant estimate: ` +
+    `${link} — fill it out and you can book right from there.`;
+
+  try {
+    const message = await client.messages.create({
+      to:   toPhone,
+      from: fromPhone,
+      body,
+    });
+
+    console.log(
+      "[Estimate Link] Sent tenant=%s to=%s from=%s call_id=%s sid=%s",
+      tenant.id, toPhone, fromPhone, sourceCallId || "(none)", message.sid
+    );
+    return { ok: true, sid: message.sid };
+  } catch (e) {
+    // Common Twilio failures: 21211 invalid number, 21610 unsubscribed,
+    // 21408 not enabled for region. All non-fatal — log and let caller
+    // decide what to tell the AI.
+    console.error("[Estimate Link] Twilio send failed tenant=%s to=%s code=%s err=%s",
+      tenant.id, toPhone, e.code || "unknown", e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 4C: SMS cancellation conversation state machine
+// ─────────────────────────────────────────────────────────────────────
+
+function isAffirmation(text) {
+  return /\b(yes|yeah|yep|yup|yea|sure|confirm|please|go ahead|correct|right|ok|okay|absolutely|definitely)\b/i.test(text);
+}
+
+function isNegation(text) {
+  return /\b(no|nope|nah|don'?t|keep|stop|nevermind|never mind|forget|cancel that)\b/i.test(text);
+}
+
+function isSkipReason(text) {
+  return /^(none|no|nothing|skip|n\/?a|no thanks|no thank you|nope|nah)$/i.test(text.trim());
+}
+
+async function initiateSmsCancellation(thread, tenant) {
+  const bookingsService = require("./bookings");
+  const phone = thread.leadCapture?.phone || thread.phone;
+
+  if (!phone) {
+    return {
+      reply: "I'd love to help cancel — could you confirm the phone number on the appointment so I can look it up?",
+    };
+  }
+
+  let upcoming = [];
+  try {
+    upcoming = await bookingsService.findUpcomingBookingsByPhone(tenant.id, phone);
+  } catch (e) {
+    console.error("[SMS Cancel Flow] Lookup failed phone=%s tenant=%s err=%s",
+      phone, tenant.id, e.message);
+    return {
+      reply: "I'm having trouble looking up your appointment right now. Please call us directly so we can help.",
+    };
+  }
+
+  if (upcoming.length === 0) {
+    console.log("[SMS Cancel Flow] No upcoming bookings phone=%s tenant=%s", phone, tenant.id);
+    return {
+      reply: "I don't see any upcoming appointments under this number. If you booked under a different phone number, please call us directly so we can look it up.",
+    };
+  }
+
+  if (upcoming.length === 1) {
+    const b = upcoming[0];
+    const friendly = bookingsService.formatBookingForVoiceConfirm(b);
+    thread.cancelState = "awaiting_confirm";
+    thread.pendingCancelBookingId = b.id;
+    thread.pendingCancelBookingsList = null;
+    console.log("[SMS Cancel Flow] 1 booking found, awaiting confirm bookingId=%s", b.id);
+    return {
+      reply: `I see your appointment ${friendly}. Reply YES to confirm cancellation, or NO to keep it.`,
+    };
+  }
+
+  const items = upcoming.map((b) => ({
+    id: b.id,
+    friendly: bookingsService.formatBookingForVoiceConfirm(b),
+  }));
+  thread.cancelState = "awaiting_choice";
+  thread.pendingCancelBookingsList = items;
+  thread.pendingCancelBookingId = null;
+  console.log("[SMS Cancel Flow] %d bookings found, awaiting choice phone=%s",
+    items.length, phone);
+
+  const list = items.map((it, i) => `${i + 1}) ${it.friendly}`).join("\n");
+  return {
+    reply: `I see multiple upcoming appointments under this number:\n${list}\n\nWhich would you like to cancel? Reply with the number, or NONE to keep them all.`,
+  };
+}
+
+async function handleSmsCancellationIncoming(thread, incomingText, tenant) {
+  if (!thread.cancelState) return null;
+
+  const text = (incomingText || "").trim();
+  const lc = text.toLowerCase();
+
+  if (/^(nevermind|never mind|forget it|cancel that|stop)$/i.test(lc)) {
+    console.log("[SMS Cancel Flow] Universal abort from state=%s", thread.cancelState);
+    thread.cancelState = null;
+    thread.pendingCancelBookingId = null;
+    thread.pendingCancelBookingsList = null;
+    return { reply: "No problem, keeping your appointment as-is." };
+  }
+
+  switch (thread.cancelState) {
+
+    case "awaiting_choice": {
+      const list = thread.pendingCancelBookingsList || [];
+
+      if (/^(none|no)$/i.test(lc)) {
+        console.log("[SMS Cancel Flow] awaiting_choice → cancelled by customer");
+        thread.cancelState = null;
+        thread.pendingCancelBookingsList = null;
+        return { reply: "Got it, keeping all your appointments." };
+      }
+
+      const digitMatch = lc.match(/\d+/);
+      const num = digitMatch ? parseInt(digitMatch[0], 10) : NaN;
+
+      if (!num || num < 1 || num > list.length) {
+        const reList = list.map((it, i) => `${i + 1}) ${it.friendly}`).join("\n");
+        return {
+          reply: `Sorry, I didn't catch that. Please reply with the number of the appointment you'd like to cancel:\n${reList}\n\nOr NONE to keep them all.`,
+        };
+      }
+
+      const chosen = list[num - 1];
+      thread.cancelState = "awaiting_confirm";
+      thread.pendingCancelBookingId = chosen.id;
+      thread.pendingCancelBookingsList = null;
+      console.log("[SMS Cancel Flow] awaiting_choice → awaiting_confirm bookingId=%s", chosen.id);
+      return {
+        reply: `Just to confirm, you want to cancel: ${chosen.friendly}? Reply YES to confirm or NO to keep it.`,
+      };
+    }
+
+    case "awaiting_confirm": {
+      const yes = isAffirmation(lc);
+      const no  = isNegation(lc);
+
+      if (yes && no) {
+        return {
+          reply: "Sorry, I want to make sure I get this right. Please reply with just YES to cancel, or NO to keep your appointment.",
+        };
+      }
+
+      if (no) {
+        console.log("[SMS Cancel Flow] awaiting_confirm → declined");
+        thread.cancelState = null;
+        thread.pendingCancelBookingId = null;
+        return { reply: "Got it, keeping your appointment." };
+      }
+
+      if (!yes) {
+        return {
+          reply: "Sorry, I didn't catch that. Please reply YES to confirm cancellation, or NO to keep your appointment.",
+        };
+      }
+
+      thread.cancelState = "awaiting_reason";
+      console.log("[SMS Cancel Flow] awaiting_confirm → awaiting_reason bookingId=%s",
+        thread.pendingCancelBookingId);
+      return {
+        reply: "No problem — was there anything specific that came up, just so we can let the team know? Reply with a quick note, or NONE to skip.",
+      };
+    }
+
+    case "awaiting_reason": {
+      const bookingId = thread.pendingCancelBookingId;
+      if (!bookingId) {
+        console.error("[SMS Cancel Flow] awaiting_reason with no pendingCancelBookingId — resetting");
+        thread.cancelState = null;
+        return {
+          reply: "Sorry, something went wrong on our end. Please call us if you still need to cancel.",
+        };
+      }
+
+      const reason = isSkipReason(lc) ? null : text.slice(0, 500);
+
+      try {
+        const bookingsService = require("./bookings");
+        const booking = await bookingsService.cancelBooking(bookingId, {
+          cancelled_via: "sms",
+          cancellation_reason: reason,
+        });
+
+        thread.cancelState = null;
+        thread.pendingCancelBookingId = null;
+
+        if (!booking) {
+          console.warn("[SMS Cancel Flow] cancelBooking returned null bookingId=%s", bookingId);
+          return {
+            reply: "Hmm, I couldn't find that appointment to cancel. Please call us if you still need help.",
+          };
+        }
+
+        if (booking.tenant_id !== tenant.id) {
+          console.error("[SMS Cancel Flow] tenant mismatch! booking=%s tenant=%s expected=%s",
+            booking.id, booking.tenant_id, tenant.id);
+          return {
+            reply: "Something went wrong. Please call us directly to cancel your appointment.",
+          };
+        }
+
+        console.log("[SMS Cancel Flow] Cancelled bookingId=%s tenant=%s reason=%s",
+          booking.id, tenant.id, reason ? "captured" : "none");
+
+        const friendly = bookingsService.formatBookingForVoiceConfirm(booking);
+        return {
+          reply: `Cancelled — your appointment ${friendly} has been cancelled. Would you like to set up a new time, or just leave things for now?`,
+        };
+      } catch (e) {
+        console.error("[SMS Cancel Flow] Cancel failed bookingId=%s err=%s",
+          bookingId, e.message);
+        thread.cancelState = null;
+        thread.pendingCancelBookingId = null;
+        return {
+          reply: "Sorry, something went wrong cancelling your appointment. Please call us directly so we can help.",
+        };
+      }
+    }
+
+    default:
+      console.warn("[SMS Cancel Flow] Unknown cancelState=%s — resetting", thread.cancelState);
+      thread.cancelState = null;
+      thread.pendingCancelBookingId = null;
+      thread.pendingCancelBookingsList = null;
+      return null;
+  }
+}
+
 module.exports = {
+  // Phase 2 (transactional cancellation SMS)
   sendBookingCancellationSms,
-  // Helpers exported for testing / future transactional SMS functions
+  // Phase 4C (multi-turn cancellation conversation)
+  initiateSmsCancellation,
+  handleSmsCancellationIncoming,
+  // Phase E1 (outbound estimate link)
+  sendEstimateLinkSms,
+  // Helpers
   formatFriendlyDate,
   getFirstName,
   getTenantPrimaryPhone,

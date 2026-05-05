@@ -457,6 +457,7 @@ app.use("/webhooks", require("./routes/webhooks"));
 app.use("/api/coaching", authMiddleware, require("./routes/coaching"));
 app.use("/api/ai-coach", authMiddleware, require("./routes/aicoach"));
 app.use('/api/rollup-v5', authMiddleware, require('./routes/rollupV5'));
+app.use("/api/scope-options", authMiddleware, require("./routes/scopeOptions"));
 app.use('/churn', require('./routes/churnPublic'));
 
 // Serve dashboard static assets early so JS/CSS/images load,

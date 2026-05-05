@@ -105,6 +105,21 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
   const callsConfused = metrics?.ai?.calls_confused || 0;
   const totalNotConverted = callsHungUp + callsFollowup + callsTransferred + callsConfused;
 
+  // ═══════════════════════════════════════════════════════════════════
+  // VOICE → ESTIMATE FUNNEL (Phase E1.2 — May 4, 2026)
+  //
+  // 3-stage funnel data from /metrics. Section is gated on
+  // tenant.estimator_enabled below — solo tenants without the estimator
+  // never see the card. When data is all zero (e.g., tenant just enabled
+  // estimator + hasn't received pricing-intent calls yet), we still
+  // render the card so they know the feature is wired up — counts will
+  // populate as voice calls happen.
+  // ═══════════════════════════════════════════════════════════════════
+  const voiceFunnel = metrics?.voice_funnel || {
+    links_sent: 0, estimates_submitted: 0, booked: 0,
+    fill_rate: 0, book_rate: 0, overall_rate: 0,
+  };
+
   const totalRecovered = Math.round(revenue / 100);
   const missedCallRev = Math.round(totalRecovered * 0.39);
   const followupRev = Math.round(totalRecovered * 0.29);
@@ -300,6 +315,135 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
 
         {showGuide && <ZapierGuideModal onClose={() => setShowGuide(false)} />}
 
+        {/* ══════════════════════════════════════════════════════════════
+            VOICE → ESTIMATE FUNNEL (Phase E1.2 — May 4, 2026)
+
+            Three-stage attribution funnel showing how voice calls flow
+            through the estimator into bookings:
+
+              Stage 1 — Links Sent  (Alex fired send_estimate_link tool)
+              Stage 2 — Filled Out  (customer submitted the estimator form)
+              Stage 3 — Booked      (those leads became confirmed bookings)
+
+            Conversion percentages between each stage are the diagnostic:
+              fill_rate    = Stage 2 / Stage 1   ← prompt tuning signal
+              book_rate    = Stage 3 / Stage 2   ← form-quality signal
+              overall_rate = Stage 3 / Stage 1   ← end-to-end ROI
+
+            Gated on tenant.estimator_enabled — solo tenants without the
+            estimator never see this card. Empty state when all zero is
+            still rendered (lets them know the feature is wired up).
+            ══════════════════════════════════════════════════════════════ */}
+        {tenant?.estimator_enabled && (
+          <div>
+            <div style={s.secLabel}>
+              <div style={s.secBar} /><div style={s.secTitle}>Voice → Estimate Funnel</div>
+              <div style={s.secSub}>Last 30 days</div>
+            </div>
+            <div style={s.card}>
+              <div style={s.cardHdr}>
+                <div>
+                  <div style={s.cardTitle}>Voice attribution</div>
+                  <div style={s.cardSub}>Alex sent estimate links → filled out → booked</div>
+                </div>
+                <div style={{ fontSize: 10, color: BRAND, fontWeight: 600 }}>
+                  {voiceFunnel.overall_rate}% end-to-end
+                </div>
+              </div>
+
+              {/* 3-stage funnel: Stage / Arrow / Stage / Arrow / Stage */}
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "1fr auto 1fr auto 1fr",
+                alignItems: "center",
+                gap: 8,
+                padding: "20px 16px",
+              }}>
+                {/* Stage 1: Links Sent */}
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 9, color: "#888", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>
+                    Links Sent
+                  </div>
+                  <div style={{ fontSize: 36, fontWeight: 800, color: "#2563eb", lineHeight: 1 }}>
+                    {voiceFunnel.links_sent}
+                  </div>
+                  <div style={{ fontSize: 10, color: "#888", marginTop: 6 }}>
+                    Voice calls
+                  </div>
+                </div>
+
+                {/* Arrow + fill rate */}
+                <FunnelArrow rate={voiceFunnel.fill_rate} label="fill rate" />
+
+                {/* Stage 2: Filled Out */}
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 9, color: "#888", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>
+                    Filled Out
+                  </div>
+                  <div style={{ fontSize: 36, fontWeight: 800, color: "#7c3aed", lineHeight: 1 }}>
+                    {voiceFunnel.estimates_submitted}
+                  </div>
+                  <div style={{ fontSize: 10, color: "#888", marginTop: 6 }}>
+                    Customers submitted
+                  </div>
+                </div>
+
+                {/* Arrow + book rate */}
+                <FunnelArrow rate={voiceFunnel.book_rate} label="book rate" />
+
+                {/* Stage 3: Booked */}
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 9, color: "#888", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>
+                    Booked
+                  </div>
+                  <div style={{ fontSize: 36, fontWeight: 800, color: "#16a34a", lineHeight: 1 }}>
+                    {voiceFunnel.booked}
+                  </div>
+                  <div style={{ fontSize: 10, color: "#888", marginTop: 6 }}>
+                    Confirmed
+                  </div>
+                </div>
+              </div>
+
+              {/* Insight strip — shown when there's enough data to interpret */}
+              {voiceFunnel.links_sent >= 5 && (
+                <div style={{
+                  padding: "10px 16px",
+                  background: "#fafafa",
+                  borderTop: "1px solid #f5f5f5",
+                  fontSize: 10,
+                  color: "#666",
+                  lineHeight: 1.6,
+                }}>
+                  {voiceFunnel.fill_rate < 25 && voiceFunnel.fill_rate > 0 ? (
+                    <>💡 Low fill rate ({voiceFunnel.fill_rate}%) — customers are getting the link but not completing the form. Check estimator UX or SMS body wording.</>
+                  ) : voiceFunnel.book_rate >= 40 && voiceFunnel.estimates_submitted >= 3 ? (
+                    <>🎯 Strong book rate ({voiceFunnel.book_rate}%) — estimator is qualifying leads well. Pipeline is healthy.</>
+                  ) : voiceFunnel.estimates_submitted === 0 && voiceFunnel.links_sent > 0 ? (
+                    <>⚠️ {voiceFunnel.links_sent} link{voiceFunnel.links_sent === 1 ? "" : "s"} sent, 0 submissions yet. Tap a link from your phone to make sure the page loads correctly.</>
+                  ) : (
+                    <>📊 Full funnel: {voiceFunnel.links_sent} sent → {voiceFunnel.estimates_submitted} filled ({voiceFunnel.fill_rate}%) → {voiceFunnel.booked} booked ({voiceFunnel.overall_rate}% end-to-end).</>
+                  )}
+                </div>
+              )}
+
+              {/* Empty state — shown when no links sent yet */}
+              {voiceFunnel.links_sent === 0 && (
+                <div style={{
+                  padding: "10px 16px",
+                  background: "#fafafa",
+                  borderTop: "1px solid #f5f5f5",
+                  fontSize: 10,
+                  color: "#888",
+                  lineHeight: 1.6,
+                }}>
+                  No voice estimate links sent in the last 30 days. When a caller asks "how much does it cost", Alex will send them a link to your estimator and the funnel will populate here.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* ── TWO COLUMN: OBJECTIONS + ACTIVITY FEED ── */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
           <div>
@@ -486,6 +630,25 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
           {footerLabel} · Command Center · {new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}
         </div>
 
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// FunnelArrow — local helper for the Voice → Estimate funnel.
+// Renders an arrow with the conversion rate underneath. Color shifts
+// based on rate quality: red if very low, gray if neutral, green if good.
+// Phase E1.2 (May 4, 2026)
+// ─────────────────────────────────────────────────────────────────────────
+function FunnelArrow({ rate, label }) {
+  const color = rate >= 30 ? "#16a34a" : rate >= 15 ? "#888" : rate > 0 ? "#dc2626" : "#cbd5e1";
+  return (
+    <div style={{ textAlign: "center", padding: "0 4px" }}>
+      <div style={{ fontSize: 22, color: "#cbd5e1", lineHeight: 1, marginBottom: 4 }}>→</div>
+      <div style={{ fontSize: 13, fontWeight: 700, color, lineHeight: 1 }}>{rate}%</div>
+      <div style={{ fontSize: 9, color: "#888", marginTop: 2, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+        {label}
       </div>
     </div>
   );

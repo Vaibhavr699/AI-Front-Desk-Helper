@@ -24,6 +24,7 @@ import { LumaSpin } from "../components/ui/luma-spin";
 import { ConfirmationModal } from "../components/ConfirmationModal";
 import Billing from "./Billing";
 import Plans from "./Plans";
+import ScopeSettings from "./ScopeSettings";
 import { useToast } from "../components/ui/Toast";
 import {
   Bot,
@@ -2970,6 +2971,15 @@ export default function Settings({ tenantId }) {
                 </div>
               </section>
 
+              {/* ─────────────────────────────────────────────────────────────
+                   Standard Scope — owner-facing scope toggles (Phase V2, May 5, 2026)
+                   Embedded as a sub-component. Self-loads from /api/scope-options.
+                   Inherits the parent tab's plan/addon gate via TABS.filter() above.
+                  ───────────────────────────────────────────────────────────── */}
+              <section className="pt-4 border-t border-gray-100">
+                <ScopeSettings />
+              </section>
+              
               {/* Save reminder */}
               <div className="pt-4 border-t border-gray-100">
                 <p className="text-xs text-gray-500 italic flex items-center gap-2">

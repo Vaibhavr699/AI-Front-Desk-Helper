@@ -504,6 +504,29 @@ export function updateServiceRateOverride(tenantId, serviceSlug, percentageAdjus
   });
 }
 
+// ── Owner scope toggles (May 5, 2026) ─────────────────────────────────────
+// Phase V2. Backs the "Standard Scope" section in Settings → Estimator tab.
+// Owners configure what's included by default in their estimates (trim,
+// ceilings, doors, etc.). Affects both estimator pricing AND the customer-
+// facing "What's included" strip on the chat widget result screen.
+
+/**
+ * Get all services + scope toggles for the calling tenant.
+ */
+export function getScopeOptions() {
+  return api("/api/scope-options");
+}
+
+/**
+ * Bulk upsert scope toggle state.
+ */
+export function updateScopeOptions(changes) {
+  return api("/api/scope-options", {
+    method: "PUT",
+    body: JSON.stringify({ changes }),
+  });
+}
+
 // ── Franchise zee subscribe (Apr 29, 2026) ────────────────────────────────
 // Phase 6 Franchise. Initiates Stripe Checkout for a zee paying their own
 // subscription. Returns { url, type } where url is the Stripe checkout URL

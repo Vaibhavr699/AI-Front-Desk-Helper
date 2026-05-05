@@ -165,17 +165,10 @@ router.get("/transfer-dial", async (req, res) => {
 // Deduped per phone number over 24h so a caller who keeps trying only gets one
 // recovery flow, not five.
 // ─────────────────────────────────────────────────────────
-router.post("/status", (req, res) => {
-  const twiml = '<?xml version="1.0" encoding="UTF-8"?><Response/>';
-  res.writeHead(200, {
-    "Content-Type": "text/xml",
-    "Content-Length": Buffer.byteLength(twiml).toString(),
-  });
-  res.end(twiml);
-
-  const CallSid    = req.body && req.body.CallSid;
-  const CallStatus = req.body && req.body.CallStatus;
-  const From       = req.body && req.body.From;
+function processStatusPayload(payload = {}) {
+  const CallSid    = payload.CallSid;
+  const CallStatus = payload.CallStatus;
+  const From       = payload.From;
 
   // ── Update call row with final status (existing behavior) ─────────────
   if (CallSid && (CallStatus === "completed" || CallStatus === "busy" || CallStatus === "failed" || CallStatus === "no-answer")) {
@@ -183,7 +176,7 @@ router.post("/status", (req, res) => {
     updateCallByTwilioSid(CallSid, {
       status:           CallStatus,
       ended_at:         endedAt,
-      duration_minutes: req.body?.CallDuration ? parseFloat(req.body.CallDuration) / 60 : null,
+      duration_minutes: payload.CallDuration ? parseFloat(payload.CallDuration) / 60 : null,
     }).catch(() => {});
   }
 
@@ -272,7 +265,7 @@ router.post("/status", (req, res) => {
       }
     });
   }
-});
+}
 
 // ── Estimate Recovery Outbound Calls ──────────────────────────────────────
 //
@@ -609,5 +602,7 @@ router.all("/outbound", async (req, res) => {
 </Response>`;
   res.type("text/xml").send(twiml);
 });
+
+router.processStatusPayload = processStatusPayload;
 
 module.exports = router;

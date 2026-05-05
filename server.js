@@ -110,7 +110,14 @@ app.post("/twilio/status", (req, res) => {
       const params = new URLSearchParams(Buffer.concat(chunks).toString());
       const CallSid = params.get("CallSid");
       const CallStatus = params.get("CallStatus");
-      if (CallSid && (CallStatus === "completed" || CallStatus === "busy" || CallStatus === "failed" || CallStatus === "no-answer")) {
+      if (typeof twilioRoutes.processStatusPayload === "function") {
+        twilioRoutes.processStatusPayload({
+          CallSid,
+          CallStatus,
+          From: params.get("From"),
+          CallDuration: params.get("CallDuration"),
+        });
+      } else if (CallSid && (CallStatus === "completed" || CallStatus === "busy" || CallStatus === "failed" || CallStatus === "no-answer")) {
         callsService.updateCallByTwilioSid(CallSid, { status: CallStatus, ended_at: new Date().toISOString() }).catch(() => { });
       }
     } catch (_) { /* ignore parse errors */ }
@@ -2619,18 +2626,12 @@ function registerTwilioVoiceRoutes(pathPatterns, tenantScoped) {
   const normalizedPatterns = Array.isArray(pathPatterns) ? pathPatterns : [pathPatterns];
 
   for (const pathPattern of normalizedPatterns) {
-    app.get(pathPattern, handler);
-    app.post(pathPattern, handler);
     app.all(pathPattern, handler);
   }
 }
 
 registerTwilioVoiceRoutes(["/twilio-voice", "/twilio-voice/"], false);
 registerTwilioVoiceRoutes(["/twilio-voice/:tenantId", "/twilio-voice/:tenantId/"], true);
-
-// Backward compatibility with older webhook paths that may still be configured in Twilio.
-registerTwilioVoiceRoutes(["/twilio/voice", "/twilio/voice/"], false);
-registerTwilioVoiceRoutes(["/twilio/voice/:tenantId", "/twilio/voice/:tenantId/"], true);
 
 app.post("/twilio-missed-call", async (req, res) => {
   const from = normalizePhone(req.body?.From || req.body?.from);

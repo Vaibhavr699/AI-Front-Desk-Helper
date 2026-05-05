@@ -118,7 +118,8 @@ router.get('/overview', async (req, res) => {
       const [callsRes, bookingsRes, leadsRes, revenueRes] = await Promise.all([
         db.query(
           `SELECT COUNT(*)::int AS count FROM calls
-             WHERE tenant_id = ANY($1::uuid[]) AND created_at >= $2`,
+             WHERE tenant_id = ANY($1::uuid[])
+               AND COALESCE(started_at, created_at) >= $2`,
           [customerIds, since]
         ),
         db.query(
@@ -128,15 +129,38 @@ router.get('/overview', async (req, res) => {
         ),
         db.query(
           `SELECT COUNT(*)::int AS count FROM leads
-             WHERE tenant_id = ANY($1::uuid[]) AND status = 'open'`,
+             WHERE tenant_id = ANY($1::uuid[])
+               AND LOWER(COALESCE(status, '')) NOT IN ('closed', 'lost', 'won', 'archived')`,
           [customerIds]
         ),
         db.query(
-          `SELECT COALESCE(SUM(revenue_cents), 0)::bigint AS total
-             FROM bookings
-            WHERE tenant_id = ANY($1::uuid[])
-              AND created_at >= $2
-              AND revenue_cents IS NOT NULL`,
+          `SELECT (
+             COALESCE((
+               SELECT SUM(actual_revenue_cents)
+                 FROM bookings
+                WHERE tenant_id = ANY($1::uuid[])
+                  AND created_at >= $2
+                  AND actual_revenue_cents IS NOT NULL
+                  AND actual_revenue_cents > 0
+             ), 0)
+             +
+             COALESCE((
+               SELECT SUM(actual_revenue_cents)
+                 FROM leads
+                WHERE tenant_id = ANY($1::uuid[])
+                  AND created_at >= $2
+                  AND actual_revenue_cents IS NOT NULL
+                  AND actual_revenue_cents > 0
+                  AND id NOT IN (
+                    SELECT lead_id
+                      FROM bookings
+                     WHERE tenant_id = ANY($1::uuid[])
+                       AND lead_id IS NOT NULL
+                       AND actual_revenue_cents IS NOT NULL
+                       AND actual_revenue_cents > 0
+                  )
+             ), 0)
+           )::bigint AS total`,
           [customerIds, since]
         ),
       ]);
@@ -196,7 +220,8 @@ router.get('/customers', async (req, res) => {
       db.query(
         `SELECT tenant_id, COUNT(*)::int AS count
            FROM calls
-          WHERE tenant_id = ANY($1::uuid[]) AND created_at >= $2
+          WHERE tenant_id = ANY($1::uuid[])
+            AND COALESCE(started_at, created_at) >= $2
           GROUP BY tenant_id`,
         [customerIds, since]
       ),

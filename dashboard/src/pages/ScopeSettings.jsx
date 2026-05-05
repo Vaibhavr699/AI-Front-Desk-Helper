@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { getScopeOptions, updateScopeOptions } from "../api";
 
 /**
  * ScopeSettings.jsx
@@ -8,6 +9,10 @@ import { useState, useEffect, useMemo } from "react";
  * Backed by routes/scopeOptions.js. Owner toggles what's included by default
  * in each service's estimator price + customer-facing "What's included" strip.
  * Customer never sees these toggles — they only see the resulting price + strip.
+ *
+ * May 5, 2026 fix: switched from raw `fetch("/api/...")` (which hit the
+ * dashboard host and got back the SPA fallback HTML) to the api.js helpers
+ * which prefix VITE_API_URL + handle Bearer auth + impersonation headers.
  *
  * Design choices:
  *   - One "Save Changes" button at the bottom batches all toggles in one request
@@ -19,15 +24,6 @@ import { useState, useEffect, useMemo } from "react";
  *     impact before flipping.
  *   - Services with zero toggles are hidden — currently just deck_fence which
  *     is intentionally skipped in mig 058.
- *
- * Drop-in usage in your existing Settings.jsx:
- *
- *   import ScopeSettings from "./ScopeSettings";
- *   ...
- *   {activeTab === "scope" && <ScopeSettings />}
- *
- * Style: Tailwind. Light theme to match dashboard. Orange accent matches
- * brand (#E8702A → text-orange-600 / bg-orange-600).
  */
 
 // Pretty service names. Keys are vertical_services.service_slug values.
@@ -194,12 +190,8 @@ export default function ScopeSettings() {
       try {
         setLoading(true);
         setError(null);
-        const res = await fetch("/api/scope-options", {
-          credentials: "include",
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (!cancelled) setServices(data.services || []);
+        const data = await getScopeOptions();
+        if (!cancelled) setServices(data?.services || []);
       } catch (err) {
         if (!cancelled) setError(`Couldn't load: ${err.message}`);
       } finally {
@@ -256,29 +248,17 @@ export default function ScopeSettings() {
 
       const changes = Object.entries(pending).map(([key, enabled]) => {
         // key format: "<serviceId>-<optionKey>" — but optionKey may contain
-        // dashes itself (e.g. include_trim — actually we use underscores, but
-        // be defensive). Split on FIRST dash only.
+        // dashes itself (defensive). Split on FIRST dash only.
         const dashIdx = key.indexOf("-");
         const service_id = parseInt(key.slice(0, dashIdx), 10);
         const option_key = key.slice(dashIdx + 1);
         return { service_id, option_key, enabled };
       });
 
-      const res = await fetch("/api/scope-options", {
-        method: "PUT",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ changes }),
-      });
+      const data = await updateScopeOptions(changes);
 
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        throw new Error(errBody.error || `HTTP ${res.status}`);
-      }
-
-      const data = await res.json();
       setPending({});
-      setSuccess(`Saved ${data.updated} change${data.updated === 1 ? "" : "s"}.`);
+      setSuccess(`Saved ${data?.updated ?? changes.length} change${(data?.updated ?? changes.length) === 1 ? "" : "s"}.`);
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
       setError(`Couldn't save: ${err.message}`);

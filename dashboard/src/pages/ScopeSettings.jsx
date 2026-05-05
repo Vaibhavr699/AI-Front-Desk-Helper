@@ -14,16 +14,26 @@ import { getScopeOptions, updateScopeOptions } from "../api";
  * dashboard host and got back the SPA fallback HTML) to the api.js helpers
  * which prefix VITE_API_URL + handle Bearer auth + impersonation headers.
  *
+ * May 5, 2026 v2: Killed the sticky bottom save bar + Save Changes button.
+ * Switched to auto-save on toggle flip — same pattern as the per-service rate
+ * overrides elsewhere in Settings. One save mechanism across the whole page,
+ * zero "did my change save?" confusion.
+ *
+ *   - Toggle flips immediately (optimistic UI)
+ *   - Tiny spinner appears next to the toggle while save is in-flight
+ *   - Brief green ✓ on success (fades after ~1.5s)
+ *   - On failure the toggle reverts and an inline red message appears under
+ *     the row until the next successful save of that option
+ *
  * Design choices:
- *   - One "Save Changes" button at the bottom batches all toggles in one request
- *     so we don't hit the API on every flip. Keeps per-toggle UX feeling
- *     instant + reduces network chatter.
- *   - Live preview shows BOTH the prose strip ("Includes: walls, trim, ceilings.")
- *     and a structured list (✓/○) so the owner can scan either way.
+ *   - Live preview shows the prose strip ("Includes: walls, trim, ceilings.")
+ *     so the owner sees exactly what the customer will see.
  *   - Modifier info is shown next to each toggle so the owner sees the price
  *     impact before flipping.
  *   - Services with zero toggles are hidden — currently just deck_fence which
  *     is intentionally skipped in mig 058.
+ *   - Each save sends a single-row change. If the owner spam-flips, the
+ *     backend handles last-write-wins; we don't try to debounce here.
  */
 
 // Pretty service names. Keys are vertical_services.service_slug values.
@@ -77,7 +87,7 @@ function formatModifier(option) {
 // Build the customer-facing "What's included" prose preview from the
 // currently-enabled toggles.
 function buildIncludesPreview(service) {
-  const visible = service.options.filter(o => o.affects_includes_text);
+  const visible  = service.options.filter(o => o.affects_includes_text);
   const enabled  = visible.filter(o => o.enabled).map(o => stripIncludePrefix(o.display_label));
   const disabled = visible.filter(o => !o.enabled).map(o => stripIncludePrefix(o.display_label));
 
@@ -90,6 +100,43 @@ function buildIncludesPreview(service) {
     parts.push(`${list.charAt(0).toUpperCase()}${list.slice(1)} quoted separately on walkthrough.`);
   }
   return parts.length > 0 ? parts.join(" ") : "Standard scope.";
+}
+
+// ─── Tiny spinner shown while a save is in-flight ───────────────────────────
+function Spinner() {
+  return (
+    <svg
+      className="animate-spin h-4 w-4 text-gray-400"
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+      />
+    </svg>
+  );
+}
+
+// ─── Tiny green check shown briefly on a successful save ────────────────────
+function SavedCheck() {
+  return (
+    <svg
+      className="h-4 w-4 text-green-600"
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth="3"
+      aria-hidden="true"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+    </svg>
+  );
 }
 
 // ─── Toggle switch (small, animated, brand-coloured) ────────────────────────
@@ -116,7 +163,7 @@ function Toggle({ enabled, onChange, disabled }) {
 }
 
 // ─── Single service card ─────────────────────────────────────────────────────
-function ServiceCard({ service, onToggle }) {
+function ServiceCard({ service, saveState, onToggle }) {
   // Skip services with no toggles (e.g. deck_fence — intentionally skipped
   // in mig 058 until split into separate deck + fence services).
   if (!service.options || service.options.length === 0) return null;
@@ -135,30 +182,46 @@ function ServiceCard({ service, onToggle }) {
       </div>
 
       <div className="space-y-3 mb-5">
-        {service.options.map(option => (
-          <div
-            key={option.option_key}
-            className="flex items-center justify-between py-2 border-b border-gray-100 last:border-b-0"
-          >
-            <div className="flex-1 min-w-0 mr-4">
-              <div className="text-sm font-medium text-gray-900">
-                {option.display_label}
-              </div>
-              {formatModifier(option) && (
-                <div className="text-xs text-gray-500 mt-0.5">
-                  {formatModifier(option)}
-                  {option.default_enabled && (
-                    <span className="ml-2 text-gray-400">· default ON</span>
+        {service.options.map(option => {
+          const key    = `${service.service_id}-${option.option_key}`;
+          const status = saveState[key]; // { status: "saving" | "saved" | "error", error? }
+
+          return (
+            <div
+              key={option.option_key}
+              className="py-2 border-b border-gray-100 last:border-b-0"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex-1 min-w-0 mr-4">
+                  <div className="text-sm font-medium text-gray-900">
+                    {option.display_label}
+                  </div>
+                  {formatModifier(option) && (
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {formatModifier(option)}
+                      {option.default_enabled && (
+                        <span className="ml-2 text-gray-400">· default ON</span>
+                      )}
+                    </div>
                   )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {status?.status === "saving" && <Spinner />}
+                  {status?.status === "saved"  && <SavedCheck />}
+                  <Toggle
+                    enabled={option.enabled}
+                    onChange={() => onToggle(service.service_id, option.option_key, option.enabled)}
+                  />
+                </div>
+              </div>
+              {status?.status === "error" && (
+                <div className="text-xs text-red-600 mt-1.5">
+                  Couldn't save — {status.error || "unknown error"}. Click the toggle to try again.
                 </div>
               )}
             </div>
-            <Toggle
-              enabled={option.enabled}
-              onChange={() => onToggle(service.service_id, option.option_key, option.enabled)}
-            />
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Live preview of the customer-facing "What's included" strip */}
@@ -176,12 +239,13 @@ function ServiceCard({ service, onToggle }) {
 
 // ─── Main component ──────────────────────────────────────────────────────────
 export default function ScopeSettings() {
-  const [services, setServices] = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [saving, setSaving]     = useState(false);
-  const [pending, setPending]   = useState({}); // { "serviceId-optionKey": enabled }
-  const [error, setError]       = useState(null);
-  const [success, setSuccess]   = useState(null);
+  const [services, setServices]   = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [loadError, setLoadError] = useState(null);
+
+  // Per-toggle save status, keyed by `${service_id}-${option_key}`.
+  // Values: { status: "saving" | "saved" | "error", error?: string }
+  const [saveState, setSaveState] = useState({});
 
   // Load on mount
   useEffect(() => {
@@ -189,11 +253,11 @@ export default function ScopeSettings() {
     (async () => {
       try {
         setLoading(true);
-        setError(null);
+        setLoadError(null);
         const data = await getScopeOptions();
         if (!cancelled) setServices(data?.services || []);
       } catch (err) {
-        if (!cancelled) setError(`Couldn't load: ${err.message}`);
+        if (!cancelled) setLoadError(`Couldn't load: ${err.message}`);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -201,12 +265,13 @@ export default function ScopeSettings() {
     return () => { cancelled = true; };
   }, []);
 
-  // Toggle handler — updates local state immediately + queues the change.
-  function handleToggle(serviceId, optionKey, currentEnabled) {
+  // Auto-save on toggle flip.
+  // Optimistic update first, then PATCH. On failure, revert + show inline error.
+  async function handleToggle(serviceId, optionKey, currentEnabled) {
     const newEnabled = !currentEnabled;
     const key = `${serviceId}-${optionKey}`;
 
-    // Optimistic UI update
+    // 1. Optimistic UI update — flip the toggle right away.
     setServices(prev => prev.map(s => {
       if (s.service_id !== serviceId) return s;
       return {
@@ -217,57 +282,46 @@ export default function ScopeSettings() {
       };
     }));
 
-    // Queue or unqueue the change. If they flip back to original, remove it.
-    setPending(prev => {
-      const next = { ...prev };
-      // Find the original value to detect "flipped back to original"
-      const service = services.find(s => s.service_id === serviceId);
-      const option  = service?.options.find(o => o.option_key === optionKey);
-      const originalValue = option?.enabled; // pre-flip value
-      // If flipping back to what was originally fetched, drop from pending.
-      // Otherwise queue it.
-      if (originalValue === newEnabled) {
-        delete next[key];
-      } else {
-        next[key] = newEnabled;
-      }
-      return next;
-    });
+    // 2. Mark this key as saving (clears any prior error/saved indicator).
+    setSaveState(prev => ({ ...prev, [key]: { status: "saving" } }));
 
-    // Clear any prior success/error state on new edit
-    setSuccess(null);
-    setError(null);
-  }
-
-  // Save batches all pending changes in one request.
-  async function handleSave() {
-    if (saving || Object.keys(pending).length === 0) return;
     try {
-      setSaving(true);
-      setError(null);
+      // 3. Fire the save — single-row change.
+      await updateScopeOptions([
+        { service_id: serviceId, option_key: optionKey, enabled: newEnabled },
+      ]);
 
-      const changes = Object.entries(pending).map(([key, enabled]) => {
-        // key format: "<serviceId>-<optionKey>" — but optionKey may contain
-        // dashes itself (defensive). Split on FIRST dash only.
-        const dashIdx = key.indexOf("-");
-        const service_id = parseInt(key.slice(0, dashIdx), 10);
-        const option_key = key.slice(dashIdx + 1);
-        return { service_id, option_key, enabled };
-      });
-
-      const data = await updateScopeOptions(changes);
-
-      setPending({});
-      setSuccess(`Saved ${data?.updated ?? changes.length} change${(data?.updated ?? changes.length) === 1 ? "" : "s"}.`);
-      setTimeout(() => setSuccess(null), 3000);
+      // 4. Success → flash green check, then quietly clear after ~1.5s.
+      //    Guard the timeout: if a newer save kicked off for the same key
+      //    in the meantime, leave its state alone.
+      setSaveState(prev => ({ ...prev, [key]: { status: "saved" } }));
+      setTimeout(() => {
+        setSaveState(prev => {
+          if (prev[key]?.status !== "saved") return prev;
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+      }, 1500);
     } catch (err) {
-      setError(`Couldn't save: ${err.message}`);
-    } finally {
-      setSaving(false);
+      // 5. Failure → revert the optimistic toggle + show inline error
+      //    until the user clicks again and a save succeeds.
+      setServices(prev => prev.map(s => {
+        if (s.service_id !== serviceId) return s;
+        return {
+          ...s,
+          options: s.options.map(o =>
+            o.option_key === optionKey ? { ...o, enabled: currentEnabled } : o
+          ),
+        };
+      }));
+      setSaveState(prev => ({
+        ...prev,
+        [key]: { status: "error", error: err.message },
+      }));
     }
   }
 
-  const pendingCount = Object.keys(pending).length;
   const visibleServices = services.filter(s => s.options && s.options.length > 0);
 
   // ─── Render ────────────────────────────────────────────────────────────────
@@ -280,7 +334,7 @@ export default function ScopeSettings() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto pb-24">
+    <div className="max-w-3xl mx-auto">
       {/* Header */}
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-gray-900 mb-2">Standard Scope</h2>
@@ -289,17 +343,20 @@ export default function ScopeSettings() {
           "what's included" strip — no toggles, no decision fatigue. You can always upsell additional
           scope on the in-person walkthrough.
         </p>
+        <p className="text-xs text-gray-500 mt-2">
+          Changes save automatically as you toggle.
+        </p>
       </div>
 
-      {/* Error banner (load failures) */}
-      {error && !saving && (
+      {/* Load-failure banner */}
+      {loadError && (
         <div className="mb-4 bg-red-50 border border-red-200 text-red-800 rounded-lg px-4 py-3 text-sm">
-          {error}
+          {loadError}
         </div>
       )}
 
       {/* Empty state */}
-      {visibleServices.length === 0 && !error && (
+      {visibleServices.length === 0 && !loadError && (
         <div className="bg-gray-50 border border-gray-200 rounded-xl p-8 text-center">
           <div className="text-gray-700 font-medium mb-1">No services configured yet</div>
           <div className="text-sm text-gray-500">
@@ -315,38 +372,10 @@ export default function ScopeSettings() {
             <ServiceCard
               key={service.service_id}
               service={service}
+              saveState={saveState}
               onToggle={handleToggle}
             />
           ))}
-        </div>
-      )}
-
-      {/* Sticky save bar */}
-      {visibleServices.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
-          <div className="max-w-3xl mx-auto px-6 py-4 flex items-center gap-4">
-            <div className="flex-1 text-sm">
-              {pendingCount > 0 && (
-                <span className="text-gray-700">
-                  {pendingCount} unsaved change{pendingCount === 1 ? "" : "s"}
-                </span>
-              )}
-              {success && (
-                <span className="text-green-700 font-medium">✓ {success}</span>
-              )}
-              {error && saving === false && pendingCount > 0 && (
-                <span className="text-red-700">⚠ {error}</span>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving || pendingCount === 0}
-              className="bg-orange-600 hover:bg-orange-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium px-6 py-2 rounded-lg transition-colors"
-            >
-              {saving ? "Saving…" : "Save Changes"}
-            </button>
-          </div>
         </div>
       )}
     </div>

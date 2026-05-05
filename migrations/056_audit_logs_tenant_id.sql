@@ -25,8 +25,6 @@ BEGIN
          SET tenant_id = organization_id::uuid
        WHERE tenant_id IS NULL
          AND organization_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
-
-      ALTER TABLE public.audit_logs DROP COLUMN organization_id;
     END IF;
 
     IF EXISTS (
@@ -39,8 +37,6 @@ BEGIN
          SET tenant_id = org_id::uuid
        WHERE tenant_id IS NULL
          AND org_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
-
-      ALTER TABLE public.audit_logs DROP COLUMN org_id;
     END IF;
 
     CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_id

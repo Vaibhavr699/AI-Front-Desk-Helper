@@ -39,20 +39,30 @@ END $$;
 
 -- Add the new constraint with the full plan list.
 -- Order matches lib/plans.js ADMIN_PLAN_IDS for consistency.
-ALTER TABLE tenants
-  ADD CONSTRAINT tenants_plan_check
-  CHECK (
-    plan IS NULL
-    OR plan IN (
-      'basic',
-      'pro',
-      'elite',
-      'franchise',
-      'hq_starter',
-      'hq_growth',
-      'hq_enterprise'
-    )
-  );
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_constraint
+     WHERE conrelid = 'tenants'::regclass
+       AND conname = 'tenants_plan_check'
+  ) THEN
+    ALTER TABLE tenants
+      ADD CONSTRAINT tenants_plan_check
+      CHECK (
+        plan IS NULL
+        OR plan IN (
+          'basic',
+          'pro',
+          'elite',
+          'franchise',
+          'hq_starter',
+          'hq_growth',
+          'hq_enterprise'
+        )
+      );
+  END IF;
+END $$;
 
 -- Verify by counting rows in each plan tier (informational, not enforcing).
 DO $$

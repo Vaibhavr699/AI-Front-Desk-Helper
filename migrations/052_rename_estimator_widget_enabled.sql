@@ -13,8 +13,25 @@
 
 BEGIN;
 
-ALTER TABLE tenants
-  RENAME COLUMN estimator_widget_enabled TO estimator_enabled;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'tenants'
+       AND column_name = 'estimator_widget_enabled'
+  ) AND NOT EXISTS (
+    SELECT 1
+      FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'tenants'
+       AND column_name = 'estimator_enabled'
+  ) THEN
+    ALTER TABLE public.tenants
+      RENAME COLUMN estimator_widget_enabled TO estimator_enabled;
+  END IF;
+END $$;
 
 COMMENT ON COLUMN tenants.estimator_enabled IS
   'Phase 7 V1.5 — Master toggle for all estimator surfaces (widget Quick Quote, popup, V2 voice handoff, V2 SMS estimator). Was estimator_widget_enabled before May 4, 2026.';

@@ -11,8 +11,26 @@ CREATE INDEX IF NOT EXISTS idx_leads_web_id ON leads(web_id);
 
 -- 3. Add unique constraints per tenant
 -- We use separate constraints because a lead might have both or neither.
-ALTER TABLE leads ADD CONSTRAINT unique_tenant_facebook_id UNIQUE (tenant_id, facebook_id);
-ALTER TABLE leads ADD CONSTRAINT unique_tenant_web_id UNIQUE (tenant_id, web_id);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_constraint
+     WHERE conname = 'unique_tenant_facebook_id'
+  ) THEN
+    ALTER TABLE leads
+      ADD CONSTRAINT unique_tenant_facebook_id UNIQUE (tenant_id, facebook_id);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_constraint
+     WHERE conname = 'unique_tenant_web_id'
+  ) THEN
+    ALTER TABLE leads
+      ADD CONSTRAINT unique_tenant_web_id UNIQUE (tenant_id, web_id);
+  END IF;
+END $$;
 
 -- 4. Backfill existing leads that have 'fb-' or 'web-' in the phone column
 UPDATE leads 

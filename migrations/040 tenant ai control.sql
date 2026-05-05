@@ -1,4 +1,4 @@
-- ═════════════════════════════════════════════════════════════════════
+-- ═════════════════════════════════════════════════════════════════════
 -- Migration 040 — Tenant-wide AI Control (Apr 23, 2026)
 --
 -- Pivot from per-phone routing (mig 039) to tenant-wide routing. All

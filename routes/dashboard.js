@@ -888,7 +888,32 @@ router.get("/metrics", async (req, res) => {
          WHERE t.id = ANY($1)
          ORDER BY t.name ASC`,
         [tenantIds, currentWindow]
-      ) : Promise.resolve({ rows: [] })
+      ) : Promise.resolve({ rows: [] }),
+
+     // ─────────────────────────────────────────────────────────────────
+      // Phase E1.2 (May 4, 2026) — Voice → Estimate Funnel
+      // Three stages: links sent (calls.estimate_link_sent_at) → estimates
+      // submitted (leads.estimator_payload->>'source_call_id') → booked
+      // (bookings JOIN those leads).
+      // ─────────────────────────────────────────────────────────────────
+      db.query(`
+        SELECT
+          (SELECT COUNT(*) FROM calls
+            WHERE tenant_id = ANY($1)
+              AND estimate_link_sent_at > $2) AS links_sent,
+          (SELECT COUNT(*) FROM leads
+            WHERE tenant_id = ANY($1)
+              AND estimator_payload IS NOT NULL
+              AND estimator_payload->>'source_call_id' IS NOT NULL
+              AND created_at > $2) AS estimates_submitted,
+          (SELECT COUNT(DISTINCT b.id)
+             FROM bookings b
+             JOIN leads l ON b.lead_id = l.id
+            WHERE b.tenant_id = ANY($1)
+              AND l.estimator_payload->>'source_call_id' IS NOT NULL
+              AND b.created_at > $2) AS booked`,
+        [tenantIds, currentWindow]
+      )
     ]);
 
     const salesStats         = results[0];

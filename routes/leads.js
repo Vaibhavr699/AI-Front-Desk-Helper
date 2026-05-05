@@ -46,7 +46,7 @@ router.get("/:id", async (req, res) => {
 
     // Audit log: lead viewed
     await logAction({
-      organization_id: String(lead.tenant_id),
+      tenant_id: String(lead.tenant_id),
       user_id: req.user?.sub ? String(req.user.sub) : null,
       action: "lead_viewed",
       entity_type: "lead",

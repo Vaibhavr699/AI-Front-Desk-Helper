@@ -49,6 +49,7 @@ const emailService = require("./services/email");
 const { getAIConfig, REALTIME_TOOLS, RECOVERY_TOOLS } = require("./lib/orchestrator");
 const { isWithinBusinessHours } = require("./lib/timeUtils");
 const crmWebhookPayload = require("./lib/crmWebhookPayload");
+const { getLast10Digits, normalizeE164Phone } = require("./lib/phone");
 
 const _resetBase = (process.env.DASHBOARD_URL || process.env.BASE_URL || "").replace(/\/$/, "");
 console.log("[Startup] Password reset: Resend=" + (process.env.RESEND_API_KEY && process.env.EMAIL_FROM ? "yes" : "no") + ", ResetLinkBase=" + (_resetBase || "NOT SET – set DASHBOARD_URL or BASE_URL"));
@@ -1104,7 +1105,8 @@ async function sendToCRM(leadCapture, tenantId = null) {
 
 
 function normalizePhone(value) {
-  return String(value || "").trim();
+  const raw = String(value || "").trim();
+  return normalizeE164Phone(raw) || raw;
 }
 
 function getOrCreateSmsThread(phone) {
@@ -3812,8 +3814,15 @@ sendToOpenAI(sessionUpdate);
               if (bookingPhone) {
                 try {
                   const activeRecovery = await db.query(
-                    "SELECT id FROM estimate_recoveries WHERE tenant_id = $1 AND contact_phone = $2 AND status IN ('active', 'paused', 'dormant') LIMIT 1",
-                    [tenant.id, normalizePhone(bookingPhone)]
+                    `SELECT id FROM estimate_recoveries
+                     WHERE tenant_id = $1
+                       AND status IN ('active', 'paused', 'dormant')
+                       AND (
+                         contact_phone = $2
+                         OR right(regexp_replace(COALESCE(contact_phone, ''), '[^0-9]', '', 'g'), 10) = $3
+                       )
+                     LIMIT 1`,
+                    [tenant.id, normalizePhone(bookingPhone), getLast10Digits(bookingPhone)]
                   );
                   if (activeRecovery.rows.length > 0) {
                     await estimateRecoveryService.markConverted(activeRecovery.rows[0].id);
@@ -4791,8 +4800,15 @@ app.post("/webhooks/crm/job-completed", async (req, res) => {
     if (hasRevenue) {
       try {
         const activeRecovery = await db.query(
-          "SELECT id FROM estimate_recoveries WHERE tenant_id = $1 AND contact_phone = $2 AND status IN ('active', 'paused', 'dormant') LIMIT 1",
-          [tenantId, phone]
+          `SELECT id FROM estimate_recoveries
+           WHERE tenant_id = $1
+             AND status IN ('active', 'paused', 'dormant')
+             AND (
+               contact_phone = $2
+               OR right(regexp_replace(COALESCE(contact_phone, ''), '[^0-9]', '', 'g'), 10) = $3
+             )
+           LIMIT 1`,
+          [tenantId, phone, getLast10Digits(phone)]
         );
         if (activeRecovery.rows.length > 0) {
           await estimateRecoveryService.markConverted(activeRecovery.rows[0].id);

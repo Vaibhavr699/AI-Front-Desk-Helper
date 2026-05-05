@@ -13,6 +13,8 @@ const router = express.Router();
 const db = require('../lib/db');
 const { authMiddleware } = require('../lib/auth');
 const { auditLog } = require('../lib/auditLogger');
+const { buildTenantInsert } = require('../lib/tenantInsert');
+const { normalizeE164Phone } = require('../lib/phone');
 
 const {
   validateCanAddCustomer,
@@ -319,8 +321,8 @@ router.post('/customers', async (req, res) => {
     await validateCanAddCustomer(db, req.user.tenant);
 
     const brandMode = brand_mode_inherit
-      ? req.user.tenant.brand_mode || 'default'
-      : 'default';
+      ? req.user.tenant.brand_mode || 'ai_branded'
+      : 'ai_branded';
 
     // Generate a unique slug from the business name. tenants.slug is
     // NOT NULL + UNIQUE, so we slugify, then probe the DB until we find
@@ -348,25 +350,21 @@ router.post('/customers', async (req, res) => {
       });
     }
 
-    const { rows } = await db.query(
-      `INSERT INTO tenants (
-         name, slug, company_name, primary_email, phone, plan,
-         account_type, reseller_id, billing_owner, brand_mode,
-         stripe_customer_id, stripe_subscription_id
-       )
-       VALUES ($1, $2, $3, $4, $5, $6, 'customer', $7, 'reseller', $8, NULL, NULL)
-       RETURNING *`,
-      [
-        name,
-        slug,
-        name,           // company_name defaults to display name (matches dashboard.js pattern)
-        primary_email,
-        phone || null,
-        plan,
-        req.user.tenant.id,
-        brandMode,
-      ]
-    );
+    const tenantInsert = buildTenantInsert({
+      name,
+      slug,
+      company_name: name,
+      primary_email,
+      phone: normalizeE164Phone(phone) || phone || null,
+      plan,
+      account_type: 'customer',
+      reseller_id: req.user.tenant.id,
+      billing_owner: 'reseller',
+      brand_mode: brandMode,
+      stripe_customer_id: null,
+      stripe_subscription_id: null,
+    });
+    const { rows } = await db.query(tenantInsert.sql, tenantInsert.values);
     const created = rows[0];
 
     await safeAuditLog({

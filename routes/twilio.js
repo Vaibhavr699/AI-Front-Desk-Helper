@@ -5,6 +5,7 @@ const { getTenantByPhone, getTenantById, getTenantBySlug } = require("../lib/ten
 const callsService = require("../services/calls");
 const recordingService = require("../services/recording");
 const { updateCallByTwilioSid, getCallByTwilioSid } = require("../services/calls");
+const { getLast10Digits, normalizeE164Phone } = require("../lib/phone");
 
 const router = express.Router();
 const BASE_URL = process.env.BASE_URL;
@@ -210,12 +211,18 @@ function processStatusPayload(payload = {}) {
         // Dedupe: if this phone already has ANY active recovery, skip.
         // Handled inside startMissedCallRecovery but we also check here
         // to avoid creating duplicate leads unnecessarily.
+        const normalizedFrom = normalizeE164Phone(From) || From;
+        const fromLast10 = getLast10Digits(From);
         const recent = await db.query(
           `SELECT 1 FROM estimate_recoveries
-           WHERE tenant_id = $1 AND contact_phone = $2
+           WHERE tenant_id = $1
+             AND (
+               contact_phone = $2
+               OR right(regexp_replace(COALESCE(contact_phone, ''), '[^0-9]', '', 'g'), 10) = $3
+             )
              AND status = 'active'
              AND created_at > now() - interval '24 hours' LIMIT 1`,
-          [call.tenant_id, From]
+          [call.tenant_id, normalizedFrom, fromLast10]
         );
         if (recent.rows.length > 0) {
           console.log("[Missed-call] Dedupe hit for %s tenant=%s — active recovery exists", From, call.tenant_id);

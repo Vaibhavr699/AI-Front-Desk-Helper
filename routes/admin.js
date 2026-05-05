@@ -9,6 +9,7 @@ const { getPlan, listPlans, ADMIN_PLAN_IDS } = require("../lib/plans");
 const crypto = require("crypto");
 const { generateUniqueResellerCode } = require("../lib/resellerBilling");
 const { getResellerTier } = require("../lib/resellerPlans");
+const { buildTenantInsert } = require("../lib/tenantInsert");
 
 const router = express.Router();
 
@@ -514,24 +515,23 @@ for (let i = 0; i < 5; i++) {
   slug = `${toSlug(trimmedName)}-${crypto.randomBytes(2).toString("hex")}`;
 }
 
-const tenantResult = await db.query(
-  `INSERT INTO tenants (
-     name, company_name, slug,
-     account_type, reseller_tier, reseller_code,
-     reseller_customer_limit, reseller_wholesale_rate_cents,
-     billing_owner, brand_mode, plan
-   )
-   VALUES ($1, $1, $2, 'reseller', $3, $4, $5, $6, 'direct', 'ai_branded', 'basic')
-   RETURNING id, name, slug, reseller_code, reseller_tier, created_at`,
-  [
-    trimmedName,
+const resellerTenantInsert = buildTenantInsert(
+  {
+    name: trimmedName,
+    company_name: trimmedName,
     slug,
-    tier,
-    resellerCode,
-    tierDef.customer_limit,
-    tierDef.wholesale_rate_cents,
-  ]
+    account_type: "reseller",
+    reseller_tier: tier,
+    reseller_code: resellerCode,
+    reseller_customer_limit: tierDef.customer_limit,
+    reseller_wholesale_rate_cents: tierDef.wholesale_rate_cents,
+    billing_owner: "direct",
+    brand_mode: "ai_branded",
+    plan: "basic",
+  },
+  "id, name, slug, reseller_code, reseller_tier, created_at"
 );
+const tenantResult = await db.query(resellerTenantInsert.sql, resellerTenantInsert.values);
     const tenant = tenantResult.rows[0];
 
     // Create owner dashboard_user (random password, gets set via reset link)
@@ -701,16 +701,22 @@ router.post("/tenants/franchise-zee", async (req, res) => {
     // - brand_mode='white_label' — zees inherit HQ chrome by default
     // - subscription_status left NULL until zee completes Stripe checkout
     // - primary_email set so getOrCreateCustomer finds it directly
-    const tenantResult = await db.query(
-      `INSERT INTO tenants (
-         name, company_name, slug,
-         plan, parent_id, brand_mode,
-         plan_overrides, billing_owner, primary_email
-       )
-       VALUES ($1, $1, $2, 'franchise', $3, 'white_label', $4, 'direct', $5)
-       RETURNING id, name, slug, plan, parent_id, brand_mode, plan_overrides, created_at`,
-      [trimmedName, slug, hq_tenant_id, planOverrides, normalizedEmail]
+    const franchiseTenantInsert = buildTenantInsert(
+      {
+        name: trimmedName,
+        company_name: trimmedName,
+        slug,
+        plan: "franchise",
+        parent_id: hq_tenant_id,
+        business_type: "location",
+        brand_mode: "white_label",
+        plan_overrides: planOverrides,
+        billing_owner: "direct",
+        primary_email: normalizedEmail,
+      },
+      "id, name, slug, plan, parent_id, brand_mode, plan_overrides, created_at"
     );
+    const tenantResult = await db.query(franchiseTenantInsert.sql, franchiseTenantInsert.values);
     const tenant = tenantResult.rows[0];
 
     // Create owner dashboard_user (random password, set via reset link)

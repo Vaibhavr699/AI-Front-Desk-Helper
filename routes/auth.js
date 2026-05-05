@@ -31,7 +31,7 @@ router.post("/login", async (req, res) => {
       is_super_admin: user.is_super_admin === true,
     });
     await logAction({
-      organization_id: String(user.tenant_id),
+      tenant_id: String(user.tenant_id),
       user_id: String(user.id),
       action: "user_login",
       entity_type: "user",
@@ -167,7 +167,7 @@ router.post("/reset-password", async (req, res) => {
     const hash = await auth.hashPassword(password);
     await auth.updatePassword(user.id, hash);
      await logAction({
-      organization_id: String(user.tenant_id),
+      tenant_id: String(user.tenant_id),
       user_id: String(user.id),
       action: "password_reset",
       entity_type: "user",

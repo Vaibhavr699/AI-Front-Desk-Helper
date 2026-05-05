@@ -8,6 +8,7 @@ const { getTenantById } = require("../lib/tenant");
 const followUp = require("./followUp");
 const calendar = require("../calendar");
 const notificationService = require("./notifications");
+const { getLast10Digits, normalizeE164Phone } = require("../lib/phone");
 
 /** Normalize and validate booking payload from AI (handles camelCase, extra fields, bad dates). */
 function normalizeBookingData(data, isUpdate = false) {
@@ -23,7 +24,8 @@ function normalizeBookingData(data, isUpdate = false) {
     return isUpdate ? undefined : null;
   };
 
-  const contactPhone = get(data, "contact_phone", "contactPhone");
+  const rawContactPhone = get(data, "contact_phone", "contactPhone");
+  const contactPhone = rawContactPhone ? (normalizeE164Phone(rawContactPhone) || rawContactPhone) : rawContactPhone;
   if (!isUpdate && !contactPhone) {
     throw new Error("contact_phone is required and cannot be empty");
   }
@@ -51,8 +53,11 @@ function normalizeBookingData(data, isUpdate = false) {
   };
 
   // Handle estimated_revenue_cents carefully for updates
-  if ("estimated_value" in data || "estimatedValue" in data) {
-    const val = data.estimated_value !== undefined ? data.estimated_value : data.estimatedValue;
+  if ("estimated_value" in data || "estimatedValue" in data || "estimated_revenue_cents" in data || "revenue_cents" in data || "revenue" in data) {
+    const centsValue = data.estimated_revenue_cents ?? data.revenue_cents;
+    const val = centsValue !== undefined
+      ? Number(centsValue) / 100
+      : (data.estimated_value !== undefined ? data.estimated_value : (data.estimatedValue ?? data.revenue));
     const numeric = parseFloat(val);
     // Use default if not a valid number or <= 0
     result.estimated_revenue_cents = (isNaN(numeric) || numeric <= 0) ? 25000 : Math.round(numeric * 100);
@@ -369,9 +374,19 @@ async function cancelBooking(bookingId, options = {}) {
 }
 
 async function findLatestBookingByPhone(tenantId, phone) {
+  const normalizedPhone = normalizeE164Phone(phone) || phone;
+  const last10 = getLast10Digits(phone);
   const res = await db.query(
-    `SELECT * FROM bookings WHERE tenant_id = $1 AND contact_phone = $2 ORDER BY created_at DESC LIMIT 1`,
-    [tenantId, phone]
+    `SELECT *
+       FROM bookings
+      WHERE tenant_id = $1
+        AND (
+          contact_phone = $2
+          OR right(regexp_replace(COALESCE(contact_phone, ''), '[^0-9]', '', 'g'), 10) = $3
+        )
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [tenantId, normalizedPhone, last10]
   );
   return res.rows[0] || null;
 }
@@ -396,16 +411,6 @@ async function findLatestBookingByPhone(tenantId, phone) {
 // comparing the call's E.164 From: against whatever the AI captured
 // when the booking was created.
 // ═════════════════════════════════════════════════════════════════════
-
-/**
- * Extract the last 10 digits of a phone string. Strips all non-digit
- * characters first. Returns "" if input has fewer than 10 digits.
- */
-function getLast10Digits(phone) {
-  if (!phone) return "";
-  const digits = String(phone).replace(/\D/g, "");
-  return digits.length >= 10 ? digits.slice(-10) : "";
-}
 
 /**
  * Find all UPCOMING, non-cancelled bookings matching a phone number for

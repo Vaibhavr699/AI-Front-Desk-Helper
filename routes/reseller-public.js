@@ -19,6 +19,8 @@ const router = express.Router();
 const db = require('../lib/db');
 const { auditLog } = require('../lib/auditLogger');
 const { validateCanAddCustomer } = require('../lib/resellerBilling');
+const { buildTenantInsert } = require('../lib/tenantInsert');
+const { normalizeE164Phone } = require('../lib/phone');
 const {
   sendResellerCustomerWelcomeEmail,
   sendResellerNewCustomerNotification,
@@ -43,7 +45,7 @@ async function fetchResellerByCode(code) {
   if (!normalized) return null;
 
   try {
-    const { rows } = await db.query(
+    const tenantInsert = buildTenantInsert(
       `SELECT * FROM tenants
         WHERE reseller_code = $1
           AND account_type = 'reseller'
@@ -179,7 +181,7 @@ router.post('/:code/signup', async (req, res) => {
    // Create customer tenant. tenants.slug + company_name are NOT NULL,
     // so generate a unique slug from the business name and default
     // company_name to the same value (mirrors routes/reseller.js fix).
-    const brandMode = reseller.brand_mode || 'default';
+    const brandMode = reseller.brand_mode || 'ai_branded';
 
     let baseSlug = trimmedName.toLowerCase()
       .replace(/\s+/g, '-')
@@ -204,24 +206,24 @@ router.post('/:code/signup', async (req, res) => {
       });
     }
 
-    const { rows } = await db.query(
-      `INSERT INTO tenants (
-         name, slug, company_name, primary_email, phone, plan,
-         account_type, reseller_id, billing_owner, brand_mode,
-         stripe_customer_id, stripe_subscription_id
-       )
-       VALUES ($1, $2, $3, $4, $5, 'basic', 'customer', $6, 'reseller', $7, NULL, NULL)
-       RETURNING id, name, primary_email`,
-      [
-        trimmedName,
+    const tenantInsert = buildTenantInsert(
+      {
+        name: trimmedName,
         slug,
-        trimmedName,        // company_name = display name (same pattern as authenticated reseller endpoint)
-        normalizedEmail,
-        phone ? String(phone).trim() : null,
-        reseller.id,
-        brandMode,
-      ]
+        company_name: trimmedName,
+        primary_email: normalizedEmail,
+        phone: normalizeE164Phone(phone) || (phone ? String(phone).trim() : null),
+        plan: 'basic',
+        account_type: 'customer',
+        reseller_id: reseller.id,
+        billing_owner: 'reseller',
+        brand_mode: brandMode,
+        stripe_customer_id: null,
+        stripe_subscription_id: null,
+      },
+      'id, name, primary_email'
     );
+    const { rows } = await db.query(tenantInsert.sql, tenantInsert.values);
     const created = rows[0];
 
     await safeAuditLog({

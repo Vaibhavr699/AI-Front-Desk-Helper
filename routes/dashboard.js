@@ -16,6 +16,7 @@ const nurturingService = require("../services/nurturing");
 const notificationsService = require("../services/notifications");
 const { logAction } = require("../lib/auditLogger");
  const locationBilling = require("../lib/locationBilling");
+const { buildTenantInsert } = require("../lib/tenantInsert");
 const {
   sendLocationAddedEmail,
   sendFranchiseeInviteEmail,
@@ -122,7 +123,7 @@ router.patch("/bookings/:id", async (req, res) => {
       if (!booking) return res.status(404).json({ error: "Not found" });
 
       await logAction({
-        organization_id: String(booking.tenant_id),
+        tenant_id: String(booking.tenant_id),
         user_id: req.user?.sub ? String(req.user.sub) : null,
         action: "booking_cancelled",
         entity_type: "booking",
@@ -158,7 +159,7 @@ router.patch("/bookings/:id", async (req, res) => {
     const booking = result.rows[0];
 
     await logAction({
-      organization_id: String(booking.tenant_id),
+      tenant_id: String(booking.tenant_id),
       user_id: req.user?.sub ? String(req.user.sub) : null,
       action: "booking_updated",
       entity_type: "booking",
@@ -222,7 +223,7 @@ router.post("/bookings/:id/cancel", async (req, res) => {
     if (!booking) return res.status(404).json({ error: "Not found" });
 
     await logAction({
-      organization_id: String(booking.tenant_id),
+      tenant_id: String(booking.tenant_id),
       user_id: req.user?.sub ? String(req.user.sub) : null,
       action: "booking_cancelled",
       entity_type: "booking",
@@ -351,7 +352,7 @@ router.get("/recordings/:id/audio", async (req, res) => {
     if (!rec || !rec.recording_url) return res.status(404).json({ error: "Not found" });
 
     await logAction({
-      organization_id: String(rec.tenant_id),
+      tenant_id: String(rec.tenant_id),
       user_id: req.user?.sub ? String(req.user.sub) : null,
       action: "recording_played",
       entity_type: "recording",
@@ -1324,10 +1325,18 @@ router.post("/tenants", async (req, res) => {
     if (existing.rows.length > 0) {
       return res.status(409).json({ error: "A business with this slug already exists. Try a different name." });
     }
-    const insert = await db.query(
-      "INSERT INTO tenants (name, slug, company_name, business_type, parent_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, slug, company_name, business_type, parent_id",
-      [finalName, slug, finalCompany, businessType, parentId]
+    const tenantInsert = buildTenantInsert(
+      {
+        name: finalName,
+        slug,
+        company_name: finalCompany,
+        business_type: businessType,
+        parent_id: parentId,
+        timezone: body.timezone || "America/Chicago",
+      },
+      "id, name, slug, company_name, business_type, parent_id"
     );
+    const insert = await db.query(tenantInsert.sql, tenantInsert.values);
     const tenant = insert.rows[0];
 
     if (isByot) {
@@ -1610,7 +1619,7 @@ router.patch("/tenants/:id", async (req, res) => {
     out.has_nurturing_referral = hasNurturingReferralAccess(out);
 
     await logAction({
-      organization_id: String(id),
+      tenant_id: String(id),
       user_id: req.user?.sub ? String(req.user.sub) : null,
       action: "settings_updated",
       entity_type: "settings",
@@ -2473,33 +2482,26 @@ router.post("/tenants/:parentId/locations", async (req, res) => {
       inviteExpiresAt = expires.toISOString();
     }
 
-    const insertResult = await db.query(
-      `INSERT INTO tenants (
-         name, slug, company_name, business_type, parent_id,
-         billing_responsibility, plan, timezone,
-         is_suspended, brand_mode,
-         franchisee_invite_token, franchisee_invite_expires_at,
-         created_at, updated_at
-       )
-       VALUES ($1, $2, $3, 'location', $4, $5, $6, $7, $8, $9, $10, $11, now(), now())
-       RETURNING id, name, slug, company_name, business_type, parent_id,
-                 billing_responsibility, plan, timezone, is_suspended, brand_mode,
-                 franchisee_invite_token, franchisee_invite_expires_at`,
-      [
-        finalName,
+    const tenantInsert = buildTenantInsert(
+      {
+        name: finalName,
         slug,
-        finalCompany,
-        parentId,
-        billingResponsibility,
-        childPlan,
+        company_name: finalCompany,
+        business_type: "location",
+        parent_id: parentId,
+        billing_responsibility: billingResponsibility,
+        plan: childPlan,
         timezone,
-        isSuspended,
-        // Inherit parent's brand_mode (white_label HQ → white_label child)
-        parent.brand_mode || "ai_branded",
-        inviteToken,
-        inviteExpiresAt,
-      ]
+        is_suspended: isSuspended,
+        brand_mode: parent.brand_mode || "ai_branded",
+        franchisee_invite_token: inviteToken,
+        franchisee_invite_expires_at: inviteExpiresAt,
+      },
+      `id, name, slug, company_name, business_type, parent_id,
+       billing_responsibility, plan, timezone, is_suspended, brand_mode,
+       franchisee_invite_token, franchisee_invite_expires_at`
     );
+    const insertResult = await db.query(tenantInsert.sql, tenantInsert.values);
   const newLocation = insertResult.rows[0];
 
     // Promote parent to business_type='parent' on first location add.
@@ -2515,7 +2517,7 @@ router.post("/tenants/:parentId/locations", async (req, res) => {
 
     // Audit log the creation (use parent_id for org scope)
     await logAction({
-      organization_id: String(parentId),
+      tenant_id: String(parentId),
       user_id: req.user?.sub ? String(req.user.sub) : null,
       action: "location_created",
       entity_type: "tenant",
@@ -2696,7 +2698,7 @@ router.delete("/tenants/:parentId/locations/:childId", async (req, res) => {
 
     // Audit log
     await logAction({
-      organization_id: String(parentId),
+      tenant_id: String(parentId),
       user_id: req.user?.sub ? String(req.user.sub) : null,
       action: "location_removed",
       entity_type: "tenant",
@@ -2829,7 +2831,7 @@ router.patch("/tenants/:parentId/locations/:childId", async (req, res) => {
 
     // Audit log
     await logAction({
-      organization_id: String(parentId),
+      tenant_id: String(parentId),
       user_id: req.user?.sub ? String(req.user.sub) : null,
       action: "location_updated",
       entity_type: "tenant",
@@ -2944,7 +2946,7 @@ router.post("/tenants/:parentId/locations/:childId/retry-sync", async (req, res)
     // Audit trail — distinguish retries from other sync attempts so we can
     // grep for "how often are customers hitting the retry button"
     await logAction({
-      organization_id: String(parentId),
+      tenant_id: String(parentId),
       user_id: req.user?.sub ? String(req.user.sub) : null,
       action: "location_stripe_retry",
       entity_type: "tenant",

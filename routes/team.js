@@ -110,7 +110,7 @@ router.get("/", requireTeamManager, async (req, res) => {
     const r = await db.query(query, params);
 
     await safeLogAction({
-      organization_id: String(req.user.tenant_id),
+      tenant_id: String(req.user.tenant_id),
       user_id: String(req.user.sub),        // ✅ FIXED: was req.user.id
       action: "team_viewed",
       entity_type: "team",
@@ -226,7 +226,7 @@ router.post("/invite", requireTeamManager, async (req, res) => {
     }
 
     await safeLogAction({
-      organization_id: String(req.user.tenant_id),
+      tenant_id: String(req.user.tenant_id),
       user_id: String(req.user.sub),        // ✅ FIXED: was req.user.id
       action: "user_invited",
       entity_type: "user",
@@ -295,7 +295,7 @@ router.delete("/:id", requireTeamManager, async (req, res) => {
     await db.query("DELETE FROM dashboard_users WHERE id = $1", [targetUserId]);
 
     await safeLogAction({
-      organization_id: String(req.user.tenant_id),
+      tenant_id: String(req.user.tenant_id),
       user_id: String(req.user.sub),        // ✅ FIXED: was req.user.id
       action: "user_removed",
       entity_type: "user",

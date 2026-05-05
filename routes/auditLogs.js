@@ -32,8 +32,8 @@ router.get("/", async (req, res) => {
     const limitNum = parseInt(limit, 10);
     const offset = (pageNum - 1) * limitNum;
 
-    // ── Build org_id list ────────────────────────────────────────────────
-    let orgIds = [String(tenantId)];
+    // ── Build tenant_id list ─────────────────────────────────────────────
+    let tenantIds = [String(tenantId)];
 
     if (isParentAdmin) {
       const { data: childTenants, error: tenantErr } = await supabase
@@ -44,7 +44,7 @@ router.get("/", async (req, res) => {
       if (tenantErr) {
         console.error("GET /api/audit-logs tenant fetch error:", tenantErr);
       } else if (childTenants?.length) {
-        orgIds = [...orgIds, ...childTenants.map((t) => String(t.id))];
+        tenantIds = [...tenantIds, ...childTenants.map((t) => String(t.id))];
       }
     }
 
@@ -52,11 +52,11 @@ router.get("/", async (req, res) => {
     let query = supabase
       .from("audit_logs")
       .select(
-        `id, action, organization_id, entity_type, entity_id,
+        `id, action, tenant_id, entity_type, entity_id,
          old_value, new_value, ip_address, user_agent, created_at, user_id`,
         { count: "exact" }
       )
-      .in("organization_id", orgIds)
+      .in("tenant_id", tenantIds)
       .order("created_at", { ascending: false })
       .range(offset, offset + limitNum - 1);
 
@@ -82,7 +82,7 @@ router.get("/", async (req, res) => {
 
     // ── Batch resolve user emails from PostgreSQL ────────────────────────
     const userIds = [...new Set(logs.map((l) => l.user_id).filter(Boolean))];
-    const orgIdsToResolve = [...new Set(logs.map((l) => l.organization_id).filter(Boolean))];
+    const tenantIdsToResolve = [...new Set(logs.map((l) => l.tenant_id).filter(Boolean))];
 
     let userMap = {};
     let locationMap = {};
@@ -98,10 +98,10 @@ router.get("/", async (req, res) => {
     }
 
     // ── Batch resolve tenant names from PostgreSQL ───────────────────────
-    if (orgIdsToResolve.length > 0) {
+    if (tenantIdsToResolve.length > 0) {
       const tenantRes = await db.query(
         `SELECT id::text, name FROM tenants WHERE id::text = ANY($1)`,
-        [orgIdsToResolve]
+        [tenantIdsToResolve]
       );
       tenantRes.rows.forEach((t) => {
         locationMap[t.id] = t.name;
@@ -113,7 +113,7 @@ router.get("/", async (req, res) => {
       ...log,
       user_email: userMap[log.user_id]?.email || null,
       user_role:  userMap[log.user_id]?.role  || null,
-      location_name: locationMap[log.organization_id] || null,
+      location_name: locationMap[log.tenant_id] || null,
     }));
 
     res.json({

@@ -2,6 +2,12 @@
 
 const db = require("../lib/db");
 const twilio = require("../lib/twilio");
+const { getLast10Digits, normalizeE164Phone } = require("../lib/phone");
+
+function normalizeRecoveryPhone(raw) {
+  const value = String(raw || "").trim();
+  return normalizeE164Phone(value) || value;
+}
 
 // ─────────────────────────────────────────────────────────
 // SEQUENCE DEFINITIONS
@@ -350,12 +356,19 @@ async function startRecovery(tenantId, bookingId, options = {}) {
 }
 
 async function startEstimateRecovery(tenantId, lead, options = {}) {
-  const phone = lead.phone || lead.contact_phone;
+  const phone = normalizeRecoveryPhone(lead.phone || lead.contact_phone);
   if (!phone) return null;
+  const last10 = getLast10Digits(phone);
 
   const existing = await db.query(
-    "SELECT id FROM estimate_recoveries WHERE tenant_id = $1 AND contact_phone = $2 AND status = 'active'",
-    [tenantId, phone]
+    `SELECT id FROM estimate_recoveries
+      WHERE tenant_id = $1
+        AND status = 'active'
+        AND (
+          contact_phone = $2
+          OR right(regexp_replace(COALESCE(contact_phone, ''), '[^0-9]', '', 'g'), 10) = $3
+        )`,
+    [tenantId, phone, last10]
   );
   if (existing.rows.length > 0) return existing.rows[0];
 
@@ -399,12 +412,19 @@ async function startEstimateRecovery(tenantId, lead, options = {}) {
 }
 
 async function startInquiryRecovery(tenantId, lead, options = {}) {
-  const phone = lead.phone || lead.contact_phone;
+  const phone = normalizeRecoveryPhone(lead.phone || lead.contact_phone);
   if (!phone) return null;
+  const last10 = getLast10Digits(phone);
 
   const existing = await db.query(
-    "SELECT id FROM estimate_recoveries WHERE tenant_id = $1 AND contact_phone = $2 AND status = 'active'",
-    [tenantId, phone]
+    `SELECT id FROM estimate_recoveries
+      WHERE tenant_id = $1
+        AND status = 'active'
+        AND (
+          contact_phone = $2
+          OR right(regexp_replace(COALESCE(contact_phone, ''), '[^0-9]', '', 'g'), 10) = $3
+        )`,
+    [tenantId, phone, last10]
   );
   if (existing.rows.length > 0) return existing.rows[0];
 
@@ -448,12 +468,19 @@ async function startInquiryRecovery(tenantId, lead, options = {}) {
  * skip — don't stack recoveries for the same caller.
  */
 async function startMissedCallRecovery(tenantId, lead, options = {}) {
-  const phone = lead.phone || lead.contact_phone;
+  const phone = normalizeRecoveryPhone(lead.phone || lead.contact_phone);
   if (!phone) return null;
+  const last10 = getLast10Digits(phone);
 
   const existing = await db.query(
-    "SELECT id FROM estimate_recoveries WHERE tenant_id = $1 AND contact_phone = $2 AND status = 'active'",
-    [tenantId, phone]
+    `SELECT id FROM estimate_recoveries
+      WHERE tenant_id = $1
+        AND status = 'active'
+        AND (
+          contact_phone = $2
+          OR right(regexp_replace(COALESCE(contact_phone, ''), '[^0-9]', '', 'g'), 10) = $3
+        )`,
+    [tenantId, phone, last10]
   );
   if (existing.rows.length > 0) {
     console.log("[Recovery] Missed-call dedupe: recovery already active for %s", phone);

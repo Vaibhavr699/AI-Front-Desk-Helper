@@ -3589,11 +3589,34 @@ sendToOpenAI(sessionUpdate);
                   if (result.ok) {
                     console.log("[AI-Desk] send_estimate_link success call_id=%s tenant=%s to=%s sid=%s",
                       callId, tenant.id, phone, result.sid);
+ 
+                    // ─────────────────────────────────────────────────────
+                    // Phase E1.2 (May 4, 2026) — Voice → Estimate funnel
+                    // Stage 1 tracking. Mark this call as having sent an
+                    // estimate link so the Dashboard funnel widget can
+                    // count "links sent" alongside "estimates filled out"
+                    // (leads.estimator_payload->>'source_call_id') and
+                    // "bookings from voice" (bookings JOIN those leads).
+                    //
+                    // Fire-and-forget — funnel tracking is non-critical,
+                    // never block the tool response on it. The IS NULL
+                    // guard makes it idempotent: if the AI fires the tool
+                    // twice in one call (rare — wrong number caller scenario),
+                    // we keep the first timestamp and ignore subsequent.
+                    // ─────────────────────────────────────────────────────
+                    pool.query(
+                      "UPDATE calls SET estimate_link_sent_at = now() WHERE id = $1 AND estimate_link_sent_at IS NULL",
+                      [callId]
+                    ).catch((err) =>
+                      console.error("[AI-Desk] funnel tracking update failed call_id=%s err=%s", callId, err.message)
+                    );
+ 
                     output = JSON.stringify({
                       success: true,
                       message: "Link sent successfully. Tell the caller: 'Just sent it — should be in your messages now. Fill it out and you'll get an instant ballpark range, then you can book a walkthrough right from there.' Briefly confirm they got it.",
                     });
                   } else {
+ 
                     console.error("[AI-Desk] send_estimate_link failed call_id=%s err=%s",
                       callId, result.error || result.skipped || "unknown");
                     output = JSON.stringify({

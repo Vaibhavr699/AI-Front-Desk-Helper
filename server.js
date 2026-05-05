@@ -942,7 +942,7 @@ function finalizeCrmLeadPayload(obj) {
   const nameParts = crmWebhookPayload.splitDisplayName(primaryName);
   const first_name = String(obj.first_name ?? "").trim() || nameParts.first_name;
   const last_name = String(obj.last_name ?? "").trim() || nameParts.last_name;
-  const full_name = nameParts.full_name || primaryName || String(obj.full_name ?? "").trim();
+  const full_name = nameParts.full_name || primaryName || "";
 
   return {
     ...obj,

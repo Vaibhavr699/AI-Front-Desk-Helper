@@ -39,7 +39,7 @@ async function syncBookingToCrm(tenantId, booking) {
   const nameParts = crmWebhookPayload.splitDisplayName(booking.contact_name);
   const firstName = nameParts.first_name || "";
   const lastName = nameParts.last_name || "";
-  const displayName = nameParts.full_name || String(booking.contact_name || "").trim();
+  const displayName = nameParts.full_name || "";
   const phone = crmWebhookPayload.normalizePhoneForCrm(booking.contact_phone) || String(booking.contact_phone || "").trim();
   const appointmentDetails = crmWebhookPayload.buildBookingAppointmentDetails(booking);
 

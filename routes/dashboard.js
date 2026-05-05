@@ -2501,8 +2501,10 @@ router.post("/tenants/:parentId/locations", async (req, res) => {
        billing_responsibility, plan, timezone, is_suspended, brand_mode,
        franchisee_invite_token, franchisee_invite_expires_at`
     );
+    const existingActiveLocationCount = await locationBilling.countActiveLocations(parentId);
+
     const insertResult = await db.query(tenantInsert.sql, tenantInsert.values);
-  const newLocation = insertResult.rows[0];
+    const newLocation = insertResult.rows[0];
 
     // Promote parent to business_type='parent' on first location add.
     // Idempotent — the WHERE clause no-ops if already 'parent'. This gates
@@ -2510,6 +2512,7 @@ router.post("/tenants/:parentId/locations", async (req, res) => {
     // (tenants.some(t => t.business_type === 'parent')), so without this
     // update any standalone customer adding their first location would
     // have a broken dropdown.
+    const parentWasPromoted = parent.business_type !== "parent";
     await db.query(
       "UPDATE tenants SET business_type = 'parent', updated_at = now() WHERE id = $1 AND business_type != 'parent'",
       [parentId]
@@ -2536,12 +2539,6 @@ router.post("/tenants/:parentId/locations", async (req, res) => {
     if (!isSelfPays) {
       const stripeResult = await locationBilling.addChildToParentSubscription(parent, newLocation);
 
-      // Always record the sync outcome so the retry UI + rollup badges
-      // share one source of truth (see migration 036).
-      await locationBilling.recordSyncStatus(newLocation.id, stripeResult).catch((err) =>
-        console.error("[Locations] recordSyncStatus failed post-create:", err.message)
-      );
-
       if (!stripeResult.ok) {
         console.error(
           "[Locations] Stripe sync FAILED for new location %s under parent %s: %s",
@@ -2549,14 +2546,43 @@ router.post("/tenants/:parentId/locations", async (req, res) => {
           parentId,
           stripeResult.reason || stripeResult.error
         );
-        // Don't 500 — child is created, parent can manually sync later
-        // via the retry button. Return 201 with a warning so the UI knows.
-        return res.status(201).json({
-          ok: true,
-          location: newLocation,
-          warning: `Location created but Stripe sync failed: ${stripeResult.reason || stripeResult.error}. You can retry from the Locations page.`,
+
+        // P2 fix: do NOT leave a partially-created location row when Stripe
+        // billing couldn't be attached. Roll back by deleting the child row,
+        // and revert the parent promotion if this was the first location.
+        try {
+          await db.query("DELETE FROM tenants WHERE id = $1", [newLocation.id]);
+        } catch (err) {
+          console.error(
+            "[Locations] rollback DELETE failed for new location %s: %s",
+            newLocation.id,
+            err.message
+          );
+        }
+
+        if (parentWasPromoted && existingActiveLocationCount === 0) {
+          // Parent had no locations before this attempt — revert to prior type.
+          try {
+            await db.query(
+              "UPDATE tenants SET business_type = $2, updated_at = now() WHERE id = $1",
+              [parentId, "standalone"]
+            );
+          } catch (err) {
+            console.error("[Locations] rollback parent promotion failed:", err.message);
+          }
+        }
+
+        return res.status(502).json({
+          ok: false,
+          error: `Stripe sync failed: ${stripeResult.reason || stripeResult.error}`,
         });
       }
+
+      // Record the successful sync outcome so retry UI + rollup badges share
+      // one source of truth (see migration 036).
+      await locationBilling.recordSyncStatus(newLocation.id, stripeResult).catch((err) =>
+        console.error("[Locations] recordSyncStatus failed post-create:", err.message)
+      );
 
       // Re-read the child row to get the new parent_location_stripe_item_id
       const updatedChildResult = await db.query("SELECT * FROM tenants WHERE id = $1", [newLocation.id]);

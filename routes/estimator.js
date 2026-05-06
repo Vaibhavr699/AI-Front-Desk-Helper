@@ -11,6 +11,9 @@
 //   POST /validate                 → input validation only
 //   GET  /tenant-config/:tenantId  → widget config bundle
 //   POST /lead                     → capture estimator_payload to leads
+//   POST /log-events               → synthetic conversation messages
+//   GET  /rate-overrides/:tenantId → per-service rate override read
+//   PATCH /rate-overrides/:tenantId → per-service rate override upsert
 //
 // Admin-only endpoint (GET /vertical/:slug) lives in routes/estimatorAdmin.js
 // and mounts at /api/admin/estimator with requireSuperAdmin gate.
@@ -22,6 +25,49 @@ const estimator = require("../lib/estimator");
 const leadsService = require("../services/leads");
 
 const router = express.Router();
+
+// ─── Includes-text helpers (Phase 7 V2 — May 5, 2026) ───────────────────────
+// These overlay tenant-level scope_options onto the per-service includes_text
+// returned by getVerticalConfig. They run only inside /tenant-config; the
+// rest of the file is unchanged. If you change the prose format here, also
+// update buildIncludesPreview() in dashboard/src/pages/ScopeSettings.jsx so
+// the owner preview matches what the customer actually sees.
+
+function stripIncludePrefix(label) {
+  return String(label || "").replace(/^Include\s+/i, "").toLowerCase();
+}
+
+function formatList(items) {
+  if (!items.length)        return "";
+  if (items.length === 1)   return items[0];
+  if (items.length === 2)   return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
+
+// Three-state return:
+//   undefined → no scope_options rows with affects_includes_text=true exist for this
+//               service. Caller leaves the legacy vertical_services.includes_text in
+//               place (deck_fence + future verticals fall through here).
+//   null      → rows exist but every toggle is OFF. Caller sets includes_text=null
+//               so the widget's `if (includes)` guard hides the box entirely
+//               (Drew's call, May 5 2026).
+//   string    → at least one toggle is ON. Returns the formatted prose.
+function buildIncludesText(scopeRows) {
+  const visible = scopeRows.filter(r => r.affects_includes_text);
+  if (visible.length === 0) return undefined;
+
+  const enabled  = visible.filter(r =>  r.enabled).map(r => stripIncludePrefix(r.display_label));
+  const disabled = visible.filter(r => !r.enabled).map(r => stripIncludePrefix(r.display_label));
+
+  if (enabled.length === 0) return null;
+
+  let result = `Includes: ${formatList(enabled)}.`;
+  if (disabled.length > 0) {
+    const list = formatList(disabled);
+    result += ` ${list.charAt(0).toUpperCase()}${list.slice(1)} quoted separately on walkthrough.`;
+  }
+  return result;
+}
 
 // -------------------- POST /quote --------------------
 //
@@ -77,13 +123,19 @@ router.post("/validate", async (req, res) => {
 // Returns full vertical config for widget rendering: services, modifiers,
 // junction, questions. Widget calls this once on load, then renders forms
 // dynamically without further DB hits until /quote.
+//
+// Phase 7 V2 (May 5, 2026): After getVerticalConfig() returns, overlay the
+// owner's scope_options (mig 058) onto each service's includes_text. This
+// keeps lib/estimator.js untouched while making the widget reflect live
+// toggle state from the Standard Scope settings tab. Failure to overlay is
+// non-fatal — falls back to the static vertical_services.includes_text.
 router.get("/tenant-config/:tenantId", async (req, res) => {
   try {
     const tenantId = req.params.tenantId;
     if (!tenantId) {
       return res.status(400).json({ error: "tenantId required" });
     }
-   const config = await estimator.getVerticalConfig(tenantId);
+    const config = await estimator.getVerticalConfig(tenantId);
 
     // Gate: only return config if estimator is actually enabled for this tenant.
     // Prevents widget from rendering on tenants who haven't activated the addon.
@@ -92,7 +144,54 @@ router.get("/tenant-config/:tenantId", async (req, res) => {
       return res.status(403).json({ error: "Estimator not enabled for this tenant" });
     }
 
-    res.json(config); 
+    // ─── Overlay scope_options onto per-service includes_text ─────────────
+    // ASSUMPTION: scope_options.service_id is an FK to vertical_services.id.
+    // If your schema stores service_slug directly on scope_options, change
+    // the JOIN to: WHERE so.tenant_id = $1 and select so.service_slug.
+    try {
+      const { rows: scopeRows } = await db.query(
+        `SELECT vs.service_slug,
+                so.option_key,
+                so.display_label,
+                so.enabled,
+                so.affects_includes_text
+           FROM scope_options so
+           JOIN vertical_services vs ON vs.id = so.service_id
+          WHERE so.tenant_id = $1
+          ORDER BY vs.service_slug, so.option_key`,
+        [tenantId]
+      );
+
+      // Group rows by service_slug for O(1) lookup per service
+      const bySlug = {};
+      for (const row of scopeRows) {
+        if (!bySlug[row.service_slug]) bySlug[row.service_slug] = [];
+        bySlug[row.service_slug].push(row);
+      }
+
+      // Patch each service. Three outcomes per service:
+      //   - No scope_options rows for this slug → leave static includes_text
+      //   - Rows exist, all toggles OFF        → null (widget hides box)
+      //   - Rows exist, at least one ON        → computed prose string
+      if (Array.isArray(config.services)) {
+        for (const svc of config.services) {
+          const rows = bySlug[svc.service_slug];
+          if (!rows) continue;
+
+          const computed = buildIncludesText(rows);
+          if (computed !== undefined) {
+            svc.includes_text = computed; // string or null
+          }
+        }
+      }
+    } catch (scopeErr) {
+      // Non-fatal — if the overlay fails (missing table on staging, schema
+      // drift, query timeout, etc), still return config with the legacy
+      // static includes_text rather than 500ing the widget load.
+      console.error("[Estimator] scope_options overlay failed (non-fatal): %s", scopeErr.message);
+    }
+
+    res.json(config);
   } catch (e) {
     console.error("[Estimator] /tenant-config error:", e.message);
     if (e.message && e.message.includes("not found")) {
@@ -172,7 +271,7 @@ router.post("/lead", async (req, res) => {
       ]
     );
 
-   console.log(
+    console.log(
       "[Estimator] /lead captured tenantId=%s leadId=%s service=%s specialized=%s",
       tenant_id,
       lead.id,

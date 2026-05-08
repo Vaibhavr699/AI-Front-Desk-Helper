@@ -23,6 +23,13 @@
  *   caller a vertical-agnostic SMS with a link to the hosted estimator
  *   page (routes/estimateLink.js). Link includes ?call_id=<callId> for
  *   attribution back to the originating call.
+ *
+ * Migration 059 (May 8, 2026): DNC suppression added to both outbound
+ *   functions (sendBookingCancellationSms + sendEstimateLinkSms). The
+ *   customer-initiated cancellation flow is intentionally NOT gated by
+ *   DNC — those are responses to inbound customer messages, not outbound
+ *   automation. A customer who texts "cancel my appointment" deserves a
+ *   reply even if they're on the do-not-contact list.
  */
 
 const db = require("../lib/db");
@@ -85,6 +92,38 @@ async function getTenantPrimaryPhone(tenantId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// DNC SUPPRESSION (Migration 059, May 8 2026)
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Check whether a phone is on the do-not-contact list for a tenant.
+ *
+ * Matches on both E.164 exact and last-10-digit normalized form to catch
+ * +14025551234 vs (402) 555-1234 vs 4025551234.
+ *
+ * Cheap query thanks to the partial index idx_leads_do_not_contact —
+ * the WHERE do_not_contact = true predicate scans only flagged rows.
+ *
+ * Returns true if blocked, false if safe to proceed.
+ */
+async function isPhoneDoNotContact(tenantId, phone) {
+  if (!tenantId || !phone) return false;
+  const last10 = String(phone).replace(/\D/g, "").slice(-10);
+  const r = await db.query(
+    `SELECT 1 FROM leads
+      WHERE tenant_id = $1
+        AND do_not_contact = true
+        AND (
+          phone = $2
+          OR right(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) = $3
+        )
+      LIMIT 1`,
+    [tenantId, phone, last10]
+  );
+  return r.rows.length > 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Phase 2: transactional cancellation SMS
 // ─────────────────────────────────────────────────────────────────────
 
@@ -104,6 +143,16 @@ async function sendBookingCancellationSms(tenant, booking) {
   if (!booking.contact_phone) {
     console.warn("[SMS Cancel] No contact_phone for booking=%s, skipping", booking.id);
     return { ok: false, skipped: "no_phone" };
+  }
+
+  // DNC suppression (Migration 059): never send a cancellation confirmation
+  // to a do-not-contact customer. Even though it's transactional, they
+  // explicitly opted out of all communication. The dashboard user who
+  // triggered the cancellation already sees it cancelled in their UI.
+  if (await isPhoneDoNotContact(tenant.id, booking.contact_phone)) {
+    console.log("[SMS Cancel] DNC blocked bookingId=%s tenant=%s phone=%s — suppressing",
+      booking.id, tenant.id, booking.contact_phone);
+    return { ok: false, skipped: "do_not_contact" };
   }
 
   const client = twilio.getClientForTenant(tenant);
@@ -192,6 +241,16 @@ async function sendEstimateLinkSms(tenant, toPhone, link, sourceCallId = null) {
     return { ok: false, error: "missing_args" };
   }
 
+  // DNC suppression (Migration 059): never text an estimator link to a
+  // do-not-contact customer, even if they're on a live call asking for it.
+  // Edge case (DNC'd customer calls in and asks for an estimator link)
+  // should be handled by the AI offering an in-person estimate instead.
+  if (await isPhoneDoNotContact(tenant.id, toPhone)) {
+    console.log("[Estimate Link] DNC blocked tenant=%s to=%s call_id=%s — suppressing",
+      tenant.id, toPhone, sourceCallId || "(none)");
+    return { ok: false, error: "do_not_contact", skipped: "do_not_contact" };
+  }
+
   const client = twilio.getClientForTenant(tenant);
   if (!client) {
     console.warn("[Estimate Link] No Twilio client for tenant=%s", tenant.id);
@@ -239,6 +298,11 @@ async function sendEstimateLinkSms(tenant, toPhone, link, sourceCallId = null) {
 
 // ─────────────────────────────────────────────────────────────────────
 // Phase 4C: SMS cancellation conversation state machine
+//
+// NOTE: These functions intentionally do NOT have DNC suppression. They
+// respond to inbound customer messages — a DNC'd customer who texts in
+// asking to cancel their appointment deserves a reply. DNC suppresses
+// outbound automation, not responses to direct customer requests.
 // ─────────────────────────────────────────────────────────────────────
 
 function isAffirmation(text) {
@@ -462,4 +526,6 @@ module.exports = {
   formatFriendlyDate,
   getFirstName,
   getTenantPrimaryPhone,
+  // DNC suppression (Migration 059)
+  isPhoneDoNotContact,
 };

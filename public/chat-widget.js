@@ -1088,18 +1088,44 @@
         });
         bubble.appendChild(range);
 
-        // What's included — sourced from vertical_services.includes_text via /tenant-config
-        const includes = getIncludesText(estimatorState.service_slug);
-        if (includes) {
-          const includesBox = document.createElement("div");
-          Object.assign(includesBox.style, {
-            background: "#f0f7ff", border: "1px solid #cfe3ff", borderRadius: "8px",
-            padding: "8px 10px", marginTop: "4px", marginBottom: "6px",
-            fontSize: "11px", color: "#1e3a5f", lineHeight: "1.5"
-          });
-          includesBox.innerHTML = `📋 <strong>Includes:</strong> ${includes}`;
-          bubble.appendChild(includesBox);
-        }
+        // What's included — sourced from scope_options overlay (structured object)
+// or legacy vertical_services.includes_text (plain string) via /tenant-config
+const includes = getIncludesText(estimatorState.service_slug);
+if (includes) {
+  if (typeof includes === "string") {
+    // Legacy fallback: services without scope_options rows still come back as prose
+    const includesBox = document.createElement("div");
+    Object.assign(includesBox.style, {
+      background: "#f0f7ff", border: "1px solid #cfe3ff", borderRadius: "8px",
+      padding: "10px 12px", marginTop: "4px", marginBottom: "6px",
+      fontSize: "12px", color: "#1e3a5f", lineHeight: "1.5"
+    });
+    includesBox.innerHTML = `📋 <strong>Includes:</strong> ${includes}`;
+    bubble.appendChild(includesBox);
+  } else if (typeof includes === "object") {
+    // Structured format — green "Included" + amber "Not included" boxes
+    if (includes.included) {
+      const includedBox = document.createElement("div");
+      Object.assign(includedBox.style, {
+        background: "#e8f5e9", border: "1.5px solid #66bb6a", borderRadius: "10px",
+        padding: "11px 13px", marginTop: "6px", marginBottom: "4px",
+        fontSize: "12px", color: "#1b5e20", lineHeight: "1.5"
+      });
+      includedBox.innerHTML = `✅ <strong style="font-size:13px">Included in this estimate:</strong><br><span style="font-weight:600;font-size:13px">${includes.included}</span>`;
+      bubble.appendChild(includedBox);
+    }
+    if (includes.excluded) {
+      const excludedBox = document.createElement("div");
+      Object.assign(excludedBox.style, {
+        background: "#fff3e0", border: "1.5px solid #ffa726", borderRadius: "10px",
+        padding: "11px 13px", marginTop: "4px", marginBottom: "6px",
+        fontSize: "12px", color: "#e65100", lineHeight: "1.5"
+      });
+      excludedBox.innerHTML = `❌ <strong style="font-size:13px">Does NOT include:</strong><br><span style="font-weight:600;font-size:13px">${includes.excluded}</span><br><span style="font-weight:400;font-size:11px;opacity:0.85;font-style:italic">These can be added during your in-person walkthrough if needed.</span>`;
+      bubble.appendChild(excludedBox);
+    }
+  }
+}
 
         const disclaimer = document.createElement("div");
         Object.assign(disclaimer.style, {

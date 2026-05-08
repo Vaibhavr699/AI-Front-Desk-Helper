@@ -336,6 +336,12 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SERVE_DASHBOARD = process.env.SERVE_DASHBOARD === "true";
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || "";
 const smsThreads = new Map();
+
+// Twilio retries unanswered webhooks after ~15s. Dedup by MessageSid so a
+// retry doesn't re-trigger the orchestrator and emit duplicate replies.
+// Bug observed May 7 2026: identical "✅ rescheduled" emitted twice in one minute.
+const recentTwilioSmsSids = new Map(); // sid → timestamp ms
+const TWILIO_SMS_DEDUP_MS = 5 * 60 * 1000;
 const fbProcessedMessageIds = new Map();
 const FB_DEDUPE_MS = 60000;
 let callsTableHasTranscriptColumn = true;
@@ -1274,29 +1280,144 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
   ].join("\n");
 }
 
-async function runSmsAiOrchestrator(thread, incomingText, tenant = null) {
-  // Determine if we should fetch available slots
-  let availableSlots = [];
-  const text = (incomingText || "").toLowerCase();
-  const dateMentioned = text.match(/tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|(\d{4}-\d{2}-\d{2})/);
-  const askingAvailability = text.includes("available") || text.includes("time") || text.includes("when");
+function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
+  const companyName = tenant?.company_name || tenant?.name || "our team";
+  const toneOfVoice = tenant?.tone_of_voice || "professional";
+  const timezone    = tenant?.timezone || BUSINESS_TIMEZONE || "America/Chicago";
 
-  if (tenant && (dateMentioned || askingAvailability)) {
-    try {
-      // Default to checking tomorrow if no specific date is clear, for simplicity
-      let dateToCheck = new Date();
-      dateToCheck.setDate(dateToCheck.getDate() + 1); // Tomorrow
-      if (text.includes("today")) dateToCheck = new Date();
-      
-      const dateStr = dateToCheck.toISOString().split("T")[0];
-      availableSlots = await getAvailableSlots(tenant, dateStr);
-      if (availableSlots.length > 0) {
-        availableSlots.info = `Available on ${dateStr}: ${availableSlots.join(", ")}`;
-      }
-    } catch (err) {
-      console.error("[Orchestrator] Failed to fetch slots:", err.message);
+  // ─── DATE ANCHOR (Phase 7.6, May 7 2026) ──────────────────────────────
+  // Without this block the AI hallucinates dates from training data.
+  // Bug observed: "May 8th at 2:00" booked as 2023-05-08; "tomorrow late
+  // morning" booked as 2026-10-06. Pin today's date in the tenant's
+  // timezone every turn so the AI has an anchor.
+  const now = new Date();
+  const dateFmt = new Intl.DateTimeFormat("en-US", {
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
+    timeZone: timezone,
+  }).format(now);
+  const todayIso = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric", month: "2-digit", day: "2-digit",
+    timeZone: timezone,
+  }).format(now); // YYYY-MM-DD
+  const currentYear = parseInt(todayIso.slice(0, 4), 10);
+
+  const dateAnchor = [
+    "",
+    "═══ TODAY'S DATE (read this every turn) ═══",
+    `Today is ${dateFmt}.`,
+    `ISO format: ${todayIso}. Current year: ${currentYear}.`,
+    "",
+    "When converting customer words to appointment_date (YYYY-MM-DD):",
+    `  - "today" → ${todayIso}`,
+    `  - "tomorrow" → the day after ${todayIso}`,
+    `  - "next Monday" / "this Friday" → relative to ${todayIso}, NOT to your training data`,
+    `  - Bare "May 8" with no year → May 8 of ${currentYear} if still upcoming, else ${currentYear + 1}`,
+    `  - NEVER produce an appointment_date before ${todayIso}`,
+    `  - NEVER produce an appointment_date more than 90 days after ${todayIso} unless the customer explicitly named a year more than 90 days out`,
+    `  - NEVER use a year other than ${currentYear} or ${currentYear + 1}`,
+    "",
+  ].join("\n");
+
+  // ─── INTENT RULES (Phase 7.6, May 7 2026) ─────────────────────────────
+  // Disambiguates the three failure modes seen in production:
+  //   1. should_book on YOUR-availability questions ("how busy are you")
+  //   2. should_cancel on frustration ("stop calling me")
+  //   3. AI re-asking for info we already have
+  const intentRules = [
+    "═══ INTENT CLASSIFICATION (CRITICAL) ═══",
+    "",
+    "should_book: set TRUE ONLY when ALL of these are true:",
+    "  - Customer named a specific date AND specific time",
+    "  - We have full_name + phone + email already collected",
+    "  - The question is about scheduling the CUSTOMER'S appointment, not asking when WE work",
+    "",
+    "should_cancel: set TRUE ONLY when customer EXPLICITLY says one of:",
+    `  - "cancel my appointment" / "I want to cancel" / "no longer need this"`,
+    `  - "not interested anymore" / "remove me" / "take me off your list"`,
+    "DO NOT set should_cancel for any of these (these are frustration, NOT cancellation):",
+    `  - "stop calling me" / "this is annoying" / "you're not helping"`,
+    `  - "Stop!!" / "Don't come" (without explicit cancellation language)`,
+    `  - "you are no longer needed" (ambiguous — ASK to clarify before cancelling)`,
+    `  - General negativity, rudeness, confusion`,
+    "If the customer seems frustrated, apologize briefly, offer to have a human reach out, and DO NOT cancel anything.",
+    "",
+    "should_reschedule: set TRUE only when customer wants to MOVE an existing appointment AND has provided both a new date AND a new time.",
+    "",
+    "═══ SCHEDULE QUESTION DISAMBIGUATION ═══",
+    "These ask about OUR work hours / OUR availability — answer informationally only, do NOT set should_book:",
+    `  - "What's your schedule?" / "How busy are you?" / "When can you do the work?"`,
+    `  - "Do you work weekends?" / "What hours are you open?"`,
+    `  - "What is your work schedule" / "How long does this take?"`,
+    "Example response: 'We're open Monday-Friday 8am-5pm. Once booked, we typically start within 1-2 weeks.'",
+    "",
+    "These ARE about scheduling the customer — you can pursue should_book once date+time+contact are present:",
+    `  - "Can I come at 2pm Friday?" / "Are you free tomorrow?" / "What times are open?"`,
+    "",
+    "═══ STATE AWARENESS ═══",
+    "If `Known lead data` below already has full_name/phone/email, do NOT ask for them again. Reference what you have.",
+    "If the customer asks 'Will I hear from you?' or similar, they're checking on a prior request — acknowledge that and tell them next steps, don't re-introduce yourself.",
+    "",
+  ].join("\n");
+
+  // ─── CORE SMS RULES ───────────────────────────────────────────────────
+  const coreSmsRules = [
+    `You are an SMS receptionist for ${companyName}.`,
+    `TONE OF VOICE: ${toneOfVoice}. Maintain this personality.`,
+    "Flow: qualify lead, gather full_name, contact email, contact phone, project_type, project_details, address, preferred appointment_date and appointment_time.",
+    "MANDATORY CONTACT INFO: collect full_name + valid phone + valid email BEFORE setting should_book=true.",
+    "Be concise, friendly, one short text message. Avoid long paragraphs.",
+    "SERVICE TYPES: Do NOT assume the customer wants a specific service. Ask what they need.",
+    "When you set should_book=true, do NOT say 'I have scheduled' or 'You are booked' in your reply — say 'Let me confirm that slot' or similar. The system will send the official confirmation after writing to the calendar.",
+    "REVENUE ESTIMATION: provide an estimated_value (number, USD) based on project_details (Room: 500, Interior: 2500, Exterior: 5000).",
+  ].join("\n");
+
+  // Stitch sections in order: anchor → intent → core → tenant → calendar → objections → FAQs
+  let combined = dateAnchor + "\n" + intentRules + "\n" + coreSmsRules;
+
+  // Tenant-specific instructions (sms_instructions wins over instructions per Phase 7.5)
+  const tenantPrompt = (tenant?.sms_instructions && tenant.sms_instructions.trim())
+    ? tenant.sms_instructions
+    : tenant?.instructions;
+  if (tenantPrompt) {
+    combined += "\n\nBUSINESS SPECIFIC INSTRUCTIONS:\n" + tenantPrompt;
+  }
+
+  // Calendar context
+  if (availableSlots && availableSlots.length > 0) {
+    combined += `\n\nCALENDAR AVAILABILITY: open slots for the requested day: ${availableSlots.join(", ")}. Suggest these if customer asks for available times or their requested time is taken.`;
+  } else if (availableSlots && availableSlots.info) {
+    combined += `\n\nCALENDAR CONTEXT: ${availableSlots.info}`;
+  }
+
+  // Objection handling
+  if (tenant && tenant.objection_handling_config) {
+    const oh = tenant.objection_handling_config;
+    let lines = [];
+    if (Array.isArray(oh) && oh.length) {
+      lines = oh
+        .filter(c => c && (c.script || "").trim())
+        .map(c => `- If they say "${(c.trigger || "").trim() || "..."}": respond with: ${(c.script || "").trim()}`);
+    } else if (typeof oh === "object") {
+      if (oh.price)    lines.push(`- If price is a concern: ${oh.price}`);
+      if (oh.thinking) lines.push(`- If they need to think about it: ${oh.thinking}`);
+      if (oh.spouse)   lines.push(`- If they need to talk to a spouse: ${oh.spouse}`);
+    }
+    if (lines.length) {
+      combined += "\n\nOBJECTION HANDLING STRATEGIES:\n" + lines.join("\n");
     }
   }
+
+  // FAQs
+  if (tenant && Array.isArray(tenant.faqs) && tenant.faqs.length > 0) {
+    combined += "\n\nFrequently Asked Questions:\n" + tenant.faqs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n");
+  }
+
+  return [
+    combined,
+    "\nReturn strict JSON only with keys: reply, lead_capture, should_book, should_cancel, should_reschedule, appointment_date, appointment_time, follow_up_minutes.",
+    `Known lead data: ${JSON.stringify(thread.leadCapture)}`,
+  ].join("\n");
+}
 
   const input = [
     { role: "system", content: buildSmsSystemPrompt(thread, tenant, availableSlots) },
@@ -1410,9 +1531,200 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
     tenant = TENANTS[thread.tenantId];
   }
   if (!tenant) {
-    console.warn("[Booking] No tenant resolved for booking flow. thread.phone=%s", thread.phone);
+    console.warn("[Booking] No tenant resolved. thread.phone=%s", thread.phone);
     return null;
   }
+
+  // ── Cancellation flow (Phase 4C state machine — unchanged) ─────────
+  if (ai.should_cancel) {
+    const smsService = require("./services/sms");
+    const init = await smsService.initiateSmsCancellation(thread, tenant);
+    return init.reply;
+  }
+
+  // ── Reschedule flow ──────────────────────────────────────────────
+  if (ai.should_reschedule && ai.appointment_date && ai.appointment_time) {
+    // Run the same date validation as new bookings — bug observed May 7 2026:
+    // AI rescheduled to 2023-05-08 because there was no past-date check.
+    const dateValidation = validateProposedDate(ai.appointment_date);
+    if (!dateValidation.ok) return dateValidation.message;
+    ai.appointment_date = dateValidation.normalized;
+
+    const booking = await bookingsService.findLatestBookingByPhone(
+      tenant.id,
+      thread.leadCapture?.phone || thread.phone
+    );
+    if (!booking) return "I couldn't find an existing appointment to reschedule. Would you like to schedule a new one instead?";
+
+    await bookingsService.updateBooking(booking.id, {
+      preferred_date: ai.appointment_date,
+      appointment_time: ai.appointment_time,
+      notes: ai.lead_capture?.project_details || booking.notes,
+    });
+    return `✅ Your appointment has been rescheduled for ${ai.appointment_date} at ${ai.appointment_time}.`;
+  }
+
+  if (!ai.should_book || !ai.appointment_date || !ai.appointment_time) return null;
+
+  // ── Contact-info gate ──────────────────────────────────────────────
+  const fullName = ai.lead_capture?.full_name || thread.leadCapture?.full_name;
+  const phone    = ai.lead_capture?.phone     || thread.leadCapture?.phone || thread.phone;
+  const email    = ai.lead_capture?.email     || thread.leadCapture?.email;
+  if (!fullName || !phone || !email) {
+    const missing = [];
+    if (!fullName) missing.push("full name");
+    if (!phone)    missing.push("phone number");
+    if (!email)    missing.push("email address");
+    return `To finalize your booking, I just need your ${missing.join(" and ")}. Please share that and I'll get you scheduled!`;
+  }
+
+  // ── Date validation (Phase 7.6 May 7 2026) ─────────────────────────
+  // Replaces the silent "shift past dates forward" behavior. Now: reject
+  // past dates and dates >90 days out so the customer is asked to confirm
+  // instead of getting auto-fixed into a wrong year.
+  const dateValidation = validateProposedDate(ai.appointment_date);
+  if (!dateValidation.ok) return dateValidation.message;
+  ai.appointment_date = dateValidation.normalized;
+
+  // Vague-time mapping
+  if (ai.appointment_time === "morning")   ai.appointment_time = "9:00 AM";
+  if (ai.appointment_time === "afternoon") ai.appointment_time = "1:00 PM";
+  if (ai.appointment_time === "evening")   ai.appointment_time = "6:00 PM";
+
+  // ── Idempotency check (Phase 7.6 May 7 2026) ───────────────────────
+  // Don't double-book if an identical booking was created in the last
+  // 60 seconds. Defends against orchestrator running twice when Twilio
+  // retries a slow webhook (despite Patch 3 dedup, this is belt+braces).
+  try {
+    const dup = await db.query(
+      `SELECT id FROM bookings
+        WHERE tenant_id = $1
+          AND contact_phone = $2
+          AND preferred_date = $3
+          AND appointment_time = $4
+          AND COALESCE(status, '') != 'Cancelled'
+          AND created_at > now() - interval '60 seconds'
+        LIMIT 1`,
+      [tenant.id, phone, ai.appointment_date, ai.appointment_time]
+    );
+    if (dup.rows.length > 0) {
+      console.log("[Booking] Idempotent skip — duplicate within 60s for tenant=%s phone=%s date=%s time=%s",
+        tenant.id, phone, ai.appointment_date, ai.appointment_time);
+      thread.bookedEventId = thread.bookedEventId || "LOCAL_ONLY";
+      thread.needsFollowUpAt = null;
+      return `✅ You are booked for ${ai.appointment_date} at ${ai.appointment_time}.`;
+    }
+  } catch (idempErr) {
+    console.error("[Booking] Idempotency check failed (non-fatal):", idempErr.message);
+  }
+
+  // ── Calendar availability check ────────────────────────────────────
+  const availability = await checkAvailability({
+    appointment_date: ai.appointment_date,
+    appointment_time: ai.appointment_time,
+    duration_minutes: 60,
+  }, tenant);
+
+  const calendarNotConfigured = availability.reason === "calendar_not_configured";
+  const isAvailable = (availability.ok && availability.available) || calendarNotConfigured;
+  if (availability.reason === "calendar_error") {
+    console.warn("[Booking] Calendar error — falling back to local booking:", availability.message || "unknown");
+  }
+
+  if (!isAvailable) {
+    thread.needsFollowUpAt = Date.now() + 30 * 60 * 1000;
+    return "That time is no longer available. Please share another preferred time.";
+  }
+
+  // ── Try Google Calendar sync, fall back to local-only ──────────────
+  let booked = { ok: true, fallback: true };
+  const shouldTryGoogle = availability.reason !== "calendar_not_configured" && availability.reason !== "calendar_error";
+  if (shouldTryGoogle) {
+    try {
+      const syncResult = await bookAppointment({
+        appointment_date: ai.appointment_date,
+        appointment_time: ai.appointment_time,
+        duration_minutes: 60,
+        full_name: thread.leadCapture.full_name || "New Lead",
+        phone: thread.leadCapture?.phone || thread.phone,
+        email: thread.leadCapture.email || "",
+        address: thread.leadCapture.address || "",
+        project_details: thread.leadCapture.project_details || "",
+      }, tenant);
+
+      if (syncResult && syncResult.ok) booked = syncResult;
+      else console.warn("[Booking] Google Calendar sync failed:", syncResult?.reason || "unknown");
+    } catch (err) {
+      console.error("[Booking] Google Calendar exception:", err.message);
+    }
+  }
+
+  if (!booked.ok) return "I couldn't complete booking yet. Can I offer another time?";
+
+  thread.bookedEventId    = booked.eventId || (booked.fallback ? "LOCAL_ONLY" : "");
+  thread.needsFollowUpAt  = null;
+  thread.followUpCount    = 0;
+
+  // ── Persist locally ──────────────────────────────────────────────
+  try {
+    const t = tenantOverride || (thread.tenantId ? TENANTS[thread.tenantId] : null);
+    if (t) {
+      await bookingsService.createBooking(t.id, null, {
+        contact_name: thread.leadCapture.full_name || "New Lead",
+        contact_phone: thread.leadCapture?.phone || thread.phone,
+        contact_email: thread.leadCapture.email || "",
+        address:       thread.leadCapture.address || "",
+        city:          "",
+        scope:         thread.leadCapture.project_type || "",
+        job_type:      (thread.leadCapture.project_type && String(thread.leadCapture.project_type).trim()) || "Residential",
+        preferred_date:   ai.appointment_date,
+        appointment_time: ai.appointment_time,
+        notes:            thread.leadCapture.project_details || "",
+        estimated_value:  thread.leadCapture.estimated_value,
+      }, thread.leadId);
+
+      if (thread.leadId) {
+        leadsService.updateLeadStatus(thread.leadId, "Booked").catch(e => console.error("Lead status update error:", e));
+      }
+    }
+  } catch (dbErr) {
+    console.error("[Booking] Local DB persistence failed:", dbErr.message);
+  }
+
+  return `✅ You are booked for ${ai.appointment_date} at ${ai.appointment_time}.`;
+}
+
+// Helper used by both new-booking and reschedule paths.
+// Returns { ok: true, normalized } or { ok: false, message }.
+function validateProposedDate(rawDate) {
+  const m = String(rawDate || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) {
+    return { ok: false, message: "I didn't quite catch that date. Could you share it as MM/DD or YYYY-MM-DD?" };
+  }
+  const [, yStr, mStr, dStr] = m;
+  const proposed = new Date(Number(yStr), Number(mStr) - 1, Number(dStr));
+  proposed.setHours(0, 0, 0, 0);
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (proposed < today) {
+    console.warn("[Booking] Past date rejected: %s", rawDate);
+    return { ok: false, message: "Looks like that date has already passed — could you share a date coming up?" };
+  }
+
+  const ninetyDays = new Date(today);
+  ninetyDays.setDate(ninetyDays.getDate() + 90);
+  if (proposed > ninetyDays) {
+    console.warn("[Booking] Date >90 days out rejected: %s", rawDate);
+    return { ok: false, message: "Just to confirm — that date is more than 90 days out. Could you double-check the date and year you'd like?" };
+  }
+
+  const y = proposed.getFullYear();
+  const mm = String(proposed.getMonth() + 1).padStart(2, "0");
+  const dd = String(proposed.getDate()).padStart(2, "0");
+  return { ok: true, normalized: `${y}-${mm}-${dd}` };
+}
 
  
   // HANDLE CANCELLATION — Phase 4C (May 4, 2026)
@@ -1711,10 +2023,11 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
   let replyText = ai.reply || "Thanks for reaching out!";
 
   const bookingResult = await handleLeadBooking(thread, ai, tenant);
-  if (bookingResult) {
+ if (bookingResult) {
     replyText = bookingResult;
-  } else if (!ai.should_book) {
-    // If not booking, default to a 2-hour delay for the primary follow-up unless the AI specified
+  } else if (!ai.should_book && !thread.bookedEventId) {
+    // Only arm nurture if not booked. Without this guard, every post-booking
+    // customer reply re-armed the nurture loop. Bug observed May 7 2026.
     const followUpMinutes = Number(ai.follow_up_minutes) || 120;
     thread.needsFollowUpAt = Date.now() + followUpMinutes * 60 * 1000;
   }
@@ -1726,8 +2039,12 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
     }
   }
 
-  // Reset follow up count because they just replied
+  // Reset follow-up count only when there's no booking in flight. After a
+// confirmed booking, leaving counter intact prevents nurture from re-arming
+// indefinitely if the customer keeps chatting post-confirmation.
+if (!thread.bookedEventId) {
   thread.followUpCount = 0;
+}
 
   // Record response in history
   thread.history.push({ role: "assistant", text: replyText, at: new Date().toISOString() });
@@ -1963,28 +2280,43 @@ async function runSmsFollowUps() {
   for (const thread of smsThreads.values()) {
     if (!thread.needsFollowUpAt || thread.needsFollowUpAt > now) continue;
 
-    // Enforce 2-touch limit: Do not follow up if we have already reached out twice
-    if (thread.followUpCount >= 2) {
-      thread.needsFollowUpAt = null; // Mark as done
+    // ── Suppress nurture entirely once a booking is on file ─────────
+    // Booked customers get appointment-confirmation flows from elsewhere
+    // (estimateRecovery, calendar invites). Sending "your appointment is
+    // on our schedule" here just adds noise — bug observed May 7 2026.
+    if (thread.bookedEventId) {
+      thread.needsFollowUpAt = null;
       continue;
     }
 
-    const recentInboundMs = thread.lastInboundAt ? now - thread.lastInboundAt : Infinity;
-    if (recentInboundMs < 10 * 60 * 1000) continue; // Don't follow up if they just messaged us
+    // 2-touch limit
+    if (thread.followUpCount >= 2) {
+      thread.needsFollowUpAt = null;
+      continue;
+    }
 
-    const followUpText = thread.bookedEventId
-      ? "Quick follow-up: your appointment is on our schedule. Reply here if you need to reschedule."
-      : "Just checking in — would you like me to help you lock in a time for your estimate?";
+    // ── Cooldown: 30 min after last inbound (was 10 — too aggressive) ─
+    // Prevents the "checking in" message from firing in the middle of an
+    // active conversation. Bug observed May 7: nurture fired 33 minutes
+    // after customer's last reply during ongoing back-and-forth.
+    const recentInboundMs = thread.lastInboundAt ? now - thread.lastInboundAt : Infinity;
+    if (recentInboundMs < 30 * 60 * 1000) continue;
+
+    // Same cooldown for recent outbound — don't pile on
+    const recentOutboundMs = thread.lastOutboundAt ? now - thread.lastOutboundAt : Infinity;
+    if (recentOutboundMs < 30 * 60 * 1000) continue;
+
+    // Unbooked-only nurture text (booked branch removed since we early-exit above)
+    const followUpText = "Just checking in — would you like me to help you lock in a time for your estimate?";
 
     let sent = { ok: false };
 
-    // Transition channel logic for Web Widget
+    // Channel routing
     if (thread.channel === "website") {
-      // If we captured their real phone number during the website chat, we transition to SMS.
       if (thread.leadCapture.phone) {
         sent = await sendTwilioSms(thread.leadCapture.phone, followUpText, thread.tenantId);
       } else {
-        // Can't follow up on a web widget if we don't have their phone number, so mark as complete
+        // No phone captured during web chat — can't follow up, mark done
         thread.needsFollowUpAt = null;
         continue;
       }
@@ -1993,7 +2325,6 @@ async function runSmsFollowUps() {
       await sendFacebookMessage(fbId, followUpText);
       sent = { ok: true };
     } else {
-      // SMS channel
       sent = await sendTwilioSms(thread.phone, followUpText, thread.tenantId);
     }
 
@@ -2002,14 +2333,7 @@ async function runSmsFollowUps() {
       thread.lastOutboundAt = now;
       thread.followUpCount++;
 
-      // CRM: Save follow-up message
       if (thread.leadId) {
-        // Find tenantId for this thread
-        // For now, assume gladiators or lookup from DB if needed. 
-        // But thread.leadId should have tenant_id in DB. 
-        // Let's use a safe lookup or pass it if possible.
-        // Actually thread is in-memory, we can try to guess tenant from channel/phone.
-        // Or better, get lead by ID.
         leadsService.getLeadById(thread.leadId).then(lead => {
           if (lead) {
             messagesService.saveMessage(lead.tenant_id, lead.id, thread.channel || "sms", "outbound", followUpText, { is_followup: true });
@@ -2017,18 +2341,18 @@ async function runSmsFollowUps() {
         }).catch(err => console.error("[FollowUp] CRM log failed:", err.message));
       }
 
-      // If this was Touch 1, schedule Touch 2 for 24 hours later. Check if it's the 2nd touch, mark completed.
+      // Touch 1 → schedule Touch 2 in 24h. Touch 2 → done.
       if (thread.followUpCount < 2) {
         thread.needsFollowUpAt = now + 24 * 60 * 60 * 1000;
       } else {
         thread.needsFollowUpAt = null;
       }
     } else {
-      // If it failed, retry in 15 mins
       thread.needsFollowUpAt = now + 15 * 60 * 1000;
     }
   }
 }
+
 app.get("/setup-facebook-menu", async (req, res) => {
   const PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN;
 
@@ -2676,20 +3000,36 @@ app.post("/twilio-missed-call", async (req, res) => {
 });
 
 app.post("/twilio-sms", async (req, res) => {
-  const from = normalizePhone(req.body?.From || req.body?.from);
-  const body = String(req.body?.Body || req.body?.body || "").trim();
+  const from       = normalizePhone(req.body?.From || req.body?.from);
+  const body       = String(req.body?.Body || req.body?.body || "").trim();
+  const messageSid = String(req.body?.MessageSid || req.body?.messageSid || "");
 
   if (!from || !body) {
     res.status(400).send("Missing From or Body");
     return;
   }
 
-  try {
-    const toNum = req.body?.To || req.body?.to;
-    const tenant = await getTenantByPhone(toNum);
+  // ── Twilio retry dedup ─────────────────────────────────────────────
+  if (messageSid) {
+    const now = Date.now();
+    // GC: drop entries older than dedup window
+    for (const [sid, ts] of recentTwilioSmsSids.entries()) {
+      if (now - ts > TWILIO_SMS_DEDUP_MS) recentTwilioSmsSids.delete(sid);
+    }
+    if (recentTwilioSmsSids.has(messageSid)) {
+      console.log("[SMS] Dedup hit — Twilio retry for sid=%s, suppressing reply", messageSid);
+      // Still return valid TwiML so Twilio stops retrying
+      res.type("text/xml").send('<?xml version="1.0" encoding="UTF-8"?><Response/>');
+      return;
+    }
+    recentTwilioSmsSids.set(messageSid, now);
+  }
 
+  try {
+    const toNum  = req.body?.To || req.body?.to;
+    const tenant = await getTenantByPhone(toNum);
     const result = await processSmsConversation(from, body, tenant);
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escapeXml(result.reply)}</Message></Response>`;
+    const twiml  = `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escapeXml(result.reply)}</Message></Response>`;
     res.type("text/xml").send(twiml);
   } catch (error) {
     console.error("Twilio SMS webhook error:", error.stack || error.message);

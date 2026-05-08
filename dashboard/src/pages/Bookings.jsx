@@ -75,7 +75,7 @@ export default function Bookings({ tenantId }) {
     }
     let cancelled = false;
     setLeadLoading(true);
-    getLead(selectedBooking.lead_id)
+   getLeadById(selectedBooking.lead_id)
       .then((lead) => {
         if (!cancelled) setLeadInfo(lead);
       })

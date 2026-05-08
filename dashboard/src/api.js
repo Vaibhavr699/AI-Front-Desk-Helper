@@ -408,6 +408,23 @@ export function updateLead(id, data) {
   });
 }
 
+/**
+ * Toggle the do_not_contact flag on a lead — Migration 059 (May 8, 2026).
+ *
+ * value=true cascades: backend cancels any active estimate recoveries and
+ * pending nurturing schedule rows for the lead. Returns:
+ *   { lead, cancelled_recoveries, cancelled_nurtures }
+ *
+ * value=false reopens the lead to future automation but leaves
+ * previously-cancelled sequences cancelled.
+ */
+export function setLeadDoNotContact(id, value, reason = null) {
+  return api(`/api/leads/${id}/do-not-contact`, {
+    method: 'PATCH',
+    body: JSON.stringify({ value, reason }),
+  });
+}
+
 export function getPhoneNumbers(tenantId) {
   return api(`/api/phone-numbers?tenant_id=${tenantId}`);
 }

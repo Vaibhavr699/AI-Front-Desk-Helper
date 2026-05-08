@@ -103,7 +103,9 @@ async function updateLeadInfo(id, data) {
   let i = 1;
 
   // NOTE: contact_method is NOT in this allow-list — immutable after INSERT by design.
-  // If an admin needs to correct a mis-categorized lead, do it via direct SQL.
+  // do_not_contact is also NOT in this allow-list — must go through setDoNotContact()
+  // so the cascade (cancel recoveries + nurtures) and the audit fields fire correctly.
+  // If an admin needs to bypass, do it via direct SQL.
   const allowed = [
     'name', 'email', 'address', 'project_type', 'notes', 'status',
     'estimated_revenue_cents', 'actual_revenue_cents', 'lead_source', 'has_sms_consent', 'last_consent_at',
@@ -127,9 +129,11 @@ async function updateLeadInfo(id, data) {
 async function getLeadById(id) {
   const res = await db.query(`
     SELECT l.*,
-           sc.consent_text, sc.ip_address, sc.user_agent, sc.page_url, sc.source as consent_source
+           sc.consent_text, sc.ip_address, sc.user_agent, sc.page_url, sc.source as consent_source,
+           du.name as do_not_contact_set_by_name
     FROM leads l
-    LEFT JOIN sms_consents sc ON l.last_consent_id = sc.id
+    LEFT JOIN sms_consents sc   ON l.last_consent_id      = sc.id
+    LEFT JOIN dashboard_users du ON l.do_not_contact_set_by = du.id
     WHERE l.id = $1
   `, [id]);
   return res.rows[0];
@@ -145,10 +149,102 @@ async function getLeadsByTenant(tenantIds, limit = 50, offset = 0) {
   return res.rows;
 }
 
+/**
+ * Set / clear the do_not_contact flag for a lead.
+ *
+ * When flipping ON (value=true), this also CANCELS any active estimate
+ * recoveries and pending nurturing schedule rows for the lead, so the
+ * dashboard reflects clean state immediately and no cron tick can fire
+ * a stray text. The cron-level suppression checks (services/estimateRecovery
+ * and services/nurturing) are the durable defense — this cascade is the
+ * "make it instant" cleanup.
+ *
+ * When flipping OFF (value=false), the lead is reopened to future
+ * automation, but previously cancelled sequences stay cancelled. This is
+ * intentional — un-cancelling old sequences would surprise users.
+ *
+ * Returns: { lead, cancelled_recoveries, cancelled_nurtures }
+ *
+ * options:
+ *   - userId: dashboard_users.id of the person flipping the toggle (audit)
+ *   - reason: optional free-text reason ("customer asked us to stop")
+ *   - cascade: defaults true; set false to flip the flag without
+ *     cancelling sequences (rarely needed — admin debugging only)
+ */
+async function setDoNotContact(leadId, value, options = {}) {
+  if (!leadId) throw new Error("setDoNotContact: leadId required");
+  const { userId = null, reason = null, cascade = true } = options;
+  const flagging = Boolean(value);
+
+  // 1. Update the lead row. Source of truth.
+  const leadRes = await db.query(
+    `UPDATE leads
+        SET do_not_contact         = $1,
+            do_not_contact_set_at  = CASE WHEN $1 THEN now() ELSE NULL END,
+            do_not_contact_set_by  = CASE WHEN $1 THEN $2 ELSE NULL END,
+            do_not_contact_reason  = CASE WHEN $1 THEN $3 ELSE NULL END,
+            updated_at             = now()
+      WHERE id = $4
+      RETURNING *`,
+    [flagging, userId, reason, leadId]
+  );
+
+  const lead = leadRes.rows[0];
+  if (!lead) {
+    throw new Error(`setDoNotContact: lead ${leadId} not found`);
+  }
+
+  let cancelled_recoveries = 0;
+  let cancelled_nurtures = 0;
+
+  // 2. Cascade only when turning ON. Best-effort: log + continue on errors.
+  // The cron-level checks would catch anything we miss here on the next tick.
+  if (flagging && cascade) {
+    try {
+      const recRes = await db.query(
+        `UPDATE estimate_recoveries
+            SET status = 'cancelled', updated_at = now()
+          WHERE tenant_id = $1
+            AND lead_id   = $2
+            AND status IN ('active', 'paused', 'dormant')
+          RETURNING id`,
+        [lead.tenant_id, leadId]
+      );
+      cancelled_recoveries = recRes.rowCount || 0;
+    } catch (err) {
+      console.error("[Leads] setDoNotContact: recovery cascade failed leadId=%s err=%s",
+        leadId, err.message);
+    }
+
+    try {
+      const nurRes = await db.query(
+        `UPDATE nurturing_schedule
+            SET status = 'cancelled', updated_at = now()
+          WHERE lead_id = $1
+            AND status IN ('pending', 'scheduled')
+          RETURNING id`,
+        [leadId]
+      );
+      cancelled_nurtures = nurRes.rowCount || 0;
+    } catch (err) {
+      console.error("[Leads] setDoNotContact: nurture cascade failed leadId=%s err=%s",
+        leadId, err.message);
+    }
+  }
+
+  console.log(
+    "[Leads] setDoNotContact leadId=%s flag=%s userId=%s cancelled_recoveries=%d cancelled_nurtures=%d reason=%s",
+    leadId, flagging, userId || "(none)", cancelled_recoveries, cancelled_nurtures, reason || "(none)"
+  );
+
+  return { lead, cancelled_recoveries, cancelled_nurtures };
+}
+
 module.exports = {
   getOrCreateLead,
   updateLeadStatus,
   updateLeadInfo,
   getLeadById,
-  getLeadsByTenant
+  getLeadsByTenant,
+  setDoNotContact,
 };

@@ -6,7 +6,7 @@ import {
   cancelBooking,
   getTechnicians,
   getUser,
-  getLead,
+   getLeadById,
   setLeadDoNotContact,
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";

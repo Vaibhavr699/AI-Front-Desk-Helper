@@ -59,14 +59,16 @@ function buildIncludesText(scopeRows) {
   const enabled  = visible.filter(r =>  r.enabled).map(r => stripIncludePrefix(r.display_label));
   const disabled = visible.filter(r => !r.enabled).map(r => stripIncludePrefix(r.display_label));
 
-  if (enabled.length === 0) return null;
+  // Structured return so the widget can render included vs excluded as
+  // two visually distinct boxes (green/amber). Widget falls back to
+  // legacy string handling if it ever sees the old prose format.
+  // Returns null when nothing is configured (widget hides the box entirely).
+  if (enabled.length === 0 && disabled.length === 0) return null;
 
-  let result = `Includes: ${formatList(enabled)}.`;
-  if (disabled.length > 0) {
-    const list = formatList(disabled);
-    result += ` ${list.charAt(0).toUpperCase()}${list.slice(1)} quoted separately on walkthrough.`;
-  }
-  return result;
+  return {
+    included: enabled.length > 0 ? formatList(enabled) : null,
+    excluded: disabled.length > 0 ? formatList(disabled) : null,
+  };
 }
 
 // -------------------- POST /quote --------------------

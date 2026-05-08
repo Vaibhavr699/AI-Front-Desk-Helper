@@ -283,7 +283,7 @@ for (const seq of [
   PRICE_SEQUENCE,
   SPOUSE_SEQUENCE,
   INQUIRY_SEQUENCE,
-  MISSED_CALL_SEQUENCE, // 🆕
+  MISSED_CALL_SEQUENCE,
 ]) {
   for (const s of seq) ALL_STEPS.set(s.step, s);
 }
@@ -519,6 +519,58 @@ async function startMissedCallRecovery(tenantId, lead, options = {}) {
 }
 
 // ─────────────────────────────────────────────────────────
+// DNC SUPPRESSION (Migration 059, May 8 2026)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Check whether a recovery should be blocked from sending due to a
+ * do_not_contact flag on a matching lead.
+ *
+ * Two ways to match:
+ *   1. recovery.lead_id directly references a DNC'd lead.
+ *   2. recovery.contact_phone matches any DNC'd lead in the same tenant
+ *      (covers cases where the recovery was created without lead_id).
+ *
+ * Cheap query thanks to the partial index idx_leads_do_not_contact —
+ * the WHERE do_not_contact = true predicate scans only flagged rows.
+ *
+ * Returns true if blocked, false if safe to proceed.
+ */
+async function isRecoveryBlocked(recovery) {
+  if (!recovery) return false;
+
+  // Path 1: linked lead is DNC
+  if (recovery.lead_id) {
+    const r = await db.query(
+      "SELECT 1 FROM leads WHERE id = $1 AND do_not_contact = true LIMIT 1",
+      [recovery.lead_id]
+    );
+    if (r.rows.length > 0) return true;
+  }
+
+  // Path 2: any same-phone lead in this tenant is DNC. Matches both
+  // E.164 exact and last-10-digit normalized form to catch +14025551234
+  // vs (402) 555-1234 vs 4025551234.
+  if (recovery.contact_phone && recovery.tenant_id) {
+    const last10 = getLast10Digits(recovery.contact_phone);
+    const r = await db.query(
+      `SELECT 1 FROM leads
+        WHERE tenant_id = $1
+          AND do_not_contact = true
+          AND (
+            phone = $2
+            OR right(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) = $3
+          )
+        LIMIT 1`,
+      [recovery.tenant_id, recovery.contact_phone, last10]
+    );
+    if (r.rows.length > 0) return true;
+  }
+
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────
 // CORE: Process due recovery actions (called by cron)
 // ─────────────────────────────────────────────────────────
 
@@ -527,7 +579,27 @@ async function processDueRecoveries() {
     `SELECT er.*, t.company_name, t.name as tenant_name
      FROM estimate_recoveries er
      JOIN tenants t ON t.id = er.tenant_id
-     WHERE er.status = 'active' AND er.next_action_at <= now()
+     WHERE er.status = 'active'
+       AND er.next_action_at <= now()
+       -- DNC suppression (Migration 059): skip if the linked lead is flagged.
+       AND NOT EXISTS (
+         SELECT 1 FROM leads l
+         WHERE l.id = er.lead_id
+           AND l.do_not_contact = true
+       )
+       -- DNC suppression: skip if any same-phone lead in this tenant is
+       -- flagged. Catches recoveries where lead_id was never linked but
+       -- the customer exists in leads under the same number.
+       AND NOT EXISTS (
+         SELECT 1 FROM leads l
+         WHERE l.tenant_id = er.tenant_id
+           AND l.do_not_contact = true
+           AND (
+             l.phone = er.contact_phone
+             OR right(regexp_replace(COALESCE(l.phone, ''), '[^0-9]', '', 'g'), 10)
+                = right(regexp_replace(COALESCE(er.contact_phone, ''), '[^0-9]', '', 'g'), 10)
+           )
+       )
      ORDER BY er.next_action_at
      LIMIT 50`
   );
@@ -551,6 +623,17 @@ async function processDueRecoveries() {
 // ─────────────────────────────────────────────────────────
 
 async function executeStep(recovery) {
+  // Defense in depth (Migration 059): the SQL filter in processDueRecoveries
+  // should prevent DNC'd recoveries from getting here, but a flag could be
+  // flipped between the SELECT and now (window of ~ms-to-seconds). If we
+  // find a blocked recovery here, cancel it so it stops cluttering the
+  // active list, and never send.
+  if (await isRecoveryBlocked(recovery)) {
+    console.log("[Recovery] DNC blocked at executeStep id=%s phone=%s — auto-cancelling", recovery.id, recovery.contact_phone);
+    await markCancelled(recovery.id);
+    return;
+  }
+
   const stepDef = ALL_STEPS.get(recovery.current_step);
   if (!stepDef) {
     await markDormant(recovery.id);
@@ -927,7 +1010,7 @@ module.exports = {
   startRecovery,
   startInquiryRecovery,
   startEstimateRecovery,
-  startMissedCallRecovery,   // 🆕
+  startMissedCallRecovery,
   processDueRecoveries,
   setObjection,
   markConverted,
@@ -943,9 +1026,10 @@ module.exports = {
   sendRecoverySms,
   makeRecoveryCall,
   advanceStep,
+  isRecoveryBlocked,
   GHOST_SEQUENCE,
   INQUIRY_SEQUENCE,
-  MISSED_CALL_SEQUENCE,      // 🆕
+  MISSED_CALL_SEQUENCE,
   OBJECTION_SEQUENCES,
   ALL_STEPS,
 };

@@ -150,17 +150,23 @@ router.get("/tenant-config/:tenantId", async (req, res) => {
     // the JOIN to: WHERE so.tenant_id = $1 and select so.service_slug.
     try {
       const { rows: scopeRows } = await db.query(
-        `SELECT vs.service_slug,
-                so.option_key,
-                so.display_label,
-                so.enabled,
-                so.affects_includes_text
-           FROM scope_options so
-           JOIN vertical_services vs ON vs.id = so.service_id
-          WHERE so.tenant_id = $1
-          ORDER BY vs.service_slug, so.option_key`,
-        [tenantId]
-      );
+  `SELECT
+     vs.service_slug,
+     vso.option_key,
+     vso.display_label,
+     COALESCE(tso.enabled, vso.default_enabled) AS enabled,
+     vso.affects_includes_text
+   FROM tenants t
+   JOIN vertical_services vs       ON vs.vertical_id          = t.vertical_id
+   JOIN vertical_scope_options vso ON vso.vertical_service_id = vs.id
+   LEFT JOIN tenant_service_scope_options tso
+     ON tso.vertical_service_id = vso.vertical_service_id
+    AND tso.option_key          = vso.option_key
+    AND tso.tenant_id           = t.id
+   WHERE t.id = $1
+   ORDER BY vs.service_slug, vso.display_order`,
+  [tenantId]
+);
 
       // Group rows by service_slug for O(1) lookup per service
       const bySlug = {};

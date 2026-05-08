@@ -177,17 +177,17 @@ async function setDoNotContact(leadId, value, options = {}) {
   const flagging = Boolean(value);
 
   // 1. Update the lead row. Source of truth.
-  const leadRes = await db.query(
-    `UPDATE leads
-        SET do_not_contact         = $1,
-            do_not_contact_set_at  = CASE WHEN $1 THEN now() ELSE NULL END,
-            do_not_contact_set_by  = CASE WHEN $1 THEN $2 ELSE NULL END,
-            do_not_contact_reason  = CASE WHEN $1 THEN $3 ELSE NULL END,
-            updated_at             = now()
-      WHERE id = $4
-      RETURNING *`,
-    [flagging, userId, reason, leadId]
-  );
+ const leadRes = await db.query(
+  `UPDATE leads
+      SET do_not_contact         = $1,
+          do_not_contact_set_at  = CASE WHEN $1 THEN now() ELSE NULL END,
+          do_not_contact_set_by  = CASE WHEN $1 THEN $2::uuid ELSE NULL END,
+          do_not_contact_reason  = CASE WHEN $1 THEN $3 ELSE NULL END,
+          updated_at             = now()
+    WHERE id = $4::uuid
+    RETURNING *`,
+  [flagging, userId, reason, leadId]
+);
 
   const lead = leadRes.rows[0];
   if (!lead) {

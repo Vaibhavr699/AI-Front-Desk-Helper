@@ -130,7 +130,7 @@ async function getLeadById(id) {
   const res = await db.query(`
     SELECT l.*,
            sc.consent_text, sc.ip_address, sc.user_agent, sc.page_url, sc.source as consent_source,
-           du.name as do_not_contact_set_by_name
+           du.email as do_not_contact_set_by_name
     FROM leads l
     LEFT JOIN sms_consents sc   ON l.last_consent_id      = sc.id
     LEFT JOIN dashboard_users du ON l.do_not_contact_set_by = du.id

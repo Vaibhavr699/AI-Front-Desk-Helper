@@ -1,12 +1,21 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { getBookings, updateBooking, cancelBooking, getTechnicians, getUser } from "../api";
+import {
+  getBookings,
+  updateBooking,
+  cancelBooking,
+  getTechnicians,
+  getUser,
+  getLead,
+  setLeadDoNotContact,
+} from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import {
   Calendar, List, Users, Clock, CheckCircle2, AlertCircle,
   MapPin, ChevronRight, Phone, Search, Filter,
   ChevronLeft, ChevronsLeft, ChevronsRight,
-  ArrowUpDown, X, ExternalLink, Mail, DollarSign, Tag
+  ArrowUpDown, X, ExternalLink, Mail, DollarSign, Tag,
+  Ban,
 } from "lucide-react";
 import BookingCalendar from "../components/BookingCalendar";
 import TechnicianManager from "../components/TechnicianManager";
@@ -35,12 +44,60 @@ export default function Bookings({ tenantId }) {
   const [cancelReason, setCancelReason] = useState('');
   const [cancelError, setCancelError] = useState('');
 
+  // Do Not Contact flow state — Migration 059 (May 8, 2026)
+  // leadInfo holds the full lead row for the currently selected booking,
+  // including do_not_contact, do_not_contact_set_at, do_not_contact_set_by_name,
+  // and do_not_contact_reason. Fetched on modal open via getLead().
+  const [leadInfo, setLeadInfo] = useState(null);
+  const [leadLoading, setLeadLoading] = useState(false);
+  const [dncMode, setDncMode] = useState(null); // null | 'enable' | 'disable' | 'submitting'
+  const [dncReason, setDncReason] = useState('');
+  const [dncError, setDncError] = useState('');
+  const [dncToast, setDncToast] = useState(null); // { kind, message } | null
+
   // Reset cancel state whenever user opens/closes the modal
   useEffect(() => {
     setCancelMode(null);
     setCancelReason('');
     setCancelError('');
+    setDncMode(null);
+    setDncReason('');
+    setDncError('');
   }, [selectedBooking?.id]);
+
+  // Fetch the lead behind this booking so we can show DNC status + toggle.
+  // Booking row already has lead_id when it was created with one (most cases).
+  // If a booking doesn't have lead_id, the modal just hides the DNC section.
+  useEffect(() => {
+    if (!selectedBooking?.lead_id) {
+      setLeadInfo(null);
+      return;
+    }
+    let cancelled = false;
+    setLeadLoading(true);
+    getLead(selectedBooking.lead_id)
+      .then((lead) => {
+        if (!cancelled) setLeadInfo(lead);
+      })
+      .catch((err) => {
+        console.error("Failed to load lead for DNC status:", err.message);
+        if (!cancelled) setLeadInfo(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLeadLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBooking?.lead_id]);
+
+  // Auto-dismiss DNC toast after 5s
+  useEffect(() => {
+    if (!dncToast) return;
+    const t = setTimeout(() => setDncToast(null), 5000);
+    return () => clearTimeout(t);
+  }, [dncToast]);
+
   useEffect(() => {
     if (!tenantId) return;
     getTechnicians(tenantId)
@@ -113,7 +170,7 @@ export default function Bookings({ tenantId }) {
     }
   }
 
- async function handleCancelBooking() {
+  async function handleCancelBooking() {
     if (!selectedBooking) return;
     setCancelMode('submitting');
     setCancelError('');
@@ -140,6 +197,61 @@ export default function Bookings({ tenantId }) {
       }
     } catch (e) {
       alert("Failed to assign technician: " + e.message);
+    }
+  }
+
+  /**
+   * Toggle the do_not_contact flag for the currently selected booking's lead.
+   *
+   * value=true cascades — backend cancels any active estimate recoveries and
+   * pending nurturing schedule rows for the lead. The response includes
+   * counts so we can show a meaningful confirmation toast.
+   *
+   * value=false reopens the lead to future automation but leaves
+   * previously-cancelled sequences cancelled.
+   */
+  async function handleToggleDnc(value) {
+    if (!leadInfo) return;
+    setDncMode('submitting');
+    setDncError('');
+    try {
+      const result = await setLeadDoNotContact(
+        leadInfo.id,
+        value,
+        value ? (dncReason.trim() || null) : null
+      );
+      setLeadInfo(result.lead);
+      setDncMode(null);
+      setDncReason('');
+
+      // Mirror the new flag to the booking list so the row badge updates
+      // immediately. The bookings backend may not yet JOIN to leads.do_not_contact,
+      // but if/when it does, this keeps the UI in sync without a full reload.
+      if (selectedBooking?.lead_id === leadInfo.id) {
+        setBookings((prev) =>
+          prev.map((b) =>
+            b.lead_id === leadInfo.id ? { ...b, do_not_contact: value } : b
+          )
+        );
+      }
+
+      // Toast feedback summarizing what just happened.
+      if (value) {
+        const parts = [];
+        if (result.cancelled_recoveries > 0) {
+          parts.push(`${result.cancelled_recoveries} recovery sequence${result.cancelled_recoveries === 1 ? '' : 's'}`);
+        }
+        if (result.cancelled_nurtures > 0) {
+          parts.push(`${result.cancelled_nurtures} nurture${result.cancelled_nurtures === 1 ? '' : 's'}`);
+        }
+        const tail = parts.length > 0 ? ` Cancelled ${parts.join(' and ')}.` : '';
+        setDncToast({ kind: 'enabled', message: `Communication stopped.${tail}` });
+      } else {
+        setDncToast({ kind: 'disabled', message: 'Communication resumed for future outreach.' });
+      }
+    } catch (e) {
+      setDncError(e.message || 'Failed to update');
+      setDncMode(value ? 'enable' : 'disable');
     }
   }
 
@@ -307,7 +419,23 @@ export default function Bookings({ tenantId }) {
                     >
                       <td className="px-6 py-4">
                         <div className="flex flex-col">
-                          <span className="text-sm font-semibold text-stone-900 group-hover:text-blue-600 transition-colors">{b.contact_name || "Unknown"}</span>
+                          <span className="text-sm font-semibold text-stone-900 group-hover:text-blue-600 transition-colors flex items-center gap-2">
+                            {b.contact_name || "Unknown"}
+                            {/* DNC badge — Migration 059 (May 8, 2026).
+                                Renders only if the bookings API returns
+                                do_not_contact in the row (requires backend
+                                JOIN to leads). Until that ships, the badge
+                                is invisible but the modal toggle still works. */}
+                            {b.do_not_contact && (
+                              <span
+                                title="Do Not Contact"
+                                className="px-1.5 py-0.5 bg-red-100 text-red-700 text-[9px] font-black uppercase tracking-wider rounded border border-red-200 inline-flex items-center gap-1"
+                              >
+                                <Ban className="w-2.5 h-2.5" />
+                                DNC
+                              </span>
+                            )}
+                          </span>
                           <span className="text-xs text-stone-500 flex items-center gap-1.5 mt-0.5">
                             <Phone className="w-3 h-3" />
                             {b.contact_phone || "No phone"}
@@ -436,6 +564,32 @@ export default function Bookings({ tenantId }) {
         <TechnicianManager tenantId={tenantId} />
       )}
 
+      {/* DNC toast — fixed top-right, auto-dismisses after 5s */}
+      {dncToast && (
+        <div className="fixed top-6 right-6 z-[200] animate-in slide-in-from-top-4 fade-in duration-300">
+          <div
+            className={`flex items-start gap-3 px-4 py-3 rounded-xl shadow-lg border max-w-sm ${
+              dncToast.kind === 'enabled'
+                ? 'bg-amber-50 border-amber-200 text-amber-900'
+                : 'bg-stone-50 border-stone-200 text-stone-900'
+            }`}
+          >
+            {dncToast.kind === 'enabled' ? (
+              <Ban className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+            ) : (
+              <CheckCircle2 className="w-5 h-5 text-stone-600 mt-0.5 shrink-0" />
+            )}
+            <p className="text-sm font-semibold leading-snug">{dncToast.message}</p>
+            <button
+              onClick={() => setDncToast(null)}
+              className="ml-1 p-0.5 hover:bg-black/5 rounded transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Detail Modal */}
       {selectedBooking && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -448,6 +602,12 @@ export default function Bookings({ tenantId }) {
               <div className="flex items-center gap-3">
                 <div className={`w-3 h-3 rounded-full animate-pulse ${getStatusSlugColor(selectedBooking.status)}`} />
                 <h2 className="text-xl font-bold text-stone-900 tracking-tight">Booking Details</h2>
+                {leadInfo?.do_not_contact && (
+                  <span className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-black uppercase tracking-widest rounded border border-red-200 inline-flex items-center gap-1">
+                    <Ban className="w-2.5 h-2.5" />
+                    DNC
+                  </span>
+                )}
               </div>
               <button
                 onClick={() => setSelectedBooking(null)}
@@ -523,6 +683,7 @@ export default function Bookings({ tenantId }) {
                   </select>
                 </div>
               </div>
+
               {selectedBooking.status?.toLowerCase() !== 'cancelled' && (
                 <div className="pt-4 border-t border-stone-100">
                   {cancelMode === null && (
@@ -569,6 +730,133 @@ export default function Bookings({ tenantId }) {
                           {cancelMode === 'submitting' ? 'Cancelling...' : 'Confirm cancellation'}
                         </button>
                       </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ─────────────────────────────────────────────────────
+                  Do Not Contact section — Migration 059 (May 8, 2026)
+
+                  Only renders if we successfully loaded the lead behind
+                  this booking. The lead may not exist for very old bookings
+                  predating the lead-first architecture, in which case the
+                  section is hidden silently.
+                  ───────────────────────────────────────────────────── */}
+              {selectedBooking.lead_id && (
+                <div className="pt-4 border-t border-stone-100">
+                  {leadLoading && (
+                    <div className="flex items-center justify-center p-4 text-sm text-stone-500">
+                      <div className="w-4 h-4 border-2 border-stone-300 border-t-stone-600 rounded-full animate-spin mr-2" />
+                      Loading communication settings...
+                    </div>
+                  )}
+
+                  {!leadLoading && leadInfo && !leadInfo.do_not_contact && dncMode === null && (
+                    <button
+                      onClick={() => setDncMode('enable')}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white border border-amber-200 text-amber-700 hover:bg-amber-50 hover:border-amber-300 font-semibold text-sm rounded-xl transition-all"
+                    >
+                      <Ban className="w-4 h-4" />
+                      Stop All Communication
+                    </button>
+                  )}
+
+                  {!leadLoading && leadInfo?.do_not_contact && dncMode === null && (
+                    <div className="space-y-3 p-4 bg-red-50 border border-red-200 rounded-xl">
+                      <div className="flex items-start gap-3">
+                        <Ban className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-red-900">All outbound communication stopped</p>
+                          <p className="text-xs text-red-700 mt-1">
+                            No SMS follow-ups, recovery sequences, or nurturing campaigns will fire for this customer.
+                          </p>
+                          {leadInfo.do_not_contact_reason && (
+                            <p className="text-xs text-red-800 mt-2 italic">"{leadInfo.do_not_contact_reason}"</p>
+                          )}
+                          {(leadInfo.do_not_contact_set_at || leadInfo.do_not_contact_set_by_name) && (
+                            <p className="text-[10px] text-red-600 mt-2 uppercase tracking-wider">
+                              {leadInfo.do_not_contact_set_at && `Set ${format(new Date(leadInfo.do_not_contact_set_at), 'MMM d, yyyy')}`}
+                              {leadInfo.do_not_contact_set_by_name && ` by ${leadInfo.do_not_contact_set_by_name}`}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setDncMode('disable')}
+                        className="w-full px-4 py-2 bg-white border border-red-200 text-red-700 hover:bg-red-100 font-semibold text-xs rounded-lg transition-all"
+                      >
+                        Resume Communication
+                      </button>
+                    </div>
+                  )}
+
+                  {dncMode === 'enable' && (
+                    <div className="space-y-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                      <div className="flex items-start gap-3">
+                        <Ban className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+                        <div>
+                          <label className="text-[10px] font-black uppercase tracking-widest text-amber-800">Stop all outbound communication?</label>
+                          <p className="text-xs text-amber-700 mt-1">
+                            This will cancel any active follow-up sequences and nurturing campaigns for {selectedBooking.contact_name || 'this customer'}, and prevent any future automated texts or calls.
+                          </p>
+                        </div>
+                      </div>
+                      <textarea
+                        value={dncReason}
+                        onChange={(e) => setDncReason(e.target.value)}
+                        placeholder="Reason (optional, for the audit log)..."
+                        rows={2}
+                        className="w-full text-sm bg-white border border-amber-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-amber-200 placeholder:text-amber-500 text-stone-700"
+                      />
+                      {dncError && <p className="text-xs text-red-700 font-medium">{dncError}</p>}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => { setDncMode(null); setDncReason(''); setDncError(''); }}
+                          className="flex-1 px-4 py-2 bg-white border border-stone-200 text-stone-700 hover:border-stone-300 font-semibold text-xs rounded-lg transition-all"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => handleToggleDnc(true)}
+                          className="flex-1 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs rounded-lg transition-all"
+                        >
+                          Stop Communication
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {dncMode === 'disable' && (
+                    <div className="space-y-3 p-4 bg-stone-50 border border-stone-200 rounded-xl">
+                      <div>
+                        <label className="text-[10px] font-black uppercase tracking-widest text-stone-700">Resume communication?</label>
+                        <p className="text-xs text-stone-600 mt-1">
+                          Future automated outreach will be allowed for this customer. Previously cancelled sequences will stay cancelled.
+                        </p>
+                      </div>
+                      {dncError && <p className="text-xs text-red-700 font-medium">{dncError}</p>}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => { setDncMode(null); setDncError(''); }}
+                          className="flex-1 px-4 py-2 bg-white border border-stone-200 text-stone-700 hover:border-stone-300 font-semibold text-xs rounded-lg transition-all"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => handleToggleDnc(false)}
+                          className="flex-1 px-4 py-2 bg-stone-700 hover:bg-stone-800 text-white font-semibold text-xs rounded-lg transition-all"
+                        >
+                          Resume
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {dncMode === 'submitting' && (
+                    <div className="flex items-center justify-center p-4 text-sm text-stone-500">
+                      <div className="w-4 h-4 border-2 border-stone-300 border-t-stone-600 rounded-full animate-spin mr-2" />
+                      Updating...
                     </div>
                   )}
                 </div>

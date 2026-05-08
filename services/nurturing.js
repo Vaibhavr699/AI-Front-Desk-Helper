@@ -14,6 +14,56 @@ function addDays(d, days) {
   return out;
 }
 
+// ─────────────────────────────────────────────────────────
+// DNC SUPPRESSION (Migration 059, May 8 2026)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Check whether a lead should be blocked from outbound nurturing due to
+ * a do_not_contact flag.
+ *
+ * Two ways to match:
+ *   1. leadId directly references a DNC'd lead.
+ *   2. phone matches any DNC'd lead in the same tenant — covers cases
+ *      where the schedule row was created without a lead_id, or where
+ *      the same phone exists across multiple lead rows.
+ *
+ * Cheap query thanks to the partial index idx_leads_do_not_contact —
+ * the WHERE do_not_contact = true predicate scans only flagged rows.
+ *
+ * Returns true if blocked, false if safe to proceed.
+ */
+async function isLeadDoNotContact({ leadId, tenantId, phone } = {}) {
+  // Path 1: direct lead_id match
+  if (leadId) {
+    const r = await db.query(
+      "SELECT 1 FROM leads WHERE id = $1 AND do_not_contact = true LIMIT 1",
+      [leadId]
+    );
+    if (r.rows.length > 0) return true;
+  }
+
+  // Path 2: any same-phone lead in this tenant is DNC. Matches both
+  // E.164 exact and last-10-digit normalized form.
+  if (phone && tenantId) {
+    const last10 = String(phone).replace(/\D/g, "").slice(-10);
+    const r = await db.query(
+      `SELECT 1 FROM leads
+        WHERE tenant_id = $1
+          AND do_not_contact = true
+          AND (
+            phone = $2
+            OR right(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) = $3
+          )
+        LIMIT 1`,
+      [tenantId, phone, last10]
+    );
+    if (r.rows.length > 0) return true;
+  }
+
+  return false;
+}
+
 /**
  * Schedule post-service follow-up and referral request after a completed job.
  * Completed job leads → maintenance + re-engagement + referral + seasonal (all flows).
@@ -51,6 +101,11 @@ async function schedulePostServiceCampaigns(tenantId, booking) {
 
 /**
  * Process due nurturing_schedule rows.
+ *
+ * DNC suppression (Migration 059): the LEFT JOIN to leads + the
+ * COALESCE filter skip any schedule whose linked lead is DNC'd. Schedules
+ * without a lead_id (rare) pass through this filter and get caught by the
+ * defense-in-depth check inside processOneNurturing.
  */
 async function processDueNurturing() {
   const rows = await db.query(
@@ -60,7 +115,10 @@ async function processDueNurturing() {
      FROM nurturing_schedule ns
      JOIN tenants t ON t.id = ns.tenant_id
      LEFT JOIN leads l ON l.id = ns.lead_id
-     WHERE ns.status = 'pending' AND ns.due_at <= now()
+     WHERE ns.status = 'pending'
+       AND ns.due_at <= now()
+       -- DNC suppression (Migration 059): skip if the linked lead is flagged.
+       AND COALESCE(l.do_not_contact, false) = false
      ORDER BY ns.due_at
      LIMIT 50`
   );
@@ -87,6 +145,17 @@ async function processDueNurturing() {
 
 async function processOneNurturing(row) {
   const { id: scheduleId, tenant_id, lead_id, booking_id, campaign_type, company_name, lead_phone, lead_email, lead_name, tenant_phone } = row;
+
+  // Defense in depth (Migration 059): the SQL filter in processDueNurturing
+  // should prevent DNC'd schedules from getting here, but a flag could be
+  // flipped between the SELECT and now. Catch it before any send and
+  // mark the schedule cancelled so it doesn't keep cycling.
+  if (await isLeadDoNotContact({ leadId: lead_id, tenantId: tenant_id, phone: lead_phone })) {
+    console.log("[Nurturing] DNC blocked at processOneNurturing scheduleId=%s leadId=%s — cancelling", scheduleId, lead_id);
+    await db.query("UPDATE nurturing_schedule SET status = 'cancelled' WHERE id = $1", [scheduleId]);
+    return;
+  }
+
   const toEmail = lead_email || null;
   const toPhone = lead_phone || null;
 
@@ -221,6 +290,16 @@ async function processOneNurturing(row) {
  */
 async function triggerNurturingCall(scheduleId, tenantId, leadId, toPhone, script) {
   if (!toPhone || !script) return false;
+
+  // Defense in depth (Migration 059) — last line of defense before placing
+  // an outbound call. processOneNurturing already checked, but a paranoid
+  // double-check here costs one indexed query and prevents a billable Twilio
+  // call to a DNC'd customer if anything upstream regressed.
+  if (await isLeadDoNotContact({ leadId, tenantId, phone: toPhone })) {
+    console.log("[Nurturing] DNC blocked at triggerNurturingCall tenant=%s to=%s — suppressing", tenantId, toPhone);
+    return false;
+  }
+
   const tenant = await db.query(
     `SELECT t.*, (SELECT pn.phone FROM phone_numbers pn WHERE pn.tenant_id = t.id ORDER BY pn.is_primary DESC NULLS LAST LIMIT 1) as matched_phone
      FROM tenants t WHERE t.id = $1`,
@@ -261,6 +340,13 @@ async function triggerNurturingCall(scheduleId, tenantId, leadId, toPhone, scrip
 }
 
 async function sendNurturingSms(tenantId, toPhone, body) {
+  // Defense in depth (Migration 059) — last line of defense before sending.
+  // Catches DNC flips that happened between the schedule SELECT and now.
+  if (await isLeadDoNotContact({ tenantId, phone: toPhone })) {
+    console.log("[Nurturing] DNC blocked at sendNurturingSms tenant=%s to=%s — suppressing", tenantId, toPhone);
+    return false;
+  }
+
   const tenant = await db.query(
     `SELECT t.*, (SELECT pn.phone FROM phone_numbers pn WHERE pn.tenant_id = t.id ORDER BY pn.is_primary DESC NULLS LAST LIMIT 1) as matched_phone
      FROM tenants t WHERE t.id = $1`,
@@ -329,10 +415,19 @@ async function createReferralAndOutreach(tenantId, referringLeadId, referringBoo
 
   let leadId = null;
   const existingLead = await db.query(
-    "SELECT id FROM leads WHERE tenant_id = $1 AND phone = $2",
+    "SELECT id, do_not_contact FROM leads WHERE tenant_id = $1 AND phone = $2",
     [tenantId, referralPhone]
   ).then((r) => r.rows[0]);
+
   if (existingLead) {
+    // DNC suppression (Migration 059): if the referral target is a previously
+    // DNC'd lead in this tenant, do NOT create a referral_leads row and do
+    // NOT send SMS. The referring customer might not realize their friend
+    // is already on our do-not-contact list.
+    if (existingLead.do_not_contact) {
+      console.log("[Nurturing] Referral target is DNC'd — skipping outreach. tenantId=%s leadId=%s", tenantId, existingLead.id);
+      return null;
+    }
     leadId = existingLead.id;
   } else {
     const leadRes = await db.query(
@@ -376,9 +471,12 @@ async function processMaintenanceReminders() {
       const tp = touchpoints[tpIdx];
       if (!tp.months || tp.months <= 0) continue;
       // ✅ Only leads with a completed job (last_service_date IS NOT NULL)
+      // ✅ DNC suppression (Migration 059): exclude flagged leads.
       const leads = await db.query(
         `SELECT l.id as lead_id FROM leads l
-         WHERE l.tenant_id = $1 AND l.last_service_date IS NOT NULL
+         WHERE l.tenant_id = $1
+           AND l.do_not_contact = false
+           AND l.last_service_date IS NOT NULL
            AND l.last_service_date + ($2::text || ' months')::interval <= current_date
            AND NOT EXISTS (
              SELECT 1 FROM campaign_log c
@@ -417,9 +515,12 @@ async function processReengagement() {
       const tp = touchpoints[tpIdx];
       if (!tp.months || tp.months <= 0) continue;
       // ✅ Only leads with a completed job (last_service_date IS NOT NULL)
+      // ✅ DNC suppression (Migration 059): exclude flagged leads.
       const leads = await db.query(
         `SELECT l.id as lead_id FROM leads l
-         WHERE l.tenant_id = $1 AND l.last_service_date IS NOT NULL
+         WHERE l.tenant_id = $1
+           AND l.do_not_contact = false
+           AND l.last_service_date IS NOT NULL
            AND l.last_service_date + ($2::text || ' months')::interval <= current_date
            AND NOT EXISTS (
              SELECT 1 FROM campaign_log c
@@ -468,6 +569,9 @@ function parseTouchpoints(touchpointsJson, fallbackMonths) {
  *   Group 3: Lost leads — marked Lost OR recovery cancelled, AND at least
  *            90 days have passed since the lead was last updated (cooling-off
  *            period so we don't nurture someone right after they said no)
+ *
+ * DNC suppression (Migration 059): all three groups exclude leads where
+ * do_not_contact = true.
  */
 async function processSeasonalCampaigns() {
   const month   = new Date().getMonth() + 1;
@@ -497,7 +601,9 @@ async function processSeasonalCampaigns() {
     // ── Group 1: Completed job leads ────────────────────────────────────
     const completedLeads = await db.query(
       `SELECT l.id, l.phone, l.email, l.name FROM leads l
-       WHERE l.tenant_id = $1 AND l.last_service_date IS NOT NULL
+       WHERE l.tenant_id = $1
+         AND l.do_not_contact = false
+         AND l.last_service_date IS NOT NULL
          AND l.last_service_date >= current_date - interval '24 months'
          AND NOT EXISTS (
            SELECT 1 FROM campaign_log c
@@ -514,6 +620,7 @@ async function processSeasonalCampaigns() {
       `SELECT DISTINCT l.id, l.phone, l.email, l.name FROM leads l
        JOIN estimate_recoveries er ON er.lead_id = l.id
        WHERE l.tenant_id = $1
+         AND l.do_not_contact = false
          AND l.last_service_date IS NULL
          AND er.status = 'dormant'
          AND l.created_at >= current_date - interval '24 months'
@@ -533,6 +640,7 @@ async function processSeasonalCampaigns() {
       `SELECT DISTINCT l.id, l.phone, l.email, l.name FROM leads l
        LEFT JOIN estimate_recoveries er ON er.lead_id = l.id
        WHERE l.tenant_id = $1
+         AND l.do_not_contact = false
          AND l.last_service_date IS NULL
          AND (l.status = 'Lost' OR er.status = 'cancelled')
          AND l.updated_at <= current_date - interval '90 days'
@@ -605,4 +713,5 @@ module.exports = {
   processMaintenanceReminders,
   processReengagement,
   processSeasonalCampaigns,
+  isLeadDoNotContact,
 };

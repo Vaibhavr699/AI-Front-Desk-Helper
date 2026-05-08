@@ -2007,6 +2007,66 @@ async function sendFacebookMessage(recipientId, messageText, quickReplies = [], 
     console.error("[Facebook] fetch error:", err.message);
   }
 }
+
+// ─────────────────────────────────────────────────────────
+// DNC SUPPRESSION HELPER (Migration 059, May 8 2026)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Check whether the lead behind an in-memory SMS thread is on the
+ * do-not-contact list.
+ *
+ * Two paths:
+ *   1. thread.leadId — direct check by lead id.
+ *   2. Phone match — covers website/SMS threads where leadId wasn't
+ *      attached yet, by looking up any DNC'd lead with the same phone
+ *      under the same tenant.
+ *
+ * Skips the phone-match path for synthetic thread keys (fb-* / web-*)
+ * since those aren't real phone numbers.
+ *
+ * Returns true if blocked, false if safe to proceed.
+ */
+async function isThreadDoNotContact(thread) {
+  if (!thread) return false;
+
+  // Path 1: linked lead is DNC
+  if (thread.leadId) {
+    const r = await db.query(
+      "SELECT 1 FROM leads WHERE id = $1 AND do_not_contact = true LIMIT 1",
+      [thread.leadId]
+    );
+    if (r.rows.length > 0) return true;
+  }
+
+  // Path 2: any same-phone lead in this tenant is DNC. Skip for
+  // synthetic thread keys (fb-/web-) which aren't real phones — for
+  // those, the leadId path is the only reliable check.
+  const phone = thread.leadCapture?.phone || thread.phone;
+  if (
+    phone &&
+    thread.tenantId &&
+    !String(phone).startsWith("fb-") &&
+    !String(phone).startsWith("web-")
+  ) {
+    const last10 = String(phone).replace(/\D/g, "").slice(-10);
+    const r = await db.query(
+      `SELECT 1 FROM leads
+        WHERE tenant_id = $1
+          AND do_not_contact = true
+          AND (
+            phone = $2
+            OR right(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) = $3
+          )
+        LIMIT 1`,
+      [thread.tenantId, phone, last10]
+    );
+    if (r.rows.length > 0) return true;
+  }
+
+  return false;
+}
+
 async function runSmsFollowUps() {
   const now = Date.now();
   for (const thread of smsThreads.values()) {
@@ -2025,6 +2085,33 @@ async function runSmsFollowUps() {
     if (thread.followUpCount >= 2) {
       thread.needsFollowUpAt = null;
       continue;
+    }
+
+    // ── DNC suppression (Migration 059, May 8 2026) ─────────────────
+    // If the lead behind this thread is do-not-contact, never fire a
+    // follow-up. Clear the timer so we stop checking on every tick.
+    // The send-time guards in services/sms.js sendNurturingSms and
+    // sendBookingCancellationSms are the last line of defense if this
+    // somehow leaks through.
+    try {
+      if (await isThreadDoNotContact(thread)) {
+        console.log(
+          "[FollowUp] DNC blocked phone=%s leadId=%s tenantId=%s — clearing timer",
+          thread.phone,
+          thread.leadId || "(none)",
+          thread.tenantId || "(none)"
+        );
+        thread.needsFollowUpAt = null;
+        continue;
+      }
+    } catch (err) {
+      // Don't block on a DB error — service-layer DNC checks will catch
+      // it at send time. Log and proceed.
+      console.error(
+        "[FollowUp] DNC check failed phone=%s err=%s — proceeding to send-time guards",
+        thread.phone,
+        err.message
+      );
     }
 
     // ── Cooldown: 30 min after last inbound (was 10 — too aggressive) ─

@@ -25,9 +25,18 @@ import { getScopeOptions, updateScopeOptions } from "../api";
  *   - On failure the toggle reverts and an inline red message appears under
  *     the row until the next successful save of that option
  *
+ * May 8, 2026: Updated owner preview to match the new customer-facing layout.
+ *   - buildIncludesPreview() now returns structured { included, excluded }
+ *     matching the backend's buildIncludesText structured payload (mig 058
+ *     overlay in routes/estimator.js)
+ *   - ServiceCard renders two visually distinct boxes — green ✅ for what's
+ *     included, amber ❌ for what is NOT included with a friendly walkthrough
+ *     note. Mirrors what customers see in the chat widget result screen so
+ *     owners aren't guessing.
+ *
  * Design choices:
- *   - Live preview shows the prose strip ("Includes: walls, trim, ceilings.")
- *     so the owner sees exactly what the customer will see.
+ *   - Live preview shows exactly what the customer sees in the chat widget,
+ *     so the owner never has to guess.
  *   - Modifier info is shown next to each toggle so the owner sees the price
  *     impact before flipping.
  *   - Services with zero toggles are hidden — currently just deck_fence which
@@ -57,7 +66,7 @@ function formatServiceName(slug) {
 }
 
 // Strip "Include " prefix from a display label and lowercase, so we can
-// build a natural "Includes: walls, trim, and ceilings" sentence.
+// build a natural "walls, trim, and ceilings" list.
 function stripIncludePrefix(label) {
   return label.replace(/^Include\s+/i, "").toLowerCase();
 }
@@ -84,22 +93,21 @@ function formatModifier(option) {
   }
 }
 
-// Build the customer-facing "What's included" prose preview from the
-// currently-enabled toggles.
+// Build the customer-facing "What's included" preview as structured data.
+// Returns { included: string|null, excluded: string|null }.
+//
+// May 8, 2026: Switched from prose string to structured object so the
+// owner-side preview can render the same two-box layout the customer sees
+// in the chat widget. Mirrors backend buildIncludesText() in routes/estimator.js.
 function buildIncludesPreview(service) {
   const visible  = service.options.filter(o => o.affects_includes_text);
-  const enabled  = visible.filter(o => o.enabled).map(o => stripIncludePrefix(o.display_label));
+  const enabled  = visible.filter(o =>  o.enabled).map(o => stripIncludePrefix(o.display_label));
   const disabled = visible.filter(o => !o.enabled).map(o => stripIncludePrefix(o.display_label));
 
-  const parts = [];
-  if (enabled.length > 0) {
-    parts.push(`Includes: ${formatList(enabled)}.`);
-  }
-  if (disabled.length > 0) {
-    const list = formatList(disabled);
-    parts.push(`${list.charAt(0).toUpperCase()}${list.slice(1)} quoted separately on walkthrough.`);
-  }
-  return parts.length > 0 ? parts.join(" ") : "Standard scope.";
+  return {
+    included: enabled.length  > 0 ? formatList(enabled)  : null,
+    excluded: disabled.length > 0 ? formatList(disabled) : null,
+  };
 }
 
 // ─── Tiny spinner shown while a save is in-flight ───────────────────────────
@@ -168,7 +176,8 @@ function ServiceCard({ service, saveState, onToggle }) {
   // in mig 058 until split into separate deck + fence services).
   if (!service.options || service.options.length === 0) return null;
 
-  const includesPreview = useMemo(() => buildIncludesPreview(service), [service]);
+  const preview = useMemo(() => buildIncludesPreview(service), [service]);
+  const hasAnyPreview = preview.included || preview.excluded;
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
@@ -224,14 +233,44 @@ function ServiceCard({ service, saveState, onToggle }) {
         })}
       </div>
 
-      {/* Live preview of the customer-facing "What's included" strip */}
-      <div className="bg-orange-50 border border-orange-100 rounded-lg p-4">
-        <div className="text-xs font-semibold uppercase tracking-wider text-orange-700 mb-2">
+      {/* Live preview of the customer-facing "What's included" strip.
+          Mirrors the two-box layout the customer sees in the chat widget. */}
+      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+        <div className="text-xs font-semibold uppercase tracking-wider text-gray-600 mb-3">
           Customer will see:
         </div>
-        <div className="text-sm text-gray-800 leading-relaxed">
-          {includesPreview}
-        </div>
+
+        {!hasAnyPreview ? (
+          <div className="text-sm text-gray-600 italic">Standard scope.</div>
+        ) : (
+          <div className="space-y-2">
+            {preview.included && (
+              <div className="bg-green-50 border-2 border-green-400 rounded-lg p-3">
+                <div className="text-xs font-bold text-green-800 mb-1 flex items-center gap-1.5">
+                  <span>✅</span>
+                  <span>Included in this estimate:</span>
+                </div>
+                <div className="text-sm font-semibold text-green-900">
+                  {preview.included}
+                </div>
+              </div>
+            )}
+            {preview.excluded && (
+              <div className="bg-orange-50 border-2 border-orange-400 rounded-lg p-3">
+                <div className="text-xs font-bold text-orange-800 mb-1 flex items-center gap-1.5">
+                  <span>❌</span>
+                  <span>Does NOT include:</span>
+                </div>
+                <div className="text-sm font-semibold text-orange-900 mb-1">
+                  {preview.excluded}
+                </div>
+                <div className="text-xs text-orange-700 italic">
+                  These can be added during the in-person walkthrough if needed.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

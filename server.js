@@ -239,6 +239,11 @@ app.get("/sms-consent", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "sms-consent.html"));
 });
 // Increase body size limits slightly to support small logo uploads (e.g. base64 images) in dashboard settings.
+// Render runs us behind a load balancer. Without trust proxy, req.ip
+// returns the proxy's internal IP instead of the actual visitor IP,
+// which breaks SMS consent records (compliance / 10DLC dispute defense).
+app.set("trust proxy", true);
+
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 app.use(express.json({ limit: "2mb" }));
 
@@ -561,22 +566,6 @@ async function loadWebsiteContext() {
   } catch (error) {
     websiteKnowledgeContext = `Website context unavailable (${error.message}).`;
   }
-}
-
-function buildRealtimeInstructions(tenant) {
-  const companyName = tenant.company_name || "our team";
-  const personalizedSalesPrompt = SALES_CLOSE_PROMPT.replace(/{{company_name}}/g, companyName);
-
-  const faqText = (Array.isArray(tenant.faqs) && tenant.faqs.length > 0)
-    ? "\n\nFrequently Asked Questions:\n" + tenant.faqs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n")
-    : "";
-
-  return `${tenant.instructions}
-
-${personalizedSalesPrompt}${faqText}
-
-Website knowledge context from ${WEBSITE_CONTEXT_URL}:
-${websiteKnowledgeContext}`;
 }
 
 async function getCallerHistory(phone) {
@@ -1214,75 +1203,6 @@ async function sendTwilioSms(to, body, tenantId = null) {
 function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
   const companyName = tenant?.company_name || tenant?.name || "our team";
   const toneOfVoice = tenant?.tone_of_voice || "professional";
-
-  // 1. CORE SMS RULES
-  const coreSmsRules = [
-    `You are an SMS receptionist for ${companyName}.`,
-    `TONE OF VOICE: Your tone of voice is ${toneOfVoice}. Maintain this personality in your texts.`,
-    "Flow: qualify lead, gather full_name, contact email, contact phone, project_type, project_details, address, preferred appointment_date and appointment_time.",
-    "MANDATORY CONTACT INFO: You MUST collect the customer's full_name, a valid phone number, and a valid email address BEFORE setting should_book=true. If any of these are missing, ask for them politely (e.g., 'To confirm your spot, could I also get your email address?').",
-    "Be concise, friendly, and use one short text message. Avoid long paragraphs.",
-    "SERVICE TYPES: Do NOT assume the customer wants a specific service (like interior or exterior painting) unless they mention it or it is in the business details. Ask: 'What type of service are you looking for?'",
-    "IMPORTANT: When the customer provides a date/time and you set should_book=true, do NOT say 'I have scheduled' or 'You are booked'. Instead say something like 'Let me check availability for that time' or 'I'll confirm that slot for you shortly'. The system will check the calendar and provide the final confirmation.",
-    "If enough details exist (including name, phone, and email) to request booking, set should_book true.",
-    "If the customer wants to cancel, set should_cancel true.",
-    "If the customer wants to reschedule, set should_reschedule true and provide the new appointment_date/time.",
-    "REVENUE ESTIMATION: Always provide an estimated_value (number, in dollars) based on the project_details (e.g., Room: 500, Interior: 2500, Exterior: 5000)."
-  ].join("\n");
-
-  // 2. TENANT CUSTOM INSTRUCTIONS
-  // May 1, 2026 — Phase 7.5. Prefer sms_instructions if set (channel-specific
-  // policy: SMS can promote Quick Quote tool, voice keeps deflecting pricing).
-  // Falls back to instructions for tenants who haven't customized SMS prompt yet.
-  let combinedInstructions = coreSmsRules;
-  const tenantPrompt = (tenant?.sms_instructions && tenant.sms_instructions.trim())
-    ? tenant.sms_instructions
-    : tenant?.instructions;
-  if (tenantPrompt) {
-    combinedInstructions += "\n\nBUSINESS SPECIFIC INSTRUCTIONS:\n" + tenantPrompt;
-  }
-
-  // 3. CALENDAR CONTEXT (if available)
-  if (availableSlots && availableSlots.length > 0) {
-    combinedInstructions += `\n\nCALENDAR AVAILABILITY: The following slots are currently open for the requested day: ${availableSlots.join(", ")}. Suggest these to the customer if they ask for available times or if their requested time is taken.`;
-  } else if (availableSlots && availableSlots.info) {
-    combinedInstructions += `\n\nCALENDAR CONTEXT: ${availableSlots.info}`;
-  }
-
-  // 4. OBJECTION HANDLING
-  if (tenant && tenant.objection_handling_config) {
-    const oh = tenant.objection_handling_config;
-    let lines = [];
-    if (Array.isArray(oh) && oh.length) {
-      lines = oh
-        .filter(c => c && (c.script || "").trim())
-        .map(c => `- If they say "${(c.trigger || "").trim() || "..."}": respond with: ${(c.script || "").trim()}`);
-    } else if (typeof oh === "object") {
-      if (oh.price) lines.push(`- If price is a concern: ${oh.price}`);
-      if (oh.thinking) lines.push(`- If they need to think about it: ${oh.thinking}`);
-      if (oh.spouse) lines.push(`- If they need to talk to a spouse: ${oh.spouse}`);
-    }
-    if (lines.length) {
-      combinedInstructions += "\n\nOBJECTION HANDLING STRATEGIES:\n" + lines.join("\n");
-    }
-  }
-
-  // 4. KNOWLEDGE BASE (FAQs)
-  if (tenant && Array.isArray(tenant.faqs) && tenant.faqs.length > 0) {
-    const faqText = "\n\nFrequently Asked Questions:\n" + tenant.faqs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n");
-    combinedInstructions += faqText;
-  }
-
-  return [
-    combinedInstructions,
-    "\nReturn strict JSON only with keys: reply, lead_capture, should_book, should_cancel, should_reschedule, appointment_date, appointment_time, follow_up_minutes.",
-    `Known lead data: ${JSON.stringify(thread.leadCapture)}`
-  ].join("\n");
-}
-
-function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
-  const companyName = tenant?.company_name || tenant?.name || "our team";
-  const toneOfVoice = tenant?.tone_of_voice || "professional";
   const timezone    = tenant?.timezone || BUSINESS_TIMEZONE || "America/Chicago";
 
   // ─── DATE ANCHOR (Phase 7.6, May 7 2026) ──────────────────────────────
@@ -1709,179 +1629,6 @@ function validateProposedDate(rawDate) {
   const mm = String(proposed.getMonth() + 1).padStart(2, "0");
   const dd = String(proposed.getDate()).padStart(2, "0");
   return { ok: true, normalized: `${y}-${mm}-${dd}` };
-}
-
- 
-  // HANDLE CANCELLATION — Phase 4C (May 4, 2026)
-  //
-  // Initiate the multi-turn cancellation flow. initiateSmsCancellation
-  // looks up upcoming bookings, sets thread.cancelState appropriately
-  // (awaiting_confirm if 1 booking, awaiting_choice if multiple), and
-  // returns the prompt SMS. Subsequent inbound messages are handled by
-  // handleSmsCancellationIncoming in processSmsConversation BEFORE the
-  // AI orchestrator runs (see Change 2 above).
-  //
-  // This replaces the old single-shot cancel which:
-  //   - did exact phone-match only (missed (402)555-1234 vs +14025551234)
-  //   - cancelled without explicit customer confirmation
-  //   - didn't pass cancelled_via='sms' to cancelBooking
-  //   - didn't capture a reason
-  //   - couldn't disambiguate when a customer had multiple bookings
-  if (ai.should_cancel) {
-    const smsService = require("./services/sms");
-    const init = await smsService.initiateSmsCancellation(thread, tenant);
-    return init.reply;
-  }
- 
-
-  // HANDLE RESCHEDULING
-  if (ai.should_reschedule && ai.appointment_date && ai.appointment_time) {
-    const booking = await bookingsService.findLatestBookingByPhone(tenant.id, thread.leadCapture?.phone || thread.phone);
-    if (!booking) return "I couldn't find an existing appointment to reschedule. Would you like to schedule a new one instead?";
-
-    await bookingsService.updateBooking(booking.id, {
-      preferred_date: ai.appointment_date,
-      appointment_time: ai.appointment_time,
-      notes: ai.lead_capture?.project_details || booking.notes
-    });
-    return `✅ Your appointment has been rescheduled for ${ai.appointment_date} at ${ai.appointment_time}.`;
-  }
-
-  if (!ai.should_book || !ai.appointment_date || !ai.appointment_time) return null;
-
-  // ENSURE CONTACT INFO IS PRESENT
-  const fullName = ai.lead_capture?.full_name || thread.leadCapture?.full_name;
-  const phone = ai.lead_capture?.phone || thread.leadCapture?.phone || thread.phone;
-  const email = ai.lead_capture?.email || thread.leadCapture?.email;
-
-  if (!fullName || !phone || !email) {
-    let missing = [];
-    if (!fullName) missing.push("full name");
-    if (!phone) missing.push("phone number");
-    if (!email) missing.push("email address");
-    
-    return `To finalize your booking, I just need your ${missing.join(" and ")}. Please share that and I'll get you scheduled!`;
-  }
-
-  // Parse date string safely — avoid new Date("YYYY-MM-DD") which interprets as UTC midnight
-  const dateParts = String(ai.appointment_date).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  let parsedDate;
-  if (dateParts) {
-    parsedDate = new Date(Number(dateParts[1]), Number(dateParts[2]) - 1, Number(dateParts[3]));
-  } else {
-    parsedDate = new Date(ai.appointment_date);
-  }
-  const now = new Date();
-  const currentYear = now.getFullYear();
-
-  if (parsedDate.getFullYear() < currentYear) {
-    parsedDate.setFullYear(currentYear);
-  }
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  parsedDate.setHours(0, 0, 0, 0);
-
-  while (parsedDate < today) {
-    parsedDate.setFullYear(parsedDate.getFullYear() + 1);
-  }
-
-  // Use local date components to avoid timezone shift from toISOString()
-  const y = parsedDate.getFullYear();
-  const m = String(parsedDate.getMonth() + 1).padStart(2, '0');
-  const d = String(parsedDate.getDate()).padStart(2, '0');
-  ai.appointment_date = `${y}-${m}-${d}`;
-
-  if (ai.appointment_time === "morning") ai.appointment_time = "9:00 AM";
-  if (ai.appointment_time === "afternoon") ai.appointment_time = "1:00 PM";
-  if (ai.appointment_time === "evening") ai.appointment_time = "6:00 PM";
-
-  const availability = await checkAvailability({
-    appointment_date: ai.appointment_date,
-    appointment_time: ai.appointment_time,
-    duration_minutes: 60
-  }, tenant);
-
-  // Allow booking if: (1) calendar says available, (2) calendar not configured
-  // 🔥 TIGHTENED: Do NOT proceed if there was a calendar_error to prevent double bookings
-  const calendarNotConfigured = availability.reason === "calendar_not_configured";
-  const isAvailable = (availability.ok && availability.available) || calendarNotConfigured;
-  
-  if (availability.reason === "calendar_error") {
-    console.warn("[Booking] Calendar error (likely API disabled) — falling back to local booking only:", availability.message || "unknown");
-    // We proceed anyway to at least capture the lead and record the preference locally.
-  }
-
-  if (isAvailable) {
-    let booked = { ok: true, fallback: true }; // Default to success so local booking happens
-
-    // Only attempt Google Calendar sync if it's configured and was reachable during check
-    const shouldTryGoogle = availability.reason !== "calendar_not_configured" && availability.reason !== "calendar_error";
-
-    if (shouldTryGoogle) {
-      try {
-        const syncResult = await bookAppointment({
-          appointment_date: ai.appointment_date,
-          appointment_time: ai.appointment_time,
-          duration_minutes: 60,
-          full_name: thread.leadCapture.full_name || "New Lead",
-          phone: thread.leadCapture?.phone || thread.phone,
-          email: thread.leadCapture.email || "",
-          address: thread.leadCapture.address || "",
-          project_details: thread.leadCapture.project_details || ""
-        }, tenant);
-        
-        if (syncResult && syncResult.ok) {
-          booked = syncResult;
-        } else {
-          console.warn("[Booking] Google Calendar sync failed:", syncResult?.reason || "unknown");
-          // We still keep booked.ok = true (from initialization) to allow local booking to proceed
-        }
-      } catch (err) {
-        console.error("[Booking] Google Calendar bookAppointment exception:", err.message);
-        // Fallback to local-only success
-      }
-    }
-
-    if (booked.ok) {
-      thread.bookedEventId = booked.eventId || (booked.fallback ? "LOCAL_ONLY" : "");
-      thread.needsFollowUpAt = null;
-      thread.followUpCount = 0;
-
-      // PERSIST TO LOCAL DATABASE
-      try {
-        const t = tenantOverride || (thread.tenantId ? TENANTS[thread.tenantId] : null);
-        if (t) {
-          await bookingsService.createBooking(t.id, null, {
-            contact_name: thread.leadCapture.full_name || "New Lead",
-            contact_phone: thread.leadCapture?.phone || thread.phone,
-            contact_email: thread.leadCapture.email || "",
-            address: thread.leadCapture.address || "",
-            city: "",
-            scope: thread.leadCapture.project_type || "",
-            job_type: (thread.leadCapture.project_type && String(thread.leadCapture.project_type).trim()) || "Residential",
-            preferred_date: ai.appointment_date,
-            appointment_time: ai.appointment_time,
-            notes: thread.leadCapture.project_details || "",
-            estimated_value: thread.leadCapture.estimated_value
-          }, thread.leadId);
-
-          if (thread.leadId) {
-            leadsService.updateLeadStatus(thread.leadId, 'Booked').catch(e => console.error("Lead status update error:", e));
-          }
-        }
-      } catch (dbErr) {
-        console.error("[Booking] Local DB persistence failed:", dbErr.message);
-      }
-
-      return `✅ You are booked for ${ai.appointment_date} at ${ai.appointment_time}.`;
-    } else {
-      return "I couldn't complete booking yet. Can I offer another time?";
-    }
-  } else {
-    thread.needsFollowUpAt = Date.now() + 30 * 60 * 1000;
-    return "That time is no longer available. Please share another preferred time.";
-  }
 }
 
 async function processSmsConversation(phone, incomingText, tenant = null) {
@@ -3117,10 +2864,6 @@ app.use((req, res, next) => {
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-server.on("upgrade", (request, socket, head) => {
-  console.log("[DEBUG] WebSocket upgrade request received for URL:", request.url);
-});
-
 wss.on("connection", async (twilioSocket, req) => {
   let isInitializing = true;
   const twilioMessageQueue = [];
@@ -4207,18 +3950,21 @@ sendToOpenAI(sessionUpdate);
               }
             } else if (name === "hang_up" && callSid) {
               console.log("[AI-Desk] Realtime hang_up trigger callSid=%s", callSid);
-              clearSilenceTimers(); // AI is hanging up — don't fight it with silence nudges
+              clearSilenceTimers();
               output = JSON.stringify({ success: true, message: "Call ending." });
-              
-              // Give AI a moment to finish speaking if needed, then terminate
-              setTimeout(async () => {
+
+             setTimeout(async () => {
                 try {
-                  const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-                  await client.calls(callSid).update({ status: "completed" });
-                  console.log("[AI-Desk] Call terminated via hang_up tool callSid=%s", callSid);
-                } catch (e) {
-                  console.error("[AI-Desk] Hang up error:", e.message);
-                }
+                const client = twilioLib.getClientForTenant(tenant);
+               if (client && callSid) {
+                 await client.calls(callSid).update({ status: "completed" });
+                 console.log("[AI-Desk] Call terminated via hang_up tool callSid=%s", callSid);
+              } else {
+                 console.warn("[AI-Desk] hang_up: no Twilio client for tenant=%s callSid=%s", tenant?.id, callSid);
+              }
+            } catch (e) {
+              console.error("[AI-Desk] Hang up error:", e.message);
+               }
               }, 1500); // 1.5s delay to ensure the goodbye audio is sent
             } else if (name === "change_language" && args.language) {
               const lang = String(args.language).trim().toLowerCase().slice(0, 2) || "en";
@@ -4809,25 +4555,27 @@ app.post("/facebook-webhook", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      if (payload === "BOOK_ESTIMATE") {
-        await sendFacebookMessage(
-          senderId,
-          "Perfect. What day works best for your estimate?",
-          [],
-          pageAccessToken
-        );
-        return res.sendStatus(200);
-      }
+     if (payload === "BOOK_ESTIMATE") {
+  await sendFacebookMessage(
+    senderId,
+    "Perfect. What day works best for your estimate?",
+    [],
+    pageAccessToken,
+    tenant?.id
+  );
+  return res.sendStatus(200);
+}
 
-      if (payload === "TALK_HUMAN") {
-        await sendFacebookMessage(
-          senderId,
-          "No problem 👍 A team member will reach out shortly.",
-          [],
-          pageAccessToken
-        );
-        return res.sendStatus(200);
-      }
+if (payload === "TALK_HUMAN") {
+  await sendFacebookMessage(
+    senderId,
+    "No problem 👍 A team member will reach out shortly.",
+    [],
+    pageAccessToken,
+    tenant?.id
+  );
+  return res.sendStatus(200);
+} 
     }
     if (!messaging || !messaging.message?.text) {
       return res.sendStatus(200);

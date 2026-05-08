@@ -1288,8 +1288,7 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
   // ─── DATE ANCHOR (Phase 7.6, May 7 2026) ──────────────────────────────
   // Without this block the AI hallucinates dates from training data.
   // Bug observed: "May 8th at 2:00" booked as 2023-05-08; "tomorrow late
-  // morning" booked as 2026-10-06. Pin today's date in the tenant's
-  // timezone every turn so the AI has an anchor.
+  // morning" booked as 2026-10-06.
   const now = new Date();
   const dateFmt = new Intl.DateTimeFormat("en-US", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
@@ -1298,7 +1297,7 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
   const todayIso = new Intl.DateTimeFormat("en-CA", {
     year: "numeric", month: "2-digit", day: "2-digit",
     timeZone: timezone,
-  }).format(now); // YYYY-MM-DD
+  }).format(now);
   const currentYear = parseInt(todayIso.slice(0, 4), 10);
 
   const dateAnchor = [
@@ -1318,11 +1317,6 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
     "",
   ].join("\n");
 
-  // ─── INTENT RULES (Phase 7.6, May 7 2026) ─────────────────────────────
-  // Disambiguates the three failure modes seen in production:
-  //   1. should_book on YOUR-availability questions ("how busy are you")
-  //   2. should_cancel on frustration ("stop calling me")
-  //   3. AI re-asking for info we already have
   const intentRules = [
     "═══ INTENT CLASSIFICATION (CRITICAL) ═══",
     "",
@@ -1359,7 +1353,6 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
     "",
   ].join("\n");
 
-  // ─── CORE SMS RULES ───────────────────────────────────────────────────
   const coreSmsRules = [
     `You are an SMS receptionist for ${companyName}.`,
     `TONE OF VOICE: ${toneOfVoice}. Maintain this personality.`,
@@ -1371,10 +1364,8 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
     "REVENUE ESTIMATION: provide an estimated_value (number, USD) based on project_details (Room: 500, Interior: 2500, Exterior: 5000).",
   ].join("\n");
 
-  // Stitch sections in order: anchor → intent → core → tenant → calendar → objections → FAQs
   let combined = dateAnchor + "\n" + intentRules + "\n" + coreSmsRules;
 
-  // Tenant-specific instructions (sms_instructions wins over instructions per Phase 7.5)
   const tenantPrompt = (tenant?.sms_instructions && tenant.sms_instructions.trim())
     ? tenant.sms_instructions
     : tenant?.instructions;
@@ -1382,14 +1373,12 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
     combined += "\n\nBUSINESS SPECIFIC INSTRUCTIONS:\n" + tenantPrompt;
   }
 
-  // Calendar context
   if (availableSlots && availableSlots.length > 0) {
     combined += `\n\nCALENDAR AVAILABILITY: open slots for the requested day: ${availableSlots.join(", ")}. Suggest these if customer asks for available times or their requested time is taken.`;
   } else if (availableSlots && availableSlots.info) {
     combined += `\n\nCALENDAR CONTEXT: ${availableSlots.info}`;
   }
 
-  // Objection handling
   if (tenant && tenant.objection_handling_config) {
     const oh = tenant.objection_handling_config;
     let lines = [];
@@ -1407,7 +1396,6 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
     }
   }
 
-  // FAQs
   if (tenant && Array.isArray(tenant.faqs) && tenant.faqs.length > 0) {
     combined += "\n\nFrequently Asked Questions:\n" + tenant.faqs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n");
   }
@@ -1418,6 +1406,29 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
     `Known lead data: ${JSON.stringify(thread.leadCapture)}`,
   ].join("\n");
 }
+
+async function runSmsAiOrchestrator(thread, incomingText, tenant = null) {
+  // Determine if we should fetch available slots
+  let availableSlots = [];
+  const text = (incomingText || "").toLowerCase();
+  const dateMentioned = text.match(/tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|(\d{4}-\d{2}-\d{2})/);
+  const askingAvailability = text.includes("available") || text.includes("time") || text.includes("when");
+
+  if (tenant && (dateMentioned || askingAvailability)) {
+    try {
+      let dateToCheck = new Date();
+      dateToCheck.setDate(dateToCheck.getDate() + 1);
+      if (text.includes("today")) dateToCheck = new Date();
+
+      const dateStr = dateToCheck.toISOString().split("T")[0];
+      availableSlots = await getAvailableSlots(tenant, dateStr);
+      if (availableSlots.length > 0) {
+        availableSlots.info = `Available on ${dateStr}: ${availableSlots.join(", ")}`;
+      }
+    } catch (err) {
+      console.error("[Orchestrator] Failed to fetch slots:", err.message);
+    }
+  }
 
   const input = [
     { role: "system", content: buildSmsSystemPrompt(thread, tenant, availableSlots) },
@@ -1456,16 +1467,9 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
                 estimated_value: { type: ["number", "null"] }
               },
               required: [
-                "full_name",
-                "phone",
-                "email",
-                "address",
-                "project_type",
-                "project_details",
-                "timeline",
-                "appointment_date",
-                "appointment_time",
-                "estimated_value"
+                "full_name", "phone", "email", "address",
+                "project_type", "project_details", "timeline",
+                "appointment_date", "appointment_time", "estimated_value"
               ]
             },
             should_book: { type: "boolean" },
@@ -1476,13 +1480,8 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
             follow_up_minutes: { type: "number" }
           },
           required: [
-            "reply",
-            "lead_capture",
-            "should_book",
-            "should_cancel",
-            "should_reschedule",
-            "appointment_date",
-            "appointment_time",
+            "reply", "lead_capture", "should_book", "should_cancel",
+            "should_reschedule", "appointment_date", "appointment_time",
             "follow_up_minutes"
           ]
         },
@@ -1515,6 +1514,7 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
     throw new Error(`OpenAI SMS orchestration returned non-JSON output: ${outputText}`);
   }
 }
+
 function mergeLeadCapture(thread, incomingLeadCapture) {
   if (!incomingLeadCapture || typeof incomingLeadCapture !== "object") return;
   for (const field of LEAD_CAPTURE_FIELDS) {
@@ -1535,7 +1535,7 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
     return null;
   }
 
-  // ── Cancellation flow (Phase 4C state machine — unchanged) ─────────
+  // ── Cancellation flow (Phase 4C state machine) ─────────────────────
   if (ai.should_cancel) {
     const smsService = require("./services/sms");
     const init = await smsService.initiateSmsCancellation(thread, tenant);
@@ -1544,8 +1544,6 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
 
   // ── Reschedule flow ──────────────────────────────────────────────
   if (ai.should_reschedule && ai.appointment_date && ai.appointment_time) {
-    // Run the same date validation as new bookings — bug observed May 7 2026:
-    // AI rescheduled to 2023-05-08 because there was no past-date check.
     const dateValidation = validateProposedDate(ai.appointment_date);
     if (!dateValidation.ok) return dateValidation.message;
     ai.appointment_date = dateValidation.normalized;
@@ -1566,7 +1564,6 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
 
   if (!ai.should_book || !ai.appointment_date || !ai.appointment_time) return null;
 
-  // ── Contact-info gate ──────────────────────────────────────────────
   const fullName = ai.lead_capture?.full_name || thread.leadCapture?.full_name;
   const phone    = ai.lead_capture?.phone     || thread.leadCapture?.phone || thread.phone;
   const email    = ai.lead_capture?.email     || thread.leadCapture?.email;
@@ -1578,23 +1575,16 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
     return `To finalize your booking, I just need your ${missing.join(" and ")}. Please share that and I'll get you scheduled!`;
   }
 
-  // ── Date validation (Phase 7.6 May 7 2026) ─────────────────────────
-  // Replaces the silent "shift past dates forward" behavior. Now: reject
-  // past dates and dates >90 days out so the customer is asked to confirm
-  // instead of getting auto-fixed into a wrong year.
+  // Date validation
   const dateValidation = validateProposedDate(ai.appointment_date);
   if (!dateValidation.ok) return dateValidation.message;
   ai.appointment_date = dateValidation.normalized;
 
-  // Vague-time mapping
   if (ai.appointment_time === "morning")   ai.appointment_time = "9:00 AM";
   if (ai.appointment_time === "afternoon") ai.appointment_time = "1:00 PM";
   if (ai.appointment_time === "evening")   ai.appointment_time = "6:00 PM";
 
-  // ── Idempotency check (Phase 7.6 May 7 2026) ───────────────────────
-  // Don't double-book if an identical booking was created in the last
-  // 60 seconds. Defends against orchestrator running twice when Twilio
-  // retries a slow webhook (despite Patch 3 dedup, this is belt+braces).
+  // Idempotency check — defends against orchestrator running twice
   try {
     const dup = await db.query(
       `SELECT id FROM bookings
@@ -1618,7 +1608,6 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
     console.error("[Booking] Idempotency check failed (non-fatal):", idempErr.message);
   }
 
-  // ── Calendar availability check ────────────────────────────────────
   const availability = await checkAvailability({
     appointment_date: ai.appointment_date,
     appointment_time: ai.appointment_time,
@@ -1636,7 +1625,6 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
     return "That time is no longer available. Please share another preferred time.";
   }
 
-  // ── Try Google Calendar sync, fall back to local-only ──────────────
   let booked = { ok: true, fallback: true };
   const shouldTryGoogle = availability.reason !== "calendar_not_configured" && availability.reason !== "calendar_error";
   if (shouldTryGoogle) {
@@ -1665,7 +1653,6 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
   thread.needsFollowUpAt  = null;
   thread.followUpCount    = 0;
 
-  // ── Persist locally ──────────────────────────────────────────────
   try {
     const t = tenantOverride || (thread.tenantId ? TENANTS[thread.tenantId] : null);
     if (t) {
@@ -1694,8 +1681,6 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
   return `✅ You are booked for ${ai.appointment_date} at ${ai.appointment_time}.`;
 }
 
-// Helper used by both new-booking and reschedule paths.
-// Returns { ok: true, normalized } or { ok: false, message }.
 function validateProposedDate(rawDate) {
   const m = String(rawDate || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) {

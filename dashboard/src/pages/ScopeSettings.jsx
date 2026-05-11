@@ -34,26 +34,51 @@ import { getScopeOptions, updateScopeOptions } from "../api";
  *     note. Mirrors what customers see in the chat widget result screen so
  *     owners aren't guessing.
  *
+ * Wave 1 — May 11, 2026: Roofing support.
+ *   - SERVICE_LABELS extended with the 5 roofing service slugs (Mig 062).
+ *   - Header optionally renders the vertical name when the API includes it,
+ *     so a roofing tenant sees "Standard Scope · Roofing" and a painting
+ *     tenant sees "Standard Scope · Painting" (or just "Standard Scope" if
+ *     the field is absent — defensive fallback).
+ *   - The rest of the component is automatically vertical-aware because
+ *     routes/scopeOptions.js filters by tenant.vertical_id; whatever
+ *     services come back render via SERVICE_LABELS (or the title-case
+ *     fallback for unknown slugs).
+ *
  * Design choices:
  *   - Live preview shows exactly what the customer sees in the chat widget,
  *     so the owner never has to guess.
  *   - Modifier info is shown next to each toggle so the owner sees the price
  *     impact before flipping.
- *   - Services with zero toggles are hidden — currently just deck_fence which
- *     is intentionally skipped in mig 058.
+ *   - Services with zero toggles are hidden. Painting's deck_fence falls in
+ *     this bucket (intentionally skipped in mig 058 until split into
+ *     separate deck + fence services).
  *   - Each save sends a single-row change. If the owner spam-flips, the
  *     backend handles last-write-wins; we don't try to debounce here.
  */
 
 // Pretty service names. Keys are vertical_services.service_slug values.
+// Unknown slugs fall through to formatServiceName() for graceful title-case.
 const SERVICE_LABELS = {
-  interior:   "Interior Painting",
-  exterior:   "Exterior Painting",
-  cabinets:   "Cabinet Painting",
-  deck_fence: "Deck & Fence Painting",
-  // V2 verticals will land here as they ship:
-  // replacement: "Roof Replacement", repair: "Roof Repair",
-  // new_install: "New Fence Install", staining: "Fence Staining", ...
+  // ─── Painting (Mig 047) ─────────────────────────────────────────────────
+  interior:             "Interior Painting",
+  exterior:             "Exterior Painting",
+  cabinets:             "Cabinet Painting",
+  deck_fence:           "Deck & Fence Painting",
+
+  // ─── Roofing (Mig 062, Wave 1 — May 11, 2026) ───────────────────────────
+  asphalt_shingle:      "Asphalt Shingle Roofing",
+  metal_standing_seam:  "Metal Standing Seam Roofing",
+  tile:                 "Tile Roofing",
+  slate:                "Slate Roofing",
+  flat_epdm:            "Flat / EPDM Roofing",
+};
+
+// Pretty vertical names for the header subtitle. Optional — gracefully
+// degrades if the API doesn't return a vertical block.
+const VERTICAL_LABELS = {
+  painting: "Painting",
+  roofing:  "Roofing",
 };
 
 // Fallback for unknown slugs — title-case the snake_case.
@@ -61,6 +86,16 @@ function formatServiceName(slug) {
   if (SERVICE_LABELS[slug]) return SERVICE_LABELS[slug];
   return slug
     .split("_")
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+// Pretty vertical name with snake_case → title-case fallback.
+function formatVerticalName(slugOrName) {
+  if (!slugOrName) return null;
+  if (VERTICAL_LABELS[slugOrName]) return VERTICAL_LABELS[slugOrName];
+  return String(slugOrName)
+    .split(/[_\s-]+/)
     .map(w => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
 }
@@ -172,8 +207,8 @@ function Toggle({ enabled, onChange, disabled }) {
 
 // ─── Single service card ─────────────────────────────────────────────────────
 function ServiceCard({ service, saveState, onToggle }) {
-  // Skip services with no toggles (e.g. deck_fence — intentionally skipped
-  // in mig 058 until split into separate deck + fence services).
+  // Skip services with no toggles (e.g. painting deck_fence — intentionally
+  // skipped in mig 058 until split into separate deck + fence services).
   if (!service.options || service.options.length === 0) return null;
 
   const preview = useMemo(() => buildIncludesPreview(service), [service]);
@@ -279,6 +314,7 @@ function ServiceCard({ service, saveState, onToggle }) {
 // ─── Main component ──────────────────────────────────────────────────────────
 export default function ScopeSettings() {
   const [services, setServices]   = useState([]);
+  const [vertical, setVertical]   = useState(null); // Wave 1: optional, may be null
   const [loading, setLoading]     = useState(true);
   const [loadError, setLoadError] = useState(null);
 
@@ -294,7 +330,12 @@ export default function ScopeSettings() {
         setLoading(true);
         setLoadError(null);
         const data = await getScopeOptions();
-        if (!cancelled) setServices(data?.services || []);
+        if (cancelled) return;
+        setServices(data?.services || []);
+        // Wave 1: capture vertical info if the backend returns it. The header
+        // gracefully omits the subtitle if the API doesn't include this field
+        // (older routes/scopeOptions.js versions). No-op if absent.
+        setVertical(data?.vertical || null);
       } catch (err) {
         if (!cancelled) setLoadError(`Couldn't load: ${err.message}`);
       } finally {
@@ -363,6 +404,13 @@ export default function ScopeSettings() {
 
   const visibleServices = services.filter(s => s.options && s.options.length > 0);
 
+  // Wave 1: resolve a friendly vertical name for the header subtitle.
+  // Tries vertical.slug first, then vertical.name, falls back to null.
+  const verticalSubtitle = useMemo(() => {
+    if (!vertical) return null;
+    return formatVerticalName(vertical.slug) || formatVerticalName(vertical.name) || null;
+  }, [vertical]);
+
   // ─── Render ────────────────────────────────────────────────────────────────
   if (loading) {
     return (
@@ -376,7 +424,14 @@ export default function ScopeSettings() {
     <div className="max-w-3xl mx-auto">
       {/* Header */}
       <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">Standard Scope</h2>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">
+          Standard Scope
+          {verticalSubtitle && (
+            <span className="text-base font-normal text-gray-500 ml-2">
+              · {verticalSubtitle}
+            </span>
+          )}
+        </h2>
         <p className="text-sm text-gray-600 leading-relaxed">
           Configure what's included by default in your estimates. Customers see one price plus a clear
           "what's included" strip — no toggles, no decision fatigue. You can always upsell additional

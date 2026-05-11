@@ -3329,8 +3329,15 @@ wss.on("connection", async (twilioSocket, req) => {
   let callId = crypto.randomUUID();
   // callSid and isOutbound are handled at the top of handleConnection
   let streamSid = null;
-  let from = null;
-  let to = null;
+  // Initialize from/to from URL query params populated by handleTwilioVoice
+  // via buildTenantWsUrl. Twilio's Stream payload does NOT include From in
+  // msg.start by default unless you add <Parameter> elements to the TwiML —
+  // we don't, but we DO put From/To in the WebSocket URL query string.
+  // Without reading from `q` here, the closure's `from` stays null forever
+  // and any tool that uses it for caller identification (request_do_not_contact,
+  // cancel_appointment) silently fails the lookup.
+  let from = q.From || q.from || null;
+  let to = q.To || q.to || null;
   let transcript = "";
   let transferAttempted = false;
   let hasBooked = false;

@@ -2,6 +2,7 @@
 
 const db = require("../lib/db");
 const notificationService = require("./notifications");
+const { logAction } = require("../lib/auditLogger");
 
 /**
  * Derive contact_method from available signals when not explicitly passed.
@@ -163,17 +164,18 @@ async function getLeadsByTenant(tenantIds, limit = 50, offset = 0) {
  * automation, but previously cancelled sequences stay cancelled. This is
  * intentional — un-cancelling old sequences would surprise users.
  *
- * AUDIT LOG (Migration 060, May 9 2026): every flip writes an entry to
- * audit_logs with action='lead_dnc_enabled' or 'lead_dnc_disabled' and the
- * dnc_trigger_source column populated. This MUST happen for TCPA
- * compliance — every opt-out needs WHO + WHEN + WHAT TRIGGERED on file.
- * Wrapped in try/catch so a schema mismatch never blocks the DNC flip
- * itself (the flag on the lead row is the durable source of truth).
+ * AUDIT LOG — Migration 060 (May 9, 2026):
+ * This function now writes the audit_logs entry directly via logAction(),
+ * so EVERY caller path (dashboard PATCH, SMS keyword, SMS intent, voice
+ * intent) gets logged identically without duplication. The previous
+ * logAction call in routes/leads.js for DNC flips has been removed —
+ * routes/leads.js now ONLY passes ip_address + user_agent through options
+ * so this function can record them for SOC 2 evidence.
  *
  * Returns: { lead, cancelled_recoveries, cancelled_nurtures }
  *
  * options:
- *   - userId: dashboard_users.id of the person flipping the toggle (audit)
+ *   - userId: dashboard_users.id of the person flipping the toggle
  *   - reason: optional free-text reason ("customer asked us to stop")
  *   - cascade: defaults true; set false to flip the flag without
  *     cancelling sequences (rarely needed — admin debugging only)
@@ -183,6 +185,8 @@ async function getLeadsByTenant(tenantIds, limit = 50, offset = 0) {
  *       'sms_intent'       — AI classified soft phrase as opt-out
  *       'voice_intent'     — caller said opt-out during a call
  *       'compliance_email' — admin support ticket
+ *   - ip_address / user_agent: optional request context for SOC 2.
+ *     Dashboard PATCH path passes these; SMS/voice paths pass null.
  */
 async function setDoNotContact(leadId, value, options = {}) {
   if (!leadId) throw new Error("setDoNotContact: leadId required");
@@ -191,21 +195,23 @@ async function setDoNotContact(leadId, value, options = {}) {
     reason = null,
     cascade = true,
     trigger_source = 'owner_dashboard',
+    ip_address = null,
+    user_agent = null,
   } = options;
   const flagging = Boolean(value);
 
   // 1. Update the lead row. Source of truth.
- const leadRes = await db.query(
-  `UPDATE leads
-      SET do_not_contact         = $1,
-          do_not_contact_set_at  = CASE WHEN $1 THEN now() ELSE NULL END,
-          do_not_contact_set_by  = CASE WHEN $1 THEN $2::uuid ELSE NULL END,
-          do_not_contact_reason  = CASE WHEN $1 THEN $3 ELSE NULL END,
-          updated_at             = now()
-    WHERE id = $4::uuid
-    RETURNING *`,
-  [flagging, userId, reason, leadId]
-);
+  const leadRes = await db.query(
+    `UPDATE leads
+        SET do_not_contact         = $1,
+            do_not_contact_set_at  = CASE WHEN $1 THEN now() ELSE NULL END,
+            do_not_contact_set_by  = CASE WHEN $1 THEN $2::uuid ELSE NULL END,
+            do_not_contact_reason  = CASE WHEN $1 THEN $3 ELSE NULL END,
+            updated_at             = now()
+      WHERE id = $4::uuid
+      RETURNING *`,
+    [flagging, userId, reason, leadId]
+  );
 
   const lead = leadRes.rows[0];
   if (!lead) {
@@ -250,57 +256,37 @@ async function setDoNotContact(leadId, value, options = {}) {
     }
   }
 
-  // 3. Audit log. Centralized here (Migration 060) so EVERY caller path
-  // (dashboard PATCH, SMS keyword, SMS intent, voice intent) gets logged
-  // identically without each caller needing to remember. If routes/leads.js
-  // also writes an audit entry, you'll get double-writes — remove that one.
+  // 3. Audit log via canonical logAction() helper. This is the ONLY place
+  // DNC events get audited now — routes/leads.js used to call logAction
+  // itself after this function returned; that call has been removed in
+  // the same rollout. If you re-introduce a logAction call for DNC events
+  // elsewhere, you'll get double-writes.
   //
-  // Wrapped in try/catch because a missing-column or RLS error must NOT
-  // block the DNC flip. The flag on leads is the durable source of truth;
-  // audit_logs is for compliance reporting.
-  try {
-    // Resolve user_email for dashboard display. Best-effort — if the
-    // dashboard_users lookup fails (user deleted, RLS, etc.), the audit
-    // entry still goes through with email=null.
-    let setByEmail = null;
-    if (userId) {
-      try {
-        const u = await db.query(
-          "SELECT email FROM dashboard_users WHERE id = $1::uuid LIMIT 1",
-          [userId]
-        );
-        setByEmail = u.rows[0]?.email || null;
-      } catch (_) { /* best-effort lookup */ }
-    }
-
-    await db.query(
-      `INSERT INTO audit_logs
-         (tenant_id, action, resource_type, resource_id,
-          user_email, details, dnc_trigger_source, created_at)
-       VALUES ($1::uuid, $2, 'lead', $3::uuid,
-               $4, $5::jsonb, $6, now())`,
-      [
-        lead.tenant_id,
-        flagging ? 'lead_dnc_enabled' : 'lead_dnc_disabled',
-        leadId,
-        setByEmail,
-        JSON.stringify({
-          lead_id: leadId,
-          lead_phone: lead.phone || null,
-          user_id: userId,
-          user_email: setByEmail,
-          reason: reason,
-          cancelled_recoveries,
-          cancelled_nurtures,
-          trigger_source,
-        }),
-        trigger_source,
-      ]
-    );
-  } catch (err) {
-    console.error("[Leads] setDoNotContact: audit log INSERT failed leadId=%s err=%s",
-      leadId, err.message);
-  }
+  // logAction() is internally wrapped with try/catch + logs SDK errors, so
+  // a Supabase outage or column mismatch will not crash the DNC flip.
+  // The flag on leads is the durable source of truth; audit_logs is for
+  // compliance reporting only.
+  await logAction({
+    tenant_id: lead.tenant_id,
+    user_id: userId,
+    action: flagging ? "lead_dnc_enabled" : "lead_dnc_disabled",
+    entity_type: "lead",
+    entity_id: leadId,
+    old_value: {
+      do_not_contact: !flagging, // we just flipped, so old state was the opposite
+    },
+    new_value: {
+      do_not_contact: flagging,
+      reason,
+      cancelled_recoveries,
+      cancelled_nurtures,
+      trigger_source,
+      lead_phone: lead.phone || null,
+    },
+    ip_address,
+    user_agent,
+    dnc_trigger_source: trigger_source,
+  });
 
   console.log(
     "[Leads] setDoNotContact leadId=%s flag=%s userId=%s trigger_source=%s cancelled_recoveries=%d cancelled_nurtures=%d reason=%s",

@@ -14,6 +14,11 @@
  *     tenant_service_scope_options. If a tenant hasn't touched a toggle yet,
  *     `enabled` reflects the catalog's `default_enabled`.
  *
+ *     Wave 1 (May 11, 2026): response also includes a `vertical` block
+ *     ({ slug, name }) so the dashboard header can render the vertical
+ *     name as a subtitle. Defensive — fields may be null if the verticals
+ *     row is missing optional columns.
+ *
  *   PUT  /api/scope-options
  *     Bulk upsert of toggle state. Body: { changes: [{ service_id, option_key, enabled }, ...] }.
  *     Uses ON CONFLICT to handle both first-time and update writes. Wraps
@@ -41,6 +46,7 @@ const db      = require("../lib/db");
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/scope-options
 // Returns services + toggles + current state for the calling tenant.
+// Wave 1: also returns the tenant's vertical for header display.
 // ─────────────────────────────────────────────────────────────────────────────
 router.get("/", async (req, res) => {
   const tenantId = req.tenantId || req.user?.tenant_id;
@@ -49,6 +55,35 @@ router.get("/", async (req, res) => {
   }
 
   try {
+    // 0. Wave 1 — lookup the tenant's vertical for the dashboard header
+    //    subtitle. Non-fatal if missing; ScopeSettings.jsx handles null
+    //    gracefully by omitting the subtitle entirely.
+    //    SELECT v.* so we don't fail if the verticals schema changes; we
+    //    pluck only the fields the frontend reads.
+    let vertical = null;
+    try {
+      const verticalResult = await db.query(
+        `SELECT v.*
+           FROM verticals v
+           JOIN tenants t ON t.vertical_id = v.vertical_id
+          WHERE t.id = $1
+          LIMIT 1`,
+        [tenantId]
+      );
+      const vRow = verticalResult.rows[0];
+      if (vRow) {
+        vertical = {
+          slug: vRow.slug ?? null,
+          name: vRow.name ?? null,
+        };
+      }
+    } catch (vErr) {
+      // Non-fatal — log and continue with vertical=null. The frontend's
+      // header just won't show the subtitle.
+      console.warn("[ScopeOptions] vertical lookup failed (non-fatal) tenant=%s err=%s",
+        tenantId, vErr.message);
+    }
+
     // 1. Get the tenant's vertical_id and the services in that vertical.
     //    We join through tenants so we never return services from a vertical
     //    this tenant doesn't belong to.
@@ -66,7 +101,7 @@ router.get("/", async (req, res) => {
     if (servicesResult.rows.length === 0) {
       // Tenant has no vertical set, or no services in their vertical.
       // Frontend handles this with an empty-state message.
-      return res.json({ services: [] });
+      return res.json({ services: [], vertical });
     }
 
     const services = servicesResult.rows;
@@ -129,7 +164,7 @@ router.get("/", async (req, res) => {
       });
     });
 
-    res.json({ services: Object.values(byService) });
+    res.json({ services: Object.values(byService), vertical });
   } catch (err) {
     console.error("[ScopeOptions] GET failed tenant=%s err=%s", tenantId, err.message);
     res.status(500).json({ error: "Failed to load scope options" });

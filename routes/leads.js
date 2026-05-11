@@ -147,28 +147,15 @@ router.patch("/:id/do-not-contact", async (req, res) => {
     const result = await leadsService.setDoNotContact(req.params.id, value, {
       userId,
       reason: trimmedReason,
-    });
-
-    // Audit log — captures who flipped the toggle, when, and the cascade impact.
-    await logAction({
-      tenant_id: String(lead.tenant_id),
-      user_id: userId,
-      action: value ? "lead_dnc_enabled" : "lead_dnc_disabled",
-      entity_type: "lead",
-      entity_id: String(lead.id),
-      old_value: {
-        do_not_contact: lead.do_not_contact,
-        do_not_contact_reason: lead.do_not_contact_reason,
-      },
-      new_value: {
-        do_not_contact: value,
-        reason: trimmedReason,
-        cancelled_recoveries: result.cancelled_recoveries,
-        cancelled_nurtures: result.cancelled_nurtures,
-      },
+      trigger_source: "owner_dashboard",
+      // Migration 060 (May 9, 2026): audit logging moved into setDoNotContact()
+      // so every path (dashboard PATCH, SMS keyword, SMS intent, voice intent)
+      // is captured identically. The duplicate logAction() that used to live
+      // here was removed — passing ip_address + user_agent through options
+      // preserves SOC 2 evidence without double-writing.
       ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
       user_agent: req.get("user-agent") || null,
-    }).catch((e) => console.error("[Leads API] DNC audit log failed:", e.message));
+    });
 
     res.json({
       lead: result.lead,

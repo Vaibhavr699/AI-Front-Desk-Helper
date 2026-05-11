@@ -1253,10 +1253,19 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
     `  - "Stop!!" / "Don't come" (without explicit cancellation language)`,
     `  - "you are no longer needed" (ambiguous — ASK to clarify before cancelling)`,
     `  - General negativity, rudeness, confusion`,
-    "If the customer seems frustrated, apologize briefly, offer to have a human reach out, and DO NOT cancel anything.",
+   "If the customer seems frustrated, apologize briefly, offer to have a human reach out, and DO NOT cancel anything.",
+    "",
+    "should_dnc: set TRUE ONLY when customer EXPLICITLY asks to stop being contacted (TCPA opt-out):",
+    `  - "stop calling me" / "stop texting me" / "don't call me again"`,
+    `  - "do not contact me" / "remove me from your list" / "take me off your list"`,
+    `  - "I don't want to hear from you anymore" / "never message me again"`,
+    "DO NOT set should_dnc for any of these:",
+    `  - Single-word "STOP" / "UNSUBSCRIBE" / "CANCEL" — those fire BEFORE you see the message via the carrier keyword system. If you're seeing this message at all, those didn't trigger.`,
+    `  - General frustration without explicit opt-out: "this is annoying", "you're not helping", "I'm busy"`,
+    `  - Cancellation requests ("cancel my appointment") — that's should_cancel, not should_dnc`,
+    "When should_dnc=true, keep your reply short and neutral — the system will overwrite it with the formal opt-out confirmation, so don't waste words trying to retain them.",
     "",
     "should_reschedule: set TRUE only when customer wants to MOVE an existing appointment AND has provided both a new date AND a new time.",
-    "",
     "═══ SCHEDULE QUESTION DISAMBIGUATION ═══",
     "These ask about OUR work hours / OUR availability — answer informationally only, do NOT set should_book:",
     `  - "What's your schedule?" / "How busy are you?" / "When can you do the work?"`,
@@ -1322,7 +1331,7 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
 
   return [
     combined,
-    "\nReturn strict JSON only with keys: reply, lead_capture, should_book, should_cancel, should_reschedule, appointment_date, appointment_time, follow_up_minutes.",
+    "\nReturn strict JSON only with keys: reply, lead_capture, should_book, should_cancel, should_reschedule, should_dnc, appointment_date, appointment_time, follow_up_minutes.",
     `Known lead data: ${JSON.stringify(thread.leadCapture)}`,
   ].join("\n");
 }
@@ -1395,13 +1404,14 @@ async function runSmsAiOrchestrator(thread, incomingText, tenant = null) {
             should_book: { type: "boolean" },
             should_cancel: { type: "boolean" },
             should_reschedule: { type: "boolean" },
+            should_dnc: { type: "boolean" },
             appointment_date: { type: "string" },
             appointment_time: { type: "string" },
             follow_up_minutes: { type: "number" }
           },
           required: [
             "reply", "lead_capture", "should_book", "should_cancel",
-            "should_reschedule", "appointment_date", "appointment_time",
+            "should_reschedule", "should_dnc", "appointment_date", "appointment_time",
             "follow_up_minutes"
           ]
         },
@@ -1675,6 +1685,81 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
       }
     }
   }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // TCPA hard keyword opt-out (Migration 060, May 9 2026)
+  //
+  // Carrier-mandated STOP keywords MUST fire DNC immediately, with no AI
+  // round-trip and no chance of paraphrasing or misclassification.
+  // Soft phrases like "stop calling me" fall through to the AI orchestrator's
+  // should_dnc field (handled lower in this function).
+  //
+  // Normalization: trim, uppercase, strip everything non-letter. So:
+  //   "Stop."  → "STOP"    (match)
+  //   "stop!"  → "STOP"    (match)
+  //   "STOP "  → "STOP"    (match)
+  //   "I need to cancel my appointment" → "INEEDTOCANCEL..." (NO match)
+  // ─────────────────────────────────────────────────────────────────────
+  const STOP_KEYWORDS = new Set([
+    "STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT", "REMOVE", "OPTOUT"
+  ]);
+  const START_KEYWORDS = new Set(["START", "UNSTOP"]);
+  const tcpaNormalized = (incomingText || "").trim().toUpperCase().replace(/[^A-Z]/g, "");
+
+  if (tenant && thread.leadId && STOP_KEYWORDS.has(tcpaNormalized)) {
+    console.log("[TCPA] STOP keyword from phone=%s leadId=%s tenant=%s keyword=%s",
+      thread.phone, thread.leadId, tenant.id, tcpaNormalized);
+
+    try {
+      await leadsService.setDoNotContact(thread.leadId, true, {
+        reason: `SMS keyword: ${tcpaNormalized}`,
+        trigger_source: 'sms_keyword',
+      });
+    } catch (err) {
+      console.error("[TCPA] setDoNotContact (keyword) failed:", err.message);
+    }
+
+    const replyText = "You've been unsubscribed and will no longer receive messages from us. Reply START to opt back in.";
+    thread.history.push({ role: "assistant", text: replyText, at: new Date().toISOString() });
+    thread.lastOutboundAt = Date.now();
+    thread.needsFollowUpAt = null;
+    thread.cancelState = null;
+
+    messagesService.saveMessage(tenant.id, thread.leadId, thread.channel || "sms", "outbound", replyText, {
+      tcpa_dnc_confirmation: true,
+      trigger_source: 'sms_keyword',
+      keyword: tcpaNormalized,
+    });
+
+    return { reply: replyText, lead_capture: {}, booking_confirmed: null, dnc_set: true };
+  }
+
+  if (tenant && thread.leadId && START_KEYWORDS.has(tcpaNormalized)) {
+    console.log("[TCPA] START keyword from phone=%s leadId=%s tenant=%s",
+      thread.phone, thread.leadId, tenant.id);
+
+    try {
+      await leadsService.setDoNotContact(thread.leadId, false, {
+        reason: `SMS keyword: ${tcpaNormalized}`,
+        trigger_source: 'sms_keyword',
+      });
+    } catch (err) {
+      console.error("[TCPA] setDoNotContact (START re-enable) failed:", err.message);
+    }
+
+    const replyText = "You're opted back in. Reply STOP at any time to unsubscribe.";
+    thread.history.push({ role: "assistant", text: replyText, at: new Date().toISOString() });
+    thread.lastOutboundAt = Date.now();
+
+    messagesService.saveMessage(tenant.id, thread.leadId, thread.channel || "sms", "outbound", replyText, {
+      tcpa_optin_confirmation: true,
+      trigger_source: 'sms_keyword',
+      keyword: tcpaNormalized,
+    });
+
+    return { reply: replyText, lead_capture: {}, booking_confirmed: null, dnc_cleared: true };
+  }
+
  // ─────────────────────────────────────────────────────────────────────
   // Phase 4C (May 4, 2026) — SMS cancellation state machine.
   //
@@ -1728,6 +1813,42 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
       follow_up_minutes: SMS_FOLLOW_UP_DELAY_MINUTES,
       lead_capture: {}
     };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // TCPA soft-intent opt-out (Migration 060, May 9 2026)
+  //
+  // Hard keywords were caught BEFORE the AI ran. This handles soft phrases
+  // like "stop calling me", "don't text me again" that the AI classified as
+  // opt-out (should_dnc=true). We fire DNC + send the formal confirmation
+  // reply, overwriting whatever conversational ack the AI generated.
+  // ─────────────────────────────────────────────────────────────────────
+  if (ai.should_dnc && tenant && thread.leadId) {
+    console.log("[TCPA] AI intent DNC fired phone=%s leadId=%s tenant=%s msg=%s",
+      thread.phone, thread.leadId, tenant.id, (incomingText || "").slice(0, 80));
+
+    try {
+      await leadsService.setDoNotContact(thread.leadId, true, {
+        reason: `SMS intent: "${(incomingText || '').slice(0, 200)}"`,
+        trigger_source: 'sms_intent',
+      });
+    } catch (err) {
+      console.error("[TCPA] setDoNotContact (intent) failed:", err.message);
+    }
+
+    const replyText = "You've been unsubscribed and won't receive any further messages or calls from us. Reply START to opt back in.";
+    thread.history.push({ role: "assistant", text: replyText, at: new Date().toISOString() });
+    thread.lastOutboundAt = Date.now();
+    thread.needsFollowUpAt = null;
+    thread.cancelState = null;
+
+    messagesService.saveMessage(tenant.id, thread.leadId, thread.channel || "sms", "outbound", replyText, {
+      tcpa_dnc_confirmation: true,
+      trigger_source: 'sms_intent',
+      raw_message: (incomingText || "").slice(0, 200),
+    });
+
+    return { reply: replyText, lead_capture: {}, booking_confirmed: null, dnc_set: true };
   }
 
   mergeLeadCapture(thread, ai.lead_capture);
@@ -4034,6 +4155,117 @@ sendToOpenAI(sessionUpdate);
                 }).catch(e => console.error("Notification error:", e));
 
                 output = JSON.stringify(result);
+              }
+            } else if (name === "request_do_not_contact" && tenant && callId) {
+              // ─────────────────────────────────────────────────────────
+              // TCPA voice opt-out — Migration 060 (May 9, 2026)
+              //
+              // Caller explicitly asked to be removed from all contact.
+              // We:
+              //  1. Fire setDoNotContact + cascade-cancel recoveries/nurtures
+              //  2. Audit-log via setDoNotContact (trigger_source=voice_intent)
+              //  3. Notify the owner that a caller opted out
+              //  4. Schedule a safety-net hangup 5s out in case Alex
+              //     forgets to call hang_up after acknowledging
+              //
+              // CRITICAL: we use the resolved `leadId` (from `from` at WS
+              // handshake) rather than trusting any arg. Falls back to a
+              // phone-based lead lookup if leadId wasn't set yet (e.g.
+              // very fast hangup before getOrCreateLead resolved).
+              // ─────────────────────────────────────────────────────────
+              console.log("[AI-Desk] request_do_not_contact callSid=%s tenant=%s leadId=%s from=%s reason=%s",
+                callSid, tenant.id, leadId || "(none)", from || "(none)", args.reason || "(none)");
+
+              let dncFired = false;
+              let resolvedLeadId = leadId;
+
+              if (!resolvedLeadId && from) {
+                try {
+                  const leadRow = await db.query(
+                    `SELECT id FROM leads
+                       WHERE tenant_id = $1
+                         AND (
+                           phone = $2
+                           OR right(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) = $3
+                         )
+                       ORDER BY updated_at DESC LIMIT 1`,
+                    [tenant.id, from, getLast10Digits(from)]
+                  );
+                  if (leadRow.rows.length > 0) {
+                    resolvedLeadId = leadRow.rows[0].id;
+                  }
+                } catch (err) {
+                  console.error("[AI-Desk] request_do_not_contact phone-lookup failed:", err.message);
+                }
+              }
+
+              if (resolvedLeadId) {
+                try {
+                  await leadsService.setDoNotContact(resolvedLeadId, true, {
+                    reason: args.reason || `Voice caller from ${from || 'unknown'} explicitly requested DNC`,
+                    trigger_source: 'voice_intent',
+                  });
+                  dncFired = true;
+                } catch (err) {
+                  console.error("[AI-Desk] request_do_not_contact setDoNotContact failed:", err.message);
+                }
+              } else {
+                console.warn("[AI-Desk] request_do_not_contact: no lead found for phone=%s tenant=%s — DNC not applied",
+                  from || "(unknown)", tenant.id);
+              }
+
+              // Update the call record with the disposition for audit
+              safeUpdateCallSummary(callId, {
+                disposition: 'dnc_requested',
+                metadata: {
+                  ...currentLeadCapture,
+                  dnc_fired: dncFired,
+                  dnc_trigger_source: 'voice_intent',
+                  dnc_reason: args.reason || null,
+                }
+              }).catch((err) => console.error("[AI-Desk] DNC call summary update failed:", err.message));
+
+              // Owner-facing notification
+              notificationsService.createNotification(tenant.id, {
+                type: 'dnc_requested',
+                title: 'Caller Requested Do-Not-Contact',
+                body: `A caller from ${from || 'unknown number'} explicitly asked to be removed from contact during a voice call. ${dncFired ? 'DNC applied.' : 'DNC NOT applied (no matching lead found — manual review needed).'}`,
+                data: { callSid, callId, from, leadId: resolvedLeadId, dnc_fired: dncFired, reason: args.reason }
+              }).catch((e) => console.error("DNC notification error:", e));
+
+              output = JSON.stringify({
+                success: dncFired,
+                message: dncFired
+                  ? "DNC applied. Tell the caller in ONE short sentence, calm and warm: 'Got it. I'll make sure you're removed from our list right away. Take care.' Then immediately call hang_up. DO NOT argue, DO NOT ask why, DO NOT try to retain."
+                  : "I couldn't find their record automatically, but they've asked to opt out and we'll handle it manually. Tell the caller in ONE short sentence: 'Got it — I'll make a note and have someone update our records. Take care.' Then immediately call hang_up.",
+              });
+
+              // Safety-net hangup: if Alex forgets to call hang_up after
+              // the acknowledgment, close the call from our side at 5s.
+              // hasScheduledHangup flag prevents double-fire with hang_up.
+              if (!hasScheduledHangup && callSid) {
+                hasScheduledHangup = true;
+                setTimeout(async () => {
+                  try {
+                    const client = twilioLib.getClientForTenant(tenant);
+                    if (client && callSid) {
+                      await client.calls(callSid).update({ status: "completed" });
+                      console.log("[AI-Desk] DNC safety-net hangup triggered callSid=%s", callSid);
+                    }
+                  } catch (e) {
+                    console.error("[AI-Desk] DNC safety-net hangup failed:", e.message);
+                  }
+                  clearSilenceTimers();
+                  if (openaiSocket?.readyState === WebSocket.OPEN) openaiSocket.close();
+                  if (twilioSocket.readyState === WebSocket.OPEN) twilioSocket.close();
+                  await safeUpdateCallSummary(callId, {
+                    status: "completed",
+                    disposition: dncFired ? "dnc_requested" : "dnc_attempted",
+                    transcript,
+                    metadata: { ...currentLeadCapture, hangup_reason: "dnc_safety_net" },
+                    markEnded: true,
+                  });
+                }, 5000);
               }
             } else if (name === "hang_up" && callSid) {
               console.log("[AI-Desk] Realtime hang_up trigger callSid=%s", callSid);

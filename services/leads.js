@@ -163,6 +163,13 @@ async function getLeadsByTenant(tenantIds, limit = 50, offset = 0) {
  * automation, but previously cancelled sequences stay cancelled. This is
  * intentional — un-cancelling old sequences would surprise users.
  *
+ * AUDIT LOG (Migration 060, May 9 2026): every flip writes an entry to
+ * audit_logs with action='lead_dnc_enabled' or 'lead_dnc_disabled' and the
+ * dnc_trigger_source column populated. This MUST happen for TCPA
+ * compliance — every opt-out needs WHO + WHEN + WHAT TRIGGERED on file.
+ * Wrapped in try/catch so a schema mismatch never blocks the DNC flip
+ * itself (the flag on the lead row is the durable source of truth).
+ *
  * Returns: { lead, cancelled_recoveries, cancelled_nurtures }
  *
  * options:
@@ -170,10 +177,21 @@ async function getLeadsByTenant(tenantIds, limit = 50, offset = 0) {
  *   - reason: optional free-text reason ("customer asked us to stop")
  *   - cascade: defaults true; set false to flip the flag without
  *     cancelling sequences (rarely needed — admin debugging only)
+ *   - trigger_source: where the flip originated, for TCPA audit
+ *       'owner_dashboard' (default) — manual toggle in CRM
+ *       'sms_keyword'      — STOP/UNSUBSCRIBE/etc carrier keyword
+ *       'sms_intent'       — AI classified soft phrase as opt-out
+ *       'voice_intent'     — caller said opt-out during a call
+ *       'compliance_email' — admin support ticket
  */
 async function setDoNotContact(leadId, value, options = {}) {
   if (!leadId) throw new Error("setDoNotContact: leadId required");
-  const { userId = null, reason = null, cascade = true } = options;
+  const {
+    userId = null,
+    reason = null,
+    cascade = true,
+    trigger_source = 'owner_dashboard',
+  } = options;
   const flagging = Boolean(value);
 
   // 1. Update the lead row. Source of truth.
@@ -232,9 +250,61 @@ async function setDoNotContact(leadId, value, options = {}) {
     }
   }
 
+  // 3. Audit log. Centralized here (Migration 060) so EVERY caller path
+  // (dashboard PATCH, SMS keyword, SMS intent, voice intent) gets logged
+  // identically without each caller needing to remember. If routes/leads.js
+  // also writes an audit entry, you'll get double-writes — remove that one.
+  //
+  // Wrapped in try/catch because a missing-column or RLS error must NOT
+  // block the DNC flip. The flag on leads is the durable source of truth;
+  // audit_logs is for compliance reporting.
+  try {
+    // Resolve user_email for dashboard display. Best-effort — if the
+    // dashboard_users lookup fails (user deleted, RLS, etc.), the audit
+    // entry still goes through with email=null.
+    let setByEmail = null;
+    if (userId) {
+      try {
+        const u = await db.query(
+          "SELECT email FROM dashboard_users WHERE id = $1::uuid LIMIT 1",
+          [userId]
+        );
+        setByEmail = u.rows[0]?.email || null;
+      } catch (_) { /* best-effort lookup */ }
+    }
+
+    await db.query(
+      `INSERT INTO audit_logs
+         (tenant_id, action, resource_type, resource_id,
+          user_email, details, dnc_trigger_source, created_at)
+       VALUES ($1::uuid, $2, 'lead', $3::uuid,
+               $4, $5::jsonb, $6, now())`,
+      [
+        lead.tenant_id,
+        flagging ? 'lead_dnc_enabled' : 'lead_dnc_disabled',
+        leadId,
+        setByEmail,
+        JSON.stringify({
+          lead_id: leadId,
+          lead_phone: lead.phone || null,
+          user_id: userId,
+          user_email: setByEmail,
+          reason: reason,
+          cancelled_recoveries,
+          cancelled_nurtures,
+          trigger_source,
+        }),
+        trigger_source,
+      ]
+    );
+  } catch (err) {
+    console.error("[Leads] setDoNotContact: audit log INSERT failed leadId=%s err=%s",
+      leadId, err.message);
+  }
+
   console.log(
-    "[Leads] setDoNotContact leadId=%s flag=%s userId=%s cancelled_recoveries=%d cancelled_nurtures=%d reason=%s",
-    leadId, flagging, userId || "(none)", cancelled_recoveries, cancelled_nurtures, reason || "(none)"
+    "[Leads] setDoNotContact leadId=%s flag=%s userId=%s trigger_source=%s cancelled_recoveries=%d cancelled_nurtures=%d reason=%s",
+    leadId, flagging, userId || "(none)", trigger_source, cancelled_recoveries, cancelled_nurtures, reason || "(none)"
   );
 
   return { lead, cancelled_recoveries, cancelled_nurtures };

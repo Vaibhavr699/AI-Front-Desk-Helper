@@ -1,0 +1,633 @@
+-- ============================================================================
+-- Migration 066 — Phase 7 Estimator: Home Exterior Mega-Vertical
+-- Date:    May 11, 2026
+-- Author:  Drew Koch
+-- Phase:   7 (Estimator Engine V1, Wave 2 — Paragon Exteriors launch)
+--
+-- Context:
+--   The first multi-trade customer (Paragon Exteriors) needs a single
+--   vertical that bundles roofing + siding + fence + gutters. Rather than
+--   refactor to multi-vertical-tenant architecture, we create a unified
+--   "home_exterior" mega-vertical containing copies of all 20 services
+--   from the 4 standalone trade verticals (Migs 062 through 065).
+--
+-- Architecture:
+--   - Services / default_rates / scope_options: COPIED from trade verticals
+--     via slug-based joins, so changes to industry pricing only need to be
+--     made in one place per trade if we ever want to keep them synced.
+--   - Modifier categories: CUSTOM-designed for the mega. Trade-specific
+--     categories that share slugs across trades (existing_removal) are
+--     renamed with trade prefixes (existing_siding_removal, etc.) to satisfy
+--     the (vertical_id, category_slug) unique constraint.
+--   - Widget questions: CUSTOM-designed. Trade-scoped via service_slug
+--     column — widget shows questions where service_slug is NULL (universal),
+--     equals selected service slug, or equals selected service's trade
+--     ('roofing' / 'siding' / 'fence' / 'gutters'). Requires the widget JS
+--     to derive trade from the selected service slug.
+--
+-- Standalone trade verticals (Migs 062-065) remain intact and untouched.
+-- They stay useful for any future single-trade customer (e.g., Demo Roofing
+-- Co for sales demos, a fencing-only contractor, etc.).
+--
+-- Idempotency:
+--   ON CONFLICT DO NOTHING throughout. Safe to re-run.
+-- ============================================================================
+
+BEGIN;
+
+-- ============================================================================
+-- SECTION 1: Mega-vertical
+-- ============================================================================
+INSERT INTO verticals (slug, display_name, status, pricing_mode) VALUES
+  ('home_exterior', 'Home Exterior Services', 'active', 'bundled')
+ON CONFLICT (slug) DO NOTHING;
+
+DO $$
+DECLARE
+  v_mega_id INTEGER;
+BEGIN
+  SELECT vertical_id INTO v_mega_id FROM verticals WHERE slug = 'home_exterior';
+  RAISE NOTICE 'home_exterior vertical_id = %', v_mega_id;
+END $$;
+
+-- ============================================================================
+-- SECTION 2: Regional multipliers
+-- ============================================================================
+INSERT INTO vertical_regional_multipliers (vertical_id, bucket, multiplier)
+SELECT v.vertical_id, b.bucket, b.mult
+FROM verticals v
+CROSS JOIN (VALUES ('high', 1.25), ('mid', 1.00), ('low', 0.85)) AS b(bucket, mult)
+WHERE v.slug = 'home_exterior'
+ON CONFLICT (vertical_id, bucket) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 3: Services — COPIED from 4 trade verticals (20 rows)
+-- ============================================================================
+-- sort_order is re-assigned so all 20 services appear in trade-grouped order
+-- in the widget service picker: 1-5 roofing, 6-10 siding, 11-15 fence,
+-- 16-20 gutters.
+-- ----------------------------------------------------------------------------
+INSERT INTO vertical_services (vertical_id, service_slug, display_name, pricing_mode, unit, sort_order, materials_pct)
+SELECT
+  mega.vertical_id,
+  vs.service_slug,
+  vs.display_name,
+  vs.pricing_mode,
+  vs.unit,
+  CASE tv.slug
+    WHEN 'roofing' THEN vs.sort_order          -- 1-5
+    WHEN 'siding'  THEN vs.sort_order + 5      -- 6-10
+    WHEN 'fence'   THEN vs.sort_order + 10     -- 11-15
+    WHEN 'gutters' THEN vs.sort_order + 15     -- 16-20
+  END AS sort_order,
+  vs.materials_pct
+FROM vertical_services vs
+JOIN verticals tv ON tv.vertical_id = vs.vertical_id
+CROSS JOIN (SELECT vertical_id FROM verticals WHERE slug = 'home_exterior') AS mega
+WHERE tv.slug IN ('roofing', 'siding', 'fence', 'gutters')
+ON CONFLICT (vertical_id, service_slug) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 4: Modifier categories — CUSTOM-designed (13 rows)
+-- ============================================================================
+INSERT INTO vertical_modifier_categories (vertical_id, category_slug, display_name, modifier_type, multi_select, options, sort_order)
+SELECT v.vertical_id, m.slug, m.display_name, m.mod_type, m.multi_select, m.options::jsonb, m.sort_order
+FROM verticals v
+CROSS JOIN (VALUES
+
+  -- ─── UNIVERSAL: access_difficulty (applies to all 20 services) ──────
+  ('access_difficulty', 'Access difficulty', 'percentage', FALSE,
+   '[
+     {"value": "standard",     "label": "Standard access",       "adjustment":  0.00},
+     {"value": "complex",      "label": "Tight or sloped lot",   "adjustment":  0.10},
+     {"value": "very_complex", "label": "Very difficult access", "adjustment": null, "routes_to": "specialized"}
+   ]', 1),
+
+  -- ─── ROOFING-only modifiers ─────────────────────────────────────────
+  ('roof_complexity', 'Roof features', 'percentage', TRUE,
+   '[
+     {"value": "skylights",       "label": "Skylights",            "adjustment": 0.05},
+     {"value": "multiple_ridges", "label": "Multiple roof ridges", "adjustment": 0.08},
+     {"value": "dormers",         "label": "Dormers",              "adjustment": 0.10},
+     {"value": "chimneys",        "label": "One or more chimneys", "adjustment": 0.03}
+   ]', 2),
+
+  ('decking_condition', 'Roof decking condition', 'percentage', FALSE,
+   '[
+     {"value": "sound",        "label": "Sound, no known damage",   "adjustment": 0.00},
+     {"value": "some_repair",  "label": "Some repair likely needed","adjustment": 0.10},
+     {"value": "major_repair", "label": "Major damage",             "adjustment": null, "routes_to": "specialized"}
+   ]', 3),
+
+  -- ─── SIDING-only modifiers ──────────────────────────────────────────
+  ('siding_complexity', 'Siding features', 'percentage', TRUE,
+   '[
+     {"value": "dormers",         "label": "Dormers",                    "adjustment": 0.08},
+     {"value": "bay_windows",     "label": "Bay windows",                "adjustment": 0.10},
+     {"value": "complex_corners", "label": "Complex corner work",        "adjustment": 0.06},
+     {"value": "custom_cuts",     "label": "Lots of custom cuts/angles", "adjustment": 0.12},
+     {"value": "mixed_materials", "label": "Mixed siding materials",     "adjustment": 0.15}
+   ]', 4),
+
+  ('trim_detail', 'Trim detail', 'percentage', FALSE,
+   '[
+     {"value": "minimal",   "label": "Minimal trim",                 "adjustment": -0.05},
+     {"value": "average",   "label": "Average trim",                 "adjustment":  0.00},
+     {"value": "extensive", "label": "Extensive trim/fascia/soffit", "adjustment":  0.10}
+   ]', 5),
+
+  ('existing_siding_removal', 'Existing siding', 'percentage', FALSE,
+   '[
+     {"value": "no_removal",    "label": "New construction (no removal)", "adjustment": 0.00},
+     {"value": "vinyl_removal", "label": "Remove vinyl or aluminum",      "adjustment": 0.08},
+     {"value": "wood_removal",  "label": "Remove wood or cedar",          "adjustment": 0.12},
+     {"value": "asbestos",      "label": "Asbestos siding present",       "adjustment": null, "routes_to": "specialized"}
+   ]', 6),
+
+  -- ─── FENCE-only modifiers ───────────────────────────────────────────
+  ('fence_height', 'Fence height', 'percentage', FALSE,
+   '[
+     {"value": "4ft", "label": "4 feet (decorative)",       "adjustment": -0.15},
+     {"value": "6ft", "label": "6 feet (standard privacy)", "adjustment":  0.00},
+     {"value": "8ft", "label": "8 feet (maximum privacy)",  "adjustment":  0.25}
+   ]', 7),
+
+  ('terrain', 'Property terrain', 'percentage', FALSE,
+   '[
+     {"value": "flat",       "label": "Flat or gentle slope",    "adjustment":  0.00},
+     {"value": "sloped",     "label": "Sloped (stepped panels)", "adjustment":  0.10},
+     {"value": "very_steep", "label": "Very steep terrain",      "adjustment": null, "routes_to": "specialized"}
+   ]', 8),
+
+  ('existing_fence_removal', 'Existing fence removal', 'percentage', FALSE,
+   '[
+     {"value": "no_removal",         "label": "No existing fence (new install)",         "adjustment": 0.00},
+     {"value": "chain_link_removal", "label": "Remove existing chain link / wire",       "adjustment": 0.05},
+     {"value": "wood_removal",       "label": "Remove existing wood fence",              "adjustment": 0.10},
+     {"value": "concrete_footings",  "label": "Existing concrete footings need removal", "adjustment": 0.20}
+   ]', 9),
+
+  ('gates_count', 'Number of gates', 'flat_per_item', FALSE,
+   '[
+     {"value": "gates", "label": "Gates", "adjustment": 40000}
+   ]', 10),
+
+  -- ─── GUTTERS-only modifiers ─────────────────────────────────────────
+  ('gutter_height', 'Gutter height (stories)', 'percentage', FALSE,
+   '[
+     {"value": "single",     "label": "Single story",          "adjustment":  0.00},
+     {"value": "two_story",  "label": "Two-story",             "adjustment":  0.15},
+     {"value": "three_plus", "label": "Three or more stories", "adjustment": null, "routes_to": "specialized"}
+   ]', 11),
+
+  ('existing_gutter_removal', 'Existing gutter removal', 'percentage', FALSE,
+   '[
+     {"value": "no_removal",       "label": "New construction (no removal)",    "adjustment": 0.00},
+     {"value": "aluminum_removal", "label": "Remove existing aluminum",         "adjustment": 0.05},
+     {"value": "severe_damage",    "label": "Severe damage / rusted / falling", "adjustment": 0.15}
+   ]', 12),
+
+  ('downspouts_count', 'Number of downspouts', 'flat_per_item', FALSE,
+   '[
+     {"value": "downspouts", "label": "Downspouts", "adjustment": 15000}
+   ]', 13)
+
+) AS m(slug, display_name, mod_type, multi_select, options, sort_order)
+WHERE v.slug = 'home_exterior'
+ON CONFLICT (vertical_id, category_slug) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 5: Junction — service-modifier mappings (80 rows)
+-- ============================================================================
+-- access_difficulty:        all 20 services            =  20 rows
+-- roof_complexity:          5 roofing services         =   5 rows
+-- decking_condition:        5 roofing services         =   5 rows
+-- siding_complexity:        5 siding services          =   5 rows
+-- trim_detail:              5 siding services          =   5 rows
+-- existing_siding_removal:  5 siding services          =   5 rows
+-- fence_height:             5 fence services           =   5 rows
+-- terrain:                  5 fence services           =   5 rows
+-- existing_fence_removal:   5 fence services           =   5 rows
+-- gates_count:              5 fence services           =   5 rows
+-- gutter_height:            5 gutter services          =   5 rows
+-- existing_gutter_removal:  5 gutter services          =   5 rows
+-- downspouts_count:         5 gutter services          =   5 rows
+--                                              TOTAL  =  80 rows
+-- ----------------------------------------------------------------------------
+
+-- Universal: access_difficulty applies to all 20 services
+INSERT INTO vertical_service_modifier_categories (service_id, modifier_category_id, required, sort_order)
+SELECT vs.id, vmc.id, TRUE, 99
+FROM vertical_services vs
+JOIN verticals v ON v.vertical_id = vs.vertical_id
+JOIN vertical_modifier_categories vmc ON vmc.vertical_id = v.vertical_id
+WHERE v.slug = 'home_exterior'
+  AND vmc.category_slug = 'access_difficulty'
+ON CONFLICT (service_id, modifier_category_id) DO NOTHING;
+
+-- Roofing-specific: roof_complexity, decking_condition for 5 roofing services
+INSERT INTO vertical_service_modifier_categories (service_id, modifier_category_id, required, sort_order)
+SELECT vs.id, vmc.id,
+       CASE vmc.category_slug WHEN 'decking_condition' THEN TRUE ELSE FALSE END AS required,
+       CASE vmc.category_slug WHEN 'roof_complexity' THEN 1 WHEN 'decking_condition' THEN 2 END AS sort_order
+FROM vertical_services vs
+JOIN verticals v ON v.vertical_id = vs.vertical_id
+JOIN vertical_modifier_categories vmc ON vmc.vertical_id = v.vertical_id
+WHERE v.slug = 'home_exterior'
+  AND vs.service_slug IN ('asphalt_shingle', 'metal_standing_seam', 'tile', 'slate', 'flat_epdm')
+  AND vmc.category_slug IN ('roof_complexity', 'decking_condition')
+ON CONFLICT (service_id, modifier_category_id) DO NOTHING;
+
+-- Siding-specific: siding_complexity, trim_detail, existing_siding_removal for 5 siding services
+INSERT INTO vertical_service_modifier_categories (service_id, modifier_category_id, required, sort_order)
+SELECT vs.id, vmc.id,
+       CASE vmc.category_slug
+         WHEN 'siding_complexity'       THEN FALSE
+         WHEN 'trim_detail'             THEN TRUE
+         WHEN 'existing_siding_removal' THEN TRUE
+       END AS required,
+       CASE vmc.category_slug
+         WHEN 'siding_complexity'       THEN 1
+         WHEN 'trim_detail'             THEN 2
+         WHEN 'existing_siding_removal' THEN 3
+       END AS sort_order
+FROM vertical_services vs
+JOIN verticals v ON v.vertical_id = vs.vertical_id
+JOIN vertical_modifier_categories vmc ON vmc.vertical_id = v.vertical_id
+WHERE v.slug = 'home_exterior'
+  AND vs.service_slug IN ('siding_vinyl', 'siding_fiber_cement', 'siding_wood', 'siding_stucco', 'siding_metal')
+  AND vmc.category_slug IN ('siding_complexity', 'trim_detail', 'existing_siding_removal')
+ON CONFLICT (service_id, modifier_category_id) DO NOTHING;
+
+-- Fence-specific: fence_height, terrain, existing_fence_removal, gates_count for 5 fence services
+INSERT INTO vertical_service_modifier_categories (service_id, modifier_category_id, required, sort_order)
+SELECT vs.id, vmc.id,
+       CASE vmc.category_slug
+         WHEN 'fence_height'           THEN TRUE
+         WHEN 'terrain'                THEN TRUE
+         WHEN 'existing_fence_removal' THEN TRUE
+         WHEN 'gates_count'            THEN FALSE
+       END AS required,
+       CASE vmc.category_slug
+         WHEN 'fence_height'           THEN 1
+         WHEN 'terrain'                THEN 2
+         WHEN 'existing_fence_removal' THEN 3
+         WHEN 'gates_count'            THEN 4
+       END AS sort_order
+FROM vertical_services vs
+JOIN verticals v ON v.vertical_id = vs.vertical_id
+JOIN vertical_modifier_categories vmc ON vmc.vertical_id = v.vertical_id
+WHERE v.slug = 'home_exterior'
+  AND vs.service_slug IN ('fence_wood_privacy', 'fence_vinyl', 'fence_chain_link', 'fence_aluminum_ornamental', 'fence_composite')
+  AND vmc.category_slug IN ('fence_height', 'terrain', 'existing_fence_removal', 'gates_count')
+ON CONFLICT (service_id, modifier_category_id) DO NOTHING;
+
+-- Gutter-specific: gutter_height, existing_gutter_removal, downspouts_count for 5 gutter services
+INSERT INTO vertical_service_modifier_categories (service_id, modifier_category_id, required, sort_order)
+SELECT vs.id, vmc.id,
+       CASE vmc.category_slug
+         WHEN 'gutter_height'            THEN TRUE
+         WHEN 'existing_gutter_removal'  THEN FALSE
+         WHEN 'downspouts_count'         THEN FALSE
+       END AS required,
+       CASE vmc.category_slug
+         WHEN 'gutter_height'            THEN 1
+         WHEN 'existing_gutter_removal'  THEN 2
+         WHEN 'downspouts_count'         THEN 3
+       END AS sort_order
+FROM vertical_services vs
+JOIN verticals v ON v.vertical_id = vs.vertical_id
+JOIN vertical_modifier_categories vmc ON vmc.vertical_id = v.vertical_id
+WHERE v.slug = 'home_exterior'
+  AND vs.service_slug IN ('gutter_aluminum_5in', 'gutter_aluminum_6in', 'gutter_half_round', 'gutter_copper', 'gutter_guards')
+  AND vmc.category_slug IN ('gutter_height', 'existing_gutter_removal', 'downspouts_count')
+ON CONFLICT (service_id, modifier_category_id) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 6: Widget questions (24 rows)
+-- ============================================================================
+-- Tagging convention: service_slug column carries either:
+--   NULL          → universal across all services
+--   'roofing' / 'siding' / 'fence' / 'gutters'  → trade-level (widget shows
+--                                                  when selected service
+--                                                  belongs to that trade)
+--   <service_slug>  → service-specific (not used here in V1)
+--
+-- Requires widget JS to derive trade from selected service slug and filter
+-- questions accordingly. Service→trade mapping is straightforward by prefix
+-- (siding_*, fence_*, gutter_*) plus the 5 hardcoded roofing service slugs.
+-- ----------------------------------------------------------------------------
+INSERT INTO vertical_widget_questions (vertical_id, service_slug, question_slug, question_type, label, helper_text, options, required, sort_order)
+SELECT v.vertical_id, q.service_slug, q.question_slug, q.question_type, q.label, q.helper_text, q.options::jsonb, q.required, q.sort_order
+FROM verticals v
+CROSS JOIN (VALUES
+
+  -- ─── UNIVERSAL ──────────────────────────────────────────────────────
+  (NULL, 'service_type', 'select',
+   'What kind of work do you need?',
+   'Not sure? Pick the closest match — we''ll confirm during the walkthrough.',
+   '[
+     {"value": "asphalt_shingle",          "label": "Roofing — Asphalt shingle"},
+     {"value": "metal_standing_seam",      "label": "Roofing — Metal standing seam"},
+     {"value": "tile",                     "label": "Roofing — Tile"},
+     {"value": "slate",                    "label": "Roofing — Slate"},
+     {"value": "flat_epdm",                "label": "Roofing — Flat / EPDM"},
+     {"value": "siding_vinyl",             "label": "Siding — Vinyl"},
+     {"value": "siding_fiber_cement",      "label": "Siding — Fiber cement (Hardie)"},
+     {"value": "siding_wood",              "label": "Siding — Wood / cedar"},
+     {"value": "siding_stucco",            "label": "Siding — Stucco / EIFS"},
+     {"value": "siding_metal",             "label": "Siding — Metal panel"},
+     {"value": "fence_wood_privacy",       "label": "Fence — Wood privacy"},
+     {"value": "fence_vinyl",              "label": "Fence — Vinyl"},
+     {"value": "fence_chain_link",         "label": "Fence — Chain link"},
+     {"value": "fence_aluminum_ornamental","label": "Fence — Aluminum / ornamental"},
+     {"value": "fence_composite",          "label": "Fence — Composite"},
+     {"value": "gutter_aluminum_5in",      "label": "Gutters — 5\" Aluminum"},
+     {"value": "gutter_aluminum_6in",      "label": "Gutters — 6\" Aluminum"},
+     {"value": "gutter_half_round",        "label": "Gutters — Half-round"},
+     {"value": "gutter_copper",            "label": "Gutters — Copper"},
+     {"value": "gutter_guards",            "label": "Gutter guards on existing gutters"},
+     {"value": "specialized",              "label": "Not sure / specialized project"}
+   ]', TRUE, 1),
+
+  -- ─── ROOFING TRADE ──────────────────────────────────────────────────
+  ('roofing', 'home_floor_sqft', 'number',
+   'Approximately how many square feet is your home?',
+   'Total finished floor area. We use this with pitch and stories to estimate roof surface.',
+   '{"min": 500, "max": 10000, "step": 100, "unit": "sqft"}', TRUE, 10),
+
+  ('roofing', 'roof_pitch', 'select',
+   'How steep is your roof?',
+   'If you''re not sure, "Standard" is correct for most homes built since 1970.',
+   '[
+     {"value": "low",       "label": "Low pitch / nearly flat (under 4/12)"},
+     {"value": "medium",    "label": "Standard pitch (4/12 to 8/12, most common)"},
+     {"value": "steep",     "label": "Steep (9/12 to 12/12)"},
+     {"value": "very_steep","label": "Very steep (over 12/12)", "routes_to": "specialized"}
+   ]', TRUE, 11),
+
+  ('roofing', 'stories', 'select',
+   'How many stories?',
+   'We divide by floor count to estimate roof footprint.',
+   '[
+     {"value": "single",     "label": "Single story"},
+     {"value": "two_story",  "label": "Two-story"},
+     {"value": "three_plus", "label": "Three or more stories", "routes_to": "specialized"}
+   ]', TRUE, 12),
+
+  ('roofing', 'roof_complexity', 'multi_select',
+   'Does your roof have any of these features? (Pick all that apply)',
+   NULL,
+   '[
+     {"value": "skylights",       "label": "Skylights"},
+     {"value": "multiple_ridges", "label": "Multiple roof ridges"},
+     {"value": "dormers",         "label": "Dormers"},
+     {"value": "chimneys",        "label": "One or more chimneys"}
+   ]', FALSE, 13),
+
+  ('roofing', 'decking_condition', 'select',
+   'What''s the condition of your roof decking?',
+   'Decking is the wood layer under your shingles. Major damage routes to in-person.',
+   '[
+     {"value": "sound",        "label": "Sound, no known damage"},
+     {"value": "some_repair",  "label": "Some repair likely needed"},
+     {"value": "major_repair", "label": "Major damage / extensive replacement"}
+   ]', TRUE, 14),
+
+  -- ─── SIDING TRADE ───────────────────────────────────────────────────
+  ('siding', 'home_floor_sqft', 'number',
+   'Approximately how many square feet is your home?',
+   'Total finished floor area. We use this with stories to estimate siding surface.',
+   '{"min": 500, "max": 10000, "step": 100, "unit": "sqft"}', TRUE, 20),
+
+  ('siding', 'stories', 'select',
+   'How many stories is your home?',
+   NULL,
+   '[
+     {"value": "single",     "label": "Single story"},
+     {"value": "split",      "label": "Split level"},
+     {"value": "two_story",  "label": "Two-story"},
+     {"value": "three_plus", "label": "Three or more stories", "routes_to": "specialized"}
+   ]', TRUE, 21),
+
+  ('siding', 'existing_siding_removal', 'select',
+   'Does existing siding need to be removed?',
+   'New construction skips removal. Asbestos siding requires in-person inspection.',
+   '[
+     {"value": "no_removal",    "label": "New construction (no removal)"},
+     {"value": "vinyl_removal", "label": "Remove vinyl or aluminum"},
+     {"value": "wood_removal",  "label": "Remove wood or cedar"},
+     {"value": "asbestos",      "label": "Asbestos siding present", "routes_to": "specialized"}
+   ]', TRUE, 22),
+
+  ('siding', 'siding_complexity', 'multi_select',
+   'Does your home have any of these features? (Pick all that apply)',
+   NULL,
+   '[
+     {"value": "dormers",         "label": "Dormers"},
+     {"value": "bay_windows",     "label": "Bay windows"},
+     {"value": "complex_corners", "label": "Complex corner work"},
+     {"value": "custom_cuts",     "label": "Lots of custom cuts or angles"},
+     {"value": "mixed_materials", "label": "Mixing siding materials"}
+   ]', FALSE, 23),
+
+  ('siding', 'trim_detail', 'select',
+   'How much trim, fascia, and soffit work is involved?',
+   NULL,
+   '[
+     {"value": "minimal",   "label": "Minimal trim"},
+     {"value": "average",   "label": "Average trim"},
+     {"value": "extensive", "label": "Extensive trim, fascia, or soffit work"}
+   ]', TRUE, 24),
+
+  -- ─── FENCE TRADE ────────────────────────────────────────────────────
+  ('fence', 'fence_linear_ft', 'number',
+   'How many linear feet of fence do you need?',
+   'Total perimeter — a typical residential backyard is 150-250 linear feet.',
+   '{"min": 10, "max": 2000, "step": 10, "unit": "linear_feet"}', TRUE, 30),
+
+  ('fence', 'fence_height', 'select',
+   'How tall do you want the fence?',
+   'Six feet is the standard privacy height. Check HOA or municipal rules.',
+   '[
+     {"value": "4ft", "label": "4 feet (decorative)"},
+     {"value": "6ft", "label": "6 feet (standard privacy)"},
+     {"value": "8ft", "label": "8 feet (maximum privacy)"}
+   ]', TRUE, 31),
+
+  ('fence', 'terrain', 'select',
+   'What is the terrain like on your fence line?',
+   'Sloped lots require stepped panels or contoured installation.',
+   '[
+     {"value": "flat",       "label": "Flat or gentle slope"},
+     {"value": "sloped",     "label": "Sloped (stepped panels)"},
+     {"value": "very_steep", "label": "Very steep terrain", "routes_to": "specialized"}
+   ]', TRUE, 32),
+
+  ('fence', 'existing_fence_removal', 'select',
+   'Does an existing fence need to be removed?',
+   NULL,
+   '[
+     {"value": "no_removal",         "label": "No existing fence (new install)"},
+     {"value": "chain_link_removal", "label": "Remove existing chain link / wire"},
+     {"value": "wood_removal",       "label": "Remove existing wood fence"},
+     {"value": "concrete_footings",  "label": "Existing concrete footings need removal"}
+   ]', TRUE, 33),
+
+  ('fence', 'gates_count', 'number',
+   'How many gates do you need?',
+   'Each gate is priced separately. Most yards need 1-2 gates.',
+   '{"min": 0, "max": 10, "step": 1, "unit": "gates"}', FALSE, 34),
+
+  ('fence', 'permit_required', 'select',
+   'Do you need a permit or HOA approval?',
+   'We can help navigate permits and HOA requirements.',
+   '[
+     {"value": "no",     "label": "No"},
+     {"value": "permit", "label": "Yes — city permit required"},
+     {"value": "hoa",    "label": "Yes — HOA approval required"},
+     {"value": "both",   "label": "Yes — both permit and HOA"},
+     {"value": "unsure", "label": "Not sure"}
+   ]', FALSE, 35),
+
+  -- ─── GUTTERS TRADE ──────────────────────────────────────────────────
+  ('gutters', 'gutter_linear_ft', 'number',
+   'How many linear feet of gutter do you need?',
+   'Total perimeter — a typical home has 100-200 linear feet of gutter.',
+   '{"min": 10, "max": 1000, "step": 10, "unit": "linear_feet"}', TRUE, 40),
+
+  ('gutters', 'gutter_height', 'select',
+   'How tall is your home?',
+   'Two-story homes require taller ladders.',
+   '[
+     {"value": "single",     "label": "Single story"},
+     {"value": "two_story",  "label": "Two-story"},
+     {"value": "three_plus", "label": "Three or more stories", "routes_to": "specialized"}
+   ]', TRUE, 41),
+
+  ('gutters', 'existing_gutter_removal', 'select',
+   'Do existing gutters need to be removed?',
+   NULL,
+   '[
+     {"value": "no_removal",       "label": "New construction (no removal)"},
+     {"value": "aluminum_removal", "label": "Remove existing aluminum gutters"},
+     {"value": "severe_damage",    "label": "Severe damage / rusted / falling"}
+   ]', TRUE, 42),
+
+  ('gutters', 'downspouts_count', 'number',
+   'How many downspouts do you need?',
+   'Most homes need 4-8 downspouts.',
+   '{"min": 0, "max": 20, "step": 1, "unit": "downspouts"}', TRUE, 43),
+
+  ('gutters', 'add_gutter_guards', 'select',
+   'Would you like to add gutter guards?',
+   'Gutter guards reduce maintenance and clogs.',
+   '[
+     {"value": "yes",     "label": "Yes, please include guards"},
+     {"value": "no",      "label": "No, skip guards"},
+     {"value": "discuss", "label": "I''d like to discuss options"}
+   ]', FALSE, 44),
+
+  -- ─── UNIVERSAL TAIL ─────────────────────────────────────────────────
+  (NULL, 'access_difficulty', 'select',
+   'How would you describe property access?',
+   'Tight lots, steep terrain, or limited equipment access can add to the cost.',
+   '[
+     {"value": "standard",     "label": "Standard — flat lot, easy access"},
+     {"value": "complex",      "label": "Tight or sloped lot"},
+     {"value": "very_complex", "label": "Very difficult access", "routes_to": "specialized"}
+   ]', TRUE, 80),
+
+  (NULL, 'special_notes', 'text',
+   'Anything else we should know? (Optional)',
+   'Recent storm damage, HOA requirements, urgent timeline, etc.',
+   '{"max_length": 500}', FALSE, 90)
+
+) AS q(service_slug, question_slug, question_type, label, helper_text, options, required, sort_order)
+WHERE v.slug = 'home_exterior'
+ON CONFLICT (vertical_id, service_slug, question_slug) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 7: Default rates — COPIED from 4 trade verticals (60 rows)
+-- ============================================================================
+INSERT INTO vertical_default_rates (vertical_id, service_slug, cost_region, base_rate_min_cents, base_rate_max_cents, unit, notes)
+SELECT
+  mega.vertical_id,
+  dr.service_slug,
+  dr.cost_region,
+  dr.base_rate_min_cents,
+  dr.base_rate_max_cents,
+  dr.unit,
+  dr.notes
+FROM vertical_default_rates dr
+JOIN verticals tv ON tv.vertical_id = dr.vertical_id
+CROSS JOIN (SELECT vertical_id FROM verticals WHERE slug = 'home_exterior') AS mega
+WHERE tv.slug IN ('roofing', 'siding', 'fence', 'gutters')
+ON CONFLICT (vertical_id, service_slug, cost_region, unit) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 8: Scope options — COPIED from 4 trade verticals (120 rows)
+-- ============================================================================
+-- Maps OLD vertical_service_id → NEW vertical_service_id via service_slug.
+-- ----------------------------------------------------------------------------
+INSERT INTO vertical_scope_options (vertical_service_id, option_key, display_label, default_enabled, affects_includes_text, modifier_type, price_modifier_default, display_order)
+SELECT
+  new_vs.id,
+  vso.option_key,
+  vso.display_label,
+  vso.default_enabled,
+  vso.affects_includes_text,
+  vso.modifier_type,
+  vso.price_modifier_default,
+  vso.display_order
+FROM vertical_scope_options vso
+JOIN vertical_services old_vs ON old_vs.id = vso.vertical_service_id
+JOIN verticals old_v ON old_v.vertical_id = old_vs.vertical_id
+JOIN verticals mega_v ON mega_v.slug = 'home_exterior'
+JOIN vertical_services new_vs
+  ON new_vs.vertical_id = mega_v.vertical_id
+ AND new_vs.service_slug = old_vs.service_slug
+WHERE old_v.slug IN ('roofing', 'siding', 'fence', 'gutters')
+ON CONFLICT (vertical_service_id, option_key) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 9: Verification
+-- ============================================================================
+DO $$
+DECLARE
+  v_mega_id              INTEGER;
+  v_services_count       INTEGER;
+  v_modifiers_count      INTEGER;
+  v_junction_count       INTEGER;
+  v_questions_count      INTEGER;
+  v_rates_count          INTEGER;
+  v_multipliers_count    INTEGER;
+  v_scope_count          INTEGER;
+BEGIN
+  SELECT vertical_id INTO v_mega_id FROM verticals WHERE slug = 'home_exterior';
+
+  SELECT COUNT(*) INTO v_services_count    FROM vertical_services WHERE vertical_id = v_mega_id;
+  SELECT COUNT(*) INTO v_modifiers_count   FROM vertical_modifier_categories WHERE vertical_id = v_mega_id;
+  SELECT COUNT(*) INTO v_junction_count    FROM vertical_service_modifier_categories vsmc
+    JOIN vertical_services vs ON vs.id = vsmc.service_id WHERE vs.vertical_id = v_mega_id;
+  SELECT COUNT(*) INTO v_questions_count   FROM vertical_widget_questions WHERE vertical_id = v_mega_id;
+  SELECT COUNT(*) INTO v_rates_count       FROM vertical_default_rates WHERE vertical_id = v_mega_id;
+  SELECT COUNT(*) INTO v_multipliers_count FROM vertical_regional_multipliers WHERE vertical_id = v_mega_id;
+  SELECT COUNT(*) INTO v_scope_count       FROM vertical_scope_options vso
+    JOIN vertical_services vs ON vs.id = vso.vertical_service_id WHERE vs.vertical_id = v_mega_id;
+
+  RAISE NOTICE '====================================================================';
+  RAISE NOTICE 'Migration 066 — Home Exterior Mega-Vertical COMPLETE';
+  RAISE NOTICE '====================================================================';
+  RAISE NOTICE 'home_exterior vertical_id:   %', v_mega_id;
+  RAISE NOTICE 'Services:                    %  (expected: 20)', v_services_count;
+  RAISE NOTICE 'Modifier categories:         %  (expected: 13)', v_modifiers_count;
+  RAISE NOTICE 'Service-modifier mappings:   %  (expected: 80)', v_junction_count;
+  RAISE NOTICE 'Widget questions:            %  (expected: 24)', v_questions_count;
+  RAISE NOTICE 'Default rates:               %  (expected: 60)', v_rates_count;
+  RAISE NOTICE 'Regional multipliers:        %  (expected: 3)', v_multipliers_count;
+  RAISE NOTICE 'Scope options:               %  (expected: 120)', v_scope_count;
+  RAISE NOTICE '====================================================================';
+END $$;
+
+COMMIT;

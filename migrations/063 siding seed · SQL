@@ -1,0 +1,393 @@
+-- =============================================================================
+-- Migration 063 — Siding vertical seed
+-- =============================================================================
+-- Paragon Exteriors launch sprint, May 11 2026. Mirrors Mig 062 (roofing)
+-- structure. 5 services × per-square pricing × Z-Hybrid 3-bucket regional
+-- multipliers × additive scope options (V1.1 semantics from earlier today).
+--
+-- Pricing baseline: industry midpoints from the Mighty Dog Siding Components
+-- playbook (vinyl as the floor, metal panel as the ceiling). Paragon will
+-- recalibrate after first 10 jobs; defaults are deliberately wide ranges so
+-- the min/max envelope covers real Omaha+Lincoln market conditions.
+--
+-- Row count target:
+--   1 vertical + 3 regional multipliers + 5 services + 4 modifier categories
+--   + 20 junction rows + 8 widget questions + 15 default rates + 30 scope
+--   options  =  86 rows total.
+--
+-- Idempotent: every INSERT has ON CONFLICT DO NOTHING. Safe to re-run.
+-- =============================================================================
+
+BEGIN;
+
+-- -----------------------------------------------------------------------------
+-- 1. Vertical
+-- -----------------------------------------------------------------------------
+INSERT INTO verticals (vertical_id, slug, name, created_at)
+VALUES (gen_random_uuid(), 'siding', 'Siding', now())
+ON CONFLICT (slug) DO NOTHING;
+
+-- -----------------------------------------------------------------------------
+-- 2. Regional multipliers (high/mid/low cost regions)
+-- -----------------------------------------------------------------------------
+-- If your vertical_regional_multipliers table doesn't have a `multiplier` col
+-- or uses different naming, copy whatever column pattern Mig 062 used for
+-- roofing and replace the column list here.
+INSERT INTO vertical_regional_multipliers (vertical_id, cost_region, multiplier)
+SELECT v.vertical_id, region.cost_region, region.multiplier
+  FROM verticals v
+ CROSS JOIN (VALUES
+   ('high', 1.25),
+   ('mid',  1.00),
+   ('low',  0.85)
+ ) AS region(cost_region, multiplier)
+ WHERE v.slug = 'siding'
+ON CONFLICT (vertical_id, cost_region) DO NOTHING;
+
+-- -----------------------------------------------------------------------------
+-- 3. Services (5)
+-- -----------------------------------------------------------------------------
+INSERT INTO vertical_services
+  (vertical_id, service_slug, sort_order, pricing_mode, unit, is_specialized, includes_text)
+SELECT v.vertical_id, svc.service_slug, svc.sort_order, 'per_unit', 'square', FALSE, svc.includes_text
+  FROM verticals v
+ CROSS JOIN (VALUES
+   ('siding_vinyl',         1, 'Full installation including basic trim, J-channel, corner posts, and disposal.'),
+   ('siding_fiber_cement',  2, 'Full installation including house wrap, caulking, basic trim, and disposal.'),
+   ('siding_wood',          3, 'Full installation including house wrap, primer, basic trim, and disposal.'),
+   ('siding_stucco',        4, 'Full installation including lath, paper, scratch coat, finish coat, and disposal.'),
+   ('siding_metal',         5, 'Full installation including furring strips, house wrap, trim, and disposal.')
+ ) AS svc(service_slug, sort_order, includes_text)
+ WHERE v.slug = 'siding'
+ON CONFLICT (vertical_id, service_slug) DO NOTHING;
+
+-- -----------------------------------------------------------------------------
+-- 4. Modifier categories (4)
+-- -----------------------------------------------------------------------------
+-- siding_complexity: multi-select. Each picked option compounds (matches
+--   roof_complexity pattern in Mig 062).
+-- trim_detail: single-select. How much trim/fascia/soffit work.
+-- existing_removal: single-select. New construction skips removal; asbestos
+--   routes to specialized.
+-- access_difficulty: single-select. Mirrors roofing access_difficulty.
+INSERT INTO vertical_modifier_categories
+  (vertical_id, category_slug, modifier_type, multi_select, options, sort_order)
+SELECT v.vertical_id, mc.category_slug, mc.modifier_type, mc.multi_select, mc.options::jsonb, mc.sort_order
+  FROM verticals v
+ CROSS JOIN (VALUES
+   (
+     'siding_complexity',
+     'percentage',
+     TRUE,
+     '[
+       {"value": "dormers",          "label": "Dormers",                   "adjustment": 0.08},
+       {"value": "bay_windows",      "label": "Bay windows",               "adjustment": 0.10},
+       {"value": "complex_corners",  "label": "Complex corner work",       "adjustment": 0.06},
+       {"value": "custom_cuts",      "label": "Lots of custom cuts/angles","adjustment": 0.12},
+       {"value": "mixed_materials",  "label": "Mixed siding materials",    "adjustment": 0.15}
+     ]',
+     1
+   ),
+   (
+     'trim_detail',
+     'percentage',
+     FALSE,
+     '[
+       {"value": "minimal",   "label": "Minimal trim",                "adjustment": -0.05},
+       {"value": "average",   "label": "Average trim",                "adjustment": 0},
+       {"value": "extensive", "label": "Extensive trim/fascia/soffit","adjustment": 0.10}
+     ]',
+     2
+   ),
+   (
+     'existing_removal',
+     'percentage',
+     FALSE,
+     '[
+       {"value": "no_removal",      "label": "New construction (no removal)", "adjustment": 0},
+       {"value": "vinyl_removal",   "label": "Remove vinyl/aluminum",         "adjustment": 0.08},
+       {"value": "wood_removal",    "label": "Remove wood/cedar",             "adjustment": 0.12},
+       {"value": "asbestos",        "label": "Asbestos siding present",       "routes_to": "specialized"}
+     ]',
+     3
+   ),
+   (
+     'access_difficulty',
+     'percentage',
+     FALSE,
+     '[
+       {"value": "standard",     "label": "Standard access",       "adjustment": 0},
+       {"value": "complex",      "label": "Tight or sloped lot",   "adjustment": 0.10},
+       {"value": "very_complex", "label": "Very difficult access", "routes_to": "specialized"}
+     ]',
+     4
+   )
+ ) AS mc(category_slug, modifier_type, multi_select, options, sort_order)
+ WHERE v.slug = 'siding'
+ON CONFLICT (vertical_id, category_slug) DO NOTHING;
+
+-- -----------------------------------------------------------------------------
+-- 5. Junction — every service uses every modifier category (20 rows)
+-- -----------------------------------------------------------------------------
+INSERT INTO vertical_service_modifier_categories
+  (service_id, modifier_category_id, required, sort_order)
+SELECT vs.id, vmc.id, FALSE, vmc.sort_order
+  FROM vertical_services vs
+  JOIN verticals v ON v.vertical_id = vs.vertical_id
+  JOIN vertical_modifier_categories vmc ON vmc.vertical_id = v.vertical_id
+ WHERE v.slug = 'siding'
+ON CONFLICT (service_id, modifier_category_id) DO NOTHING;
+
+-- -----------------------------------------------------------------------------
+-- 6. Widget questions (8)
+-- -----------------------------------------------------------------------------
+-- Column list assumed to match Mig 062. If your vertical_widget_questions
+-- table has different columns, copy the pattern from Mig 062's question
+-- inserts and adapt this block.
+INSERT INTO vertical_widget_questions
+  (vertical_id, question_slug, question_text, question_type, options, required, sort_order)
+SELECT v.vertical_id, q.question_slug, q.question_text, q.question_type,
+       CASE WHEN q.options = '' THEN NULL ELSE q.options::jsonb END,
+       q.required, q.sort_order
+  FROM verticals v
+ CROSS JOIN (VALUES
+   (
+     'service_type',
+     'What siding material are you installing?',
+     'single_select',
+     '[
+       {"value": "siding_vinyl",        "label": "Vinyl siding"},
+       {"value": "siding_fiber_cement", "label": "Fiber cement (Hardie board)"},
+       {"value": "siding_wood",         "label": "Wood / cedar"},
+       {"value": "siding_stucco",       "label": "Stucco / EIFS"},
+       {"value": "siding_metal",        "label": "Metal panel siding"}
+     ]',
+     TRUE, 1
+   ),
+   (
+     'home_floor_sqft',
+     'What is the total square footage of your home?',
+     'number',
+     '',
+     TRUE, 2
+   ),
+   (
+     'stories',
+     'How many stories is your home?',
+     'single_select',
+     '[
+       {"value": "single",      "label": "Single story"},
+       {"value": "split",       "label": "Split level"},
+       {"value": "two_story",   "label": "Two story"},
+       {"value": "three_plus",  "label": "Three or more stories", "routes_to": "specialized"}
+     ]',
+     TRUE, 3
+   ),
+   (
+     'existing_removal',
+     'Does existing siding need to be removed?',
+     'single_select',
+     '[
+       {"value": "no_removal",    "label": "New construction (no removal)"},
+       {"value": "vinyl_removal", "label": "Remove vinyl or aluminum"},
+       {"value": "wood_removal",  "label": "Remove wood or cedar"},
+       {"value": "asbestos",      "label": "Asbestos siding present", "routes_to": "specialized"}
+     ]',
+     TRUE, 4
+   ),
+   (
+     'siding_complexity',
+     'Select any of the following that apply to your home:',
+     'multi_select',
+     '[
+       {"value": "dormers",         "label": "Dormers"},
+       {"value": "bay_windows",     "label": "Bay windows"},
+       {"value": "complex_corners", "label": "Complex corner work"},
+       {"value": "custom_cuts",     "label": "Lots of custom cuts or angles"},
+       {"value": "mixed_materials", "label": "Mixing siding materials"}
+     ]',
+     FALSE, 5
+   ),
+   (
+     'trim_detail',
+     'How much trim, fascia, and soffit work is involved?',
+     'single_select',
+     '[
+       {"value": "minimal",   "label": "Minimal trim"},
+       {"value": "average",   "label": "Average trim"},
+       {"value": "extensive", "label": "Extensive trim, fascia, or soffit work"}
+     ]',
+     TRUE, 6
+   ),
+   (
+     'access_difficulty',
+     'How would you describe property access?',
+     'single_select',
+     '[
+       {"value": "standard",     "label": "Standard — flat lot, easy access"},
+       {"value": "complex",      "label": "Tight or sloped lot"},
+       {"value": "very_complex", "label": "Very difficult access", "routes_to": "specialized"}
+     ]',
+     TRUE, 7
+   ),
+   (
+     'soffit_fascia_replacement',
+     'Are you also replacing soffit or fascia?',
+     'single_select',
+     '[
+       {"value": "no",          "label": "No"},
+       {"value": "soffit_only", "label": "Yes — soffit only"},
+       {"value": "fascia_only", "label": "Yes — fascia only"},
+       {"value": "both",        "label": "Yes — both soffit and fascia"}
+     ]',
+     FALSE, 8
+   )
+ ) AS q(question_slug, question_text, question_type, options, required, sort_order)
+ WHERE v.slug = 'siding'
+ON CONFLICT (vertical_id, question_slug) DO NOTHING;
+
+-- -----------------------------------------------------------------------------
+-- 7. Default rates per service per cost bucket (15 rows)
+-- -----------------------------------------------------------------------------
+-- Cents per square (100 sqft of siding surface).
+-- Mid bucket = baseline. High = +25%, Low = -15% per regional_multipliers
+-- table seeded above. These are rates BEFORE that multiplier — the engine
+-- applies cost_region as a hard bucket pick, not a multiplier on top.
+INSERT INTO vertical_default_rates
+  (vertical_id, service_slug, cost_region, unit, base_rate_min_cents, base_rate_max_cents)
+SELECT v.vertical_id, r.service_slug, r.cost_region, 'square', r.min_cents, r.max_cents
+  FROM verticals v
+ CROSS JOIN (VALUES
+   -- VINYL — entry-level affordable
+   ('siding_vinyl',        'high',  50000,  87500),
+   ('siding_vinyl',        'mid',   40000,  70000),
+   ('siding_vinyl',        'low',   34000,  59500),
+   -- FIBER CEMENT — durable premium
+   ('siding_fiber_cement', 'high',  100000, 150000),
+   ('siding_fiber_cement', 'mid',    80000, 120000),
+   ('siding_fiber_cement', 'low',    68000, 102000),
+   -- WOOD / CEDAR — traditional premium
+   ('siding_wood',         'high',  112500, 187500),
+   ('siding_wood',         'mid',    90000, 150000),
+   ('siding_wood',         'low',    76500, 127500),
+   -- STUCCO / EIFS — regional, specialized labor
+   ('siding_stucco',       'high',  112500, 162500),
+   ('siding_stucco',       'mid',    90000, 130000),
+   ('siding_stucco',       'low',    76500, 110500),
+   -- METAL PANEL — modern premium
+   ('siding_metal',        'high',  150000, 250000),
+   ('siding_metal',        'mid',   120000, 200000),
+   ('siding_metal',        'low',   102000, 170000)
+ ) AS r(service_slug, cost_region, min_cents, max_cents)
+ WHERE v.slug = 'siding'
+ON CONFLICT (vertical_id, service_slug, cost_region, unit) DO NOTHING;
+
+-- -----------------------------------------------------------------------------
+-- 8. Scope options per service (30 rows — 6 per service)
+-- -----------------------------------------------------------------------------
+-- All price_modifier_default values are in DOLLARS (V1.1 convention,
+-- confirmed via SELECT on production data earlier today).
+-- Modifier types: percent | flat | per_sq | per_lf | per_unit
+INSERT INTO vertical_scope_options
+  (vertical_service_id, option_key, display_label, default_enabled,
+   affects_includes_text, modifier_type, price_modifier_default, display_order)
+SELECT vs.id, opt.option_key, opt.display_label, opt.default_enabled,
+       TRUE, opt.modifier_type, opt.price_modifier_default, opt.display_order
+  FROM vertical_services vs
+  JOIN verticals v ON v.vertical_id = vs.vertical_id
+ CROSS JOIN LATERAL (VALUES
+   -- ─── VINYL ─────────────────────────────────────────────────────────
+   ('siding_vinyl', 'include_house_wrap',    'Include house wrap',         FALSE, 'per_sq',  25, 1),
+   ('siding_vinyl', 'include_starter_strip', 'Include starter strip',      TRUE,  'flat',    150, 2),
+   ('siding_vinyl', 'include_j_channel',     'Include J-channel',          TRUE,  'flat',    200, 3),
+   ('siding_vinyl', 'include_corner_posts',  'Include corner posts',       TRUE,  'flat',    250, 4),
+   ('siding_vinyl', 'include_caulking',      'Include caulking',           TRUE,  'per_lf',  2,   5),
+   ('siding_vinyl', 'include_disposal',      'Include disposal of debris', TRUE,  'flat',    300, 6),
+   -- ─── FIBER CEMENT ──────────────────────────────────────────────────
+   ('siding_fiber_cement', 'include_house_wrap',    'Include house wrap',          TRUE,  'per_sq', 30, 1),
+   ('siding_fiber_cement', 'include_priming',       'Include factory priming',     FALSE, 'per_sq', 40, 2),
+   ('siding_fiber_cement', 'include_caulking',      'Include caulking',            TRUE,  'per_lf', 3,  3),
+   ('siding_fiber_cement', 'include_blocking',      'Include blocking/backing',    TRUE,  'flat',  250, 4),
+   ('siding_fiber_cement', 'include_disposal',      'Include disposal of debris',  TRUE,  'flat',  400, 5),
+   ('siding_fiber_cement', 'include_color_match',   'Include premium color match', FALSE, 'per_sq', 50, 6),
+   -- ─── WOOD / CEDAR ──────────────────────────────────────────────────
+   ('siding_wood', 'include_house_wrap',     'Include house wrap',          TRUE,  'per_sq', 30, 1),
+   ('siding_wood', 'include_priming',        'Include priming',             TRUE,  'per_sq', 50, 2),
+   ('siding_wood', 'include_caulking',       'Include caulking',            TRUE,  'per_lf', 3,  3),
+   ('siding_wood', 'include_disposal',       'Include disposal of debris',  TRUE,  'flat',  400, 4),
+   ('siding_wood', 'include_finish_paint',   'Include finish paint coat',   FALSE, 'per_sq', 80, 5),
+   ('siding_wood', 'include_pest_treatment', 'Include pest treatment',      FALSE, 'flat',  300, 6),
+   -- ─── STUCCO / EIFS ─────────────────────────────────────────────────
+   ('siding_stucco', 'include_lath_paper',    'Include lath and paper',     TRUE,  'per_sq', 35, 1),
+   ('siding_stucco', 'include_caulking',      'Include caulking',           TRUE,  'per_lf', 2,  2),
+   ('siding_stucco', 'include_disposal',      'Include disposal of debris', TRUE,  'flat',  500, 3),
+   ('siding_stucco', 'include_priming',       'Include priming',            TRUE,  'per_sq', 30, 4),
+   ('siding_stucco', 'include_color_coat',    'Include color coat finish',  FALSE, 'per_sq', 40, 5),
+   ('siding_stucco', 'include_underlay_repair', 'Include underlying repair', FALSE, 'flat',  400, 6),
+   -- ─── METAL PANEL ───────────────────────────────────────────────────
+   ('siding_metal', 'include_house_wrap',     'Include house wrap',          TRUE,  'per_sq', 30, 1),
+   ('siding_metal', 'include_furring_strips', 'Include furring strips',      TRUE,  'flat',  300, 2),
+   ('siding_metal', 'include_caulking',       'Include caulking',            TRUE,  'per_lf', 3,  3),
+   ('siding_metal', 'include_disposal',       'Include disposal of debris',  TRUE,  'flat',  400, 4),
+   ('siding_metal', 'include_starter_strip',  'Include starter strip',       TRUE,  'flat',  200, 5),
+   ('siding_metal', 'include_color_match',    'Include premium color match', FALSE, 'per_sq', 40, 6)
+ ) AS opt(target_service_slug, option_key, display_label, default_enabled,
+          modifier_type, price_modifier_default, display_order)
+ WHERE v.slug = 'siding'
+   AND vs.service_slug = opt.target_service_slug
+ON CONFLICT (vertical_service_id, option_key) DO NOTHING;
+
+COMMIT;
+
+-- =============================================================================
+-- Verification — run after the COMMIT and confirm counts match expectations.
+-- =============================================================================
+-- Expected:
+--   verticals                                 : 1 new ('siding')
+--   vertical_regional_multipliers (siding)    : 3
+--   vertical_services (siding)                : 5
+--   vertical_modifier_categories (siding)     : 4
+--   vertical_service_modifier_categories      : 20  (5 services × 4 categories)
+--   vertical_widget_questions (siding)        : 8
+--   vertical_default_rates (siding)           : 15  (5 services × 3 buckets)
+--   vertical_scope_options (siding)           : 30  (5 services × 6 options)
+
+SELECT 'verticals' AS table_name, COUNT(*) AS rows
+  FROM verticals WHERE slug = 'siding'
+UNION ALL
+SELECT 'regional_multipliers',
+       (SELECT COUNT(*) FROM vertical_regional_multipliers vrm
+          JOIN verticals v ON v.vertical_id = vrm.vertical_id
+         WHERE v.slug = 'siding')
+UNION ALL
+SELECT 'services',
+       (SELECT COUNT(*) FROM vertical_services vs
+          JOIN verticals v ON v.vertical_id = vs.vertical_id
+         WHERE v.slug = 'siding')
+UNION ALL
+SELECT 'modifier_categories',
+       (SELECT COUNT(*) FROM vertical_modifier_categories vmc
+          JOIN verticals v ON v.vertical_id = vmc.vertical_id
+         WHERE v.slug = 'siding')
+UNION ALL
+SELECT 'junction',
+       (SELECT COUNT(*) FROM vertical_service_modifier_categories vsmc
+          JOIN vertical_services vs ON vs.id = vsmc.service_id
+          JOIN verticals v ON v.vertical_id = vs.vertical_id
+         WHERE v.slug = 'siding')
+UNION ALL
+SELECT 'widget_questions',
+       (SELECT COUNT(*) FROM vertical_widget_questions vwq
+          JOIN verticals v ON v.vertical_id = vwq.vertical_id
+         WHERE v.slug = 'siding')
+UNION ALL
+SELECT 'default_rates',
+       (SELECT COUNT(*) FROM vertical_default_rates vdr
+          JOIN verticals v ON v.vertical_id = vdr.vertical_id
+         WHERE v.slug = 'siding')
+UNION ALL
+SELECT 'scope_options',
+       (SELECT COUNT(*) FROM vertical_scope_options vso
+          JOIN vertical_services vs ON vs.id = vso.vertical_service_id
+          JOIN verticals v ON v.vertical_id = vs.vertical_id
+         WHERE v.slug = 'siding');

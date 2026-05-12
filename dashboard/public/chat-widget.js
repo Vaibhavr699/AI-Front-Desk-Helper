@@ -114,7 +114,7 @@
   // getTradeForService returns null on painting slugs, and isMegaVertical()
   // returns false — so the original flat picker + exact-match question
   // filter take over with zero regression.
-  const ROOFING_BARE_SLUGS = new Set(["asphalt", "metal", "tile", "slate", "flat_epdm"]);
+  const ROOFING_BARE_SLUGS = new Set(["asphalt_shingle", "metal_standing_seam", "tile", "slate", "flat_epdm"]);
   const TRADE_DISPLAY = {
     roofing: { name: "Roofing", icon: "🏠",  subPrompt: "Which roofing material?" },
     siding:  { name: "Siding",  icon: "🏘️",  subPrompt: "Which siding type?"      },

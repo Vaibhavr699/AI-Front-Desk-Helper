@@ -1,10 +1,21 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { getConversationTimeline, getLeadById, sendOwnerMessage, resumeAi } from '../api';
 import {
   Phone, MessageSquare, Globe, Facebook, User, Bot,
   ChevronDown, ChevronUp, Mail, AlertCircle, Send, UserCheck,
 } from 'lucide-react';
 import { format } from 'date-fns';
+
+// ─────────────────────────────────────────────────────────────────────
+// Channel display config — drives the "Replying via X" badge + the
+// validation messaging. Keep this aligned with the backend channel
+// enum in routes/leads.js (sms | website | facebook).
+// ─────────────────────────────────────────────────────────────────────
+const CHANNEL_LABELS = {
+  sms:      { name: 'SMS',      icon: MessageSquare, color: 'text-green-600',  bg: 'bg-green-50',  border: 'border-green-200' },
+  website:  { name: 'Website',  icon: Globe,         color: 'text-purple-600', bg: 'bg-purple-50', border: 'border-purple-200' },
+  facebook: { name: 'Facebook', icon: Facebook,      color: 'text-blue-600',   bg: 'bg-blue-50',   border: 'border-blue-200' },
+};
 
 const ConversationViewer = ({ leadId, leadName }) => {
   const [timeline, setTimeline] = useState([]);
@@ -22,8 +33,6 @@ const ConversationViewer = ({ leadId, leadName }) => {
 
   const scrollRef = useRef(null);
 
-  // Load both the conversation timeline AND the lead profile, since we need
-  // lead.do_not_contact and lead.human_handoff_at to drive the compose UX.
   const loadAll = useCallback(async () => {
     if (!leadId) return;
     setLoading(true);
@@ -55,15 +64,38 @@ const ConversationViewer = ({ leadId, leadName }) => {
     }
   }, [timeline]);
 
+  // ─────────────────────────────────────────────────────────────────────
+  // Phase 8.3 — detect the channel for the owner's reply by finding the
+  // most recent inbound message in the timeline. Mirrors the backend
+  // auto-detect logic in detectLeadChannel() so the badge shown to the
+  // owner matches what actually happens server-side.
+  //
+  // Falls back to 'sms' for leads with no inbound history at all.
+  // ─────────────────────────────────────────────────────────────────────
+  const detectedChannel = useMemo(() => {
+    if (!timeline || timeline.length === 0) return 'sms';
+    // Timeline is newest-first; find the first message-type item where
+    // direction is 'inbound'. We deliberately ignore calls + bookings
+    // — they're not channels we can reply on.
+    for (const item of timeline) {
+      if (item.type === 'message' && item.direction === 'inbound') {
+        if (item.channel === 'website' || item.channel === 'facebook' || item.channel === 'sms') {
+          return item.channel;
+        }
+      }
+    }
+    return 'sms';
+  }, [timeline]);
+
   const handleSend = async () => {
     if (!messageText.trim() || sending) return;
     setSending(true);
     setSendError('');
     try {
-      await sendOwnerMessage(leadId, messageText.trim());
+      // Pass the detected channel explicitly so the UI badge and the
+      // actual send route stay in sync. The backend re-detects defensively.
+      await sendOwnerMessage(leadId, messageText.trim(), detectedChannel);
       setMessageText('');
-      // Refresh timeline + lead so the new message and the handoff flag
-      // appear immediately in the UI.
       await loadAll();
     } catch (err) {
       console.error('Send failed:', err);
@@ -121,9 +153,21 @@ const ConversationViewer = ({ leadId, leadName }) => {
 
   const isHandoff = !!lead?.human_handoff_at;
   const isDnc = !!lead?.do_not_contact;
-  const hasPhone = !!lead?.phone;
   const charCount = messageText.length;
-  const willSegment = charCount > 160;
+  const willSegment = charCount > 160 && detectedChannel === 'sms';
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Channel-aware compose-box gating:
+  //   sms      → requires lead.phone in E.164 format
+  //   website  → requires lead.phone (which for website leads = sessionId)
+  //   facebook → requires lead.phone (which for FB leads = sender_id)
+  // All channels require SOMETHING in lead.phone — the field is reused
+  // as the per-channel identifier. If lead.phone is empty, no channel
+  // can route a reply.
+  // ─────────────────────────────────────────────────────────────────────
+  const hasIdentifier = !!lead?.phone;
+  const channelConfig = CHANNEL_LABELS[detectedChannel] || CHANNEL_LABELS.sms;
+  const ChannelIcon = channelConfig.icon;
 
   return (
     <div className="h-full flex flex-col bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -144,7 +188,7 @@ const ConversationViewer = ({ leadId, leadName }) => {
         </div>
       </div>
 
-      {/* ─── Timeline feed ──────────────────────────────────────────── */}
+      {/* ─── Timeline feed ─────────────────────────────────────────── */}
       <div
         ref={scrollRef}
         className="flex-1 overflow-y-auto p-6 space-y-6 bg-gray-50/30"
@@ -199,10 +243,7 @@ const ConversationViewer = ({ leadId, leadName }) => {
             );
           }
 
-          // ─── Message bubble — three visual states ────────────────────
-          //   inbound (customer)         → gray bubble, User icon
-          //   outbound + no user_id (AI) → brand-500 bubble, Bot icon
-          //   outbound + user_id (owner) → emerald bubble, UserCheck icon
+          // ── Message bubble — three visual states ──────────────────
           let avatarBg, avatarIcon, bubbleClass, senderLabel;
           if (isOwnerSent) {
             avatarBg = 'bg-emerald-500 text-white';
@@ -248,7 +289,7 @@ const ConversationViewer = ({ leadId, leadName }) => {
         })}
       </div>
 
-      {/* ─── Compose box ────────────────────────────────────────────── */}
+      {/* ─── Compose box ───────────────────────────────────────────── */}
       <div className="border-t border-gray-100 bg-white">
 
         {/* Handoff banner — shown when AI is paused on this lead */}
@@ -286,66 +327,81 @@ const ConversationViewer = ({ leadId, leadName }) => {
                 This lead is on the do-not-contact list. Messages cannot be sent.
               </span>
             </div>
-          ) : !hasPhone ? (
+          ) : !hasIdentifier ? (
             <div className="px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg flex items-center gap-2">
               <AlertCircle size={16} className="text-gray-500 flex-shrink-0" />
               <span className="text-sm text-gray-600">
-                No phone number on file for this lead — can't send SMS.
+                This lead has no contact identifier on file — can't route a reply.
               </span>
             </div>
           ) : (
-            <div className="flex gap-3 items-end">
-              <div className="flex-1">
-                <textarea
-                  value={messageText}
-                  onChange={(e) => setMessageText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                      e.preventDefault();
-                      handleSend();
-                    }
-                  }}
-                  placeholder="Type a message…  (Ctrl/Cmd+Enter to send)"
-                  rows={2}
-                  maxLength={1600}
-                  disabled={sending}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 resize-none disabled:bg-gray-50"
-                />
-                <div className="mt-1 flex items-center justify-between text-[10px] text-gray-400">
-                  <span>
-                    {willSegment ? (
-                      <span className="text-amber-600">
-                        {charCount} chars · sends as {Math.ceil(charCount / 160)} SMS segments
-                      </span>
-                    ) : (
-                      <span>{charCount} / 160</span>
-                    )}
-                  </span>
-                  {!isHandoff && (
-                    <span className="text-gray-500 italic">
-                      Sending will pause AI on this conversation
-                    </span>
-                  )}
-                </div>
+            <>
+              {/* Phase 8.3 — channel-of-reply indicator */}
+              <div className={`mb-3 px-3 py-1.5 rounded-lg flex items-center gap-2 text-xs font-medium border ${channelConfig.bg} ${channelConfig.border}`}>
+                <ChannelIcon size={14} className={channelConfig.color} />
+                <span className={channelConfig.color}>
+                  Replying via <strong>{channelConfig.name}</strong>
+                </span>
+                <span className="text-gray-400 ml-auto">
+                  Auto-detected from latest customer message
+                </span>
               </div>
-              <button
-                onClick={handleSend}
-                disabled={sending || !messageText.trim()}
-                className="px-4 py-2 bg-brand-500 text-white rounded-lg font-semibold text-sm hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-2"
-              >
-                {sending ? (
-                  <>
-                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
-                    Sending…
-                  </>
-                ) : (
-                  <>
-                    <Send size={14} />
-                    Send
-                  </>
-                )}
-              </button>
-            </div>
+
+              <div className="flex gap-3 items-end">
+                <div className="flex-1">
+                  <textarea
+                    value={messageText}
+                    onChange={(e) => setMessageText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                        e.preventDefault();
+                        handleSend();
+                      }
+                    }}
+                    placeholder="Type a message…  (Ctrl/Cmd+Enter to send)"
+                    rows={2}
+                    maxLength={1600}
+                    disabled={sending}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 resize-none disabled:bg-gray-50"
+                  />
+                  <div className="mt-1 flex items-center justify-between text-[10px] text-gray-400">
+                    <span>
+                      {willSegment ? (
+                        <span className="text-amber-600">
+                          {charCount} chars · sends as {Math.ceil(charCount / 160)} SMS segments
+                        </span>
+                      ) : detectedChannel === 'sms' ? (
+                        <span>{charCount} / 160</span>
+                      ) : (
+                        <span>{charCount} / 1600</span>
+                      )}
+                    </span>
+                    {!isHandoff && (
+                      <span className="text-gray-500 italic">
+                        Sending will pause AI on this conversation
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={handleSend}
+                  disabled={sending || !messageText.trim()}
+                  className="px-4 py-2 bg-brand-500 text-white rounded-lg font-semibold text-sm hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-2"
+                >
+                  {sending ? (
+                    <>
+                      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                      Sending…
+                    </>
+                  ) : (
+                    <>
+                      <Send size={14} />
+                      Send
+                    </>
+                  )}
+                </button>
+              </div>
+            </>
           )}
         </div>
       </div>

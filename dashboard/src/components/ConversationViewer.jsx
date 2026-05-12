@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { getConversationTimeline, getLead, sendOwnerMessage, resumeAi } from '../api';
+import { getConversationTimeline, getLeadById, sendOwnerMessage, resumeAi } from '../api';
 import {
   Phone, MessageSquare, Globe, Facebook, User, Bot,
   ChevronDown, ChevronUp, Mail, AlertCircle, Send, UserCheck,
@@ -30,7 +30,7 @@ const ConversationViewer = ({ leadId, leadName }) => {
     try {
       const [timelineData, leadData] = await Promise.all([
         getConversationTimeline(leadId),
-        getLead(leadId),
+        getLeadById(leadId),
       ]);
       setTimeline(timelineData.timeline || []);
       setLead(leadData);

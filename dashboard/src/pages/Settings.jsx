@@ -19,6 +19,7 @@ import {
   createAddonNumberCheckout,
   getServiceRateOverrides,
   updateServiceRateOverride,
+  getVerticalServices,
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import { ConfirmationModal } from "../components/ConfirmationModal";
@@ -486,13 +487,20 @@ export default function Settings({ tenantId }) {
     loading: false
   });
 
-  // Phase 7 V1.5 — Per-service rate overrides (May 4, 2026)
+ // Phase 7 V1.5 — Per-service rate overrides (May 4, 2026)
   // Map of service_slug → percentage_adjustment (number) or undefined.
   // undefined means "use default rate." Numbers stored as decimals
   // (0.20 = +20%) but displayed/edited as whole percentages in UI.
   const [rateOverrides, setRateOverrides] = useState({});
   const [overridesLoading, setOverridesLoading] = useState(false);
   const [overrideSaving, setOverrideSaving] = useState({}); // service_slug → bool
+
+  // Phase 7 V2 (May 12, 2026) — Services list dynamically loaded from the
+  // tenant's vertical, replacing a previously hardcoded painting-only list.
+  // For Home Exterior tenants this fetches Siding/Roofing/Gutters/Fence;
+  // for Painting tenants it returns the 4 painting services; etc.
+  const [verticalServices, setVerticalServices] = useState([]);
+  const [servicesLoading, setServicesLoading] = useState(false);
 
    // ── Reseller-tab guard (Apr 28, 2026) ─────────────────────────────
   // The Usage & Billing tab is filtered out of the sidebar for resellers
@@ -644,23 +652,39 @@ export default function Settings({ tenantId }) {
     }
   }, [tenantId]);
 
-  // Phase 7 V1.5 — Load per-service rate overrides when Estimator tab is active
+ // Phase 7 V1.5 → V2 (May 12, 2026) — Load BOTH the tenant's vertical
+  // services AND any rate overrides when the Estimator tab activates.
+  // Services come from /api/vertical-services and drive row rendering;
+  // overrides come from /api/service-rate-overrides and are keyed by slug.
+  // Run in parallel; either failing falls back to empty/defaults.
   useEffect(() => {
     if (activeTab !== "estimator" || !tenantId) return;
+
+    setServicesLoading(true);
     setOverridesLoading(true);
-    getServiceRateOverrides(tenantId)
-      .then((data) => {
+
+    Promise.all([
+      getVerticalServices(tenantId).catch((e) => {
+        console.warn("[Settings] Failed to load vertical services:", e.message);
+        return { services: [] };
+      }),
+      getServiceRateOverrides(tenantId).catch((e) => {
+        console.warn("[Settings] Failed to load rate overrides:", e.message);
+        return { overrides: {} };
+      }),
+    ])
+      .then(([servicesData, overridesData]) => {
+        setVerticalServices(servicesData?.services || []);
         const map = {};
-        for (const [slug, info] of Object.entries(data?.overrides || {})) {
+        for (const [slug, info] of Object.entries(overridesData?.overrides || {})) {
           map[slug] = info.percentage_adjustment;
         }
         setRateOverrides(map);
       })
-      .catch((e) => {
-        console.warn("[Settings] Failed to load rate overrides:", e.message);
-        // Non-fatal — UI shows defaults if load fails
-      })
-      .finally(() => setOverridesLoading(false));
+      .finally(() => {
+        setServicesLoading(false);
+        setOverridesLoading(false);
+      });
   }, [activeTab, tenantId]);
 
   const hasActiveSub = subscriptionStatus && ["active", "trialing"].includes(subscriptionStatus.subscription_status);
@@ -2869,18 +2893,26 @@ export default function Settings({ tenantId }) {
                   </p>
                 </div>
 
-                {overridesLoading ? (
+                {(servicesLoading || overridesLoading) ? (
                   <div className="p-4 text-center text-xs text-gray-400 italic">
-                    Loading overrides…
+                    Loading services…
+                  </div>
+                ) : verticalServices.length === 0 ? (
+                  <div className="p-6 text-center bg-gray-50 border border-gray-200 rounded-2xl">
+                    <p className="text-xs text-gray-500 italic">
+                      No services configured for this vertical yet.
+                    </p>
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {[
-                      { slug: "interior",   label: "Interior painting",  unit: "per room (size-bucketed)" },
-                      { slug: "exterior",   label: "Exterior painting",  unit: "per paintable sqft" },
-                      { slug: "cabinets",   label: "Cabinets",           unit: "per door/drawer facing" },
-                      { slug: "deck_fence", label: "Deck & Fence",       unit: "per sqft / per linear ft" },
-                    ].map((svc) => {
+                    {verticalServices.map((rawSvc) => {
+                      // Adapt new API shape to the existing inner template so
+                      // the rest of the block stays unchanged.
+                      const svc = {
+                        slug: rawSvc.service_slug,
+                        label: rawSvc.display_label,
+                        unit: rawSvc.unit_description,
+                      };
                       const currentDecimal = rateOverrides[svc.slug];
                       const currentWhole = currentDecimal === undefined
                         ? ""

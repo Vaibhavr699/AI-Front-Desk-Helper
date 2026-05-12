@@ -68,6 +68,16 @@
   let isOpen             = false;
    let hasShownHandoffNotice = false;  // Phase 8.2a — show "team member will follow up" only once per session
 
+  // ── Phase 8.3 (May 12, 2026) — polling state for owner-sent website messages
+  // pollInterval is set when chat opens and cleared when it closes.
+  // pollSinceIso advances after each successful poll so we don't re-render
+  // the same owner message twice. Initialized to chat-open time, so the
+  // customer only sees owner messages sent AFTER they opened the widget.
+  // Known V1 limitation: if owner sent a message while the widget was
+  // closed, customer won't see it on reopen until owner sends another.
+  let pollInterval       = null;
+  let pollSinceIso       = null;
+
    // ── What's included by service (Phase 7 V1.5 — May 5, 2026) ──────────────
   // Migration 051 moved this to vertical_services.includes_text. Helper now
   // reads from estimatorConfig (loaded via /tenant-config) so painters with
@@ -150,6 +160,56 @@
         body: JSON.stringify({ tenantId, sessionId, lead })
       });
     } catch (err) { console.warn("[AI Widget] Lead capture failed:", err); }
+  }
+
+  // ── Phase 8.3 (May 12, 2026) — poll for owner-sent messages ──────────────
+  //
+  // pollOwnerMessages and startPolling/stopPolling are module-scope so the
+  // openChat/closeChat handlers below can drive them. Renders new messages
+  // by directly invoking the addMsg function exposed onto window by createUI
+  // (set in createUI right after addMsg is defined).
+  //
+  // Failures are silent — polling continues until chat closes. We don't
+  // want a transient network blip to surface a UI error.
+  async function pollOwnerMessages() {
+    if (!tenantId || !sessionId) return;
+    try {
+      const url = `${apiBase}/api/widget/poll-messages?tenantId=${encodeURIComponent(tenantId)}&sessionId=${encodeURIComponent(sessionId)}&since=${encodeURIComponent(pollSinceIso)}`;
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const data = await res.json();
+      const messages = Array.isArray(data?.messages) ? data.messages : [];
+      if (messages.length === 0) return;
+
+      // Render each new message as an assistant-style bubble. The customer
+      // doesn't need to know which messages came from the AI vs. an actual
+      // human — both come from "the company."
+      const addMsg = window.__aiWidgetAddMsg;
+      if (typeof addMsg === "function") {
+        messages.forEach((m) => {
+          addMsg(m.body, false);
+          if (m.created_at && m.created_at > pollSinceIso) {
+            pollSinceIso = m.created_at;
+          }
+        });
+      }
+    } catch (err) {
+      console.warn("[AI-Widget] Poll failed:", err.message);
+    }
+  }
+
+  function startPolling() {
+    if (pollInterval) return;
+    pollSinceIso = new Date().toISOString();
+    pollInterval = setInterval(pollOwnerMessages, 5000);
+    console.log("[AI-Widget] Owner-message polling started (5s)");
+  }
+
+  function stopPolling() {
+    if (!pollInterval) return;
+    clearInterval(pollInterval);
+    pollInterval = null;
+    console.log("[AI-Widget] Owner-message polling stopped");
   }
 
   // ── Init: fetch tenant branding + estimator config in parallel ────────────
@@ -585,6 +645,11 @@
       messagesBody.scrollTop = messagesBody.scrollHeight;
       return bubble;
     }
+
+    // Phase 8.3 (May 12, 2026) — expose addMsg so the module-scope poller
+    // can render owner messages into the same conversation flow. Set once,
+    // immediately after createUI defines messagesBody + addMsg above.
+    window.__aiWidgetAddMsg = addMsg;
 
     // Special bubble that holds an interactive component (form, buttons, etc.)
     function addInteractiveBubble(buildContent) {
@@ -1334,6 +1399,9 @@ if (includes) {
       }
       if (!hasWelcomed) { addMsg(welcomeMessage, false); hasWelcomed = true; }
       setTimeout(() => input.focus(), 400);
+
+      // Phase 8.3 (May 12, 2026) — start polling for owner-sent messages
+      startPolling();
     }
     function closeChat() {
       isOpen = false;
@@ -1342,6 +1410,9 @@ if (includes) {
       setTimeout(() => { container.style.display = "none"; }, 400);
       toggle.style.background = brandColor;
       applyResponsiveLayout();
+
+      // Phase 8.3 (May 12, 2026) — stop polling when chat closes
+      stopPolling();
     }
     toggle.onclick  = () => { isOpen ? closeChat() : openChat(); };
     closeBtn.onclick = () => { closeChat(); };

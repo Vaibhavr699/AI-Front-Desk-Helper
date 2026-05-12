@@ -37,6 +37,7 @@
   let logoUrl            = null;
   let hasWelcomed        = false;
   let isOpen             = false;
+    let hasShownHandoffNotice = false;  // Phase 8.2a — show "team member will follow up" only once per session
 
   // ── Helper: lighten a hex color for hover states ──────────────────────────
   function lightenColor(hex, amount) {
@@ -545,6 +546,14 @@
         // handoff state.
         if (data.handoff) {
           console.log("[AI-Widget] Handoff active — AI reply suppressed");
+          // Phase 8.2a (May 12, 2026) — show a one-time "team member will reach out"
+          // notice so the customer doesn't think the chat broke. Uses the existing
+          // hasWelcomed-style pattern: a module-scoped flag persists for the session.
+          // Resets on page reload (new sessionId, new hasShownHandoffNotice).
+          if (!hasShownHandoffNotice) {
+            addMsg("Thanks! A team member will follow up with you shortly.", false);
+            hasShownHandoffNotice = true;
+          }
         } else if (data.reply) {
           addMsg(data.reply, false);
         } else {

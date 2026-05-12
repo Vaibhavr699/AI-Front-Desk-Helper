@@ -1998,6 +1998,50 @@ async function processFacebookConversation(senderId, messageText, tenant = null,
     }
   }
 
+  // ─────────────────────────────────────────────────────────────────────
+  // Phase 8.1 (May 12, 2026) — Human handoff check for Facebook Messenger.
+  //
+  // Mirrors the check in processSmsConversation. If the owner has taken
+  // over this lead's conversation (via the dashboard SMS compose), AI
+  // auto-responses are paused on this lead across ALL channels — including
+  // Facebook. The inbound FB message is already saved above, so the owner
+  // sees the customer's message in the dashboard timeline.
+  //
+  // Caller (/facebook-webhook handler) checks result.handoff and skips
+  // sendFacebookMessage when true.
+  //
+  // Fails open on DB error: better to over-reply than to silently drop
+  // FB messages during a Postgres hiccup.
+  // ─────────────────────────────────────────────────────────────────────
+  if (thread.leadId) {
+    try {
+      const handoffCheck = await db.query(
+        "SELECT human_handoff_at FROM leads WHERE id = $1 LIMIT 1",
+        [thread.leadId]
+      );
+      if (handoffCheck.rows[0]?.human_handoff_at) {
+        console.log(
+          "[Handoff] FB AI paused leadId=%s tenant=%s handoff_since=%s — skipping AI reply",
+          thread.leadId,
+          tenant?.id || "(none)",
+          handoffCheck.rows[0].human_handoff_at
+        );
+        return {
+          reply: null,
+          handoff: true,
+          lead_capture: {},
+          booking_confirmed: null,
+        };
+      }
+    } catch (err) {
+      console.error(
+        "[Handoff] FB lookup failed leadId=%s err=%s — failing open, AI will respond",
+        thread.leadId,
+        err.message
+      );
+    }
+  }
+
   let ai;
   try {
     // We reuse the exact same AI orchestrator as SMS and Web Chat
@@ -5006,7 +5050,16 @@ if (payload === "TALK_HUMAN") {
     // Stop typing indicator
     await sendTypingIndicator(senderId, "typing_off", pageAccessToken);
 
-    const result = await processFacebookConversation(senderId, messageText, tenant, pageAccessToken);
+   const result = await processFacebookConversation(senderId, messageText, tenant, pageAccessToken);
+
+    // Phase 8.1 (May 12, 2026) — when handoff is active, customer's FB
+    // message is saved to the dashboard but no AI auto-response is sent.
+    // Owner sees the message in the conversation viewer and replies
+    // manually (currently SMS-only via the compose box).
+    if (result?.handoff || !result?.reply) {
+      console.log("[Facebook] No AI reply (handoff=%s) for sender=%s", !!result?.handoff, senderId);
+      return;
+    }
 
     await sendFacebookMessage(
       senderId,

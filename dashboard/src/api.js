@@ -545,7 +545,7 @@ export function getServiceRateOverrides(tenantId) {
  * roofing/gutters/fence). Returns { services: [...] }.
  */
 export function getVerticalServices(tenantId) {
-  return api(`/api/estimator/services/${tenantId}`);
+  return api(`/api/vertical-services/${tenantId}`);
 }
 
 /**

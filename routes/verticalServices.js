@@ -8,34 +8,31 @@
  * Estimator tab so it renders the correct services per vertical:
  *   - Painting tenants → Interior / Exterior / Cabinets / Deck & Fence
  *   - Home Exterior tenants → Siding / Roofing / Gutters / Fence
- *   - Future verticals → whatever's in vertical_services for them
  *
- * Replaces the previously hardcoded painting-only frontend list, which was
- * leaking painting services into non-painting tenant dashboards (caught
- * on Paragon's tenant May 12, 2026 — vert=6 home_exterior).
+ * Replaces the previously hardcoded painting-only frontend list, which
+ * was leaking painting services into Paragon's home_exterior dashboard
+ * (caught May 12, 2026).
  *
- * GET /api/vertical-services
+ * GET /api/estimator/services/:tenantId
  *   Returns: {
  *     services: [
  *       { vertical_service_id, service_slug, display_label, unit_description }
  *     ]
  *   }
  *
- * Tenant-scoped via req.tenantId. Joins through tenants.vertical_id →
- * vertical_services so callers can never read another vertical's services.
- *
- * Auth: same pattern as routes/scopeOptions.js — assumes requireAuth-style
- * middleware ahead of this router that sets req.tenantId.
+ * URL-based tenantId to match the sibling /api/estimator/rate-overrides
+ * pattern. Joins through tenants.vertical_id → vertical_services so a
+ * tenant can never see services outside their own vertical.
  */
 
 const express = require("express");
 const router  = express.Router();
 const db      = require("../lib/db");
 
-router.get("/", async (req, res) => {
-  const tenantId = req.tenantId || req.user?.tenant_id;
+router.get("/:tenantId", async (req, res) => {
+  const { tenantId } = req.params;
   if (!tenantId) {
-    return res.status(401).json({ error: "Not authenticated" });
+    return res.status(400).json({ error: "tenantId required" });
   }
 
   try {
@@ -75,7 +72,6 @@ router.get("/", async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Fallback if display_name is null — title-case the slug.
-// "roofing_asphalt" → "Roofing Asphalt"
 function formatSlugFallback(slug) {
   if (!slug) return "Service";
   return String(slug)
@@ -84,9 +80,9 @@ function formatSlugFallback(slug) {
     .join(" ");
 }
 
-// Map vertical_services.pricing_mode → human-readable unit description shown
-// in the UI. Falls back gracefully if mode is unknown so we never crash a
-// tenant's settings page over a missing label.
+// Map vertical_services.pricing_mode → human-readable UI unit description.
+// Falls back gracefully if mode is unknown so we never crash a tenant's
+// settings page over a missing label.
 function describePricingMode(mode) {
   switch (mode) {
     case "per_room_bundled":     return "per room (size-bucketed)";

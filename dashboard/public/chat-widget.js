@@ -775,11 +775,52 @@
       });
     }
 
+    // ── Phase 7 V2 (May 12, 2026) — Service → Trade mapping for mega-verticals ──
+    //
+    // The home_exterior mega-vertical (Paragon, vertical_id=6) groups 20
+    // services across 4 trades. Questions in the DB are tagged at the
+    // TRADE level (e.g. service_slug='roofing' applies to all 5 roofing
+    // service variants), not at the per-service level. This helper
+    // translates a customer-picked service slug into its parent trade so
+    // the filter below matches trade-level questions correctly.
+    //
+    // Service slug conventions (Phase 7):
+    //   - Roofing services use bare slugs:  asphalt, metal, tile, slate, flat_epdm
+    //   - Siding services prefixed:         siding_*
+    //   - Fence services prefixed:          fence_*
+    //   - Gutter services prefixed:         gutter_*
+    //   - Painting (single-vertical):       interior, exterior, cabinets, deck_fence
+    //
+    // For single-trade verticals (Gladiators painting, standalone roofing
+    // before the mega-vertical existed), returns null and the filter
+    // behaves exactly like the pre-mega-vertical logic.
+    const ROOFING_BARE_SLUGS = new Set([
+      "asphalt", "metal", "tile", "slate", "flat_epdm"
+    ]);
+    function getTradeForService(serviceSlug) {
+      if (!serviceSlug || typeof serviceSlug !== "string") return null;
+      if (serviceSlug.startsWith("siding_")) return "siding";
+      if (serviceSlug.startsWith("fence_"))  return "fence";
+      if (serviceSlug.startsWith("gutter_")) return "gutters";
+      if (ROOFING_BARE_SLUGS.has(serviceSlug)) return "roofing";
+      return null;  // painting + unknowns fall through to exact-match logic
+    }
+
     function getQuestionsForService(serviceSlug) {
-      return (estimatorConfig.questions || []).filter(q =>
-        q.service_slug === serviceSlug ||
-        (q.service_slug === null && q.question_slug !== "service_type" && q.question_slug !== "special_notes")
-      );
+      const trade = getTradeForService(serviceSlug);
+      return (estimatorConfig.questions || []).filter(q => {
+        // System questions never shown to customer in the question form
+        if (q.question_slug === "service_type" || q.question_slug === "special_notes") return false;
+        // Exact service match — e.g., Gladiators painting where each
+        // service has its own questions tagged with the specific slug
+        if (q.service_slug === serviceSlug) return true;
+        // Trade-level match — mega-vertical questions are tagged with a
+        // trade slug like 'roofing' or 'siding' (not the specific service)
+        if (trade && q.service_slug === trade) return true;
+        // Universal questions (service_slug=null) apply to all services
+        if (q.service_slug === null) return true;
+        return false;
+      });
     }
 
     // Render all questions for a service as a single interactive bubble.

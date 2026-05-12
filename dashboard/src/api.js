@@ -539,6 +539,16 @@ export function getServiceRateOverrides(tenantId) {
 }
 
 /**
+ * Get the services in the tenant's vertical (Phase 7 V2, May 12, 2026).
+ * Used by the Estimator tab to render the correct rate-adjustment rows
+ * per vertical (painting → 4 painting services, home_exterior → siding/
+ * roofing/gutters/fence). Returns { services: [...] }.
+ */
+export function getVerticalServices(tenantId) {
+  return api(`/api/estimator/services/${tenantId}`);
+}
+
+/**
  * Set or reset a single service rate override.
  * @param {string} tenantId
  * @param {string} serviceSlug - 'interior' | 'exterior' | 'cabinets' | 'deck_fence'

@@ -1760,6 +1760,56 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
     return { reply: replyText, lead_capture: {}, booking_confirmed: null, dnc_cleared: true };
   }
 
+  // ─────────────────────────────────────────────────────────────────────
+  // Phase 8 (May 12, 2026) — Human handoff check.
+  //
+  // If the owner has taken over this conversation via POST /api/leads/:id/send,
+  // leads.human_handoff_at is set. We must NOT auto-respond on that lead until
+  // the owner releases handoff via POST /api/leads/:id/resume-ai.
+  //
+  // We've already saved the customer's inbound message above, so it appears
+  // in the owner's conversation viewer instantly. Now we skip everything that
+  // would generate an outbound reply — the cancellation state machine AND the
+  // AI orchestrator — because both could conflict with the owner's manual
+  // replies.
+  //
+  // Critical ordering: TCPA STOP/START keywords (above) ALWAYS fire — legal
+  // compliance never pauses. Only the AI auto-response is suppressed.
+  //
+  // Fails open on DB error: if the handoff lookup throws, we proceed to
+  // normal AI handling. Better to over-reply than to silently drop messages
+  // during a Postgres hiccup.
+  // ─────────────────────────────────────────────────────────────────────
+  if (thread.leadId) {
+    try {
+      const handoffCheck = await db.query(
+        "SELECT human_handoff_at FROM leads WHERE id = $1 LIMIT 1",
+        [thread.leadId]
+      );
+      if (handoffCheck.rows[0]?.human_handoff_at) {
+        console.log(
+          "[Handoff] AI paused leadId=%s tenant=%s handoff_since=%s — saving inbound, skipping reply",
+          thread.leadId,
+          tenant?.id || "(none)",
+          handoffCheck.rows[0].human_handoff_at
+        );
+        return {
+          reply: null,
+          handoff: true,
+          lead_capture: {},
+          booking_confirmed: null,
+        };
+      }
+    } catch (err) {
+      console.error(
+        "[Handoff] Lookup failed leadId=%s err=%s — failing open, AI will respond",
+        thread.leadId,
+        err.message
+      );
+      // Fall through to normal AI flow
+    }
+  }
+  
  // ─────────────────────────────────────────────────────────────────────
   // Phase 4C (May 4, 2026) — SMS cancellation state machine.
   //
@@ -2969,7 +3019,18 @@ app.post("/twilio-sms", async (req, res) => {
     const toNum  = req.body?.To || req.body?.to;
     const tenant = await getTenantByPhone(toNum);
     const result = await processSmsConversation(from, body, tenant);
-    const twiml  = `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escapeXml(result.reply)}</Message></Response>`;
+
+    // Phase 8 (May 12, 2026) — when handoff is active or there's no reply
+    // to send, return empty TwiML so Twilio doesn't relay anything to the
+    // customer's phone. The owner sees the inbound in the dashboard and
+    // replies manually via the Conversations compose box.
+    if (result?.handoff || !result?.reply) {
+      console.log("[SMS] No AI reply (handoff=%s) for from=%s", !!result?.handoff, from);
+      res.type("text/xml").send('<?xml version="1.0" encoding="UTF-8"?><Response/>');
+      return;
+    }
+
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${escapeXml(result.reply)}</Message></Response>`;
     res.type("text/xml").send(twiml);
   } catch (error) {
     console.error("Twilio SMS webhook error:", error.stack || error.message);
@@ -4800,13 +4861,21 @@ if (!tenant) {
     const thread = getOrCreateSmsThread(sessionId);
     thread.channel = "website";
 
-    const result = await processSmsConversation(sessionId, message, tenant);
-    const isFallback = (tenant && tenant.slug === "website-chat");
-    const tenantName = tenant ? (tenant.company_name || tenant.name || "Website Chat") : "Website Chat";
-    
-    emailService
-      .sendWebsiteChatNotificationEmail({ message, sessionId, reply: result.reply, tenantName: isFallback ? "Website Chat" : tenantName })
-      .catch((err) => console.error("Website chat email to Drew:", err.message));
+   const result = await processSmsConversation(sessionId, message, tenant);
+
+    // Phase 8 (May 12, 2026) — when handoff is active there's no AI reply
+    // to summarize, so skip the notification email. The result returned to
+    // the chat widget includes { reply: null, handoff: true } — the widget
+    // should render nothing in handoff mode (owner replies via SMS).
+    if (!result?.handoff && result?.reply) {
+      const isFallback = (tenant && tenant.slug === "website-chat");
+      const tenantName = tenant ? (tenant.company_name || tenant.name || "Website Chat") : "Website Chat";
+
+      emailService
+        .sendWebsiteChatNotificationEmail({ message, sessionId, reply: result.reply, tenantName: isFallback ? "Website Chat" : tenantName })
+        .catch((err) => console.error("Website chat email to Drew:", err.message));
+    }
+
     res.json(result);
   } catch (error) {
     console.error("Website chat error:", error.message);

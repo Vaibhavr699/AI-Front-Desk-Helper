@@ -1,0 +1,96 @@
+-- ============================================================================
+-- Migration 067 — Owner Messaging Feature
+-- Date:    May 12, 2026
+-- Author:  Drew Koch
+-- Phase:   Phase 8 (Team Inbox / Human Handoff)
+--
+-- Adds two schema pieces:
+--
+-- 1. messages.sent_by_user_id  (uuid → dashboard_users.id, NULLABLE)
+--    NULL  → AI sent it (or inbound from customer)
+--    set   → a dashboard user sent it manually via the conversation viewer
+--
+-- 2. leads.human_handoff_at + human_handoff_by_user_id
+--    NULL  → AI handles incoming messages normally (default)
+--    set   → owner has taken over; AI auto-responses are paused on this lead
+--            until manually resumed via POST /api/leads/:id/resume-ai
+--
+-- All columns are additive and backward-compatible. Every existing row
+-- defaults to the correct "AI handles" state with no backfill required.
+-- ============================================================================
+
+BEGIN;
+
+-- ─── messages.sent_by_user_id ───────────────────────────────────────────────
+ALTER TABLE messages
+  ADD COLUMN IF NOT EXISTS sent_by_user_id uuid
+    REFERENCES dashboard_users(id) ON DELETE SET NULL;
+
+COMMENT ON COLUMN messages.sent_by_user_id IS
+  'Dashboard user who manually sent this outbound message via the conversation viewer. NULL means the AI sent it (or it is inbound from a customer). Existing rows default to NULL → AI-sent, which is correct.';
+
+-- Partial index — only flagged rows are meaningful, so we scan a tiny set.
+CREATE INDEX IF NOT EXISTS idx_messages_sent_by_user
+  ON messages(sent_by_user_id)
+  WHERE sent_by_user_id IS NOT NULL;
+
+-- ─── leads.human_handoff_at + human_handoff_by_user_id ──────────────────────
+ALTER TABLE leads
+  ADD COLUMN IF NOT EXISTS human_handoff_at         timestamp with time zone NULL,
+  ADD COLUMN IF NOT EXISTS human_handoff_by_user_id uuid
+    REFERENCES dashboard_users(id) ON DELETE SET NULL;
+
+COMMENT ON COLUMN leads.human_handoff_at IS
+  'When a dashboard user took over this conversation. AI auto-response is paused while this is non-null. NULL means AI handles incoming messages normally (default).';
+
+COMMENT ON COLUMN leads.human_handoff_by_user_id IS
+  'Which dashboard user took over. Cleared when handoff is released via POST /resume-ai.';
+
+CREATE INDEX IF NOT EXISTS idx_leads_human_handoff
+  ON leads(human_handoff_at)
+  WHERE human_handoff_at IS NOT NULL;
+
+-- ─── Verification ───────────────────────────────────────────────────────────
+DO $$
+DECLARE
+  v_msg_col           INTEGER;
+  v_lead_col_at       INTEGER;
+  v_lead_col_user     INTEGER;
+  v_msg_idx           INTEGER;
+  v_lead_idx          INTEGER;
+BEGIN
+  SELECT COUNT(*) INTO v_msg_col
+    FROM information_schema.columns
+   WHERE table_schema = 'public' AND table_name = 'messages'
+     AND column_name = 'sent_by_user_id';
+
+  SELECT COUNT(*) INTO v_lead_col_at
+    FROM information_schema.columns
+   WHERE table_schema = 'public' AND table_name = 'leads'
+     AND column_name = 'human_handoff_at';
+
+  SELECT COUNT(*) INTO v_lead_col_user
+    FROM information_schema.columns
+   WHERE table_schema = 'public' AND table_name = 'leads'
+     AND column_name = 'human_handoff_by_user_id';
+
+  SELECT COUNT(*) INTO v_msg_idx
+    FROM pg_indexes
+   WHERE schemaname = 'public' AND indexname = 'idx_messages_sent_by_user';
+
+  SELECT COUNT(*) INTO v_lead_idx
+    FROM pg_indexes
+   WHERE schemaname = 'public' AND indexname = 'idx_leads_human_handoff';
+
+  RAISE NOTICE '====================================================================';
+  RAISE NOTICE 'Migration 067 — Owner Messaging Feature COMPLETE';
+  RAISE NOTICE '====================================================================';
+  RAISE NOTICE 'messages.sent_by_user_id:           %  (expected: 1)', v_msg_col;
+  RAISE NOTICE 'leads.human_handoff_at:             %  (expected: 1)', v_lead_col_at;
+  RAISE NOTICE 'leads.human_handoff_by_user_id:     %  (expected: 1)', v_lead_col_user;
+  RAISE NOTICE 'idx_messages_sent_by_user:          %  (expected: 1)', v_msg_idx;
+  RAISE NOTICE 'idx_leads_human_handoff:            %  (expected: 1)', v_lead_idx;
+  RAISE NOTICE '====================================================================';
+END $$;
+
+COMMIT;

@@ -66,6 +66,7 @@
   let logoUrl            = null;
   let hasWelcomed        = false;
   let isOpen             = false;
+   let hasShownHandoffNotice = false;  // Phase 8.2a — show "team member will follow up" only once per session
 
    // ── What's included by service (Phase 7 V1.5 — May 5, 2026) ──────────────
   // Migration 051 moved this to vertical_services.includes_text. Helper now

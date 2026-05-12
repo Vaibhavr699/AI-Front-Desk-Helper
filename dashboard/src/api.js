@@ -425,6 +425,39 @@ export function setLeadDoNotContact(id, value, reason = null) {
   });
 }
 
+// ── Owner messaging / human handoff (May 12, 2026) ────────────────────────
+// Phase 8. Lets dashboard users send manual SMS replies to leads from the
+// Conversations page. Two complementary endpoints:
+//
+//   sendOwnerMessage — POST /api/leads/:id/send
+//     Dispatches SMS via Twilio, records the message with sent_by_user_id
+//     populated (distinguishes from AI-sent), and sets human_handoff_at on
+//     the lead (idempotent — only the FIRST owner message in a session
+//     updates the timestamp). Returns { message, lead }.
+//
+//     Throws on failure. Common cases:
+//       - 422 → lead is on do-not-contact list (TCPA gate)
+//       - 502 → Twilio send failed (Twilio error in message)
+//       - 400 → validation error (empty body, missing phone, etc.)
+//
+//   resumeAi — POST /api/leads/:id/resume-ai
+//     Clears human_handoff_at so the AI orchestrator resumes auto-responding
+//     to future inbound SMS from this lead. Idempotent — calling on a lead
+//     that isn't currently in handoff returns { lead, no_change: true }.
+
+export function sendOwnerMessage(leadId, body, channel = "sms") {
+  return api(`/api/leads/${leadId}/send`, {
+    method: "POST",
+    body: JSON.stringify({ body, channel }),
+  });
+}
+
+export function resumeAi(leadId) {
+  return api(`/api/leads/${leadId}/resume-ai`, {
+    method: "POST",
+  });
+}
+
 export function getPhoneNumbers(tenantId) {
   return api(`/api/phone-numbers?tenant_id=${tenantId}`);
 }

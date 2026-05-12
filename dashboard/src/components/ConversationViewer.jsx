@@ -1,37 +1,90 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { getConversationTimeline } from '../api';
-import { Phone, MessageSquare, Globe, Facebook, User, Bot, Calendar, Clock, ChevronDown, ChevronUp, Mail } from 'lucide-react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { getConversationTimeline, getLead, sendOwnerMessage, resumeAi } from '../api';
+import {
+  Phone, MessageSquare, Globe, Facebook, User, Bot,
+  ChevronDown, ChevronUp, Mail, AlertCircle, Send, UserCheck,
+} from 'lucide-react';
 import { format } from 'date-fns';
 
 const ConversationViewer = ({ leadId, leadName }) => {
   const [timeline, setTimeline] = useState([]);
+  const [lead, setLead] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expandedCalls, setExpandedCalls] = useState({});
+
+  // Compose / send state
+  const [messageText, setMessageText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
+
+  // Resume AI state
+  const [resumingAi, setResumingAi] = useState(false);
+
   const scrollRef = useRef(null);
 
-  useEffect(() => {
-    if (leadId) {
-      loadTimeline();
-    }
-  }, [leadId]);
-
-  const loadTimeline = async () => {
+  // Load both the conversation timeline AND the lead profile, since we need
+  // lead.do_not_contact and lead.human_handoff_at to drive the compose UX.
+  const loadAll = useCallback(async () => {
+    if (!leadId) return;
     setLoading(true);
     try {
-      const data = await getConversationTimeline(leadId);
-      setTimeline(data.timeline || []);
+      const [timelineData, leadData] = await Promise.all([
+        getConversationTimeline(leadId),
+        getLead(leadId),
+      ]);
+      setTimeline(timelineData.timeline || []);
+      setLead(leadData);
     } catch (err) {
-      console.error('Failed to load timeline:', err);
+      console.error('Failed to load conversation:', err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [leadId]);
+
+  useEffect(() => {
+    if (leadId) {
+      setMessageText('');
+      setSendError('');
+      loadAll();
+    }
+  }, [leadId, loadAll]);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [timeline]);
+
+  const handleSend = async () => {
+    if (!messageText.trim() || sending) return;
+    setSending(true);
+    setSendError('');
+    try {
+      await sendOwnerMessage(leadId, messageText.trim());
+      setMessageText('');
+      // Refresh timeline + lead so the new message and the handoff flag
+      // appear immediately in the UI.
+      await loadAll();
+    } catch (err) {
+      console.error('Send failed:', err);
+      setSendError(err.message || 'Failed to send message');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleResumeAi = async () => {
+    if (resumingAi) return;
+    setResumingAi(true);
+    try {
+      await resumeAi(leadId);
+      await loadAll();
+    } catch (err) {
+      console.error('Resume AI failed:', err);
+    } finally {
+      setResumingAi(false);
+    }
+  };
 
   const toggleCall = (id) => {
     setExpandedCalls(prev => ({ ...prev, [id]: !prev[id] }));
@@ -58,7 +111,7 @@ const ConversationViewer = ({ leadId, leadName }) => {
     );
   }
 
-      if (loading) {
+  if (loading) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-500"></div>
@@ -66,9 +119,16 @@ const ConversationViewer = ({ leadId, leadName }) => {
     );
   }
 
+  const isHandoff = !!lead?.human_handoff_at;
+  const isDnc = !!lead?.do_not_contact;
+  const hasPhone = !!lead?.phone;
+  const charCount = messageText.length;
+  const willSegment = charCount > 160;
+
   return (
     <div className="h-full flex flex-col bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-      {/* Header */}
+
+      {/* ─── Header ─────────────────────────────────────────────────── */}
       <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-white sticky top-0 z-10">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-brand-100 flex items-center justify-center text-brand-600 font-bold">
@@ -77,28 +137,30 @@ const ConversationViewer = ({ leadId, leadName }) => {
           <div>
             <h3 className="font-bold text-gray-900">{leadName || 'Unknown Lead'}</h3>
             <div className="flex items-center gap-2 text-xs text-gray-500">
-              <span className="w-2 h-2 rounded-full bg-green-500"></span>
-              Conversation History
+              <span className={`w-2 h-2 rounded-full ${isHandoff ? 'bg-amber-500' : 'bg-green-500'}`}></span>
+              {isHandoff ? 'AI paused — owner is handling' : 'Conversation History'}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Timeline Feed */}
-      <div 
+      {/* ─── Timeline feed ──────────────────────────────────────────── */}
+      <div
         ref={scrollRef}
         className="flex-1 overflow-y-auto p-6 space-y-6 bg-gray-50/30"
       >
-        {timeline.map((item, idx) => {
-          const isAssistant = item.direction === 'outbound';
-          const isCall = item.type === 'call';
+        {timeline.map((item) => {
+          const isOutbound  = item.direction === 'outbound';
+          const isOwnerSent = isOutbound && !!item.sent_by_user_id;
+          const isAiSent    = isOutbound && !item.sent_by_user_id;
+          const isCall      = item.type === 'call';
 
           if (isCall) {
             const isExpanded = expandedCalls[item.id];
             return (
               <div key={item.id} className="flex flex-col items-center">
                 <div className="w-full max-w-2xl bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-                  <div 
+                  <div
                     className="p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors"
                     onClick={() => toggleCall(item.id)}
                   >
@@ -115,7 +177,7 @@ const ConversationViewer = ({ leadId, leadName }) => {
                     </div>
                     {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
                   </div>
-                  
+
                   {isExpanded && (
                     <div className="p-4 border-t border-gray-50 bg-gray-50/20">
                       <div className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed font-mono text-[11px]">
@@ -137,25 +199,46 @@ const ConversationViewer = ({ leadId, leadName }) => {
             );
           }
 
+          // ─── Message bubble — three visual states ────────────────────
+          //   inbound (customer)         → gray bubble, User icon
+          //   outbound + no user_id (AI) → brand-500 bubble, Bot icon
+          //   outbound + user_id (owner) → emerald bubble, UserCheck icon
+          let avatarBg, avatarIcon, bubbleClass, senderLabel;
+          if (isOwnerSent) {
+            avatarBg = 'bg-emerald-500 text-white';
+            avatarIcon = <UserCheck size={16} />;
+            bubbleClass = 'bg-emerald-500 text-white rounded-tr-none';
+            senderLabel = 'Sent by you';
+          } else if (isAiSent) {
+            avatarBg = 'bg-brand-500 text-white';
+            avatarIcon = <Bot size={16} />;
+            bubbleClass = 'bg-brand-500 text-white rounded-tr-none';
+            senderLabel = 'Sent by AI';
+          } else {
+            avatarBg = 'bg-gray-200 text-gray-600';
+            avatarIcon = <User size={16} />;
+            bubbleClass = 'bg-white text-gray-800 border border-gray-100 rounded-tl-none';
+            senderLabel = null;
+          }
+
           return (
-            <div 
-              key={item.id} 
-              className={`flex ${isAssistant ? 'justify-end' : 'justify-start'}`}
+            <div
+              key={item.id}
+              className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}
             >
-              <div className={`flex gap-3 max-w-[80%] ${isAssistant ? 'flex-row-reverse' : ''}`}>
-                <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center ${isAssistant ? 'bg-brand-500 text-white' : 'bg-gray-200 text-gray-600'}`}>
-                  {isAssistant ? <Bot size={16} /> : <User size={16} />}
+              <div className={`flex gap-3 max-w-[80%] ${isOutbound ? 'flex-row-reverse' : ''}`}>
+                <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center ${avatarBg}`}>
+                  {avatarIcon}
                 </div>
                 <div>
-                  <div className={`p-3 rounded-2xl text-sm shadow-sm ${
-                    isAssistant 
-                      ? 'bg-brand-500 text-white rounded-tr-none' 
-                      : 'bg-white text-gray-800 border border-gray-100 rounded-tl-none'
-                  }`}>
+                  <div className={`p-3 rounded-2xl text-sm shadow-sm ${bubbleClass}`}>
                     {item.content}
                   </div>
-                  <div className={`mt-1 flex items-center gap-1 text-[10px] text-gray-400 ${isAssistant ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`mt-1 flex items-center gap-1.5 text-[10px] text-gray-400 ${isOutbound ? 'justify-end' : 'justify-start'}`}>
                     {getChannelIcon(item.channel)}
+                    {senderLabel && (
+                      <span className="font-semibold uppercase tracking-wider">{senderLabel} ·</span>
+                    )}
                     {format(new Date(item.at), 'h:mm a')}
                   </div>
                 </div>
@@ -163,6 +246,108 @@ const ConversationViewer = ({ leadId, leadName }) => {
             </div>
           );
         })}
+      </div>
+
+      {/* ─── Compose box ────────────────────────────────────────────── */}
+      <div className="border-t border-gray-100 bg-white">
+
+        {/* Handoff banner — shown when AI is paused on this lead */}
+        {isHandoff && (
+          <div className="px-4 py-3 bg-amber-50 border-b border-amber-200 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2 min-w-0">
+              <Bot size={16} className="text-amber-600 flex-shrink-0" />
+              <span className="text-sm text-amber-900 font-medium truncate">
+                AI is paused — incoming customer messages won't get auto-responses
+              </span>
+            </div>
+            <button
+              onClick={handleResumeAi}
+              disabled={resumingAi}
+              className="text-sm text-amber-700 hover:text-amber-900 font-bold whitespace-nowrap disabled:opacity-50 transition-colors"
+            >
+              {resumingAi ? 'Resuming…' : 'Hand back to AI →'}
+            </button>
+          </div>
+        )}
+
+        {/* Inline send error */}
+        {sendError && (
+          <div className="px-4 py-2 bg-red-50 border-b border-red-200 flex items-center gap-2">
+            <AlertCircle size={14} className="text-red-600 flex-shrink-0" />
+            <span className="text-sm text-red-700">{sendError}</span>
+          </div>
+        )}
+
+        <div className="p-4">
+          {isDnc ? (
+            <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
+              <AlertCircle size={16} className="text-red-600 flex-shrink-0" />
+              <span className="text-sm text-red-800">
+                This lead is on the do-not-contact list. Messages cannot be sent.
+              </span>
+            </div>
+          ) : !hasPhone ? (
+            <div className="px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg flex items-center gap-2">
+              <AlertCircle size={16} className="text-gray-500 flex-shrink-0" />
+              <span className="text-sm text-gray-600">
+                No phone number on file for this lead — can't send SMS.
+              </span>
+            </div>
+          ) : (
+            <div className="flex gap-3 items-end">
+              <div className="flex-1">
+                <textarea
+                  value={messageText}
+                  onChange={(e) => setMessageText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                  placeholder="Type a message…  (Ctrl/Cmd+Enter to send)"
+                  rows={2}
+                  maxLength={1600}
+                  disabled={sending}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 resize-none disabled:bg-gray-50"
+                />
+                <div className="mt-1 flex items-center justify-between text-[10px] text-gray-400">
+                  <span>
+                    {willSegment ? (
+                      <span className="text-amber-600">
+                        {charCount} chars · sends as {Math.ceil(charCount / 160)} SMS segments
+                      </span>
+                    ) : (
+                      <span>{charCount} / 160</span>
+                    )}
+                  </span>
+                  {!isHandoff && (
+                    <span className="text-gray-500 italic">
+                      Sending will pause AI on this conversation
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={handleSend}
+                disabled={sending || !messageText.trim()}
+                className="px-4 py-2 bg-brand-500 text-white rounded-lg font-semibold text-sm hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-2"
+              >
+                {sending ? (
+                  <>
+                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                    Sending…
+                  </>
+                ) : (
+                  <>
+                    <Send size={14} />
+                    Send
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

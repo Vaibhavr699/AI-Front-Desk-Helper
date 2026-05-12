@@ -35,7 +35,8 @@
   // window.__aiWidgetAutoStart with a callId. We capture it here at module
   // scope so it survives estimator state resets, and pass it through to
   // /api/estimator/lead in estimator_payload.source_call_id when the lead
-  // is captured.
+  // is captured. Drew can later report on the "voice → estimate → booking"
+  // funnel by joining on this id.
   //
   // We accept the callId from two sources, in priority order:
   //   1. window.__aiWidgetAutoStart.callId (set by the wrapper page)
@@ -47,6 +48,7 @@
     } else {
       const urlParams = new URLSearchParams(window.location.search);
       const cid = urlParams.get("call_id");
+      // Defensive: cap length to avoid pathological values in the URL
       if (cid && cid.length > 0 && cid.length < 100) sourceCallId = cid;
     }
   } catch (e) {
@@ -64,14 +66,9 @@
   let logoUrl            = null;
   let hasWelcomed        = false;
   let isOpen             = false;
+   let hasShownHandoffNotice = false;  // Phase 8.2a — show "team member will follow up" only once per session
 
-  // ── Phase 8.2a (May 12, 2026) — handoff UX indicator state ────────────────
-  // Show "team member will follow up" only once per session when the AI
-  // is paused for this lead. Module-scoped so it persists across
-  // multiple handleSend calls in the same chat session.
-  let hasShownHandoffNotice = false;
-
-  // ── Phase 8.3 (May 12, 2026) — polling state for owner-sent messages ──────
+  // ── Phase 8.3 (May 12, 2026) — polling state for owner-sent website messages
   // pollInterval is set when chat opens and cleared when it closes.
   // pollSinceIso advances after each successful poll so we don't re-render
   // the same owner message twice. Initialized to chat-open time, so the
@@ -91,6 +88,66 @@
     if (!estimatorConfig || !Array.isArray(estimatorConfig.services)) return null;
     const svc = estimatorConfig.services.find(s => s.service_slug === serviceSlug);
     return svc?.includes_text || null;
+  }
+
+  // ── Phase 7 V2 (May 12, 2026) — Trade-aware helpers for mega-verticals ────
+  //
+  // The home_exterior mega-vertical (Paragon, vertical_id=6) groups 20
+  // services across 4 trades. We need two pieces of trade logic:
+  //
+  //   1. Service → Trade mapping for the QUESTION filter — questions in the
+  //      DB are tagged at the TRADE level (service_slug='roofing' applies
+  //      to all 5 roofing service variants), not per-specific-service.
+  //
+  //   2. Trade-first picker UX — instead of showing all 20 services in one
+  //      flat list, show 4 trade buttons first, then drill into specific
+  //      service options for that trade.
+  //
+  // Service slug conventions (Phase 7):
+  //   - Roofing services use bare slugs:  asphalt, metal, tile, slate, flat_epdm
+  //   - Siding services prefixed:         siding_*
+  //   - Fence services prefixed:          fence_*
+  //   - Gutter services prefixed:         gutter_*
+  //   - Painting (single-vertical):       interior, exterior, cabinets, deck_fence
+  //
+  // For single-trade verticals (Gladiators painting, standalone roofing),
+  // getTradeForService returns null on painting slugs, and isMegaVertical()
+  // returns false — so the original flat picker + exact-match question
+  // filter take over with zero regression.
+  const ROOFING_BARE_SLUGS = new Set(["asphalt", "metal", "tile", "slate", "flat_epdm"]);
+  const TRADE_DISPLAY = {
+    roofing: { name: "Roofing", icon: "🏠",  subPrompt: "Which roofing material?" },
+    siding:  { name: "Siding",  icon: "🏘️",  subPrompt: "Which siding type?"      },
+    fence:   { name: "Fence",   icon: "🚧",  subPrompt: "Which fence type?"       },
+    gutters: { name: "Gutters", icon: "💧",  subPrompt: "Which gutter type?"      },
+  };
+  const TRADE_ORDER = ["roofing", "siding", "fence", "gutters"];
+
+  function getTradeForService(serviceSlug) {
+    if (!serviceSlug || typeof serviceSlug !== "string") return null;
+    if (serviceSlug.startsWith("siding_")) return "siding";
+    if (serviceSlug.startsWith("fence_"))  return "fence";
+    if (serviceSlug.startsWith("gutter_")) return "gutters";
+    if (ROOFING_BARE_SLUGS.has(serviceSlug)) return "roofing";
+    return null;  // painting + unknowns
+  }
+
+  // Returns the list of distinct trades present in the current tenant's
+  // estimatorConfig.services (ordered by TRADE_ORDER for stable UI). Used
+  // by isMegaVertical() and renderTradePicker() to decide what to show.
+  function getTradesInVertical() {
+    if (!estimatorConfig || !Array.isArray(estimatorConfig.services)) return [];
+    const tradeSet = new Set();
+    estimatorConfig.services.forEach(s => {
+      if (s.is_specialized) return;
+      const trade = getTradeForService(s.service_slug);
+      if (trade) tradeSet.add(trade);
+    });
+    return TRADE_ORDER.filter(t => tradeSet.has(t));
+  }
+
+  function isMegaVertical() {
+    return getTradesInVertical().length >= 2;
   }
 
   // ── Estimator state (Phase 7 V1 — May 2, 2026) ────────────────────────────
@@ -714,17 +771,28 @@
 
       // Intro message
       addMsg("Great! I'll ask you a few quick questions to give you a ballpark range. This is just an estimate — final pricing requires an in-person walkthrough.", false);
-      setTimeout(() => renderServicePicker(), 600);
+
+      // Phase 7 V2 (May 12, 2026) — for mega-verticals (home_exterior, etc.)
+      // show trade picker first; for single-trade verticals (painting only,
+      // standalone roofing) keep the original flat service picker.
+      if (isMegaVertical()) {
+        setTimeout(() => renderTradePicker(), 600);
+      } else {
+        setTimeout(() => renderServicePicker(), 600);
+      }
     }
 
-    function renderServicePicker() {
-      const services = (estimatorConfig.services || []).filter(s => !s.is_specialized);
-      const serviceIcons = {
-        interior:   "🏠",
-        exterior:   "🎨",
-        cabinets:   "🚪",
-        deck_fence: "🪵"
-      };
+    // ── Phase 7 V2 (May 12, 2026) — Trade picker for mega-verticals ─────────
+    //
+    // Step 1 of a two-step picker. Shows trade buttons (Roofing / Siding /
+    // Fence / Gutters) plus a "Something else" specialized escape hatch.
+    // On selection, calls renderServicePicker(trade) to drill into the
+    // services for that trade.
+    //
+    // For single-trade verticals this function is never called — the old
+    // renderServicePicker() runs directly from startEstimatorFlow.
+    function renderTradePicker() {
+      const trades = getTradesInVertical();
 
       addInteractiveBubble((bubble) => {
         const label = document.createElement("div");
@@ -734,11 +802,115 @@
         label.style.fontSize = "13px";
         bubble.appendChild(label);
 
+        trades.forEach(trade => {
+          const config = TRADE_DISPLAY[trade];
+          if (!config) return;
+          const btn = document.createElement("button");
+          btn.className = "ai-est-card-btn";
+          btn.type = "button";
+          btn.innerHTML = `<span style="font-size:18px;margin-right:8px;vertical-align:middle">${config.icon}</span><span style="vertical-align:middle">${config.name}</span>`;
+          btn.onclick = () => {
+            bubble.querySelectorAll("button").forEach(b => b.disabled = true);
+            btn.classList.add("selected");
+            addMsg(config.name, true);
+            logEstimatorEvent("trade_selected", `[Quick Quote] Selected trade: ${config.name}`);
+            setTimeout(() => renderServicePicker(trade), 400);
+          };
+          bubble.appendChild(btn);
+        });
+
+        // Specialized / multi-trade escape hatch on the trade picker
+        const spec = document.createElement("button");
+        spec.className = "ai-est-card-btn";
+        spec.type = "button";
+        spec.innerHTML = `<span style="font-size:18px;margin-right:8px;vertical-align:middle">🛠️</span><span style="vertical-align:middle">Something else / multiple trades</span>`;
+        spec.onclick = () => {
+          estimatorState.service_slug = "specialized";
+          bubble.querySelectorAll("button").forEach(b => b.disabled = true);
+          spec.classList.add("selected");
+          addMsg("Something else / multiple trades", true);
+          logEstimatorEvent("service_selected", "[Quick Quote] Selected: Specialized / multi-trade project");
+          estimatorState.quote_result = {
+            specialized: true,
+            reason: "For multi-trade or specialized projects, we'll set up an in-person walkthrough to put together a complete estimate.",
+            quote: null
+          };
+          setTimeout(() => renderSpecializedResult(), 400);
+        };
+        bubble.appendChild(spec);
+      });
+    }
+
+    // ── Service picker — flat (single-trade) or filtered (mega-vertical) ────
+    //
+    // Phase 7 V2: now accepts an optional `tradeFilter` parameter. When
+    // passed (called from renderTradePicker), shows only services in that
+    // trade plus a "← Back to project types" link. When omitted (called
+    // from startEstimatorFlow for single-trade verticals like painting),
+    // shows all non-specialized services in a flat list with the original
+    // Specialized button — exactly like Phase 7 V1 behavior.
+    function renderServicePicker(tradeFilter) {
+      let services = (estimatorConfig.services || []).filter(s => !s.is_specialized);
+
+      // If we came from the trade picker, filter to that trade's services only
+      if (tradeFilter) {
+        services = services.filter(s => getTradeForService(s.service_slug) === tradeFilter);
+      }
+
+      // Painting service icons (used when no tradeFilter — i.e., legacy
+      // Gladiators-style single-vertical flow). Mega-vertical service
+      // buttons inherit the trade icon from TRADE_DISPLAY below.
+      const serviceIcons = {
+        interior:   "🏠",
+        exterior:   "🎨",
+        cabinets:   "🚪",
+        deck_fence: "🪵"
+      };
+
+      addInteractiveBubble((bubble) => {
+        // Back button only when drilling in from a trade picker
+        if (tradeFilter) {
+          const backWrap = document.createElement("div");
+          backWrap.style.marginBottom = "8px";
+          const backBtn = document.createElement("button");
+          backBtn.type = "button";
+          backBtn.innerText = "← Back to project types";
+          Object.assign(backBtn.style, {
+            background: "transparent",
+            border: "none",
+            color: brandColor,
+            cursor: "pointer",
+            fontSize: "11px",
+            fontWeight: "600",
+            padding: "0",
+            fontFamily: "inherit"
+          });
+          backBtn.onclick = () => {
+            bubble.querySelectorAll("button").forEach(b => b.disabled = true);
+            logEstimatorEvent("trade_picker_back", "[Quick Quote] Customer tapped back to trade picker");
+            setTimeout(() => renderTradePicker(), 200);
+          };
+          backWrap.appendChild(backBtn);
+          bubble.appendChild(backWrap);
+        }
+
+        const label = document.createElement("div");
+        label.innerText = tradeFilter
+          ? (TRADE_DISPLAY[tradeFilter]?.subPrompt || "Which option?")
+          : "What kind of project?";
+        label.style.fontWeight = "600";
+        label.style.marginBottom = "8px";
+        label.style.fontSize = "13px";
+        bubble.appendChild(label);
+
         services.forEach(svc => {
           const btn = document.createElement("button");
           btn.className = "ai-est-card-btn";
           btn.type = "button";
-          const icon = serviceIcons[svc.service_slug] || "✨";
+          // Icon priority: legacy painting hardcoded icon → trade icon → fallback sparkle
+          const icon = serviceIcons[svc.service_slug]
+            || (tradeFilter ? TRADE_DISPLAY[tradeFilter]?.icon : null)
+            || "✨";
           btn.innerHTML = `<span style="font-size:18px;margin-right:8px;vertical-align:middle">${icon}</span><span style="vertical-align:middle">${svc.display_name}</span>`;
           btn.onclick = () => {
             estimatorState.service_slug = svc.service_slug;
@@ -753,71 +925,49 @@
           bubble.appendChild(btn);
         });
 
-        // Specialized
-        const spec = document.createElement("button");
-        spec.className = "ai-est-card-btn";
-        spec.type = "button";
-        spec.innerHTML = `<span style="font-size:18px;margin-right:8px;vertical-align:middle">🛠️</span><span style="vertical-align:middle">Specialized project</span>`;
-        spec.onclick = () => {
-          estimatorState.service_slug = "specialized";
-          bubble.querySelectorAll("button").forEach(b => b.disabled = true);
-          spec.classList.add("selected");
-          addMsg("Specialized project", true);
-          logEstimatorEvent("service_selected", "[Quick Quote] Selected service: Specialized project (needs walkthrough)");
-          estimatorState.quote_result = {
-            specialized: true,
-            reason: "Specialized projects need an in-person walkthrough so we can see the details that affect pricing.",
-            quote: null
+        // Specialized button only on the FLAT picker (no tradeFilter).
+        // The trade picker has its own specialized option, and inside
+        // a trade we don't want a second "specialized" exit.
+        if (!tradeFilter) {
+          const spec = document.createElement("button");
+          spec.className = "ai-est-card-btn";
+          spec.type = "button";
+          spec.innerHTML = `<span style="font-size:18px;margin-right:8px;vertical-align:middle">🛠️</span><span style="vertical-align:middle">Specialized project</span>`;
+          spec.onclick = () => {
+            estimatorState.service_slug = "specialized";
+            bubble.querySelectorAll("button").forEach(b => b.disabled = true);
+            spec.classList.add("selected");
+            addMsg("Specialized project", true);
+            logEstimatorEvent("service_selected", "[Quick Quote] Selected service: Specialized project (needs walkthrough)");
+            estimatorState.quote_result = {
+              specialized: true,
+              reason: "Specialized projects need an in-person walkthrough so we can see the details that affect pricing.",
+              quote: null
+            };
+            setTimeout(() => renderSpecializedResult(), 400);
           };
-          setTimeout(() => renderSpecializedResult(), 400);
-        };
-        bubble.appendChild(spec);
+          bubble.appendChild(spec);
+        }
       });
     }
 
-    // ── Phase 7 V2 (May 12, 2026) — Service → Trade mapping for mega-verticals ──
+    // ── Phase 7 V2 (May 12, 2026) — Trade-aware question filter ─────────────
     //
-    // The home_exterior mega-vertical (Paragon, vertical_id=6) groups 20
-    // services across 4 trades. Questions in the DB are tagged at the
-    // TRADE level (e.g. service_slug='roofing' applies to all 5 roofing
-    // service variants), not at the per-service level. This helper
-    // translates a customer-picked service slug into its parent trade so
-    // the filter below matches trade-level questions correctly.
+    // For mega-verticals, questions are tagged at the trade level
+    // (service_slug='roofing' applies to all 5 roofing service variants).
+    // For single-trade verticals (Gladiators painting), questions are
+    // tagged at the specific service level. This filter handles both.
     //
-    // Service slug conventions (Phase 7):
-    //   - Roofing services use bare slugs:  asphalt, metal, tile, slate, flat_epdm
-    //   - Siding services prefixed:         siding_*
-    //   - Fence services prefixed:          fence_*
-    //   - Gutter services prefixed:         gutter_*
-    //   - Painting (single-vertical):       interior, exterior, cabinets, deck_fence
-    //
-    // For single-trade verticals (Gladiators painting, standalone roofing
-    // before the mega-vertical existed), returns null and the filter
-    // behaves exactly like the pre-mega-vertical logic.
-    const ROOFING_BARE_SLUGS = new Set([
-      "asphalt", "metal", "tile", "slate", "flat_epdm"
-    ]);
-    function getTradeForService(serviceSlug) {
-      if (!serviceSlug || typeof serviceSlug !== "string") return null;
-      if (serviceSlug.startsWith("siding_")) return "siding";
-      if (serviceSlug.startsWith("fence_"))  return "fence";
-      if (serviceSlug.startsWith("gutter_")) return "gutters";
-      if (ROOFING_BARE_SLUGS.has(serviceSlug)) return "roofing";
-      return null;  // painting + unknowns fall through to exact-match logic
-    }
-
+    //   - Exact service match  → show (e.g., painting 'interior' questions)
+    //   - Trade-level match    → show (e.g., 'asphalt' service → 'roofing' qs)
+    //   - service_slug=null    → show (universal questions like access)
+    //   - System questions     → always hide (service_type, special_notes)
     function getQuestionsForService(serviceSlug) {
       const trade = getTradeForService(serviceSlug);
       return (estimatorConfig.questions || []).filter(q => {
-        // System questions never shown to customer in the question form
         if (q.question_slug === "service_type" || q.question_slug === "special_notes") return false;
-        // Exact service match — e.g., Gladiators painting where each
-        // service has its own questions tagged with the specific slug
         if (q.service_slug === serviceSlug) return true;
-        // Trade-level match — mega-vertical questions are tagged with a
-        // trade slug like 'roofing' or 'siding' (not the specific service)
         if (trade && q.service_slug === trade) return true;
-        // Universal questions (service_slug=null) apply to all services
         if (q.service_slug === null) return true;
         return false;
       });
@@ -1589,20 +1739,19 @@ if (includes) {
         // Phase 8.1 (May 12, 2026) — when the owner has taken over this lead
         // via the dashboard, /website-chat returns { reply: null, handoff: true }.
         // Don't render anything on the customer side — the owner is replying
-        // out-of-band (currently SMS in V1, also website/Facebook in 8.3).
-        // The customer's own message is still visible (rendered above via
-        // addMsg(val, true)), and the inbound is recorded in the dashboard
-        // timeline for the owner.
+        // out-of-band (currently via SMS). The customer's own message is still
+        // visible in their chat window (rendered above via addMsg(val, true)),
+        // and the inbound is recorded in the dashboard timeline for the owner.
         //
         // Lead capture and quote capture still flow through if present —
         // those are independent of the AI reply and useful regardless of
         // handoff state.
-        //
-        // Phase 8.2a (May 12, 2026) — show a one-time "team member will follow
-        // up" notice so the customer doesn't think the chat broke. Module-
-        // scoped flag persists for the session; resets on page reload.
         if (data.handoff) {
           console.log("[AI-Widget] Handoff active — AI reply suppressed");
+          // Phase 8.2a (May 12, 2026) — show a one-time "team member will reach out"
+          // notice so the customer doesn't think the chat broke. Uses the existing
+          // hasWelcomed-style pattern: a module-scoped flag persists for the session.
+          // Resets on page reload (new sessionId, new hasShownHandoffNotice).
           if (!hasShownHandoffNotice) {
             addMsg("Thanks! A team member will follow up with you shortly.", false);
             hasShownHandoffNotice = true;

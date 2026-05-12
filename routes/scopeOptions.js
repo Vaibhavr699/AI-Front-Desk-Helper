@@ -73,9 +73,9 @@ router.get("/", async (req, res) => {
       const vRow = verticalResult.rows[0];
       if (vRow) {
         vertical = {
-          slug: vRow.slug ?? null,
-          name: vRow.name ?? null,
-        };
+  slug: vRow.slug ?? null,
+  name: vRow.display_name ?? null,
+};
       }
     } catch (vErr) {
       // Non-fatal — log and continue with vertical=null. The frontend's

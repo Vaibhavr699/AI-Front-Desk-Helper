@@ -334,6 +334,63 @@ app.post("/api/widget/start-sms", async (req, res) => {
   }
 });
 
+// ═════════════════════════════════════════════════════════════════════
+// Phase 8.3 (May 12, 2026) — Widget polling for owner-sent messages.
+//
+// Customer's chat widget polls this endpoint every ~5 seconds while
+// open. We look up the lead for the (tenantId, sessionId) pair —
+// website leads have lead.phone = sessionId (that's how the existing
+// /website-chat handler routes via getOrCreateLead). Then return any
+// new owner-sent outbound messages on channel='website' since the
+// caller's `since` timestamp.
+//
+// Defensive: invalid params return empty arrays (200 OK, no error)
+// so the widget can poll harmlessly even before a lead is created.
+// Errors return 500 with empty messages so the widget keeps polling.
+// ═════════════════════════════════════════════════════════════════════
+app.get("/api/widget/poll-messages", async (req, res) => {
+  try {
+    const { tenantId, sessionId } = req.query;
+    const since = req.query.since || new Date(Date.now() - 60 * 1000).toISOString();
+
+    if (!tenantId || !sessionId) {
+      return res.json({ messages: [] });
+    }
+
+    // Look up the lead for this session. For website leads, lead.phone
+    // holds the sessionId — set in /website-chat → processSmsConversation
+    // → getOrCreateLead(tenant.id, sessionId, ...).
+    const leadRes = await db.query(
+      "SELECT id FROM leads WHERE tenant_id = $1 AND phone = $2 LIMIT 1",
+      [tenantId, sessionId]
+    );
+
+    if (!leadRes.rows[0]) {
+      // No lead yet (customer hasn't sent anything) — nothing to poll
+      return res.json({ messages: [] });
+    }
+
+    const leadId = leadRes.rows[0].id;
+
+    const msgRes = await db.query(
+      `SELECT id, body, created_at FROM messages
+        WHERE lead_id = $1
+          AND channel = 'website'
+          AND direction = 'outbound'
+          AND sent_by_user_id IS NOT NULL
+          AND created_at > $2
+        ORDER BY created_at ASC
+        LIMIT 20`,
+      [leadId, since]
+    );
+
+    res.json({ messages: msgRes.rows });
+  } catch (err) {
+    console.error("[Widget Poll] Error:", err.message);
+    res.status(500).json({ messages: [] });
+  }
+});
+
 const PORT = process.env.PORT;
 const BASE_URL = process.env.BASE_URL;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;

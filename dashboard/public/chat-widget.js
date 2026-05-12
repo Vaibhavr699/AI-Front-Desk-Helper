@@ -29,6 +29,33 @@
     localStorage.setItem("ai_session_id", sessionId);
   }
 
+  // ── Voice → estimator attribution (Phase 7 V2 — May 4, 2026) ──────────────
+  // When the customer arrives via an SMS link from a phone call (sent by the
+  // AI's send_estimate_link tool), the wrapper page at /q/:tenantId injects
+  // window.__aiWidgetAutoStart with a callId. We capture it here at module
+  // scope so it survives estimator state resets, and pass it through to
+  // /api/estimator/lead in estimator_payload.source_call_id when the lead
+  // is captured.
+  //
+  // We accept the callId from two sources, in priority order:
+  //   1. window.__aiWidgetAutoStart.callId (set by the wrapper page)
+  //   2. ?call_id=... query param (fallback for direct deep links)
+  let sourceCallId = null;
+  try {
+    if (window.__aiWidgetAutoStart && typeof window.__aiWidgetAutoStart.callId === "string") {
+      sourceCallId = window.__aiWidgetAutoStart.callId;
+    } else {
+      const urlParams = new URLSearchParams(window.location.search);
+      const cid = urlParams.get("call_id");
+      if (cid && cid.length > 0 && cid.length < 100) sourceCallId = cid;
+    }
+  } catch (e) {
+    // URLSearchParams not supported in very old browsers — silently skip
+  }
+  if (sourceCallId) {
+    console.log("[AI-Widget] Source call ID detected:", sourceCallId);
+  }
+
   // ── Branding defaults (overridden by tenant config) ───────────────────────
   let companyName        = "Front Desk";
   let welcomeMessage     = "Hi there 👋 Need a quick estimate or have a question? I can help you schedule in seconds.";
@@ -37,7 +64,69 @@
   let logoUrl            = null;
   let hasWelcomed        = false;
   let isOpen             = false;
-    let hasShownHandoffNotice = false;  // Phase 8.2a — show "team member will follow up" only once per session
+
+  // ── Phase 8.2a (May 12, 2026) — handoff UX indicator state ────────────────
+  // Show "team member will follow up" only once per session when the AI
+  // is paused for this lead. Module-scoped so it persists across
+  // multiple handleSend calls in the same chat session.
+  let hasShownHandoffNotice = false;
+
+  // ── Phase 8.3 (May 12, 2026) — polling state for owner-sent messages ──────
+  // pollInterval is set when chat opens and cleared when it closes.
+  // pollSinceIso advances after each successful poll so we don't re-render
+  // the same owner message twice. Initialized to chat-open time, so the
+  // customer only sees owner messages sent AFTER they opened the widget.
+  // Known V1 limitation: if owner sent a message while the widget was
+  // closed, customer won't see it on reopen until owner sends another.
+  let pollInterval       = null;
+  let pollSinceIso       = null;
+
+   // ── What's included by service (Phase 7 V1.5 — May 5, 2026) ──────────────
+  // Migration 051 moved this to vertical_services.includes_text. Helper now
+  // reads from estimatorConfig (loaded via /tenant-config) so painters with
+  // custom includes text see it, and V2 verticals (roof, fence) can ship
+  // their own without code changes.
+  function getIncludesText(serviceSlug) {
+    if (!serviceSlug || serviceSlug === "specialized") return null;
+    if (!estimatorConfig || !Array.isArray(estimatorConfig.services)) return null;
+    const svc = estimatorConfig.services.find(s => s.service_slug === serviceSlug);
+    return svc?.includes_text || null;
+  }
+
+  // ── Estimator state (Phase 7 V1 — May 2, 2026) ────────────────────────────
+  // Inline estimator flow rendered as chat messages. Triggered by the
+  // "💰 Quick Quote" button pinned above the input area. Coexists with
+  // normal Alex chat — if user types mid-flow, Alex responds normally and
+  // estimator state pauses (can be resumed by tapping a previous card).
+  let estimatorEnabled   = false;        // From /api/estimator/tenant-config
+  let estimatorConfig    = null;         // services + questions + options
+  let estimatorActive    = false;        // True when in mid-flow
+  const estimatorState = {
+    service_slug: null,
+    inputs: {},
+    rooms: [],
+    _roomSize: "medium",
+    quote_result: null,
+    contact: { name: "", phone: "", email: "", address: "" },
+    _step: null,   // Tracks which question we're currently rendering
+    eventLog: []   // Phase 7 V1.5: buffered events for /log-events POST
+  };
+
+  // Helper: push an event into the log buffer with timestamp.
+  // Buffered until lead is captured, then POSTed in batch.
+  function logEstimatorEvent(eventType, content) {
+    estimatorState.eventLog.push({
+      event_type: eventType,
+      content: content,
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  // ── Mobile detection ──────────────────────────────────────────────────────
+  const MOBILE_BP = 640;
+  function isMobile() {
+    return window.innerWidth <= MOBILE_BP;
+  }
 
   // ── Helper: lighten a hex color for hover states ──────────────────────────
   function lightenColor(hex, amount) {
@@ -48,6 +137,10 @@
       const b   = Math.min(255, (num & 0xff) + amount);
       return "#" + ((r << 16) | (g << 8) | b).toString(16).padStart(6, "0");
     } catch { return hex; }
+  }
+
+  function formatCents(cents) {
+    return "$" + Math.round(cents / 100).toLocaleString();
   }
 
   // ── Visitor tracking ───────────────────────────────────────────────────────
@@ -72,34 +165,96 @@
     } catch (err) { console.warn("[AI Widget] Lead capture failed:", err); }
   }
 
-  // ── Init: fetch tenant branding config ────────────────────────────────────
+  // ── Phase 8.3 (May 12, 2026) — poll for owner-sent messages ──────────────
+  //
+  // pollOwnerMessages and startPolling/stopPolling are module-scope so the
+  // openChat/closeChat handlers below can drive them. Renders new messages
+  // by directly invoking the addMsg function exposed onto window by createUI
+  // (set in createUI right after addMsg is defined).
+  //
+  // Failures are silent — polling continues until chat closes. We don't
+  // want a transient network blip to surface a UI error.
+  async function pollOwnerMessages() {
+    if (!tenantId || !sessionId) return;
+    try {
+      const url = `${apiBase}/api/widget/poll-messages?tenantId=${encodeURIComponent(tenantId)}&sessionId=${encodeURIComponent(sessionId)}&since=${encodeURIComponent(pollSinceIso)}`;
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const data = await res.json();
+      const messages = Array.isArray(data?.messages) ? data.messages : [];
+      if (messages.length === 0) return;
+
+      // Render each new message as an assistant-style bubble. The customer
+      // doesn't need to know which messages came from the AI vs. an actual
+      // human — both come from "the company."
+      const addMsg = window.__aiWidgetAddMsg;
+      if (typeof addMsg === "function") {
+        messages.forEach((m) => {
+          addMsg(m.body, false);
+          if (m.created_at && m.created_at > pollSinceIso) {
+            pollSinceIso = m.created_at;
+          }
+        });
+      }
+    } catch (err) {
+      console.warn("[AI-Widget] Poll failed:", err.message);
+    }
+  }
+
+  function startPolling() {
+    if (pollInterval) return;
+    pollSinceIso = new Date().toISOString();
+    pollInterval = setInterval(pollOwnerMessages, 5000);
+    console.log("[AI-Widget] Owner-message polling started (5s)");
+  }
+
+  function stopPolling() {
+    if (!pollInterval) return;
+    clearInterval(pollInterval);
+    pollInterval = null;
+    console.log("[AI-Widget] Owner-message polling stopped");
+  }
+
+  // ── Init: fetch tenant branding + estimator config in parallel ────────────
   async function initWidget() {
     if (!tenantId) {
       console.error("[AI-Widget] No tenantId found. Script tag must have data-tenant-id attribute.");
       return;
     }
-    trackVisitor("widget_loaded");
+    trackVisitor("widget_loaded", sourceCallId ? { source_call_id: sourceCallId } : {});
 
     try {
       console.log("[AI-Widget] Fetching configuration...");
-      const res = await fetch(`${apiBase}/api/public-tenant/${tenantId}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.company_name || data.name) companyName       = data.company_name || data.name;
-        if (data.welcome_message)           welcomeMessage    = data.welcome_message;
-        if (data.brand_color)               brandColor        = data.brand_color;
-        if (data.logo_url)                  logoUrl           = data.logo_url;
-        if (data.twilio_phone_number)       twilioPhoneNumber = data.twilio_phone_number;
+      const [brandingRes, estimatorRes] = await Promise.all([
+        fetch(`${apiBase}/api/public-tenant/${tenantId}`).then(r => r.ok ? r.json() : null),
+        fetch(`${apiBase}/api/estimator/tenant-config/${tenantId}`).then(r => r.ok ? r.json() : null)
+      ]);
+
+      if (brandingRes) {
+        if (brandingRes.company_name || brandingRes.name) companyName = brandingRes.company_name || brandingRes.name;
+        if (brandingRes.chat_welcome_message)              welcomeMessage = brandingRes.chat_welcome_message;
+        else if (brandingRes.welcome_message)              welcomeMessage = brandingRes.welcome_message;
+        if (brandingRes.brand_color)                        brandColor = brandingRes.brand_color;
+        if (brandingRes.logo_url)                           logoUrl    = brandingRes.logo_url;
+        if (brandingRes.twilio_phone_number)                twilioPhoneNumber = brandingRes.twilio_phone_number;
         console.log("[AI-Widget] Loaded config for:", companyName, "| color:", brandColor);
       } else {
         console.warn("[AI-Widget] Failed to load config, using defaults.");
+      }
+
+      if (estimatorRes) {
+        estimatorConfig = estimatorRes;
+        estimatorEnabled = true;
+        console.log("[AI-Widget] Estimator enabled. Services:", estimatorConfig.services?.length || 0);
+      } else {
+        console.log("[AI-Widget] Estimator not enabled for this tenant.");
       }
     } catch (err) {
       console.error("[AI-Widget] Init error:", err);
     }
   }
 
-  // ── Build the UI (called after config loaded) ─────────────────────────────
+  // ── Build the UI ──────────────────────────────────────────────────────────
   function createUI() {
     if (!document.body) {
       setTimeout(createUI, 50);
@@ -109,7 +264,6 @@
 
     const hoverColor = lightenColor(brandColor, 20);
 
-    // Animations
     const style = document.createElement("style");
     style.innerHTML = `
       @keyframes ai-fadeIn   { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
@@ -124,6 +278,73 @@
       .ai-typing-dot:nth-child(2) { animation-delay:0.2s; }
       .ai-typing-dot:nth-child(3) { animation-delay:0.4s; }
       #ai-chat-toggle:hover { opacity:0.9; transform:scale(1.05) !important; }
+
+      /* Estimator inline UI elements */
+      .ai-est-card-btn {
+        display: block; width: 100%; padding: 10px 12px;
+        margin: 4px 0; background: #fff; border: 1.5px solid #e0e0e0;
+        border-radius: 10px; cursor: pointer; text-align: left;
+        font-family: inherit; font-size: 13px; color: #222;
+        transition: all 0.15s; font-weight: 500;
+      }
+      .ai-est-card-btn:hover { border-color: ${brandColor}; background: ${brandColor}08; }
+      .ai-est-card-btn.selected { border-color: ${brandColor}; background: ${brandColor}15; }
+      .ai-est-card-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+      .ai-est-input {
+        width: 100%; padding: 9px 12px; border: 1.5px solid #e0e0e0;
+        border-radius: 8px; font-size: 14px; outline: none;
+        font-family: inherit; box-sizing: border-box; background: #fff;
+        transition: border-color 0.15s;
+      }
+      .ai-est-input:focus { border-color: ${brandColor}; }
+
+      .ai-est-counter-row {
+        display: flex; align-items: center; gap: 8px;
+        padding: 6px 8px; border-radius: 6px; background: #fafafa;
+        border: 1px solid #eee; margin: 3px 0;
+      }
+      .ai-est-counter-btn {
+        width: 26px; height: 26px; border: 1px solid #ddd;
+        background: #fff; border-radius: 5px; cursor: pointer;
+        font-size: 14px; font-family: inherit;
+        display: flex; align-items: center; justify-content: center;
+      }
+
+      /* Mobile-specific rules (≤640px) */
+      @media (max-width: 640px) {
+        #ai-chat-container {
+          width: calc(100vw - 16px) !important;
+          max-width: calc(100vw - 16px) !important;
+          height: calc(100vh - 16px) !important;
+          height: calc(100dvh - 16px) !important;
+          right: 8px !important;
+          left: 8px !important;
+          bottom: 8px !important;
+          border-radius: 14px !important;
+        }
+        #ai-chat-toggle {
+          width: 56px !important;
+          height: 56px !important;
+          padding: 0 !important;
+          border-radius: 50% !important;
+          font-size: 24px !important;
+          bottom: 20px !important;
+          right: 20px !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+        }
+        #ai-chat-callout {
+          display: none !important;
+        }
+        #ai-sms-modal {
+          position: fixed !important;
+          top: 0 !important; left: 0 !important;
+          width: 100vw !important; height: 100vh !important;
+          height: 100dvh !important;
+        }
+      }
     `;
     document.head.appendChild(style);
 
@@ -131,7 +352,6 @@
     const toggle = document.createElement("div");
     toggle.id = "ai-chat-toggle";
     toggle.className = "ai-slide-in";
-    toggle.innerText = `Chat with ${companyName}`;
     Object.assign(toggle.style, {
       position: "fixed", bottom: "30px", right: "30px",
       background: brandColor,
@@ -145,9 +365,13 @@
     document.body.appendChild(toggle);
 
     // ── Callout bubble ───────────────────────────────────────────────────────
+    // Phase 7: switched copy from "Need a quick quote?" to estimator-aware
+    // language when estimator is enabled. Otherwise keeps original copy.
     const callout = document.createElement("div");
     callout.id = "ai-chat-callout";
-    callout.innerHTML = `👋 Need a quick quote?`;
+    callout.innerHTML = estimatorEnabled
+      ? `💰 Get a quick quote!`
+      : `👋 Need a quick quote?`;
     Object.assign(callout.style, {
       position: "fixed", bottom: "95px", right: "30px",
       background: "#fff", color: "#111", padding: "10px 32px 10px 16px",
@@ -156,8 +380,10 @@
       fontSize: "14px", fontWeight: "500", display: "none",
       opacity: "0", transform: "translateY(10px)",
       transition: "all 0.4s cubic-bezier(0.4,0,0.2,1)",
-      border: "1px solid #eee"
+      border: "1px solid #eee",
+      cursor: "pointer"
     });
+    callout.onclick = () => { if (!isOpen) openChat(); };
     document.body.appendChild(callout);
 
     const calloutArrow = document.createElement("div");
@@ -180,7 +406,7 @@
     callout.appendChild(calloutClose);
 
     function showCallout() {
-      if (isOpen) return;
+      if (isOpen || isMobile()) return;
       callout.style.display = "block";
       setTimeout(() => { callout.style.opacity = "1"; callout.style.transform = "translateY(0)"; }, 100);
     }
@@ -217,7 +443,6 @@
       gap: "10px", flexShrink: "0"
     });
 
-    // Logo or initial avatar
     const avatar = document.createElement("div");
     if (logoUrl) {
       const img = document.createElement("img");
@@ -239,9 +464,9 @@
     }
     header.appendChild(avatar);
 
-    // Title + status
     const headerInfo = document.createElement("div");
     headerInfo.style.flex = "1";
+    headerInfo.style.minWidth = "0";
     const headerTitle = document.createElement("div");
     headerTitle.innerText = companyName;
     Object.assign(headerTitle.style, {
@@ -255,7 +480,18 @@
     headerInfo.appendChild(headerStatus);
     header.appendChild(headerInfo);
 
-    // SMS button
+    const closeBtn = document.createElement("button");
+    closeBtn.innerHTML = "&times;";
+    closeBtn.type = "button";
+    closeBtn.title = "Close chat";
+    Object.assign(closeBtn.style, {
+      width: "32px", height: "32px", borderRadius: "50%",
+      border: "none", background: "rgba(255,255,255,0.2)", color: "#fff",
+      cursor: "pointer", fontSize: "22px", fontWeight: "bold", lineHeight: "1",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      flexShrink: "0", padding: "0"
+    });
+
     const smsBtn = document.createElement("button");
     smsBtn.innerText = "SMS";
     smsBtn.title = "Text us instead";
@@ -270,7 +506,6 @@
     smsBtn.onclick = () => { smsModal.style.display = "flex"; smsPhoneInput.focus(); };
     header.appendChild(smsBtn);
 
-    // Help (?) button
     const helpBtn = document.createElement("button");
     helpBtn.innerText = "?";
     helpBtn.type = "button";
@@ -300,7 +535,9 @@
       } else {
         if (!tooltip.parentNode) document.body.appendChild(tooltip);
         const r = helpBtn.getBoundingClientRect();
-        tooltip.style.left = Math.max(8, r.right - 300) + "px";
+        const tooltipWidth = Math.min(300, window.innerWidth - 16);
+        tooltip.style.width = tooltipWidth + "px";
+        tooltip.style.left = Math.max(8, Math.min(window.innerWidth - tooltipWidth - 8, r.right - tooltipWidth)) + "px";
         tooltip.style.top  = Math.max(8, r.top - 220)  + "px";
         tooltip.style.display = "block";
       }
@@ -311,6 +548,7 @@
       }
     });
     header.appendChild(helpBtn);
+    header.appendChild(closeBtn);
     container.appendChild(header);
 
     // ── Messages area ────────────────────────────────────────────────────────
@@ -318,24 +556,61 @@
     Object.assign(messagesBody.style, {
       flex: "1", padding: "16px", overflowY: "auto",
       display: "flex", flexDirection: "column", gap: "10px",
-      background: "#fafafa"
+      background: "#fafafa",
+      WebkitOverflowScrolling: "touch"
     });
     container.appendChild(messagesBody);
+
+    // ── Quick Quote button (Phase 7 — pinned above input area) ──────────────
+    // Only rendered when estimatorEnabled = true. Always visible while chat
+    // is open. Tappable any time, even mid-conversation.
+    const quickQuoteRow = document.createElement("div");
+    quickQuoteRow.style.display = "none"; // Default hidden, shown if estimator enabled
+    Object.assign(quickQuoteRow.style, {
+      padding: "8px 14px 0 14px", background: "#fff",
+      borderTop: "1px solid #f0f0f0", flexShrink: "0"
+    });
+    const quickQuoteBtn = document.createElement("button");
+    quickQuoteBtn.type = "button";
+    quickQuoteBtn.innerText = "💰 Quick Quote";
+    Object.assign(quickQuoteBtn.style, {
+      width: "100%", padding: "10px 14px",
+      background: brandColor,
+      color: "#fff", border: "none", borderRadius: "10px",
+      cursor: "pointer", fontSize: "13px", fontWeight: "700",
+      letterSpacing: "0.3px",
+      boxShadow: `0 2px 8px ${brandColor}33`,
+      fontFamily: "inherit",
+      transition: "transform 0.15s, box-shadow 0.15s"
+    });
+    quickQuoteBtn.onmouseenter = () => {
+      quickQuoteBtn.style.transform = "translateY(-1px)";
+      quickQuoteBtn.style.boxShadow = `0 4px 12px ${brandColor}55`;
+    };
+    quickQuoteBtn.onmouseleave = () => {
+      quickQuoteBtn.style.transform = "translateY(0)";
+      quickQuoteBtn.style.boxShadow = `0 2px 8px ${brandColor}33`;
+    };
+    quickQuoteBtn.onclick = () => startEstimatorFlow();
+    quickQuoteRow.appendChild(quickQuoteBtn);
+    container.appendChild(quickQuoteRow);
 
     // ── Input area ───────────────────────────────────────────────────────────
     const inputArea = document.createElement("div");
     Object.assign(inputArea.style, {
       display: "flex", padding: "12px 14px", borderTop: "1px solid #eee",
-      background: "#fff", alignItems: "center", gap: "8px"
+      background: "#fff", alignItems: "center", gap: "8px",
+      flexShrink: "0"
     });
     container.appendChild(inputArea);
 
     const input = document.createElement("input");
     input.placeholder = "Type a message...";
     Object.assign(input.style, {
-      flex: "1", border: "1.5px solid #eee", outline: "none", fontSize: "14px",
+      flex: "1", border: "1.5px solid #eee", outline: "none", fontSize: "16px",
       padding: "9px 12px", background: "#f7f7f7", borderRadius: "20px",
-      color: "#111", transition: "border-color 0.2s"
+      color: "#111", transition: "border-color 0.2s",
+      minWidth: "0"
     });
     input.addEventListener("focus",  () => { input.style.borderColor = brandColor; });
     input.addEventListener("blur",   () => { input.style.borderColor = "#eee"; });
@@ -353,7 +628,7 @@
     sendBtn.onmouseleave = () => { sendBtn.style.opacity = "1"; };
     inputArea.appendChild(sendBtn);
 
-    // ── Message bubble helper ─────────────────────────────────────────────────
+    // ── Message bubble helpers ───────────────────────────────────────────────
     function addMsg(text, isUser) {
       const bubble = document.createElement("div");
       bubble.className = "ai-chat-bubble";
@@ -371,9 +646,32 @@
       else        bubble.style.borderBottomLeftRadius  = "4px";
       messagesBody.appendChild(bubble);
       messagesBody.scrollTop = messagesBody.scrollHeight;
+      return bubble;
     }
 
-    // ── Typing indicator ──────────────────────────────────────────────────────
+    // Phase 8.3 (May 12, 2026) — expose addMsg so the module-scope poller
+    // can render owner messages into the same conversation flow. Set once,
+    // immediately after createUI defines messagesBody + addMsg above.
+    window.__aiWidgetAddMsg = addMsg;
+
+    // Special bubble that holds an interactive component (form, buttons, etc.)
+    function addInteractiveBubble(buildContent) {
+      const bubble = document.createElement("div");
+      bubble.className = "ai-chat-bubble";
+      Object.assign(bubble.style, {
+        padding: "12px 14px", borderRadius: "16px", borderBottomLeftRadius: "4px",
+        fontSize: "14px", maxWidth: "92%", alignSelf: "flex-start",
+        background: "#fff", color: "#222",
+        boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+        border: "1px solid #efefef", lineHeight: "1.5",
+        wordBreak: "break-word"
+      });
+      buildContent(bubble);
+      messagesBody.appendChild(bubble);
+      messagesBody.scrollTop = messagesBody.scrollHeight;
+      return bubble;
+    }
+
     function showTyping() {
       const typing = document.createElement("div");
       typing.id = "ai-typing-indicator";
@@ -392,27 +690,735 @@
       if (t) t.remove();
     }
 
-    // ── Toggle open/close ─────────────────────────────────────────────────────
-    toggle.onclick = () => {
-      isOpen = !isOpen;
-      if (isOpen) {
-        trackVisitor("chat_opened");
-        hideCallout();
-        toggle.classList.remove("ai-pulse-anim");
-        container.style.display = "flex";
-        setTimeout(() => { container.style.opacity = "1"; container.style.transform = "translateY(0)"; }, 10);
-        toggle.innerText = "Close";
-        toggle.style.background = "#444";
-        if (!hasWelcomed) { addMsg(welcomeMessage, false); hasWelcomed = true; }
-        setTimeout(() => input.focus(), 400);
-      } else {
-        container.style.opacity = "0";
-        container.style.transform = "translateY(10px)";
-        setTimeout(() => { container.style.display = "none"; }, 400);
-        toggle.innerText = `Chat with ${companyName}`;
-        toggle.style.background = brandColor;
+    // ════════════════════════════════════════════════════════════════════════
+    // ESTIMATOR FLOW (Phase 7 V1 — May 2, 2026)
+    // ════════════════════════════════════════════════════════════════════════
+
+    function startEstimatorFlow() {
+      if (!estimatorEnabled || !estimatorConfig) return;
+      // Reset state. NOTE: sourceCallId is module-scoped (NOT in estimatorState),
+      // so it survives this reset and gets attached to the lead at capture time.
+      estimatorActive = true;
+      estimatorState.service_slug = null;
+      estimatorState.inputs = {};
+      estimatorState.rooms = [];
+      estimatorState._roomSize = "medium";
+      estimatorState.quote_result = null;
+      estimatorState.contact = { name: "", phone: "", email: "", address: "" };
+      estimatorState._step = "service_picker";
+      estimatorState.eventLog = [];   // Reset event buffer
+
+      const startedVia = sourceCallId ? `voice link (call_id=${sourceCallId})` : "Quick Quote button";
+      trackVisitor("estimator_started", sourceCallId ? { source_call_id: sourceCallId } : {});
+      logEstimatorEvent("estimator_started", `[Quick Quote] Customer started estimator flow via ${startedVia}`);
+
+      // Intro message
+      addMsg("Great! I'll ask you a few quick questions to give you a ballpark range. This is just an estimate — final pricing requires an in-person walkthrough.", false);
+      setTimeout(() => renderServicePicker(), 600);
+    }
+
+    function renderServicePicker() {
+      const services = (estimatorConfig.services || []).filter(s => !s.is_specialized);
+      const serviceIcons = {
+        interior:   "🏠",
+        exterior:   "🎨",
+        cabinets:   "🚪",
+        deck_fence: "🪵"
+      };
+
+      addInteractiveBubble((bubble) => {
+        const label = document.createElement("div");
+        label.innerText = "What kind of project?";
+        label.style.fontWeight = "600";
+        label.style.marginBottom = "8px";
+        label.style.fontSize = "13px";
+        bubble.appendChild(label);
+
+        services.forEach(svc => {
+          const btn = document.createElement("button");
+          btn.className = "ai-est-card-btn";
+          btn.type = "button";
+          const icon = serviceIcons[svc.service_slug] || "✨";
+          btn.innerHTML = `<span style="font-size:18px;margin-right:8px;vertical-align:middle">${icon}</span><span style="vertical-align:middle">${svc.display_name}</span>`;
+          btn.onclick = () => {
+            estimatorState.service_slug = svc.service_slug;
+            // Disable all buttons in this bubble (lock the answer)
+            bubble.querySelectorAll("button").forEach(b => b.disabled = true);
+            btn.classList.add("selected");
+            // Echo selection as user message
+            addMsg(svc.display_name, true);
+            logEstimatorEvent("service_selected", `[Quick Quote] Selected service: ${svc.display_name}`);
+            setTimeout(() => renderQuestionsForService(svc.service_slug), 400);
+          };
+          bubble.appendChild(btn);
+        });
+
+        // Specialized
+        const spec = document.createElement("button");
+        spec.className = "ai-est-card-btn";
+        spec.type = "button";
+        spec.innerHTML = `<span style="font-size:18px;margin-right:8px;vertical-align:middle">🛠️</span><span style="vertical-align:middle">Specialized project</span>`;
+        spec.onclick = () => {
+          estimatorState.service_slug = "specialized";
+          bubble.querySelectorAll("button").forEach(b => b.disabled = true);
+          spec.classList.add("selected");
+          addMsg("Specialized project", true);
+          logEstimatorEvent("service_selected", "[Quick Quote] Selected service: Specialized project (needs walkthrough)");
+          estimatorState.quote_result = {
+            specialized: true,
+            reason: "Specialized projects need an in-person walkthrough so we can see the details that affect pricing.",
+            quote: null
+          };
+          setTimeout(() => renderSpecializedResult(), 400);
+        };
+        bubble.appendChild(spec);
+      });
+    }
+
+    function getQuestionsForService(serviceSlug) {
+      return (estimatorConfig.questions || []).filter(q =>
+        q.service_slug === serviceSlug ||
+        (q.service_slug === null && q.question_slug !== "service_type" && q.question_slug !== "special_notes")
+      );
+    }
+
+    // Render all questions for a service as a single interactive bubble.
+    // Multi-question forms in one bubble = less scroll churn than one-per-message.
+    function renderQuestionsForService(serviceSlug) {
+      const questions = getQuestionsForService(serviceSlug);
+      if (questions.length === 0) {
+        // Shouldn't happen for valid services, but defensive
+        submitEstimatorQuote();
+        return;
       }
-    };
+
+      addInteractiveBubble((bubble) => {
+        const intro = document.createElement("div");
+        intro.innerText = "Tell me a bit more:";
+        intro.style.fontWeight = "600";
+        intro.style.marginBottom = "10px";
+        intro.style.fontSize = "13px";
+        bubble.appendChild(intro);
+
+        questions.forEach((q, idx) => {
+          const block = renderQuestionBlock(q);
+          if (block) {
+            if (idx > 0) block.style.marginTop = "12px";
+            bubble.appendChild(block);
+          }
+        });
+
+        // Submit button at bottom of the form bubble
+        const submitWrap = document.createElement("div");
+        submitWrap.style.marginTop = "14px";
+        const submitBtn = document.createElement("button");
+        submitBtn.type = "button";
+        submitBtn.innerText = "Get my ballpark range →";
+        Object.assign(submitBtn.style, {
+          width: "100%", padding: "10px",
+          background: brandColor, color: "#fff", border: "none",
+          borderRadius: "8px", cursor: "pointer", fontSize: "13px",
+          fontWeight: "700", fontFamily: "inherit"
+        });
+        submitBtn.onclick = () => {
+          // Lock all inputs in the bubble
+          bubble.querySelectorAll("input, select, button").forEach(el => el.disabled = true);
+          submitBtn.innerText = "Calculating...";
+          // Pass bubble ref so submitEstimatorQuote can update button text on completion
+          submitEstimatorQuote(submitBtn);
+        };
+        submitWrap.appendChild(submitBtn);
+        bubble.appendChild(submitWrap);
+      });
+    }
+
+    function renderQuestionBlock(q) {
+      const wrap = document.createElement("div");
+
+      const label = document.createElement("div");
+      label.innerText = q.label + (q.required ? " *" : "");
+      Object.assign(label.style, {
+        fontWeight: "600", fontSize: "12px", color: "#444",
+        marginBottom: "4px"
+      });
+      wrap.appendChild(label);
+
+      if (q.helper_text) {
+        const helper = document.createElement("div");
+        helper.innerText = q.helper_text;
+        Object.assign(helper.style, { fontSize: "11px", color: "#888", marginBottom: "5px", lineHeight: "1.4" });
+        wrap.appendChild(helper);
+      }
+
+      if (q.question_type === "select") {
+        const sel = document.createElement("select");
+        sel.className = "ai-est-input";
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.innerText = "— select —";
+        sel.appendChild(placeholder);
+        (q.options || []).forEach(opt => {
+          const o = document.createElement("option");
+          o.value = opt.value;
+          o.innerText = opt.label;
+          sel.appendChild(o);
+        });
+        sel.onchange = () => { estimatorState.inputs[q.question_slug] = sel.value; };
+        wrap.appendChild(sel);
+
+      } else if (q.question_type === "yes_no") {
+        const row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.gap = "6px";
+        (q.options || []).forEach(opt => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "ai-est-card-btn";
+          btn.innerText = opt.label;
+          btn.style.flex = "1";
+          btn.style.textAlign = "center";
+          btn.style.margin = "0";
+          btn.style.padding = "8px";
+          btn.onclick = () => {
+            estimatorState.inputs[q.question_slug] = opt.value;
+            row.querySelectorAll(".ai-est-card-btn").forEach(b => b.classList.remove("selected"));
+            btn.classList.add("selected");
+          };
+          row.appendChild(btn);
+        });
+        wrap.appendChild(row);
+
+      } else if (q.question_type === "multi_select") {
+        const grid = document.createElement("div");
+        grid.style.display = "flex";
+        grid.style.flexDirection = "column";
+        grid.style.gap = "3px";
+        const selected = estimatorState.inputs[q.question_slug] || [];
+        (q.options || []).forEach(opt => {
+          const row = document.createElement("label");
+          Object.assign(row.style, {
+            display: "flex", alignItems: "center", gap: "8px",
+            padding: "6px 8px", borderRadius: "6px", cursor: "pointer",
+            fontSize: "13px", color: "#222"
+          });
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.value = opt.value;
+          cb.checked = selected.includes(opt.value);
+          cb.style.accentColor = brandColor;
+          cb.style.width = "16px";
+          cb.style.height = "16px";
+          cb.onchange = () => {
+            const cur = estimatorState.inputs[q.question_slug] || [];
+            if (cb.checked) {
+              if (!cur.includes(opt.value)) cur.push(opt.value);
+            } else {
+              const i = cur.indexOf(opt.value);
+              if (i >= 0) cur.splice(i, 1);
+            }
+            estimatorState.inputs[q.question_slug] = cur;
+          };
+          row.appendChild(cb);
+          row.appendChild(document.createTextNode(opt.label));
+          grid.appendChild(row);
+        });
+        wrap.appendChild(grid);
+
+      } else if (q.question_type === "multi_select_with_count") {
+        const grid = document.createElement("div");
+        grid.style.display = "flex";
+        grid.style.flexDirection = "column";
+        grid.style.gap = "4px";
+        (q.options || []).forEach(opt => {
+          const row = document.createElement("div");
+          row.className = "ai-est-counter-row";
+          const lbl = document.createElement("div");
+          lbl.innerText = opt.label;
+          lbl.style.flex = "1";
+          lbl.style.fontSize = "13px";
+          const minus = document.createElement("button");
+          minus.className = "ai-est-counter-btn";
+          minus.type = "button";
+          minus.innerText = "−";
+          const count = document.createElement("span");
+          count.innerText = "0";
+          Object.assign(count.style, { minWidth: "18px", textAlign: "center", fontWeight: "600", fontSize: "13px" });
+          const plus = document.createElement("button");
+          plus.className = "ai-est-counter-btn";
+          plus.type = "button";
+          plus.innerText = "+";
+          minus.onclick = () => {
+            const r = estimatorState.rooms.find(r => r.type === opt.value);
+            if (r && r.count > 0) {
+              r.count--;
+              if (r.count === 0) estimatorState.rooms = estimatorState.rooms.filter(rr => rr.type !== opt.value);
+            }
+            const r2 = estimatorState.rooms.find(r => r.type === opt.value);
+            count.innerText = r2 ? r2.count : 0;
+          };
+          plus.onclick = () => {
+            let r = estimatorState.rooms.find(r => r.type === opt.value);
+            if (!r) {
+              r = { type: opt.value, count: 0, size: estimatorState._roomSize };
+              estimatorState.rooms.push(r);
+            }
+            r.count++;
+            count.innerText = r.count;
+          };
+          row.appendChild(lbl);
+          row.appendChild(minus);
+          row.appendChild(count);
+          row.appendChild(plus);
+          grid.appendChild(row);
+        });
+        wrap.appendChild(grid);
+
+        // Average size selector
+        const sizeWrap = document.createElement("div");
+        sizeWrap.style.marginTop = "8px";
+        const sizeLbl = document.createElement("div");
+        sizeLbl.innerText = "Average room size:";
+        Object.assign(sizeLbl.style, { fontSize: "11px", color: "#888", marginBottom: "4px" });
+        sizeWrap.appendChild(sizeLbl);
+        const sizeRow = document.createElement("div");
+        sizeRow.style.display = "flex";
+        sizeRow.style.gap = "4px";
+        ["small", "medium", "large", "xl"].forEach(size => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "ai-est-card-btn";
+          btn.innerText = size === "xl" ? "XL" : size.charAt(0).toUpperCase() + size.slice(1);
+          btn.style.flex = "1";
+          btn.style.padding = "6px";
+          btn.style.fontSize = "11px";
+          btn.style.textAlign = "center";
+          btn.style.margin = "0";
+          if (estimatorState._roomSize === size) btn.classList.add("selected");
+          btn.onclick = () => {
+            estimatorState._roomSize = size;
+            estimatorState.rooms.forEach(r => r.size = size);
+            sizeRow.querySelectorAll(".ai-est-card-btn").forEach(b => b.classList.remove("selected"));
+            btn.classList.add("selected");
+          };
+          sizeRow.appendChild(btn);
+        });
+        sizeWrap.appendChild(sizeRow);
+        wrap.appendChild(sizeWrap);
+
+      } else if (q.question_type === "number") {
+        const inp = document.createElement("input");
+        inp.type = "number";
+        inp.className = "ai-est-input";
+        const opts = q.options || {};
+        if (opts.min !== undefined)  inp.min  = opts.min;
+        if (opts.max !== undefined)  inp.max  = opts.max;
+        if (opts.step !== undefined) inp.step = opts.step;
+        if (opts.unit) inp.placeholder = opts.unit;
+        inp.oninput = () => { estimatorState.inputs[q.question_slug] = parseFloat(inp.value) || 0; };
+        wrap.appendChild(inp);
+
+      } else if (q.question_type === "year_input") {
+        const inp = document.createElement("input");
+        inp.type = "number";
+        inp.className = "ai-est-input";
+        inp.placeholder = "YYYY";
+        const opts = q.options || {};
+        inp.min = opts.min || 1850;
+        inp.max = opts.max || new Date().getFullYear();
+        inp.oninput = () => {
+          const y = parseInt(inp.value, 10);
+          if (!y) return;
+          let bucket = "1978_2000";
+          if (y < 1978) bucket = "pre_1978";
+          else if (y >= 2000) bucket = "2000_plus";
+          estimatorState.inputs[q.question_slug] = bucket;
+        };
+        wrap.appendChild(inp);
+
+      } else if (q.question_type === "size_bucket") {
+        const row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.gap = "4px";
+        row.style.flexWrap = "wrap";
+        (q.options || []).forEach(opt => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "ai-est-card-btn";
+          btn.innerText = opt.label;
+          btn.style.flex = "1";
+          btn.style.minWidth = "80px";
+          btn.style.padding = "8px";
+          btn.style.fontSize = "11px";
+          btn.style.textAlign = "center";
+          btn.style.margin = "0";
+          btn.onclick = () => {
+            estimatorState.inputs[q.question_slug] = opt.value;
+            row.querySelectorAll(".ai-est-card-btn").forEach(b => b.classList.remove("selected"));
+            btn.classList.add("selected");
+          };
+          row.appendChild(btn);
+        });
+        wrap.appendChild(row);
+
+      } else if (q.question_type === "text") {
+        const ta = document.createElement("textarea");
+        ta.className = "ai-est-input";
+        ta.rows = 2;
+        ta.style.resize = "vertical";
+        ta.oninput = () => { estimatorState.inputs[q.question_slug] = ta.value; };
+        wrap.appendChild(ta);
+
+      } else {
+        return null;
+      }
+
+      return wrap;
+    }
+
+    async function submitEstimatorQuote(submitBtn) {
+      showTyping();
+      const inputs = { ...estimatorState.inputs };
+      if (estimatorState.service_slug === "interior") {
+        inputs.rooms = estimatorState.rooms
+          .filter(r => r.count > 0)
+          .map(r => ({ size: r.size || estimatorState._roomSize, count: r.count }));
+      }
+
+      try {
+        const res = await fetch(`${apiBase}/api/estimator/quote`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tenant_id: tenantId,
+            service_slug: estimatorState.service_slug,
+            inputs
+          })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `Server returned ${res.status}`);
+        }
+        const data = await res.json();
+        estimatorState.quote_result = data;
+        hideTyping();
+
+        if (submitBtn) submitBtn.innerText = "✓ Submitted";
+        if (data.specialized) {
+          renderSpecializedResult();
+        } else {
+          renderQuoteResult();
+        }
+      } catch (err) {
+        hideTyping();
+        console.error("[AI-Widget] Estimator quote error:", err);
+        // Re-enable the form bubble so user can retry instead of being stuck
+        if (submitBtn) {
+          submitBtn.innerText = "Try again";
+          submitBtn.disabled = false;
+          // Re-enable inputs in the same bubble as the button
+          const bubble = submitBtn.closest(".ai-chat-bubble");
+          if (bubble) {
+            bubble.querySelectorAll("input, select").forEach(el => el.disabled = false);
+            bubble.querySelectorAll("button").forEach(b => { if (b !== submitBtn) b.disabled = false; });
+          }
+        }
+        addMsg("Hmm, something went wrong calculating your range. Mind trying again? Or just give us a call.", false);
+        estimatorActive = false;
+      }
+    }
+
+   function renderQuoteResult() {
+      const r = estimatorState.quote_result;
+      // Log the quote shown event before rendering
+      const minDollars = Math.round(r.range_min_cents / 100);
+      const maxDollars = Math.round(r.range_max_cents / 100);
+      const rangeText = (r.range_min_cents === r.range_max_cents)
+        ? `$${minDollars.toLocaleString()}`
+        : `$${minDollars.toLocaleString()} - $${maxDollars.toLocaleString()}`;
+      const inputSummary = JSON.stringify({
+        service: estimatorState.service_slug,
+        inputs: estimatorState.inputs,
+        rooms: estimatorState.rooms.filter(rm => rm.count > 0)
+      });
+      logEstimatorEvent("quote_shown", `[Quick Quote] Showed quote range: ${rangeText} — Inputs: ${inputSummary}`);
+      addInteractiveBubble((bubble) => {
+        const title = document.createElement("div");
+        title.innerText = "Your Ballpark Range";
+        Object.assign(title.style, { fontSize: "12px", color: "#888", fontWeight: "600", textAlign: "center", marginBottom: "4px" });
+        bubble.appendChild(title);
+
+        const range = document.createElement("div");
+        const minStr = formatCents(r.range_min_cents);
+        const maxStr = formatCents(r.range_max_cents);
+        range.innerText = (r.range_min_cents === r.range_max_cents) ? minStr : `${minStr} – ${maxStr}`;
+        Object.assign(range.style, {
+          fontSize: "26px", fontWeight: "800", color: "#1a1a1a",
+          textAlign: "center", margin: "4px 0 8px 0", letterSpacing: "-0.5px"
+        });
+        bubble.appendChild(range);
+
+        // What's included — sourced from scope_options overlay (structured object)
+// or legacy vertical_services.includes_text (plain string) via /tenant-config
+const includes = getIncludesText(estimatorState.service_slug);
+if (includes) {
+  if (typeof includes === "string") {
+    // Legacy fallback: services without scope_options rows still come back as prose
+    const includesBox = document.createElement("div");
+    Object.assign(includesBox.style, {
+      background: "#f0f7ff", border: "1px solid #cfe3ff", borderRadius: "8px",
+      padding: "10px 12px", marginTop: "4px", marginBottom: "6px",
+      fontSize: "12px", color: "#1e3a5f", lineHeight: "1.5"
+    });
+    includesBox.innerHTML = `📋 <strong>Includes:</strong> ${includes}`;
+    bubble.appendChild(includesBox);
+  } else if (typeof includes === "object") {
+    // Structured format — green "Included" + amber "Not included" boxes
+    if (includes.included) {
+      const includedBox = document.createElement("div");
+      Object.assign(includedBox.style, {
+        background: "#e8f5e9", border: "1.5px solid #66bb6a", borderRadius: "10px",
+        padding: "11px 13px", marginTop: "6px", marginBottom: "4px",
+        fontSize: "12px", color: "#1b5e20", lineHeight: "1.5"
+      });
+      includedBox.innerHTML = `✅ <strong style="font-size:13px">Included in this estimate:</strong><br><span style="font-weight:600;font-size:13px">${includes.included}</span>`;
+      bubble.appendChild(includedBox);
+    }
+    if (includes.excluded) {
+      const excludedBox = document.createElement("div");
+      Object.assign(excludedBox.style, {
+        background: "#fff3e0", border: "1.5px solid #ffa726", borderRadius: "10px",
+        padding: "11px 13px", marginTop: "4px", marginBottom: "6px",
+        fontSize: "12px", color: "#e65100", lineHeight: "1.5"
+      });
+      excludedBox.innerHTML = `❌ <strong style="font-size:13px">Does NOT include:</strong><br><span style="font-weight:600;font-size:13px">${includes.excluded}</span><br><span style="font-weight:400;font-size:11px;opacity:0.85;font-style:italic">These can be added during your in-person walkthrough if needed.</span>`;
+      bubble.appendChild(excludedBox);
+    }
+  }
+}
+
+        const disclaimer = document.createElement("div");
+        Object.assign(disclaimer.style, {
+          background: "#fff8e1", border: "1px solid #ffe082", borderRadius: "8px",
+          padding: "8px 10px", marginTop: "4px", fontSize: "11px", color: "#7a5b00", lineHeight: "1.5"
+        });
+        disclaimer.innerHTML = `⚠️ <strong>This is a ballpark, not a final quote.</strong> Final pricing requires an in-person walkthrough.`;
+        bubble.appendChild(disclaimer);
+      });
+
+      // Follow-up CTA message
+      setTimeout(() => {
+        addMsg("Want me to schedule a free in-person walkthrough? Usually within 24 hours.", false);
+        setTimeout(() => renderContactForm(false), 500);
+      }, 800);
+    }
+
+    function renderSpecializedResult() {
+      const r = estimatorState.quote_result;
+      logEstimatorEvent("quote_shown", `[Quick Quote] Specialized project — ${r.reason || "needs in-person walkthrough"}`);
+      addMsg(r.reason || "This kind of project needs an in-person walkthrough so we can give you accurate pricing.", false);
+      setTimeout(() => {
+        addMsg("Want me to schedule a free walkthrough? Usually within 24 hours.", false);
+        setTimeout(() => renderContactForm(true), 500);
+      }, 800);
+    }
+
+    function renderContactForm(isSpecialized) {
+      addInteractiveBubble((bubble) => {
+        const intro = document.createElement("div");
+        intro.innerText = "Quick contact info:";
+        Object.assign(intro.style, { fontWeight: "600", marginBottom: "8px", fontSize: "13px" });
+        bubble.appendChild(intro);
+
+        const fields = [
+          { key: "name",    label: "Name *",    type: "text",  placeholder: "First and last" },
+          { key: "phone",   label: "Phone *",   type: "tel",   placeholder: "(555) 555-5555" },
+          { key: "email",   label: "Email *",   type: "email", placeholder: "you@example.com" },
+          { key: "address", label: "Address (optional)", type: "text", placeholder: "Street, city, ZIP" }
+        ];
+
+        const inputs = {};
+        fields.forEach(f => {
+          const w = document.createElement("div");
+          w.style.marginBottom = "8px";
+          const lbl = document.createElement("div");
+          lbl.innerText = f.label;
+          Object.assign(lbl.style, { fontSize: "11px", fontWeight: "600", color: "#444", marginBottom: "3px" });
+          w.appendChild(lbl);
+          const inp = document.createElement("input");
+          inp.type = f.type;
+          inp.className = "ai-est-input";
+          inp.placeholder = f.placeholder;
+          inp.oninput = () => { estimatorState.contact[f.key] = inp.value; };
+          w.appendChild(inp);
+          inputs[f.key] = inp;
+          bubble.appendChild(w);
+        });
+
+        const errBox = document.createElement("div");
+        Object.assign(errBox.style, { display: "none", color: "#c00", fontSize: "11px", marginBottom: "6px" });
+        bubble.appendChild(errBox);
+
+        const submit = document.createElement("button");
+        submit.type = "button";
+        submit.innerText = isSpecialized ? "Schedule walkthrough" : "Yes, schedule it";
+        Object.assign(submit.style, {
+          width: "100%", padding: "10px",
+          background: brandColor, color: "#fff", border: "none",
+          borderRadius: "8px", cursor: "pointer", fontSize: "13px",
+          fontWeight: "700", fontFamily: "inherit", marginTop: "4px"
+        });
+        submit.onclick = async () => {
+          const c = estimatorState.contact;
+          const errs = [];
+          if (!c.name || c.name.trim().length < 2) errs.push("Please enter your name.");
+          if (!c.phone || c.phone.replace(/\D/g, "").length < 10) errs.push("Please enter a valid phone.");
+          if (!c.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email)) errs.push("Please enter a valid email.");
+          if (errs.length) {
+            errBox.innerText = errs.join(" ");
+            errBox.style.display = "block";
+            return;
+          }
+          errBox.style.display = "none";
+          submit.disabled = true;
+          submit.innerText = "Sending...";
+
+          try {
+            const res = await fetch(`${apiBase}/api/estimator/lead`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                tenant_id: tenantId,
+                phone: c.phone,
+                name: c.name,
+                email: c.email,
+                address: c.address || null,
+                project_type: estimatorState.service_slug,
+                estimator_payload: {
+                  service_slug: estimatorState.service_slug,
+                  inputs: estimatorState.inputs,
+                  rooms: estimatorState.rooms,
+                  session_id: sessionId,
+                  // Phase 7 V2 (May 4, 2026) — voice attribution. Set when
+                  // the customer arrived via an SMS link from a phone call.
+                  // Will be null for organic widget traffic.
+                  source_call_id: sourceCallId
+                },
+                quote_result: estimatorState.quote_result
+              })
+            });
+            if (!res.ok) throw new Error(`Server returned ${res.status}`);
+            const leadResp = await res.json();
+            const newLeadId = leadResp.lead_id;
+
+            // Lock all inputs
+            bubble.querySelectorAll("input, button").forEach(el => el.disabled = true);
+            // Echo as a user-side confirmation
+            addMsg(`${c.name} • ${c.phone}`, true);
+
+            // Log final event + flush all buffered events to /log-events
+            logEstimatorEvent("lead_captured",
+              `[Quick Quote] Lead captured — Name: ${c.name} | Phone: ${c.phone} | Email: ${c.email}${c.address ? ' | Address: ' + c.address : ''}${sourceCallId ? ' | Voice attribution: call_id=' + sourceCallId : ''}`
+            );
+
+            // Fire-and-forget: synthetic conversation messages for dashboard visibility.
+            // Wrapped in its own try/catch so failure doesn't break the user flow.
+            if (newLeadId && estimatorState.eventLog.length > 0) {
+              fetch(`${apiBase}/api/estimator/log-events`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  tenant_id: tenantId,
+                  lead_id: newLeadId,
+                  events: estimatorState.eventLog
+                })
+              }).then(r => {
+                if (r.ok) {
+                  console.log("[AI-Widget] Logged %d estimator events to backend", estimatorState.eventLog.length);
+                } else {
+                  console.warn("[AI-Widget] Event log POST returned %d", r.status);
+                }
+              }).catch(err => {
+                console.warn("[AI-Widget] Event log POST failed:", err.message);
+              });
+            }
+
+            setTimeout(() => {
+              addMsg(`✅ You're all set! Someone from ${companyName} will reach out within 24 hours to schedule your walkthrough.`, false);
+              estimatorActive = false;
+              trackVisitor("estimator_lead_captured", sourceCallId ? { source_call_id: sourceCallId } : {});
+            }, 400);
+          } catch (err) {
+            console.error("[AI-Widget] Lead capture error:", err);
+            errBox.innerText = "Something went wrong. Please try again or just text us.";
+            errBox.style.display = "block";
+            submit.disabled = false;
+            submit.innerText = isSpecialized ? "Schedule walkthrough" : "Yes, schedule it";
+          }
+        };
+        bubble.appendChild(submit);
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // END ESTIMATOR FLOW
+    // ════════════════════════════════════════════════════════════════════════
+
+    // ── Responsive layout — called on mount, resize, orientationchange ──────
+    function applyResponsiveLayout() {
+      const mobile = isMobile();
+      if (!isOpen) {
+        if (mobile) {
+          toggle.innerText = "💬";
+        } else {
+          toggle.innerText = `Chat with ${companyName}`;
+        }
+      } else {
+        if (mobile) {
+          toggle.innerText = "×";
+          toggle.style.fontSize = "28px";
+        } else {
+          toggle.innerText = "Close";
+          toggle.style.fontSize = "15px";
+        }
+      }
+    }
+    applyResponsiveLayout();
+    window.addEventListener("resize", applyResponsiveLayout);
+    window.addEventListener("orientationchange", applyResponsiveLayout);
+
+    // ── Open/close logic ─────────────────────────────────────────────────────
+    function openChat() {
+      isOpen = true;
+      trackVisitor("chat_opened", sourceCallId ? { source_call_id: sourceCallId } : {});
+      hideCallout();
+      toggle.classList.remove("ai-pulse-anim");
+      container.style.display = "flex";
+      setTimeout(() => { container.style.opacity = "1"; container.style.transform = "translateY(0)"; }, 10);
+      toggle.style.background = "#444";
+      applyResponsiveLayout();
+      // Show Quick Quote button if estimator enabled
+      if (estimatorEnabled) {
+        quickQuoteRow.style.display = "block";
+      }
+      if (!hasWelcomed) { addMsg(welcomeMessage, false); hasWelcomed = true; }
+      setTimeout(() => input.focus(), 400);
+
+      // Phase 8.3 (May 12, 2026) — start polling for owner-sent messages
+      startPolling();
+    }
+    function closeChat() {
+      isOpen = false;
+      container.style.opacity = "0";
+      container.style.transform = "translateY(10px)";
+      setTimeout(() => { container.style.display = "none"; }, 400);
+      toggle.style.background = brandColor;
+      applyResponsiveLayout();
+
+      // Phase 8.3 (May 12, 2026) — stop polling when chat closes
+      stopPolling();
+    }
+    toggle.onclick  = () => { isOpen ? closeChat() : openChat(); };
+    closeBtn.onclick = () => { closeChat(); };
 
     // ── SMS consent modal ─────────────────────────────────────────────────────
     const smsModal = document.createElement("div");
@@ -421,15 +1427,18 @@
       position: "absolute", top: "0", left: "0", width: "100%", height: "100%",
       background: "rgba(255,255,255,0.98)", zIndex: "2147483648",
       display: "none", flexDirection: "column", padding: "28px 20px",
-      boxSizing: "border-box", textAlign: "center", fontFamily: "'Inter', sans-serif"
+      boxSizing: "border-box", textAlign: "center", fontFamily: "'Inter', sans-serif",
+      overflowY: "auto"
     });
     container.appendChild(smsModal);
 
     const smsClose = document.createElement("div");
     smsClose.innerHTML = "&times;";
     Object.assign(smsClose.style, {
-      position: "absolute", top: "14px", right: "18px", fontSize: "22px",
-      cursor: "pointer", color: "#999"
+      position: "absolute", top: "14px", right: "18px", fontSize: "28px",
+      cursor: "pointer", color: "#999", lineHeight: "1",
+      width: "32px", height: "32px", display: "flex",
+      alignItems: "center", justifyContent: "center"
     });
     smsClose.onclick = () => { smsModal.style.display = "none"; };
     smsModal.appendChild(smsClose);
@@ -464,6 +1473,9 @@
     consentCheck.type = "checkbox";
     consentCheck.style.marginTop = "3px";
     consentCheck.style.accentColor = brandColor;
+    consentCheck.style.width = "18px";
+    consentCheck.style.height = "18px";
+    consentCheck.style.flexShrink = "0";
     const disclosureText = `By submitting, you agree to receive text messages from ${companyName} about your quote, scheduling, and service updates. Msg/data rates may apply. Reply STOP to opt out.`;
     const consentLabel = document.createElement("label");
     consentLabel.innerText = disclosureText;
@@ -508,7 +1520,6 @@
       }
     };
 
-    // Show SMS button once phone number loaded
     const checkPhone = setInterval(() => {
       if (twilioPhoneNumber) {
         clearInterval(checkPhone);
@@ -537,19 +1548,20 @@
         // Phase 8.1 (May 12, 2026) — when the owner has taken over this lead
         // via the dashboard, /website-chat returns { reply: null, handoff: true }.
         // Don't render anything on the customer side — the owner is replying
-        // out-of-band (currently via SMS). The customer's own message is still
-        // visible in their chat window (rendered above via addMsg(val, true)),
-        // and the inbound is recorded in the dashboard timeline for the owner.
+        // out-of-band (currently SMS in V1, also website/Facebook in 8.3).
+        // The customer's own message is still visible (rendered above via
+        // addMsg(val, true)), and the inbound is recorded in the dashboard
+        // timeline for the owner.
         //
         // Lead capture and quote capture still flow through if present —
         // those are independent of the AI reply and useful regardless of
         // handoff state.
+        //
+        // Phase 8.2a (May 12, 2026) — show a one-time "team member will follow
+        // up" notice so the customer doesn't think the chat broke. Module-
+        // scoped flag persists for the session; resets on page reload.
         if (data.handoff) {
           console.log("[AI-Widget] Handoff active — AI reply suppressed");
-          // Phase 8.2a (May 12, 2026) — show a one-time "team member will reach out"
-          // notice so the customer doesn't think the chat broke. Uses the existing
-          // hasWelcomed-style pattern: a module-scoped flag persists for the session.
-          // Resets on page reload (new sessionId, new hasShownHandoffNotice).
           if (!hasShownHandoffNotice) {
             addMsg("Thanks! A team member will follow up with you shortly.", false);
             hasShownHandoffNotice = true;
@@ -573,6 +1585,38 @@
     sendBtn.onclick  = handleSend;
     input.onkeypress = (e) => { if (e.key === "Enter") handleSend(); };
     console.log("[AI-Widget] UI ready.");
+
+    // ── Auto-start (Phase 7 V2 — May 4, 2026) ────────────────────────────────
+    // When the customer arrives via the /q/:tenantId hosted landing page
+    // (sent by AI's send_estimate_link voice tool), the wrapper page has
+    // injected window.__aiWidgetAutoStart BEFORE this script loaded. Read
+    // it now and auto-open + auto-trigger the estimator flow.
+    //
+    // Defensive: requires both flags. Auto-start without auto-open would
+    // start the estimator behind a closed chat window — bad UX. Auto-open
+    // without auto-start just opens the chat, which is fine for other flows.
+    if (window.__aiWidgetAutoStart) {
+      const auto = window.__aiWidgetAutoStart;
+      console.log("[AI-Widget] Auto-start hint received:", auto);
+      if (auto.openChat) {
+        // Small delay so the animations + container layout settle before
+        // we trigger the open transition. Without this, the chat window
+        // can render in a weird half-state on slow devices.
+        setTimeout(() => {
+          openChat();
+          if (auto.startEstimator) {
+            if (estimatorEnabled) {
+              // Wait for the welcome message bubble to render before kicking
+              // off the estimator flow — avoids a janky "two bubbles appear
+              // at once" effect. 700ms matches the welcome's natural cadence.
+              setTimeout(() => startEstimatorFlow(), 700);
+            } else {
+              console.warn("[AI-Widget] Auto-start requested estimator but estimatorEnabled=false (tenant config missing or 404)");
+            }
+          }
+        }, 250);
+      }
+    }
   }
 
   // ── Boot ───────────────────────────────────────────────────────────────────

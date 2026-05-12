@@ -532,7 +532,26 @@
         const data = await response.json();
         hideTyping();
         trackVisitor("message_sent", { message: val });
-        addMsg(data.reply || "I'm sorry, I encountered an issue.", false);
+
+        // Phase 8.1 (May 12, 2026) — when the owner has taken over this lead
+        // via the dashboard, /website-chat returns { reply: null, handoff: true }.
+        // Don't render anything on the customer side — the owner is replying
+        // out-of-band (currently via SMS). The customer's own message is still
+        // visible in their chat window (rendered above via addMsg(val, true)),
+        // and the inbound is recorded in the dashboard timeline for the owner.
+        //
+        // Lead capture and quote capture still flow through if present —
+        // those are independent of the AI reply and useful regardless of
+        // handoff state.
+        if (data.handoff) {
+          console.log("[AI-Widget] Handoff active — AI reply suppressed");
+        } else if (data.reply) {
+          addMsg(data.reply, false);
+        } else {
+          // No reply and no handoff — unexpected empty response, show fallback
+          addMsg("I'm sorry, I encountered an issue.", false);
+        }
+
         if (data.lead_capture && Object.keys(data.lead_capture).length > 0) sendLeadToCRM(data.lead_capture);
         if (data.quote_capture) addMsg("📋 Quote request received. We'll be in touch shortly!", false);
       } catch (err) {

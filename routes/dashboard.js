@@ -271,7 +271,7 @@ router.get("/calls", async (req, res) => {
         ORDER BY created_at DESC 
         LIMIT 1
       ) r ON true
-      WHERE c.tenant_id = ANY($1)
+      WHERE c.tenant_id = ANY($1) AND c.started_at > now() - INTERVAL '60 days'
     `;
     const params = [tenantIds];
     if (status) {

@@ -2067,7 +2067,7 @@ export default function Settings({ tenantId }) {
                             Active
                           </span>
                         </div>
-                        
+                        <a
                           href={`https://${customDomain.custom_domain}`}
                           target="_blank"
                           rel="noopener noreferrer"

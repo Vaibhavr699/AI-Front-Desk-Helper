@@ -641,6 +641,40 @@ export function updateTenantBranding(id, brandMode) {
   });
 }
 
+/**
+ * Custom domain (white-label DNS) API helpers — May 13, 2026.
+ * Backs the Custom Domain section of the Branding tab.
+ */
+
+export function getCustomDomain(tenantId) {
+  return api(`/api/branding/custom-domain`, {
+    method: "GET",
+    headers: { "x-tenant-id": tenantId },
+  });
+}
+
+export function submitCustomDomain(tenantId, hostname) {
+  return api(`/api/branding/custom-domain`, {
+    method: "POST",
+    headers: { "x-tenant-id": tenantId, "Content-Type": "application/json" },
+    body: JSON.stringify({ hostname }),
+  });
+}
+
+export function verifyCustomDomain(tenantId) {
+  return api(`/api/branding/custom-domain/verify`, {
+    method: "POST",
+    headers: { "x-tenant-id": tenantId, "Content-Type": "application/json" },
+  });
+}
+
+export function disconnectCustomDomain(tenantId) {
+  return api(`/api/branding/custom-domain`, {
+    method: "DELETE",
+    headers: { "x-tenant-id": tenantId },
+  });
+}
+
 export function removeTenantPricing(id) {
   return api(`/api/admin/tenants/${id}/pricing`, { method: "DELETE" });
 }

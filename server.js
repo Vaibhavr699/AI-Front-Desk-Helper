@@ -1347,6 +1347,18 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
     "If known lead data below already has full_name/phone/email, do NOT ask for them again. Reference what you have.",
     "If the customer asks Will I hear from you? or similar, they are checking on a prior request - acknowledge that and tell them next steps, don't re-introduce yourself.",
     "",
+    "═══ ALWAYS CAPTURE IDENTIFYING DETAILS ═══",
+    "Whenever the customer mentions ANY identifying detail in their message, populate the matching lead_capture field in your JSON output. Do NOT wait for a 'full' set of information. Do NOT gate this on whether the customer seems likely to book.",
+    "Trigger lead_capture population on ANY of these the moment you see them:",
+    "  - Customer states their name (first only, last only, or both): \"Hi, this is Sarah\" → lead_capture.full_name=\"Sarah\". \"This is Drew Koch\" → lead_capture.full_name=\"Drew Koch\". \"Mike here\" → lead_capture.full_name=\"Mike\"",
+    "  - An email address: lead_capture.email",
+    "  - A phone number different from the message sender: lead_capture.phone",
+    "  - A street address or city: lead_capture.address",
+    "  - A project description (interior, exterior, deck, cabinets, etc.): lead_capture.project_type",
+    "Use the EXACT text the customer provided - do not infer last names, do not guess at spelling, do not 'clean up' what they said.",
+    "Even if the customer says they are 'just asking a question' or 'not ready to book' - STILL populate lead_capture with whatever they shared. The dashboard needs to know who you are talking with.",
+    "Common failure mode to AVOID: using the customer's name in your reply (\"Hi Winston, thanks for reaching out!\") without populating lead_capture.full_name. If you reference the name, you MUST also capture it.",
+    "",
   ].join("\n");
 
   const coreSmsRules = [
@@ -4002,11 +4014,27 @@ sendToOpenAI(sessionUpdate);
     // ─────────────────────────────────────────────────────────────
     const isOutboundContext = isOutbound || isRecovery || isNurturing;
     if (isOutboundContext && !hasScheduledHangup && callSid) {
+      // Goodbye-phrase detection — May 13, 2026 expansion.
+      //
+      // Was: exact-string match on "have a great day" / "have a wonderful day"
+      // / "take care". The Mitu Bansal transcript (May 13) showed Alex saying
+      // "have a wonderful day" and the hangup not firing because the call
+      // continued past it with "The call is ended. Let me know if there's
+      // anything else..." (Alex filling silence on a call the caller had
+      // mentally ended). Bug was: exact-string list was incomplete.
+      //
+      // Fix: regex covers the natural variants Alex actually uses to close.
+      // Deliberately NOT triggering on bare "goodbye" to reduce false
+      // positives — caller might say "okay goodbye" early in the call.
       const lowerText = text.toLowerCase();
-      const saidGoodbye =
-        lowerText.includes("have a great day") ||
-        lowerText.includes("have a wonderful day") ||
-        lowerText.includes("take care");
+      const goodbyePatterns = [
+        /\bhave a (great|wonderful|good|nice|lovely|fantastic) (day|evening|afternoon|morning|one)\b/,
+        /\btake care\b/,
+        /\bthanks (so much )?(for )?(calling|reaching out)\b/,
+        /\bhave a good one\b/,
+        /\btalk (to you )?soon\b/,
+      ];
+      const saidGoodbye = goodbyePatterns.some((rx) => rx.test(lowerText));
 
       if (saidGoodbye) {
         hasScheduledHangup = true;

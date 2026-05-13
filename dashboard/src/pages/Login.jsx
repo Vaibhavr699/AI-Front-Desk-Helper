@@ -5,6 +5,7 @@ import { Mail, Lock, Eye, EyeClosed, ArrowRight, ArrowLeft } from "lucide-react"
 import { login, signup } from "../api";
 import { cn } from "../lib/utils";
 import { useToast } from "../components/ui/Toast";
+import { useHostnameBranding } from "../contexts/HostnameBrandingContext";
 
 function Input({ className, type, ...props }) {
   return (
@@ -29,6 +30,9 @@ export default function Login({ onLogin }) {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const { success, error } = useToast();
+   const { branding } = useHostnameBranding();
+  const displayName = branding?.company_name || "AI Front Desk Helper";
+  const displayLogo = branding?.logo_url || "/favicon.png";
   const [focusedInput, setFocusedInput] = useState(null);
 
   const mouseX = useMotionValue(0);
@@ -134,7 +138,7 @@ export default function Login({ onLogin }) {
                   transition={{ type: "spring", duration: 0.8 }}
                   className="mx-auto w-12 h-12 rounded-xl bg-white border border-stone-200 flex items-center justify-center relative overflow-hidden shadow-lg p-1.5"
                 >
-                  <img src="/favicon.png" alt="Logo" className="w-full h-full object-contain" />
+                  <img src={displayLogo} alt={`${displayName} logo`} className="w-full h-full object-contain" />
                 </motion.div>
 
                 <motion.h1
@@ -151,7 +155,7 @@ export default function Login({ onLogin }) {
                   transition={{ delay: 0.3 }}
                   className="text-stone-500 text-sm"
                 >
-                  {isSignup ? "Get started with AI Front Desk Helper" : "Sign in to continue to AI Front Desk Helper"}
+                  {isSignup ? `Get started with ${displayName}` : `Sign in to continue to ${displayName}`}
                 </motion.p>
               </div>
 

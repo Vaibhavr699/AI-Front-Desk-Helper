@@ -66,6 +66,7 @@ const { authMiddleware, requireSuperAdmin } = require("./lib/auth");
 const notificationsService = require("./services/notifications");
 const metricAlerts = require("./services/metricAlerts");
 const auditLogsRouter = require("./routes/auditLogs");
+const { resolveHostnameToTenant } = require("./lib/hostnameResolver");
 
 const WEBSITE_CONTEXT_URL = process.env.WEBSITE_CONTEXT_URL || "https://www.gladiatorspainting.com";
 const WEBSITE_CONTEXT_MAX_CHARS = 10000;
@@ -246,6 +247,11 @@ app.set("trust proxy", true);
 
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 app.use(express.json({ limit: "2mb" }));
+
+// ─── Hostname → tenant resolution (Phase 7 V2, May 13, 2026) ────
+// Runs on every request. Sets req.tenantFromHost based on hostname.
+// Non-blocking: null for our own domain / dev / unmatched hosts.
+app.use(resolveHostnameToTenant);
 
 // CORS: allow frontend origin (e.g. dashboard :3089 → API :3001).
 const BASE_URL_FOR_CORS = process.env.BASE_URL || "";

@@ -571,6 +571,90 @@ async function isRecoveryBlocked(recovery) {
 }
 
 // ─────────────────────────────────────────────────────────
+// SENTIMENT SUPPRESSION (Bug #6, May 13, 2026)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Check whether the customer recently expressed anger or complaint
+ * that should pause this recovery sequence.
+ *
+ * Bug #6 fix: the Bob Prange transcript (May 13) showed recovery touches
+ * continuing to fire even after the customer texted angrily about service
+ * failures. Sentiment-aware suppression: if any inbound message in the
+ * last 48 hours matches anger or complaint patterns, pause the recovery
+ * (reschedule, don't cancel — they might calm down) and check again on
+ * the next tick.
+ *
+ * Keyword-based detection by design: fast (regex), deterministic (no
+ * OpenAI hallucination), and matches the patterns we've seen in actual
+ * angry-customer transcripts. Upgrade to OpenAI sentiment call later if
+ * we want nuance.
+ *
+ * Used by:
+ *  - executeStep() in this file (recovery touches)
+ *  - runSmsFollowUps() in server.js (SMS thread nurture loop)
+ *
+ * Returns true if recovery should pause, false to proceed normally.
+ * Fails open on DB errors — better to send than to skip silently.
+ */
+async function hasRecentNegativeSentiment(tenantId, contactPhone, lookbackHours = 48) {
+  if (!contactPhone || !tenantId) return false;
+
+  const last10 = getLast10Digits(contactPhone);
+
+  try {
+    const res = await db.query(
+      `SELECT m.body, m.created_at
+         FROM messages m
+         JOIN leads l ON l.id = m.lead_id
+        WHERE m.tenant_id = $1
+          AND m.direction = 'inbound'
+          AND m.created_at > now() - ($4::text || ' hours')::interval
+          AND (
+            l.phone = $2
+            OR right(regexp_replace(COALESCE(l.phone, ''), '[^0-9]', '', 'g'), 10) = $3
+          )
+        ORDER BY m.created_at DESC
+        LIMIT 20`,
+      [tenantId, contactPhone, last10, lookbackHours]
+    );
+
+    if (res.rows.length === 0) return false;
+
+    const negativePatterns = [
+      /\b(angry|furious|frustrated|pissed|mad|upset|annoyed)\b/i,
+      /\b(terrible|awful|horrible|disgusting|garbage)\b/i,
+      /\bnever (show|came|showed)/i,
+      /\b(ripped off|rip[- ]?off|scam|fraud|cheated)\b/i,
+      /\b(lawyer|sue|sued|suing|court|bbb|better business|attorney)\b/i,
+      /\b(refund|money back|charge[- ]?back)\b/i,
+      /\b(stop calling|leave me alone|harass)\b/i,
+      /\b(ridiculous|unacceptable|outrageous)\b/i,
+      /\b(complaint|complain|complaining)\b/i,
+      /\byou guys (suck|are (the )?(worst|terrible|awful|useless))\b/i,
+      /\bthis is (bs|bullshit|absurd)\b/i,
+    ];
+
+    for (const msg of res.rows) {
+      for (const pattern of negativePatterns) {
+        if (pattern.test(msg.body)) {
+          console.log(
+            "[Recovery] Negative sentiment detected from=%s msg=%s",
+            contactPhone,
+            (msg.body || "").slice(0, 100)
+          );
+          return true;
+        }
+      }
+    }
+    return false;
+  } catch (err) {
+    console.error("[Recovery] Sentiment check failed:", err.message);
+    return false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────
 // CORE: Process due recovery actions (called by cron)
 // ─────────────────────────────────────────────────────────
 
@@ -631,6 +715,33 @@ async function executeStep(recovery) {
   if (await isRecoveryBlocked(recovery)) {
     console.log("[Recovery] DNC blocked at executeStep id=%s phone=%s — auto-cancelling", recovery.id, recovery.contact_phone);
     await markCancelled(recovery.id);
+    return;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Bug #6 fix (May 13, 2026) — sentiment-aware pause.
+  //
+  // The Bob Prange transcript revealed that the recovery system continues
+  // firing follow-up touches even after the customer texted angrily about
+  // service failures. Check for negative-sentiment phrases in inbound
+  // messages over the last 48h. If found, reschedule for 24h out instead
+  // of firing. The customer may cool off; if not, we'll pause again next
+  // tick. Recovery resumes naturally once the angry window passes.
+  //
+  // We do NOT cancel — that would dump the recovery permanently. A legit
+  // angry customer might still convert once their concern is resolved.
+  // ─────────────────────────────────────────────────────────────────────
+  if (await hasRecentNegativeSentiment(recovery.tenant_id, recovery.contact_phone)) {
+    console.log(
+      "[Recovery] Sentiment pause id=%s phone=%s — rescheduling 24h out",
+      recovery.id,
+      recovery.contact_phone
+    );
+    const next = addHours(new Date(), 24);
+    await db.query(
+      "UPDATE estimate_recoveries SET next_action_at = $1, updated_at = now() WHERE id = $2",
+      [next.toISOString(), recovery.id]
+    );
     return;
   }
 
@@ -1027,6 +1138,7 @@ module.exports = {
   makeRecoveryCall,
   advanceStep,
   isRecoveryBlocked,
+  hasRecentNegativeSentiment,
   GHOST_SEQUENCE,
   INQUIRY_SEQUENCE,
   MISSED_CALL_SEQUENCE,

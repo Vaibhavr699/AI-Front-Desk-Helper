@@ -30,6 +30,14 @@
  *   DNC — those are responses to inbound customer messages, not outbound
  *   automation. A customer who texts "cancel my appointment" deserves a
  *   reply even if they're on the do-not-contact list.
+ *
+ * Bug #5/#6 Fix (May 13, 2026): added DNC + complaint escape hatches at
+ *   the top of handleSmsCancellationIncoming. Discovered via Bob Prange
+ *   transcript — customers expressing TCPA opt-out ("take me off your
+ *   list") or complaints ("you guys never showed up") mid-cancel-flow
+ *   were getting bounced indefinitely against the YES/NO matcher. Now
+ *   those phrases exit the state machine and fall through to the AI
+ *   orchestrator + soft-intent DNC path in processSmsConversation.
  */
 
 const db = require("../lib/db");
@@ -317,6 +325,60 @@ function isSkipReason(text) {
   return /^(none|no|nothing|skip|n\/?a|no thanks|no thank you|nope|nah)$/i.test(text.trim());
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Bug #5/#6 fix (May 13, 2026): escape-hatch detectors
+//
+// These regex sets detect when a customer mid-cancel-flow is expressing
+// something OTHER than a YES/NO answer — specifically TCPA opt-out
+// language or complaints/anger. When matched, handleSmsCancellationIncoming
+// exits the state machine and returns null so the caller falls through to
+// the AI orchestrator (which can then classify should_dnc OR generate an
+// empathetic reply + escalation notification).
+//
+// Why regex instead of LLM intent here: the cancellation state machine is
+// deliberately deterministic. We don't want to add a second LLM call inside
+// it. The AI orchestrator (one layer up) is the right place for LLM-based
+// intent — we just need to know when to STOP intercepting and let it run.
+//
+// Discovered via Bob Prange transcript May 13: phrases like "Take me off
+// your list and wait for my review", "It is 2:15 if you cannot tell time",
+// "You guys never showed up for the appointment. So quit bothering me"
+// were all bouncing indefinitely against "Sorry, I didn't catch that.
+// Please reply YES to confirm cancellation, or NO to keep your
+// appointment."
+// ─────────────────────────────────────────────────────────────────────
+
+const DNC_PHRASES = [
+  /\btake me off (your|the) list\b/i,
+  /\b(stop|quit) (calling|texting|messaging|contacting|bothering)\b/i,
+  /\bdon'?t (call|text|message|contact) me\b/i,
+  /\bnever (call|text|message|contact)\b/i,
+  /\bremove me from\b/i,
+  /\bquit bothering me\b/i,
+  /\bunsubscribe\b/i,
+  /\bopt(ing)? out\b/i,
+];
+
+const COMPLAINT_PHRASES = [
+  /\b(never|didn'?t) (show|came|arrived)\b/i,
+  /\b(missed|skipped) (the|my|our) appointment\b/i,
+  /\bwait for (my|our|the) (bad )?review\b/i,
+  /\b(leaving|leave|posting|writing) (a|my|the) (bad )?review\b/i,
+  /\b(terrible|awful|horrible|worst|garbage) (service|experience|company|business)\b/i,
+  /\bcomplain(t|ing|ed)?\b/i,
+  /\byou guys (never|didn'?t|won'?t|aren'?t)\b/i,
+  /\bripped me off\b/i,
+  /\bwaste of (my )?time\b/i,
+];
+
+function isDncPhrase(text) {
+  return DNC_PHRASES.some((rx) => rx.test(text));
+}
+
+function isComplaintPhrase(text) {
+  return COMPLAINT_PHRASES.some((rx) => rx.test(text));
+}
+
 async function initiateSmsCancellation(thread, tenant) {
   const bookingsService = require("./bookings");
   const phone = thread.leadCapture?.phone || thread.phone;
@@ -385,6 +447,37 @@ async function handleSmsCancellationIncoming(thread, incomingText, tenant) {
     thread.pendingCancelBookingId = null;
     thread.pendingCancelBookingsList = null;
     return { reply: "No problem, keeping your appointment as-is." };
+  }
+
+  // ─── Bug #5/#6 escape hatches (May 13, 2026) ──────────────────────
+  // If the customer is expressing TCPA opt-out OR a complaint while
+  // we're mid-cancel-flow, exit the state machine and return null.
+  // The caller (processSmsConversation) treats null as "I didn't handle
+  // this" and falls through to the AI orchestrator, which can:
+  //   - DNC phrase → fire soft-intent DNC path → formal opt-out reply
+  //   - Complaint phrase → generate empathetic reply + (eventually)
+  //     trigger an owner escalation notification
+  //
+  // Without these escape hatches, every non-YES/NO response loops back
+  // to "Sorry, I didn't catch that. Please reply YES to confirm
+  // cancellation, or NO to keep your appointment." — which is what
+  // happened to Bob Prange (multiple times) on May 13.
+  if (isDncPhrase(text)) {
+    console.log("[SMS Cancel Flow] DNC phrase detected mid-cancel state=%s text=%s — exiting flow, falling through to AI",
+      thread.cancelState, text.slice(0, 100));
+    thread.cancelState = null;
+    thread.pendingCancelBookingId = null;
+    thread.pendingCancelBookingsList = null;
+    return null;
+  }
+
+  if (isComplaintPhrase(text)) {
+    console.log("[SMS Cancel Flow] Complaint phrase detected mid-cancel state=%s text=%s — exiting flow, falling through to AI",
+      thread.cancelState, text.slice(0, 100));
+    thread.cancelState = null;
+    thread.pendingCancelBookingId = null;
+    thread.pendingCancelBookingsList = null;
+    return null;
   }
 
   switch (thread.cancelState) {
@@ -528,4 +621,7 @@ module.exports = {
   getTenantPrimaryPhone,
   // DNC suppression (Migration 059)
   isPhoneDoNotContact,
+  // Bug #5/#6 fix (May 13, 2026) — exported for unit testing
+  isDncPhrase,
+  isComplaintPhrase,
 };

@@ -20,6 +20,10 @@ import {
   getServiceRateOverrides,
   updateServiceRateOverride,
   getVerticalServices,
+  getCustomDomain,
+  submitCustomDomain,
+  verifyCustomDomain,
+  disconnectCustomDomain,
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import { ConfirmationModal } from "../components/ConfirmationModal";
@@ -495,12 +499,15 @@ export default function Settings({ tenantId }) {
   const [overridesLoading, setOverridesLoading] = useState(false);
   const [overrideSaving, setOverrideSaving] = useState({}); // service_slug → bool
 
-  // Phase 7 V2 (May 12, 2026) — Services list dynamically loaded from the
-  // tenant's vertical, replacing a previously hardcoded painting-only list.
-  // For Home Exterior tenants this fetches Siding/Roofing/Gutters/Fence;
-  // for Painting tenants it returns the 4 painting services; etc.
-  const [verticalServices, setVerticalServices] = useState([]);
-  const [servicesLoading, setServicesLoading] = useState(false);
+    // Phase 7 V2 (May 13, 2026) — White-label custom domain state
+  // Three states drive the UI: empty/pending/active. The 'verifying' and
+  // 'failed' statuses both render under the pending UI (with appropriate
+  // copy variations) since they're mid-flow states.
+  const [customDomain, setCustomDomain] = useState(null);
+  const [customDomainLoading, setCustomDomainLoading] = useState(false);
+  const [customDomainInput, setCustomDomainInput] = useState("");
+  const [customDomainSaving, setCustomDomainSaving] = useState(false);
+  const [customDomainError, setCustomDomainError] = useState("");
 
    // ── Reseller-tab guard (Apr 28, 2026) ─────────────────────────────
   // The Usage & Billing tab is filtered out of the sidebar for resellers
@@ -685,6 +692,25 @@ export default function Settings({ tenantId }) {
         setServicesLoading(false);
         setOverridesLoading(false);
       });
+  }, [activeTab, tenantId]);
+
+  // Load custom domain state when Branding tab is active (V2, May 13, 2026)
+  useEffect(() => {
+    if (activeTab !== "branding" || !tenantId) return;
+    setCustomDomainLoading(true);
+    getCustomDomain(tenantId)
+      .then((data) => {
+        setCustomDomain(data);
+        // Pre-fill the input with the saved hostname if there is one, so
+        // tenants don't have to re-type when retrying a failed verify.
+        if (data?.custom_domain) {
+          setCustomDomainInput(data.custom_domain);
+        }
+      })
+      .catch((e) => {
+        console.warn("[Settings] Failed to load custom domain:", e.message);
+      })
+      .finally(() => setCustomDomainLoading(false));
   }, [activeTab, tenantId]);
 
   const hasActiveSub = subscriptionStatus && ["active", "trialing"].includes(subscriptionStatus.subscription_status);
@@ -1989,38 +2015,15 @@ export default function Settings({ tenantId }) {
                 </div>
               </section>
 
-              {/* ── Custom domain (Phase 2 preview) ─────────────────────── */}
+              {/* ── Custom domain (white-label DNS, May 13, 2026) ────────── */}
               <section className="pt-8 border-t border-gray-100">
                 <h3 className="text-sm font-black text-gray-500 uppercase tracking-widest flex items-center gap-2 mb-4">
                   <Globe className="w-3.5 h-3.5" />
                   Custom domain
                 </h3>
-                {tenant?.brand_mode === "white_label" ? (
-                  <div className="p-5 bg-slate-50/60 border-2 border-dashed border-slate-200 rounded-2xl flex items-start gap-4">
-                    <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center shrink-0">
-                      <Globe className="w-5 h-5 text-slate-400" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <h4 className="text-sm font-black text-gray-700">Use your own domain</h4>
-                        <span className="px-2 py-0.5 bg-amber-100 text-amber-800 text-[9px] font-black uppercase tracking-widest rounded-md border border-amber-200">
-                          Coming Soon
-                        </span>
-                      </div>
-                      <p className="text-xs text-gray-500 leading-relaxed mb-3">
-                        Host your dashboard on your own domain (e.g. <span className="font-mono bg-white px-1.5 py-0.5 rounded">app.{form.company_name ? form.company_name.toLowerCase().replace(/[^a-z0-9]/g, "") : "yourcompany"}.com</span>) so your team and customers interact with a fully branded experience. Includes a branded login page.
-                      </p>
-                      <input
-                        type="text"
-                        value=""
-                        disabled
-                        placeholder={`app.${form.company_name ? form.company_name.toLowerCase().replace(/[^a-z0-9]/g, "") : "yourcompany"}.com`}
-                        className="w-full md:max-w-sm px-4 py-2.5 bg-white/50 border border-slate-200 rounded-xl font-mono text-xs placeholder:text-slate-400 cursor-not-allowed opacity-60"
-                      />
-                      <p className="text-[11px] text-slate-400 mt-2 italic">Included with your plan. We'll email you when it's live and walk you through the DNS setup.</p>
-                    </div>
-                  </div>
-                ) : (
+
+                {tenant?.brand_mode !== "white_label" ? (
+                  // ── Non-white-label tenants see the upgrade CTA ──────────
                   <div className="relative overflow-hidden p-5 bg-gradient-to-br from-amber-50 via-white to-amber-50/30 border-2 border-amber-200 rounded-2xl flex items-start gap-4">
                     <div className="absolute top-0 right-0 -mt-4 -mr-4 w-32 h-32 bg-amber-400 blur-[80px] opacity-20 rounded-full pointer-events-none"></div>
                     <div className="relative z-10 w-10 h-10 rounded-xl bg-white border border-amber-200 flex items-center justify-center shrink-0 shadow-sm">
@@ -2034,19 +2037,275 @@ export default function Settings({ tenantId }) {
                         </span>
                       </div>
                       <p className="text-xs text-gray-600 leading-relaxed mb-3">
-                        Host your dashboard on your own domain (e.g. <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-amber-100">app.yourcompany.com</span>) and remove all third-party branding from your team and customer experience. Includes a fully branded login page.
+                        Host your dashboard on your own domain (e.g. <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-amber-100">app.yourcompany.com</span>) and remove all third-party branding from your team and customer experience.
                       </p>
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <Link
-                          to="/plans"
-                          className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-amber-700 shadow-md shadow-amber-600/20 transition-all"
+                      <Link
+                        to="/plans"
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-amber-700 shadow-md shadow-amber-600/20 transition-all"
+                      >
+                        <Crown className="w-3.5 h-3.5" />
+                        Upgrade to Elite
+                      </Link>
+                    </div>
+                  </div>
+                ) : customDomainLoading ? (
+                  // ── Loading state ────────────────────────────────────────
+                  <div className="p-5 bg-gray-50 border border-gray-200 rounded-2xl text-center text-xs text-gray-400 italic">
+                    Loading custom domain settings…
+                  </div>
+                ) : customDomain?.custom_domain_status === "active" ? (
+                  // ── Active state — domain is live ────────────────────────
+                  <div className="p-5 bg-emerald-50 border-2 border-emerald-200 rounded-2xl">
+                    <div className="flex items-start gap-4">
+                      <div className="w-10 h-10 rounded-xl bg-white border border-emerald-200 flex items-center justify-center shrink-0 shadow-sm">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <h4 className="text-sm font-black text-emerald-900">Your dashboard is live at</h4>
+                          <span className="px-2 py-0.5 bg-emerald-600 text-white text-[9px] font-black uppercase tracking-widest rounded-md shadow-sm">
+                            Active
+                          </span>
+                        </div>
+                        
+                          href={`https://${customDomain.custom_domain}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-block font-mono text-sm font-bold text-emerald-700 hover:text-emerald-900 underline underline-offset-2 mb-3"
                         >
-                          <Crown className="w-3.5 h-3.5" />
-                          Upgrade to Elite
-                        </Link>
-                        <span className="text-[11px] text-amber-800/70 italic">Full white-label branding + custom domain included</span>
+                          {customDomain.custom_domain}
+                        </a>
+                        <p className="text-xs text-emerald-800/70 leading-relaxed mb-4">
+                          Verified {customDomain.custom_domain_verified_at
+                            ? new Date(customDomain.custom_domain_verified_at).toLocaleDateString()
+                            : "recently"}.
+                          Your team and customers can access the dashboard at this address.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!window.confirm(
+                              `Disconnect ${customDomain.custom_domain}? Your dashboard will continue working at the default URL (${customDomain.cname_target}). You can reconnect this domain later if needed.`
+                            )) return;
+                            setCustomDomainSaving(true);
+                            try {
+                              await disconnectCustomDomain(tenantId);
+                              setCustomDomain({
+                                custom_domain: null,
+                                custom_domain_status: null,
+                                custom_domain_verified_at: null,
+                                cname_target: customDomain.cname_target,
+                                is_white_label: true,
+                              });
+                              setCustomDomainInput("");
+                              success("Custom domain disconnected.");
+                            } catch (e) {
+                              toastError(`Disconnect failed: ${e.message}`);
+                            } finally {
+                              setCustomDomainSaving(false);
+                            }
+                          }}
+                          disabled={customDomainSaving}
+                          className="px-4 py-2 bg-white border-2 border-emerald-200 text-emerald-700 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-emerald-50 hover:border-emerald-300 transition-all disabled:opacity-50"
+                        >
+                          Disconnect
+                        </button>
                       </div>
                     </div>
+                  </div>
+                ) : customDomain?.custom_domain ? (
+                  // ── Pending/Verifying/Failed — CNAME instructions + Verify button ──
+                  <div className="p-5 bg-blue-50/40 border-2 border-blue-200 rounded-2xl space-y-4">
+                    <div className="flex items-start gap-4">
+                      <div className="w-10 h-10 rounded-xl bg-white border border-blue-200 flex items-center justify-center shrink-0 shadow-sm">
+                        <Clock className="w-5 h-5 text-blue-600" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <h4 className="text-sm font-black text-blue-900">DNS verification pending</h4>
+                          <span className={`px-2 py-0.5 text-[9px] font-black uppercase tracking-widest rounded-md shadow-sm ${
+                            customDomain.custom_domain_status === "failed"
+                              ? "bg-red-600 text-white"
+                              : "bg-blue-600 text-white"
+                          }`}>
+                            {customDomain.custom_domain_status}
+                          </span>
+                        </div>
+                        <p className="text-xs text-blue-800/80 leading-relaxed">
+                          Create the CNAME record below in your domain provider's DNS settings, then click <strong>Verify</strong>. DNS usually propagates within 5-15 minutes.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* CNAME instructions table */}
+                    <div className="overflow-hidden rounded-xl border-2 border-blue-100 bg-white">
+                      <table className="w-full text-xs">
+                        <tbody>
+                          <tr className="border-b border-blue-100">
+                            <td className="px-4 py-3 font-black text-blue-600 uppercase tracking-widest text-[10px] w-32 bg-blue-50/50">Record type</td>
+                            <td className="px-4 py-3 font-mono font-bold text-gray-900">CNAME</td>
+                          </tr>
+                          <tr className="border-b border-blue-100">
+                            <td className="px-4 py-3 font-black text-blue-600 uppercase tracking-widest text-[10px] bg-blue-50/50">Host / name</td>
+                            <td className="px-4 py-3 font-mono font-bold text-gray-900 break-all">{customDomain.custom_domain}</td>
+                          </tr>
+                          <tr className="border-b border-blue-100">
+                            <td className="px-4 py-3 font-black text-blue-600 uppercase tracking-widest text-[10px] bg-blue-50/50">Points to / target</td>
+                            <td className="px-4 py-3 font-mono font-bold text-gray-900 break-all">{customDomain.cname_target}</td>
+                          </tr>
+                          <tr>
+                            <td className="px-4 py-3 font-black text-blue-600 uppercase tracking-widest text-[10px] bg-blue-50/50">TTL</td>
+                            <td className="px-4 py-3 font-mono font-bold text-gray-900">3600 (or Auto)</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Failed-specific error message */}
+                    {customDomain.custom_domain_status === "failed" && customDomainError && (
+                      <div className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                        <p className="text-xs text-red-800 leading-relaxed">{customDomainError}</p>
+                      </div>
+                    )}
+
+                    {/* Action buttons */}
+                    <div className="flex gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setCustomDomainSaving(true);
+                          setCustomDomainError("");
+                          try {
+                            const result = await verifyCustomDomain(tenantId);
+                            if (result.verified) {
+                              setCustomDomain((prev) => ({
+                                ...prev,
+                                custom_domain_status: "active",
+                                custom_domain_verified_at: result.verified_at,
+                              }));
+                              success(result.note || "Custom domain is now live!");
+                            } else {
+                              setCustomDomain((prev) => ({
+                                ...prev,
+                                custom_domain_status: "failed",
+                              }));
+                              setCustomDomainError(result.reason || "Verification failed. Check your CNAME record and try again.");
+                            }
+                          } catch (e) {
+                            toastError(`Verification failed: ${e.message}`);
+                            setCustomDomainError(e.message);
+                          } finally {
+                            setCustomDomainSaving(false);
+                          }
+                        }}
+                        disabled={customDomainSaving}
+                        className="px-4 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-blue-700 shadow-md shadow-blue-600/20 transition-all disabled:opacity-50 flex items-center gap-2"
+                      >
+                        {customDomainSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                        Verify DNS
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!window.confirm("Discard this domain and start over?")) return;
+                          setCustomDomainSaving(true);
+                          try {
+                            await disconnectCustomDomain(tenantId);
+                            setCustomDomain({
+                              custom_domain: null,
+                              custom_domain_status: null,
+                              custom_domain_verified_at: null,
+                              cname_target: customDomain.cname_target,
+                              is_white_label: true,
+                            });
+                            setCustomDomainInput("");
+                            setCustomDomainError("");
+                            success("Custom domain cleared.");
+                          } catch (e) {
+                            toastError(`Failed to clear: ${e.message}`);
+                          } finally {
+                            setCustomDomainSaving(false);
+                          }
+                        }}
+                        disabled={customDomainSaving}
+                        className="px-4 py-2.5 bg-white border border-gray-200 text-gray-600 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-gray-50 hover:border-gray-300 transition-all disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  // ── Empty state — submit a new hostname ──────────────────
+                  <div className="p-5 bg-slate-50/60 border-2 border-dashed border-slate-200 rounded-2xl">
+                    <div className="flex items-start gap-4 mb-4">
+                      <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 flex items-center justify-center shrink-0">
+                        <Globe className="w-5 h-5 text-slate-400" />
+                      </div>
+                      <div className="flex-1">
+                        <h4 className="text-sm font-black text-gray-700 mb-1">Use your own domain</h4>
+                        <p className="text-xs text-gray-500 leading-relaxed">
+                          Host your dashboard on a subdomain you own — e.g. <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">app.{form.company_name ? form.company_name.toLowerCase().replace(/[^a-z0-9]/g, "") : "yourcompany"}.com</span>. You'll add a CNAME record in your DNS provider and we'll verify it.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        value={customDomainInput}
+                        onChange={(e) => {
+                          setCustomDomainInput(e.target.value.trim().toLowerCase());
+                          setCustomDomainError("");
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && customDomainInput && !customDomainSaving) {
+                            e.preventDefault();
+                            document.getElementById("custom-domain-submit-btn")?.click();
+                          }
+                        }}
+                        placeholder={`app.${form.company_name ? form.company_name.toLowerCase().replace(/[^a-z0-9]/g, "") : "yourcompany"}.com`}
+                        className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl font-mono text-sm focus:ring-4 focus:ring-blue-500/5 transition-all outline-none placeholder:text-slate-400"
+                      />
+                      <button
+                        id="custom-domain-submit-btn"
+                        type="button"
+                        onClick={async () => {
+                          if (!customDomainInput) return;
+                          setCustomDomainSaving(true);
+                          setCustomDomainError("");
+                          try {
+                            const result = await submitCustomDomain(tenantId, customDomainInput);
+                            setCustomDomain({
+                              custom_domain: result.custom_domain,
+                              custom_domain_status: result.custom_domain_status,
+                              custom_domain_verified_at: null,
+                              cname_target: result.cname_target,
+                              is_white_label: true,
+                            });
+                            success("Hostname saved. Create the CNAME record and click Verify when ready.");
+                          } catch (e) {
+                            setCustomDomainError(e.message || "Failed to save hostname.");
+                            toastError(e.message || "Failed to save hostname.");
+                          } finally {
+                            setCustomDomainSaving(false);
+                          }
+                        }}
+                        disabled={customDomainSaving || !customDomainInput}
+                        className="px-6 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-black shadow-md transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {customDomainSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
+                        Continue
+                      </button>
+                    </div>
+
+                    {customDomainError && (
+                      <p className="mt-3 text-xs text-red-600 font-bold">{customDomainError}</p>
+                    )}
+
+                    <p className="mt-3 text-[11px] text-slate-400 italic">
+                      We support subdomains only (e.g. <span className="font-mono">app.yourbrand.com</span>) — apex domains aren't supported yet.
+                    </p>
                   </div>
                 )}
               </section>

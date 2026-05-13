@@ -2037,7 +2037,7 @@ export default function Settings({ tenantId }) {
                         </span>
                       </div>
                       <p className="text-xs text-gray-600 leading-relaxed mb-3">
-                        Host your dashboard on your own domain (e.g. <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-amber-100">app.yourcompany.com</span>) and remove all third-party branding from your team and customer experience.
+                        Host your dashboard on your own custom domain (e.g. <span className="font-mono bg-white px-1.5 py-0.5 rounded border border-amber-100">app.yourcompany.com</span>). Your team and customers access the dashboard from a URL that matches your brand.
                       </p>
                       <Link
                         to="/plans"

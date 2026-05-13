@@ -1876,6 +1876,75 @@ async function processSmsConversation(phone, incomingText, tenant = null) {
       // Fall through to normal AI flow
     }
   }
+
+// ─────────────────────────────────────────────────────────────────────
+  // Touch-up routing (May 13, 2026) — bypass AI for touch-up requests.
+  //
+  // When a customer asks for a touch-up, the AI shouldn't try to
+  // auto-book (touch-ups involve warranty / scope / crew decisions the
+  // AI doesn't handle). Instead: send "team member will reach out" reply,
+  // email the team with full context, fire an owner notification, skip
+  // the AI orchestrator entirely.
+  //
+  // Discovered via Miranda Hopkins transcript May 13 — AI tried to book
+  // a touch-up for the same day at 8:00 AM when she sent "0800" at 8:04
+  // AM. Even with stronger date validation, touch-ups shouldn't be
+  // auto-booked at all.
+  //
+  // Ordering: runs AFTER TCPA keywords (compliance always wins) and
+  // AFTER handoff check (owner stays in charge), but BEFORE cancellation
+  // state machine (don't interrupt mid-cancel) and BEFORE AI orchestrator
+  // (skip AI entirely on match).
+  // ─────────────────────────────────────────────────────────────────────
+  if (tenant) {
+    try {
+      const touchUpService = require("./services/touchUp");
+      const detection = await touchUpService.detectTouchUpRequest(thread, incomingText);
+      if (detection) {
+        const replyText = await touchUpService.handleTouchUpRequest(
+          thread,
+          incomingText,
+          tenant,
+          detection
+        );
+
+        thread.history.push({
+          role: "assistant",
+          text: replyText,
+          at: new Date().toISOString(),
+        });
+        thread.lastOutboundAt = Date.now();
+        thread.needsFollowUpAt = null;  // don't arm nurture for touch-ups
+        thread.followUpCount = 0;
+
+        if (thread.leadId) {
+          messagesService.saveMessage(
+            tenant.id,
+            thread.leadId,
+            thread.channel || "sms",
+            "outbound",
+            replyText,
+            { touch_up_routed: true }
+          );
+        }
+
+        return {
+          reply: replyText,
+          touch_up: true,
+          lead_capture: {},
+          booking_confirmed: null,
+        };
+      }
+    } catch (err) {
+      // Fail open — log and fall through to normal AI flow rather than
+      // block customers entirely if touch-up service has a bug.
+      console.error(
+        "[TouchUp] Detection failed leadId=%s err=%s — falling through to AI",
+        thread.leadId || "(none)",
+        err.message
+      );
+    }
+  }
   
  // ─────────────────────────────────────────────────────────────────────
   // Phase 4C (May 4, 2026) — SMS cancellation state machine.

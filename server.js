@@ -2477,6 +2477,40 @@ async function runSmsFollowUps() {
       );
     }
 
+    // ── Sentiment suppression (Bug #6, May 13, 2026) ─────────────────
+    // If the customer has texted anger or complaints in the last 48h,
+    // clear the follow-up timer. Don't pile a "checking in" message on
+    // top of frustration — that's how complaints become escalations.
+    // Skip for non-SMS channels (fb-/web- threads) since the helper
+    // looks up by phone number in the leads table.
+    if (
+      thread.tenantId &&
+      thread.phone &&
+      !thread.phone.startsWith("fb-") &&
+      !thread.phone.startsWith("web-")
+    ) {
+      try {
+        const estimateRecoveryService = require("./services/estimateRecovery");
+        if (await estimateRecoveryService.hasRecentNegativeSentiment(thread.tenantId, thread.phone)) {
+          console.log(
+            "[FollowUp] Sentiment pause phone=%s leadId=%s — clearing follow-up timer",
+            thread.phone,
+            thread.leadId || "(none)"
+          );
+          thread.needsFollowUpAt = null;
+          continue;
+        }
+      } catch (err) {
+        console.error(
+          "[FollowUp] Sentiment check failed phone=%s err=%s — proceeding",
+          thread.phone,
+          err.message
+        );
+      }
+    }
+
+    // ── Cooldown: 30 min after last inbound (was 10 — too aggressive) ─
+
     // ── Cooldown: 30 min after last inbound (was 10 — too aggressive) ─
     // Prevents the "checking in" message from firing in the middle of an
     // active conversation. Bug observed May 7: nurture fired 33 minutes

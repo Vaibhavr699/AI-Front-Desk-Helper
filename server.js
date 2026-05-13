@@ -527,6 +527,7 @@ app.use("/api/ai-coach", authMiddleware, require("./routes/aicoach"));
 app.use('/api/rollup-v5', authMiddleware, require('./routes/rollupV5'));
 app.use("/api/scope-options", authMiddleware, require("./routes/scopeOptions"));
 app.use("/api/vertical-services", authMiddleware, require("./routes/verticalServices"));
+app.use("/api/branding", authMiddleware, require("./routes/branding"));
 app.use('/churn', require('./routes/churnPublic'));
 
 // Serve dashboard static assets early so JS/CSS/images load,

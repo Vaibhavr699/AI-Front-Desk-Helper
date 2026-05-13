@@ -254,7 +254,7 @@ router.get("/calls", async (req, res) => {
   try {
     const tenantIds = await getTargetTenantIds(req);
     if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
-    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 100);
+    const limit = Math.min(parseInt(req.query.limit, 10) || 500, 1000);
     const offset = parseInt(req.query.offset, 10) || 0;
     const status = req.query.status;
     let q = `

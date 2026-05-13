@@ -9,6 +9,7 @@ import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, 
 import FranchisePaywall from "./pages/FranchisePaywall";
 import HqLocations from "./pages/HqLocations";
 import { ToastProvider } from "./components/ui/Toast";
+import { HostnameBrandingProvider } from "./contexts/HostnameBrandingContext";
 import "./App.css";
 import Reviews from "./pages/Reviews";
 
@@ -139,6 +140,7 @@ export default function App() {
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, "")}>
       <ToastProvider>
+        <HostnameBrandingProvider>
         <ScrollToTop />
         <Routes>
           {/* Public routes */}
@@ -190,6 +192,7 @@ export default function App() {
             <Route path="/reseller/welcome" element={<ResellerWelcome />} />
           </Route>
         </Routes>
+          </HostnameBrandingProvider>
       </ToastProvider>
     </BrowserRouter>
   );

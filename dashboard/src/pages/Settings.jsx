@@ -1237,7 +1237,6 @@ export default function Settings({ tenantId }) {
               // network-wide usage on /reseller via ResellerUsageCard with
               // correct reseller-tier rates ($0.15/min vs $0.30/min Basic).
               if (tab.id === "billing" && tenant?.reseller_tier) return false;
-               if (tab.id === "estimator" && tenant?.reseller_tier) return false;
               if (tab.id === "estimator" &&
                   !tenant?.estimator_addon_purchased &&
                   !ESTIMATOR_INCLUDED_PLANS.includes(tenant?.plan)) return false;

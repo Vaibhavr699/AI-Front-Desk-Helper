@@ -59,7 +59,7 @@ function normalizeZips(values) {
   return { values: cleaned };
 }
 
-router.patch("/api/tenants/:id/service-area", async (req, res) => {
+router.patch("/:id/service-area", async (req, res) => {
   const tenantId = req.params.id;
   const { service_area } = req.body || {};
 

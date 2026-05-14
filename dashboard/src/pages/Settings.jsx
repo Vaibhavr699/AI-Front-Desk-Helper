@@ -523,6 +523,11 @@ export default function Settings({ tenantId }) {
   const [overridesLoading, setOverridesLoading] = useState(false);
   const [overrideSaving, setOverrideSaving] = useState({}); // service_slug → bool
 
+  // Phase 7 V2 (May 12, 2026) — Vertical services loaded per-tenant.
+  // Used by the Estimator tab to render the correct rate-adjustment rows
+  // for the tenant's vertical (painting → 4 services, home_exterior → 5).
+  const [verticalServices, setVerticalServices] = useState([]);
+  const [servicesLoading, setServicesLoading] = useState(false);
     // Phase 7 V2 (May 13, 2026) — White-label custom domain state
   // Three states drive the UI: empty/pending/active. The 'verifying' and
   // 'failed' statuses both render under the pending UI (with appropriate

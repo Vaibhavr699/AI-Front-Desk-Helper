@@ -182,6 +182,16 @@ export function updateTenant(id, body) {
   });
 }
 
+// ── Service area (mig 068, May 14, 2026) ──────────────────────────────────
+// PATCH the tenant's service area boundary. Three shapes accepted on the
+// backend (states / radius / zips). Pass null to clear.
+export function updateServiceArea(tenantId, serviceArea) {
+  return api(`/api/tenants/${tenantId}/service-area`, {
+    method: "PATCH",
+    body: JSON.stringify({ service_area: serviceArea }),
+  });
+}
+
 export function resetApiKey(id) {
   return api(`/api/tenants/${id}/reset-api-key`, {
     method: "POST",

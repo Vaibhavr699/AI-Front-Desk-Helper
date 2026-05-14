@@ -1267,6 +1267,59 @@ async function sendTwilioSms(to, body, tenantId = null) {
   return { ok: true, sid: msg.sid };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Service area boundary block for SMS prompt — Migration 068 (May 14, 2026)
+//
+// Returns "" when tenant.service_area is not configured, so the prompt is
+// unchanged for tenants without a boundary set — zero behavior drift.
+// Mirrors lib/orchestrator.js's buildServiceAreaRules; differs only in
+// output format (single string for SMS prompt concat vs array of rule
+// lines for voice) and the wording references lead_capture / should_book
+// (the SMS JSON schema fields) instead of capture_lead_info (voice tool).
+//
+// Triggered by the May 13 Mitu Bansal transcript where the AI committed
+// to work in Massachusetts despite the business being Omaha-only.
+// ═══════════════════════════════════════════════════════════════════════════
+function buildSmsServiceAreaBlock(tenant) {
+  const sa = tenant?.service_area;
+  if (!sa || !sa.type) return "";
+
+  const homeLabel = sa.home_city && sa.home_state
+    ? `${sa.home_city}, ${sa.home_state}`
+    : sa.home_city || sa.home_state || "our home base";
+
+  const companyName = tenant?.company_name || tenant?.name || "This business";
+  const lines = ["═══ SERVICE AREA BOUNDARY ═══"];
+
+  if (sa.type === "states") {
+    const states = (sa.values || []).join(", ");
+    lines.push(`${companyName} only works in: ${states}.`);
+    if (sa.home_city) lines.push(`Home base: ${homeLabel}.`);
+    lines.push(`If the customer's project is in any OTHER state, you MUST politely decline and capture them as an out-of-area inquiry. Example reply: "Appreciate you reaching out — unfortunately we only work in ${states} right now. Let me grab your info though, in case we expand. Could I get your name, email, and zip code?" Populate lead_capture with whatever they share. Do NOT set should_book=true. Do NOT promise a future expansion date.`);
+  } else if (sa.type === "radius") {
+    const miles = sa.values?.[0] || 30;
+    lines.push(`${companyName} only works within ${miles} miles of ${homeLabel}.`);
+    lines.push(`Use common-sense judgment about which nearby towns fall inside that radius — exact distance isn't needed, just whether it's a reasonable drive from ${homeLabel}.`);
+    lines.push(`If the project is clearly outside ${miles} miles (a different metro, a town you'd never drive to from ${homeLabel}), politely decline and capture as out-of-area: "Appreciate you reaching out — unfortunately that's outside our service area. Let me grab your info though, in case we expand. Could I get your name, email, and zip?" Populate lead_capture with what they share. Do NOT set should_book=true.`);
+    lines.push(`If you're genuinely unsure about a location, ASK: "Just so I know — is that within about ${miles} miles of ${homeLabel}?" Trust their answer.`);
+    lines.push(`Do NOT promise a future expansion date.`);
+  } else if (sa.type === "zips") {
+    const zipList = sa.values || [];
+    const sampleZips = zipList.slice(0, 8).join(", ");
+    const moreCount = Math.max(0, zipList.length - 8);
+    const zipPhrase = moreCount > 0 ? `${sampleZips} (and ${moreCount} more)` : sampleZips;
+    lines.push(`${companyName} only works in these ZIP codes: ${zipPhrase}.`);
+    if (sa.home_city) lines.push(`Home base: ${homeLabel}.`);
+    lines.push(`When the customer gives a project address, check the ZIP against the list. If it's NOT on the list, politely decline and capture as out-of-area: "Appreciate you reaching out — unfortunately we don't service that ZIP right now. Let me grab your info though. Could I get your name and email?" Populate lead_capture. Do NOT set should_book=true.`);
+    lines.push(`If the customer mentions a city but not a ZIP, ASK for the ZIP before deciding: "What ZIP code is the property in?" Then check against the list.`);
+    lines.push(`Do NOT promise a future expansion date.`);
+  }
+
+  lines.push(`STRICT RULES: Never invent service area coverage. Never commit to a project outside your stated boundary. If they push back, hold the line warmly: "I totally understand, but unfortunately that's outside where our crews can work right now." Then capture the lead as out-of-area inquiry.`);
+
+  return lines.join("\n");
+}
+
 function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
   const companyName = tenant?.company_name || tenant?.name || "our team";
   const toneOfVoice = tenant?.tone_of_voice || "professional";
@@ -1375,6 +1428,15 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
 
   let combined = dateAnchor + "\n" + intentRules + "\n" + coreSmsRules;
 
+  // ─── Service area boundary (mig 068, May 14, 2026) ────────────────────
+  // Reads tenant.service_area directly from the DB — independent of the
+  // dashboard UI hydration path. Returns "" when no boundary configured,
+  // making this a no-op for tenants who haven't set one.
+  const serviceAreaBlock = buildSmsServiceAreaBlock(tenant);
+  if (serviceAreaBlock) {
+    combined += "\n\n" + serviceAreaBlock;
+  }
+  
   const tenantPrompt = (tenant?.sms_instructions && tenant.sms_instructions.trim())
     ? tenant.sms_instructions
     : tenant?.instructions;

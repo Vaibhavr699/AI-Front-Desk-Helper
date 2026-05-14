@@ -1,14 +1,15 @@
 // routes/serviceArea.js
 // PATCH /api/tenants/:id/service-area — set, update, or clear the service area
 //
-// Validates the JSONB shape per type, audit-logs via logAction, returns updated tenant.
+// Mounted at /api/tenants in server.js with authMiddleware. Validates the
+// JSONB shape per type, audit-logs via logAction, returns updated tenant.
 // Pass body { service_area: null } to clear.
 //
-// (May 14, 2026 — mig 068)
+// (Migration 068 — May 14, 2026)
 
 const express = require("express");
 const router = express.Router();
-const { supabase } = require("../lib/supabase");
+const db = require("../lib/db");
 const { logAction } = require("../lib/auditLogger");
 
 const US_STATES = new Set([
@@ -61,32 +62,46 @@ function normalizeZips(values) {
 
 router.patch("/:id/service-area", async (req, res) => {
   const tenantId = req.params.id;
+
+  // ── Auth + ownership guard ──────────────────────────────────
+  if (!req.user) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  if (req.user.tenant_id !== tenantId && !req.user.is_super_admin) {
+    return res.status(403).json({ error: "Forbidden — cannot modify another tenant's service area" });
+  }
+
   const { service_area } = req.body || {};
 
   // ── Clear path ──────────────────────────────────────────────
   if (service_area === null) {
     try {
-      const { data: existing, error: fetchErr } = await supabase
-        .from("tenants").select("service_area").eq("id", tenantId).single();
-      if (fetchErr) return res.status(404).json({ error: "Tenant not found" });
+      const existing = await db.query(
+        "SELECT service_area FROM tenants WHERE id = $1 LIMIT 1",
+        [tenantId]
+      );
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ error: "Tenant not found" });
+      }
 
-      const { data: updated, error: updErr } = await supabase
-        .from("tenants").update({ service_area: null }).eq("id", tenantId)
-        .select().single();
-      if (updErr) return res.status(500).json({ error: updErr.message });
+      const updated = await db.query(
+        "UPDATE tenants SET service_area = NULL, updated_at = now() WHERE id = $1 RETURNING *",
+        [tenantId]
+      );
 
       await logAction({
         tenant_id: tenantId,
-        actor_type: req.user?.is_superadmin ? "superadmin" : "owner",
-        actor_id: req.user?.id || null,
+        actor_type: req.user.is_super_admin ? "superadmin" : "owner",
+        actor_id: req.user.id || null,
         action: "service_area.cleared",
         target_type: "tenant",
         target_id: tenantId,
-        metadata: { previous: existing?.service_area || null }
+        metadata: { previous: existing.rows[0].service_area || null }
       });
 
-      return res.json({ tenant: updated });
+      return res.json({ tenant: updated.rows[0] });
     } catch (e) {
+      console.error("[serviceArea] clear path error:", e.message);
       return res.status(500).json({ error: e.message });
     }
   }
@@ -131,26 +146,35 @@ router.patch("/:id/service-area", async (req, res) => {
   };
 
   try {
-    const { data: existing } = await supabase
-      .from("tenants").select("service_area").eq("id", tenantId).single();
+    const existing = await db.query(
+      "SELECT service_area FROM tenants WHERE id = $1 LIMIT 1",
+      [tenantId]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: "Tenant not found" });
+    }
 
-    const { data: updated, error: updErr } = await supabase
-      .from("tenants").update({ service_area: payload }).eq("id", tenantId)
-      .select().single();
-    if (updErr) return res.status(500).json({ error: updErr.message });
+    const updated = await db.query(
+      "UPDATE tenants SET service_area = $1::jsonb, updated_at = now() WHERE id = $2 RETURNING *",
+      [JSON.stringify(payload), tenantId]
+    );
 
     await logAction({
       tenant_id: tenantId,
-      actor_type: req.user?.is_superadmin ? "superadmin" : "owner",
-      actor_id: req.user?.id || null,
-      action: existing?.service_area ? "service_area.updated" : "service_area.set",
+      actor_type: req.user.is_super_admin ? "superadmin" : "owner",
+      actor_id: req.user.id || null,
+      action: existing.rows[0].service_area ? "service_area.updated" : "service_area.set",
       target_type: "tenant",
       target_id: tenantId,
-      metadata: { previous: existing?.service_area || null, next: payload }
+      metadata: {
+        previous: existing.rows[0].service_area || null,
+        next: payload
+      }
     });
 
-    return res.json({ tenant: updated });
+    return res.json({ tenant: updated.rows[0] });
   } catch (e) {
+    console.error("[serviceArea] set/update path error:", e.message);
     return res.status(500).json({ error: e.message });
   }
 });

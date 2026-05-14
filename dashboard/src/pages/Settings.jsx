@@ -24,6 +24,7 @@ import {
   submitCustomDomain,
   verifyCustomDomain,
   disconnectCustomDomain,
+  updateServiceArea,
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import { ConfirmationModal } from "../components/ConfirmationModal";
@@ -320,7 +321,21 @@ function detectBrowserTimezone() {
     return null;
   }
 }
-
+// ── US state list for the Service Area picker (mig 068) ──────────────
+// 50 states + DC. Matches the server's US_STATES set in routes/serviceArea.js.
+const US_STATES_LIST = [
+  ["AL","Alabama"],["AK","Alaska"],["AZ","Arizona"],["AR","Arkansas"],["CA","California"],
+  ["CO","Colorado"],["CT","Connecticut"],["DE","Delaware"],["DC","Dist. of Columbia"],
+  ["FL","Florida"],["GA","Georgia"],["HI","Hawaii"],["ID","Idaho"],["IL","Illinois"],
+  ["IN","Indiana"],["IA","Iowa"],["KS","Kansas"],["KY","Kentucky"],["LA","Louisiana"],
+  ["ME","Maine"],["MD","Maryland"],["MA","Massachusetts"],["MI","Michigan"],["MN","Minnesota"],
+  ["MS","Mississippi"],["MO","Missouri"],["MT","Montana"],["NE","Nebraska"],["NV","Nevada"],
+  ["NH","New Hampshire"],["NJ","New Jersey"],["NM","New Mexico"],["NY","New York"],["NC","North Carolina"],
+  ["ND","North Dakota"],["OH","Ohio"],["OK","Oklahoma"],["OR","Oregon"],["PA","Pennsylvania"],
+  ["RI","Rhode Island"],["SC","South Carolina"],["SD","South Dakota"],["TN","Tennessee"],["TX","Texas"],
+  ["UT","Utah"],["VT","Vermont"],["VA","Virginia"],["WA","Washington"],["WV","West Virginia"],
+  ["WI","Wisconsin"],["WY","Wyoming"]
+];
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 const DEFAULT_CAMPAIGN_PLACEHOLDERS = {
@@ -457,7 +472,16 @@ export default function Settings({ tenantId }) {
     estimator_enabled: false,
     estimator_pop_enabled: false,
     cost_region: null,
-    cost_custom_percentage: null
+    cost_custom_percentage: null,
+    // ── Service Area (mig 068, May 14, 2026) ──────────────────
+    // type: "none" | "states" | "radius" | "zips"
+    // "none" = no boundary stored (NULL in DB); prompt rules skipped entirely.
+    service_area_type: "none",
+    service_area_states: [],
+    service_area_radius: 30,
+    service_area_zips: [],
+    service_area_home_city: "",
+    service_area_home_state: ""
   });
 
   // Phone numbers state
@@ -508,6 +532,9 @@ export default function Settings({ tenantId }) {
   const [customDomainInput, setCustomDomainInput] = useState("");
   const [customDomainSaving, setCustomDomainSaving] = useState(false);
   const [customDomainError, setCustomDomainError] = useState("");
+  // Service area (mig 068, May 14, 2026)
+  const [serviceAreaSaving, setServiceAreaSaving] = useState(false);
+  const [zipBulkInput, setZipBulkInput] = useState(""); // textarea buffer for bulk-paste
 
    // ── Reseller-tab guard (Apr 28, 2026) ─────────────────────────────
   // The Usage & Billing tab is filtered out of the sidebar for resellers
@@ -608,7 +635,14 @@ export default function Settings({ tenantId }) {
          estimator_enabled: t.estimator_enabled === true,
         estimator_pop_enabled: t.estimator_pop_enabled === true,
         cost_region: t.cost_region || null,
-        cost_custom_percentage: t.cost_custom_percentage ?? null
+        cost_custom_percentage: t.cost_custom_percentage ?? null,
+        // Service area (mig 068)
+        service_area_type: t.service_area?.type || "none",
+        service_area_states: t.service_area?.type === "states" ? (t.service_area.values || []) : [],
+        service_area_radius: t.service_area?.type === "radius" ? (t.service_area.values?.[0] ?? 30) : 30,
+        service_area_zips: t.service_area?.type === "zips" ? (t.service_area.values || []) : [],
+        service_area_home_city: t.service_area?.home_city || "",
+        service_area_home_state: t.service_area?.home_state || ""
       });
     } catch (e) {
       toastError(`Failed to load tenant: ${e.message}`);
@@ -1041,7 +1075,88 @@ export default function Settings({ tenantId }) {
       setPhoneError("Failed to update label");
     }
   };
+// ─────────────────────────────────────────────────────────────────
+  // Service Area save (mig 068, May 14, 2026)
+  // Routes through dedicated PATCH /api/tenants/:id/service-area for
+  // granular audit logging. Validates client-side before posting.
+  // ─────────────────────────────────────────────────────────────────
+  const handleSaveServiceArea = async () => {
+    setServiceAreaSaving(true);
+    try {
+      let payload;
 
+      if (form.service_area_type === "none") {
+        payload = null; // Clear path — backend audit-logs as service_area.cleared
+      } else if (form.service_area_type === "states") {
+        if (form.service_area_states.length === 0) {
+          toastError("Select at least one state."); setServiceAreaSaving(false); return;
+        }
+        payload = {
+          type: "states",
+          values: form.service_area_states,
+          home_city: form.service_area_home_city.trim() || null,
+          home_state: form.service_area_home_state.trim().toUpperCase() || null
+        };
+      } else if (form.service_area_type === "radius") {
+        const miles = Number(form.service_area_radius);
+        if (!Number.isFinite(miles) || miles < 1 || miles > 100) {
+          toastError("Radius must be between 1 and 100 miles."); setServiceAreaSaving(false); return;
+        }
+        if (!form.service_area_home_city.trim() || !form.service_area_home_state.trim()) {
+          toastError("Home city and state are required for radius mode."); setServiceAreaSaving(false); return;
+        }
+        payload = {
+          type: "radius",
+          values: [miles],
+          home_city: form.service_area_home_city.trim(),
+          home_state: form.service_area_home_state.trim().toUpperCase()
+        };
+      } else if (form.service_area_type === "zips") {
+        if (form.service_area_zips.length === 0) {
+          toastError("Add at least one ZIP code."); setServiceAreaSaving(false); return;
+        }
+        payload = {
+          type: "zips",
+          values: form.service_area_zips,
+          home_city: form.service_area_home_city.trim() || null,
+          home_state: form.service_area_home_state.trim().toUpperCase() || null
+        };
+      }
+
+      const result = await updateServiceArea(tenantId, payload);
+      setTenant((prev) => ({ ...prev, ...(result?.tenant || {}) }));
+      success(payload === null ? "Service area cleared." : "Service area saved.");
+    } catch (e) {
+      toastError(`Save failed: ${e.message}`);
+    } finally {
+      setServiceAreaSaving(false);
+    }
+  };
+
+  // Parse bulk-pasted zip text → deduped 5-digit array.
+  // Accepts comma / whitespace / newline / semicolon separation.
+  const parseZipBulkInput = (raw) => {
+    const seen = new Set();
+    const out = [];
+    for (const tok of String(raw || "").split(/[\s,;]+/)) {
+      const t = tok.trim();
+      if (/^\d{5}$/.test(t) && !seen.has(t)) { seen.add(t); out.push(t); }
+    }
+    return out;
+  };
+
+  const handleAddZipsFromBulk = () => {
+    const parsed = parseZipBulkInput(zipBulkInput);
+    if (parsed.length === 0) {
+      toastError("No valid 5-digit ZIP codes found in input.");
+      return;
+    }
+    const merged = Array.from(new Set([...form.service_area_zips, ...parsed]));
+    const addedCount = merged.length - form.service_area_zips.length;
+    handleUpdateForm("service_area_zips", merged);
+    setZipBulkInput("");
+    success(`Added ${addedCount} new ZIP code${addedCount === 1 ? "" : "s"}.`);
+  };
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
@@ -2988,12 +3103,306 @@ export default function Settings({ tenantId }) {
                     title="In-browser recording coming in a future update"
                   >
                     <Mic className="w-3.5 h-3.5" />
-                    Record greeting (coming soon)
+                   Record greeting (coming soon)
                   </button>
                 </div>
               </section>
+
+              {/* ─────────────────────────────────────────────────────────────
+                   6. Service Area Boundary (mig 068, May 14, 2026)
+                   AI declines out-of-area work and captures expansion leads.
+                   ───────────────────────────────────────────────────────────── */}
+              <section className="pt-4 border-t border-gray-100">
+                <div className="mb-4">
+                  <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
+                    <MapPin className="w-4 h-4 text-primary" />
+                    Service area
+                    {form.service_area_type !== "none" && (
+                      <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[9px] font-black uppercase tracking-widest rounded-md border border-emerald-200">
+                        Active
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-xl">
+                    Tell the AI where you work. When a caller is outside your service area, the AI politely declines and captures their info as an "out-of-area inquiry" — so you can decide whether to expand or refer.
+                  </p>
+                </div>
+
+                {/* Type picker — 4 options */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+                  {[
+                    { value: "none",   label: "No limit",   sub: "Accept every caller" },
+                    { value: "states", label: "By state",   sub: "One or more states" },
+                    { value: "radius", label: "By radius",  sub: "Miles from a city" },
+                    { value: "zips",   label: "By ZIP code", sub: "Exact ZIP list" }
+                  ].map((opt) => {
+                    const selected = form.service_area_type === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => handleUpdateForm("service_area_type", opt.value)}
+                        className={`flex flex-col items-start gap-1 p-4 rounded-2xl border-2 transition-all text-left ${
+                          selected
+                            ? "border-gray-900 bg-gray-900 text-white shadow-lg scale-[1.01]"
+                            : "border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300 hover:bg-gray-100"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 w-full">
+                          <h4 className="text-sm font-black uppercase tracking-wide">{opt.label}</h4>
+                          {selected && <CheckCircle2 className="w-4 h-4 text-emerald-400 ml-auto" />}
+                        </div>
+                        <p className={`text-[11px] leading-relaxed ${selected ? "text-slate-300" : "text-gray-500"}`}>
+                          {opt.sub}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* States mode */}
+                {form.service_area_type === "states" && (
+                  <div className="p-5 bg-gray-50 border border-gray-200 rounded-2xl space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-xs font-black text-gray-500 uppercase tracking-widest">
+                          States you serve
+                        </label>
+                        <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">
+                          {form.service_area_states.length} selected
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 md:grid-cols-5 gap-2 max-h-72 overflow-y-auto p-1">
+                        {US_STATES_LIST.map(([code, name]) => {
+                          const selected = form.service_area_states.includes(code);
+                          return (
+                            <button
+                              key={code}
+                              type="button"
+                              onClick={() => {
+                                const next = selected
+                                  ? form.service_area_states.filter((s) => s !== code)
+                                  : [...form.service_area_states, code];
+                                handleUpdateForm("service_area_states", next);
+                              }}
+                              className={`px-2 py-2 rounded-lg text-xs font-bold transition-all border ${
+                                selected
+                                  ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
+                                  : "bg-white text-gray-700 border-gray-200 hover:border-gray-300"
+                              }`}
+                              title={name}
+                            >
+                              {code}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1.5">
+                          Home city <span className="font-medium text-gray-400 normal-case">(optional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={form.service_area_home_city}
+                          onChange={(e) => handleUpdateForm("service_area_home_city", e.target.value)}
+                          placeholder="e.g. Omaha"
+                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-4 focus:ring-primary/5 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1.5">
+                          Home state <span className="font-medium text-gray-400 normal-case">(optional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={form.service_area_home_state}
+                          onChange={(e) => handleUpdateForm("service_area_home_state", e.target.value.toUpperCase().slice(0, 2))}
+                          placeholder="NE"
+                          maxLength={2}
+                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-bold uppercase focus:ring-4 focus:ring-primary/5 outline-none"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-gray-500 italic leading-relaxed">
+                      Home city/state helps the AI orient callers ("we're based in Omaha but cover NE and IA"). Leave blank if you'd rather stay generic.
+                    </p>
+                  </div>
+                )}
+
+                {/* Radius mode */}
+                {form.service_area_type === "radius" && (
+                  <div className="p-5 bg-gray-50 border border-gray-200 rounded-2xl space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <div>
+                      <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-2">
+                        Radius (miles from home city)
+                      </label>
+                      <div className="flex items-center gap-3 max-w-xs">
+                        <input
+                          type="number"
+                          min={1}
+                          max={100}
+                          value={form.service_area_radius}
+                          onChange={(e) => handleUpdateForm("service_area_radius", parseInt(e.target.value, 10) || 0)}
+                          className="flex-1 px-4 py-3 bg-white border border-slate-200 rounded-xl font-bold text-lg text-center focus:ring-4 focus:ring-primary/5 outline-none"
+                        />
+                        <span className="text-sm font-black text-gray-500 uppercase tracking-widest">miles</span>
+                      </div>
+                      <p className="text-[11px] text-gray-500 italic mt-2 leading-relaxed">
+                        Range: 1–100 miles. AI uses common sense about driving distance to nearby towns — no geocoding lookup.
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1.5">
+                          Home city <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={form.service_area_home_city}
+                          onChange={(e) => handleUpdateForm("service_area_home_city", e.target.value)}
+                          placeholder="e.g. Omaha"
+                          required
+                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-4 focus:ring-primary/5 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1.5">
+                          Home state <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={form.service_area_home_state}
+                          onChange={(e) => handleUpdateForm("service_area_home_state", e.target.value.toUpperCase().slice(0, 2))}
+                          placeholder="NE"
+                          maxLength={2}
+                          required
+                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-bold uppercase focus:ring-4 focus:ring-primary/5 outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ZIPs mode */}
+                {form.service_area_type === "zips" && (
+                  <div className="p-5 bg-gray-50 border border-gray-200 rounded-2xl space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="block text-xs font-black text-gray-500 uppercase tracking-widest">
+                          Bulk paste ZIP codes
+                        </label>
+                        <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-widest rounded-md border border-emerald-200">
+                          {form.service_area_zips.length} claimed
+                        </span>
+                      </div>
+                      <textarea
+                        value={zipBulkInput}
+                        onChange={(e) => setZipBulkInput(e.target.value)}
+                        rows={3}
+                        placeholder="Paste ZIP codes here, separated by commas, spaces, or newlines. e.g. 68022, 68106, 68114&#10;68118 68130 68142"
+                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl font-mono text-xs focus:ring-4 focus:ring-primary/5 outline-none placeholder:text-slate-400"
+                      />
+                      <div className="flex items-center justify-between mt-2 gap-2 flex-wrap">
+                        <p className="text-[11px] text-gray-500 italic">
+                          Invalid (non-5-digit) tokens are ignored. Duplicates are deduped automatically.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={handleAddZipsFromBulk}
+                          disabled={!zipBulkInput.trim()}
+                          className="px-4 py-2 bg-slate-900 text-white rounded-lg text-xs font-black uppercase tracking-widest hover:bg-black transition-all disabled:opacity-40 flex items-center gap-2"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Add to list
+                        </button>
+                      </div>
+                    </div>
+
+                    {form.service_area_zips.length > 0 && (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="block text-xs font-black text-gray-500 uppercase tracking-widest">
+                            Claimed ZIP codes
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateForm("service_area_zips", [])}
+                            className="text-[10px] font-bold text-red-500 hover:text-red-700 transition-colors uppercase tracking-widest"
+                          >
+                            Clear all
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 p-3 bg-white border border-gray-200 rounded-xl max-h-48 overflow-y-auto">
+                          {form.service_area_zips.map((zip) => (
+                            <span
+                              key={zip}
+                              className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-md text-xs font-mono font-bold"
+                            >
+                              {zip}
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateForm("service_area_zips", form.service_area_zips.filter((z) => z !== zip))}
+                                className="text-emerald-500 hover:text-red-600 transition-colors"
+                                title={`Remove ${zip}`}
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1.5">
+                          Home city <span className="font-medium text-gray-400 normal-case">(optional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={form.service_area_home_city}
+                          onChange={(e) => handleUpdateForm("service_area_home_city", e.target.value)}
+                          placeholder="e.g. Omaha"
+                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-4 focus:ring-primary/5 outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-1.5">
+                          Home state <span className="font-medium text-gray-400 normal-case">(optional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={form.service_area_home_state}
+                          onChange={(e) => handleUpdateForm("service_area_home_state", e.target.value.toUpperCase().slice(0, 2))}
+                          placeholder="NE"
+                          maxLength={2}
+                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-bold uppercase focus:ring-4 focus:ring-primary/5 outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Save button — dedicated, doesn't piggyback on global Save Changes */}
+                <div className="mt-5 flex items-center gap-3 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleSaveServiceArea}
+                    disabled={serviceAreaSaving}
+                    className="px-6 py-3 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-black transition-all disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-slate-900/10"
+                  >
+                    {serviceAreaSaving ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                    Save service area
+                  </button>
+                  <p className="text-[11px] text-gray-500 italic">
+                    Service area saves separately from the rest of the page so the audit log captures each boundary change distinctly.
+                  </p>
+                </div>
+              </section>
             </div>
-          )}
+          )} 
 
           {activeTab === "estimator" && (
             <div className="space-y-10 animate-in fade-in slide-in-from-right-4 duration-500">

@@ -523,6 +523,7 @@ app.use('/api/reseller/usage', authMiddleware, require('./routes/resellerUsage')
 app.use("/api/churn-public", require("./routes/churn-public"));
 app.use("/api/reviews", require("./routes/reviews"));
 app.use("/", require("./routes/estimateLink"))
+app.use("/api/tenants", authMiddleware, require("./routes/serviceArea"));
 app.use('/api/reseller', require('./routes/reseller'));
 app.use("/api/public/branding", require("./routes/publicBranding"));
 app.use("/api", authMiddleware, dashboardRoutes);

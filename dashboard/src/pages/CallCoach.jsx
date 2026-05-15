@@ -1,327 +1,338 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import React, { useState } from "react";
+import { Link, useLocation } from "react-router-dom";
+import { getUser } from "../api";
+import { useBrand } from "../contexts/BrandContext";
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Call Coach — Phase 6 A4 list page (May 15, 2026)
+// ── Condensed nav — 9 items max ────────────────────────────────────────────
 //
-// Owner-facing surface for AI-scored sales conversations. Consumes:
-//   GET /api/call-coach/summary
-//   GET /api/call-coach/conversations
+// REMOVED from top nav (pages still exist, accessible within parent pages):
+//   • Outbound       → tab inside Calls page
+//   • AI Conversations → tab inside Leads page
+//   • Follow-ups     → tab inside Leads page
+//   • Plans          → tab inside Settings page
+//   • Usage & Billing → tab inside Settings page
 //
-// Receives tenantId from useOutletContext via the WithContext wrapper in
-// App.jsx. authFetch injects x-impersonate-tenant-id so superadmin tenant
-// switching in the header refreshes data correctly.
-// ═══════════════════════════════════════════════════════════════════════════
+const baseNavItems = [
+  { to: "/dashboard",  label: "Home",      icon: HomeIcon },
+  { to: "/calls",      label: "Calls",     icon: CallsIcon },
+  { to: "/leads",      label: "Leads",     icon: LeadsIcon },
+  { to: "/bookings",   label: "Bookings",  icon: BookingsIcon },
+  { to: "/metrics",    label: "Metrics",   icon: MetricsIcon },
+  { to: "/reviews",    label: "Reviews",   icon: ReviewsIcon },
+];
 
-function authFetch(url, options = {}) {
-  const headers = { ...(options.headers || {}) };
-  const impersonate = localStorage.getItem("impersonate_tenant_id");
-  if (impersonate) headers["x-impersonate-tenant-id"] = impersonate;
-  return fetch(url, { ...options, credentials: "include", headers });
+// ── Plan + parent-mode helpers (mirrors lib/plans.js canAddLocations) ─────
+// Locations nav item is visible only when this returns true. Matches the
+// backend gate enforced by routes/dashboard.js — Pro+ for operating_hq,
+// any HQ tier (hq_starter/hq_growth/hq_enterprise) for rollup_only.
+const HQ_PLAN_IDS = ["hq_starter", "hq_growth", "hq_enterprise"];
+const MULTI_LOCATION_PLAN_IDS = ["pro", "elite", ...HQ_PLAN_IDS];
+
+function canTenantAddLocations(activeTenant) {
+  if (!activeTenant) return false;
+  // rollup_only parents (franchise brand corporate) always can — they exist for this purpose
+  if (activeTenant.parent_mode === "rollup_only") return true;
+  // operating_hq (default) requires Pro+ plan
+  const planId = (activeTenant.plan || "basic").toLowerCase();
+  return MULTI_LOCATION_PLAN_IDS.includes(planId);
 }
 
-const PERSONA_LABELS = {
-  researcher:    { label: "Researcher",    color: "bg-blue-100 text-blue-800" },
-  protector:     { label: "Protector",     color: "bg-emerald-100 text-emerald-800" },
-  status_seeker: { label: "Status Seeker", color: "bg-purple-100 text-purple-800" },
-  pragmatist:    { label: "Pragmatist",    color: "bg-amber-100 text-amber-800" },
-  negotiator:    { label: "Negotiator",    color: "bg-rose-100 text-rose-800" },
-  collaborator:  { label: "Collaborator",  color: "bg-cyan-100 text-cyan-800" },
-  unknown:       { label: "Unknown",       color: "bg-gray-100 text-gray-600" },
-};
+// ── Role-based nav builder ─────────────────────────────────────────────────
+function getNavItems(activeTenant) {
+  const user = getUser();
+  const isImpersonating = !!localStorage.getItem("impersonate_tenant_id");
 
-const DIMENSION_LABELS = {
-  rapport: "Rapport",
-  property_walkthrough: "Property Walkthrough",
-  discovery: "Discovery",
-  education: "Education",
-  value_framing: "Value Framing",
-  objection_handling: "Objection Handling",
-  close: "Close",
-  professionalism: "Professionalism",
-};
+  // 1. Global super admin (no tenant)
+  if (user?.is_super_admin && !user.tenant_id && !isImpersonating) {
+    return [
+      { to: "/admin/tenants", label: "Tenants",        icon: BusinessesIcon },
+      { to: "/admin/admins",  label: "Platform Admins", icon: AdminsIcon    },
+    ];
+  }
 
-const SOURCE_LABELS = {
-  ai_call_inbound: "Inbound call",
-  ai_call_outbound: "Outbound call",
-  ai_sms: "SMS",
-  rep_recording: "Rep recording",
-  ai_roleplay: "Roleplay",
-  live_coach: "Live coached",
-};
+  const role = user?.role || "staff";
 
-function scoreColor(score) {
-  if (score == null) return "text-gray-400 bg-gray-50 border-gray-200";
-  const s = parseFloat(score);
-  if (s >= 8) return "text-emerald-700 bg-emerald-50 border-emerald-200";
-  if (s >= 6) return "text-amber-700 bg-amber-50 border-amber-200";
-  return "text-rose-700 bg-rose-50 border-rose-200";
+  // 2. Staff / Technician — bookings only
+  if (role !== "admin" && role !== "owner" && role !== "manager") {
+    return [{ to: "/bookings", label: "Bookings", icon: BookingsIcon }];
+  }
+
+  // 3. Manager — base items + Settings
+  if (role === "manager") {
+    return [
+      ...baseNavItems,
+      { to: "/settings", label: "Settings", icon: SettingsIcon },
+    ];
+  }
+
+  // 4. Owner / Admin
+
+  // 4a. Reseller tenant — dedicated nav (no operational items; they don't take calls)
+  if (activeTenant?.account_type === "reseller") {
+    const items = [
+      { to: "/reseller",       label: "Customers", icon: CustomersIcon },
+      { to: "/reseller/plans", label: "Plans",     icon: PlansIcon     },
+    ];
+    if (user?.is_super_admin) {
+      items.push({ to: "/admin/tenants", label: "Admin Console", icon: AdminIcon });
+    }
+    items.push({ to: "/settings", label: "Settings", icon: SettingsIcon });
+    return items;
+  }
+
+  // 4b. Non-reseller owner/admin — standard operational nav
+  const isHQ =
+    user?.tenant_business_type === "parent" ||
+    activeTenant?.business_type === "parent";
+
+  // Locations nav: gated by plan + parent_mode (Pro+ for operating_hq, any HQ tier for rollup_only)
+  // Superadmin always sees it for visibility into the system, even on Basic tenants.
+  const showLocations = canTenantAddLocations(activeTenant) || user?.is_super_admin;
+
+  const items = [...baseNavItems];
+
+  if (showLocations) {
+    items.push({ to: "/locations", label: "Locations", icon: LocationsIcon });
+  }
+
+ if (isHQ) {
+    items.push({ to: "/team",     label: "Team",       icon: TeamIcon       });
+    items.push({ to: "/tenants",  label: "Businesses", icon: BusinessesIcon });
+    items.push({ to: "/rollup-v5", label: "Rollup",    icon: RollupIcon     });
+  }
+  if (user?.is_super_admin) {
+    items.push({ to: "/admin/tenants", label: "Admin Console", icon: AdminIcon });
+  }
+
+  // Settings always last
+  items.push({ to: "/settings", label: "Settings", icon: SettingsIcon });
+
+  return items;
 }
 
-function ScoreBadge({ score }) {
-  const display = score == null ? "—" : parseFloat(score).toFixed(1);
+// ── Icons ──────────────────────────────────────────────────────────────────
+function HomeIcon({ className }) {
   return (
-    <span className={`inline-flex items-center justify-center w-12 h-7 rounded-md border text-sm font-semibold ${scoreColor(score)}`}>
-      {display}
-    </span>
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+    </svg>
   );
 }
 
-function PersonaChip({ persona, confidence }) {
-  const meta = PERSONA_LABELS[persona] || PERSONA_LABELS.unknown;
+function CallsIcon({ className }) {
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${meta.color}`}>
-      {meta.label}
-      {confidence != null && persona && persona !== "unknown" && (
-        <span className="ml-1 opacity-60">{Math.round(parseFloat(confidence) * 100)}%</span>
-      )}
-    </span>
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+    </svg>
   );
 }
 
-function SummaryTiles({ summary }) {
-  if (!summary) return null;
-  const { overall, top_weakness, personas } = summary;
-  const personasTop = (personas || []).slice(0, 3);
-  const totalPersona = (personas || []).reduce((sum, p) => sum + p.count, 0);
-  const bookRate = overall?.scored_count > 0
-    ? Math.round((overall.booked_count / overall.scored_count) * 100)
-    : null;
-
+function LeadsIcon({ className }) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-      <div className="bg-white border border-gray-200 rounded-lg p-4">
-        <div className="text-xs text-gray-500 uppercase tracking-wide">Avg Score</div>
-        <div className="mt-2 text-3xl font-bold text-gray-900">{overall?.avg_overall ?? "—"}</div>
-        <div className="text-xs text-gray-500 mt-1">across {overall?.scored_count ?? 0} scored calls</div>
-      </div>
-      <div className="bg-white border border-gray-200 rounded-lg p-4">
-        <div className="text-xs text-gray-500 uppercase tracking-wide">Booked</div>
-        <div className="mt-2 text-3xl font-bold text-gray-900">{overall?.booked_count ?? 0}</div>
-        <div className="text-xs text-gray-500 mt-1">
-          {bookRate != null ? `${bookRate}% booking rate` : "—"}
-        </div>
-      </div>
-      <div className="bg-white border border-gray-200 rounded-lg p-4">
-        <div className="text-xs text-gray-500 uppercase tracking-wide">Focus Area</div>
-        <div className="mt-2 text-lg font-semibold text-gray-900">
-          {top_weakness ? DIMENSION_LABELS[top_weakness.dimension] : "—"}
-        </div>
-        <div className="text-xs text-gray-500 mt-1">
-          {top_weakness ? `avg ${top_weakness.avg_score} — lowest dimension` : "no data yet"}
-        </div>
-      </div>
-      <div className="bg-white border border-gray-200 rounded-lg p-4">
-        <div className="text-xs text-gray-500 uppercase tracking-wide">Top Personas</div>
-        <div className="mt-2 flex flex-wrap gap-1">
-          {personasTop.length > 0 ? (
-            personasTop.map((p) => (
-              <PersonaChip key={p.buyer_persona} persona={p.buyer_persona} confidence={null} />
-            ))
-          ) : (
-            <span className="text-sm text-gray-400">no personas yet</span>
-          )}
-        </div>
-        <div className="text-xs text-gray-500 mt-2">{totalPersona} classified</div>
-      </div>
-    </div>
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+    </svg>
   );
 }
 
-function DimensionBars({ dimensions }) {
-  if (!dimensions || dimensions.length === 0) return null;
+function BookingsIcon({ className }) {
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-4 mb-6">
-      <div className="text-xs text-gray-500 uppercase tracking-wide mb-3">Dimension Averages</div>
-      <div className="space-y-2">
-        {dimensions.map((d) => {
-          const score = parseFloat(d.avg_score);
-          const pct = Math.max(0, Math.min(100, (score / 10) * 100));
-          const barColor = score >= 8 ? "bg-emerald-500" : score >= 6 ? "bg-amber-500" : "bg-rose-500";
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+    </svg>
+  );
+}
+
+function MetricsIcon({ className }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+    </svg>
+  );
+}
+
+function ReviewsIcon({ className }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+    </svg>
+  );
+}
+
+// ── Locations icon — building cluster (matches Heroicons style) ───────────
+function LocationsIcon({ className }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21V9l4-3 4 3v12M3 21h8M3 21H1m10 0h2m0 0V11l5-3 5 3v10m-10 0h10m0 0h2M9 9h.01M7 13h.01M9 17h.01M19 13h.01M19 17h.01" />
+    </svg>
+  );
+}
+
+function TeamIcon({ className }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+    </svg>
+  );
+}
+
+function BusinessesIcon({ className }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+    </svg>
+  );
+}
+
+// ── Rollup icon — sparkle (new V5 dashboard) ──────────────────────────────
+function RollupIcon({ className }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
+    </svg>
+  );
+}
+
+function AdminIcon({ className }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+    </svg>
+  );
+}
+
+function AdminsIcon({ className }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+    </svg>
+  );
+}
+
+// ── Customers icon — briefcase (reseller's client businesses) ─────────────
+function CustomersIcon({ className }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+    </svg>
+  );
+}
+
+// ── Plans icon — credit card (reseller's own billing) ─────────────────────
+function PlansIcon({ className }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+    </svg>
+  );
+}
+
+function SettingsIcon({ className }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+    </svg>
+  );
+}
+
+// ── Sidebar component ──────────────────────────────────────────────────────
+export default function Sidebar({ closeMobile, activeTenant }) {
+  const [isHovered, setIsHovered] = useState(false);
+  const location = useLocation();
+  const { companyName, logoUrl, isDefault } = useBrand();
+
+  function handleLinkClick() {
+    if (closeMobile) closeMobile();
+  }
+
+  const isExpanded = isHovered;
+
+  return (
+    <aside
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      className={`flex flex-col bg-white border-r border-stone-200 transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] shrink-0 h-full overflow-hidden ${
+        isExpanded ? "w-48" : "w-[4.5rem]"
+      }`}
+    >
+      <nav className="flex-1 py-4 px-3 space-y-1 overflow-x-hidden overflow-y-auto min-h-0">
+        {getNavItems(activeTenant).map(({ to, label, icon: Icon }) => {
+          const isActive =
+            location.pathname === to ||
+            location.pathname.startsWith(to + "/");
           return (
-            <div key={d.dimension} className="flex items-center gap-3">
-              <div className="w-44 text-sm text-gray-700">{DIMENSION_LABELS[d.dimension] || d.dimension}</div>
-              <div className="flex-1 bg-gray-100 rounded h-2 overflow-hidden">
-                <div className={`h-full ${barColor} transition-all`} style={{ width: `${pct}%` }} />
-              </div>
-              <div className="w-12 text-right text-sm font-medium text-gray-900">{d.avg_score}</div>
-            </div>
+            <Link
+              key={to}
+              to={to}
+              onClick={handleLinkClick}
+              title={!isExpanded ? label : undefined}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 group ${
+                isActive
+                  ? "bg-brand-50 text-brand-600 shadow-sm shadow-brand-100/50"
+                  : "text-stone-500 hover:bg-stone-50 hover:text-stone-900"
+              }`}
+            >
+              <Icon
+                className={`w-5 h-5 shrink-0 transition-transform duration-200 ${
+                  isActive ? "scale-110" : "group-hover:scale-110"
+                }`}
+              />
+              <span
+                className={`whitespace-nowrap transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] origin-left ${
+                  isExpanded
+                    ? "opacity-100 translate-x-0 ml-1"
+                    : "opacity-0 -translate-x-4 pointer-events-none w-0"
+                }`}
+              >
+                {label}
+              </span>
+            </Link>
           );
         })}
-      </div>
-    </div>
-  );
-}
+      </nav>
 
-export default function CallCoach({ tenantId }) {
-  const [summary, setSummary] = useState(null);
-  const [conversations, setConversations] = useState([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [filters, setFilters] = useState({ persona: "", source_type: "", days: 30 });
-
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      setLoading(true);
-      setError(null);
-      try {
-        const listParams = new URLSearchParams();
-        if (filters.persona)     listParams.set("persona", filters.persona);
-        if (filters.source_type) listParams.set("source_type", filters.source_type);
-        listParams.set("limit", "100");
-
-        const [listRes, summaryRes] = await Promise.all([
-          authFetch(`/api/call-coach/conversations?${listParams.toString()}`),
-          authFetch(`/api/call-coach/summary?days=${filters.days}`),
-        ]);
-
-        if (!listRes.ok)    throw new Error(`List failed: ${listRes.status}`);
-        if (!summaryRes.ok) throw new Error(`Summary failed: ${summaryRes.status}`);
-
-        const listData    = await listRes.json();
-        const summaryData = await summaryRes.json();
-
-        if (!cancelled) {
-          setConversations(listData.conversations || []);
-          setTotal(listData.total || 0);
-          setSummary(summaryData);
-        }
-      } catch (err) {
-        if (!cancelled) setError(err.message);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    load();
-    return () => { cancelled = true; };
-  }, [filters.persona, filters.source_type, filters.days, tenantId]);
-
-  return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Call Coach</h1>
-          <p className="text-sm text-gray-500 mt-1">AI-scored sales conversations across 8 dimensions</p>
-        </div>
-        <select
-          value={filters.days}
-          onChange={(e) => setFilters((f) => ({ ...f, days: parseInt(e.target.value, 10) }))}
-          className="px-3 py-1.5 border border-gray-300 rounded-md text-sm bg-white"
+      {/* ── Brand footer ──────────────────────────────────────────────
+          Shows tenant logo (or FD fallback for default branding) plus
+          a company-name label that fades in when sidebar is hovered.
+          Sits at the bottom so it doesn't fight with the nav items.
+          ──────────────────────────────────────────────────────────── */}
+      <div className="shrink-0 px-3 py-3 border-t border-stone-100">
+        <div
+          className="flex items-center gap-3 px-2 py-1.5"
+          title={!isExpanded ? companyName : undefined}
         >
-          <option value={7}>Last 7 days</option>
-          <option value={30}>Last 30 days</option>
-          <option value={90}>Last 90 days</option>
-          <option value={365}>Last year</option>
-        </select>
-      </div>
-
-      {error && (
-        <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-md mb-6">{error}</div>
-      )}
-
-      {loading && !summary ? (
-        <div className="text-center py-12 text-gray-500">Loading...</div>
-      ) : (
-        <>
-          <SummaryTiles summary={summary} />
-          <DimensionBars dimensions={summary?.dimensions} />
-
-          <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="text-xs text-gray-500 uppercase tracking-wide">Filter</span>
-              <select
-                value={filters.persona}
-                onChange={(e) => setFilters((f) => ({ ...f, persona: e.target.value }))}
-                className="px-3 py-1.5 border border-gray-300 rounded-md text-sm bg-white"
-              >
-                <option value="">All personas</option>
-                {Object.entries(PERSONA_LABELS).map(([k, v]) => (
-                  <option key={k} value={k}>{v.label}</option>
-                ))}
-              </select>
-              <select
-                value={filters.source_type}
-                onChange={(e) => setFilters((f) => ({ ...f, source_type: e.target.value }))}
-                className="px-3 py-1.5 border border-gray-300 rounded-md text-sm bg-white"
-              >
-                <option value="">All sources</option>
-                <option value="ai_call_inbound">Inbound calls</option>
-                <option value="ai_call_outbound">Outbound calls</option>
-                <option value="ai_sms">SMS conversations</option>
-                <option value="rep_recording">Rep recordings</option>
-                <option value="ai_roleplay">AI roleplay</option>
-              </select>
-              {(filters.persona || filters.source_type) && (
-                <button
-                  onClick={() => setFilters((f) => ({ ...f, persona: "", source_type: "" }))}
-                  className="text-sm text-gray-500 hover:text-gray-700"
-                >
-                  Clear
-                </button>
-              )}
-              <div className="flex-1" />
-              <span className="text-sm text-gray-500">{total} conversations</span>
-            </div>
-          </div>
-
-          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-            {conversations.length === 0 ? (
-              <div className="text-center py-12 text-gray-500">
-                No scored conversations yet. They appear here once the scorer runs (every 5 min).
-              </div>
+          <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-stone-100 flex items-center justify-center ring-1 ring-stone-200">
+            {logoUrl ? (
+              <img
+                src={logoUrl}
+                alt={companyName}
+                className="w-full h-full object-cover"
+              />
             ) : (
-              <table className="w-full">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr>
-                    <th className="text-left text-xs uppercase tracking-wide text-gray-500 font-medium px-4 py-2">Score</th>
-                    <th className="text-left text-xs uppercase tracking-wide text-gray-500 font-medium px-4 py-2">Source</th>
-                    <th className="text-left text-xs uppercase tracking-wide text-gray-500 font-medium px-4 py-2">Persona</th>
-                    <th className="text-left text-xs uppercase tracking-wide text-gray-500 font-medium px-4 py-2">Outcome</th>
-                    <th className="text-left text-xs uppercase tracking-wide text-gray-500 font-medium px-4 py-2">Rep</th>
-                    <th className="text-left text-xs uppercase tracking-wide text-gray-500 font-medium px-4 py-2">When</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {conversations.map((c) => (
-                    <tr key={c.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3">
-                        <Link to={`/call-coach/${c.id}`}>
-                          <ScoreBadge score={c.overall_score} />
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-700">
-                        <Link to={`/call-coach/${c.id}`} className="hover:underline">
-                          {SOURCE_LABELS[c.source_type] || c.source_type}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3">
-                        <PersonaChip persona={c.buyer_persona} confidence={c.persona_confidence} />
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        {c.outcome === "booked" ? (
-                          <span className="text-emerald-700 font-medium">Booked</span>
-                        ) : c.outcome ? (
-                          <span className="text-gray-500">{c.outcome}</span>
-                        ) : (
-                          <span className="text-gray-400">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-700">
-                        {c.rep_name || <span className="text-gray-400">AI</span>}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-500">
-                        {c.scored_at ? new Date(c.scored_at).toLocaleString() : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="w-full h-full bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center text-white font-black text-xs tracking-tight">
+                FD
+              </div>
             )}
           </div>
-        </>
-      )}
-    </div>
+          <div
+            className={`flex flex-col min-w-0 transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] origin-left ${
+              isExpanded
+                ? "opacity-100 translate-x-0"
+                : "opacity-0 -translate-x-4 pointer-events-none w-0"
+            }`}
+          >
+            <span className="text-xs font-black text-stone-900 truncate leading-tight">
+              {companyName}
+            </span>
+            {isDefault && (
+              <span className="text-[9px] font-bold text-stone-400 uppercase tracking-widest leading-tight mt-0.5">
+                Helper
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </aside>
   );
 }

@@ -6,38 +6,33 @@ import { useBrand } from "../contexts/BrandContext";
 // ── Condensed nav — 10 items max ───────────────────────────────────────────
 //
 // REMOVED from top nav (pages still exist, accessible within parent pages):
-//   • Outbound       → tab inside Calls page
+//   • Outbound        → tab inside Calls page
 //   • AI Conversations → tab inside Leads page
-//   • Follow-ups     → tab inside Leads page
-//   • Plans          → tab inside Settings page
+//   • Follow-ups      → tab inside Leads page
+//   • Plans           → tab inside Settings page
 //   • Usage & Billing → tab inside Settings page
 //
 // ADDED May 15, 2026 (Phase 6 A4): Call Coach — AI-scored conversation
 // analytics. Sits between Metrics and Reviews. Visible to managers/owners/
-// admins (anyone with access to baseNavItems), not staff/technicians.
+// admins (anyone with baseNavItems); not staff, not reseller-account tenants.
 //
 const baseNavItems = [
-  { to: "/dashboard",  label: "Home",       icon: HomeIcon },
-  { to: "/calls",      label: "Calls",      icon: CallsIcon },
-  { to: "/leads",      label: "Leads",      icon: LeadsIcon },
-  { to: "/bookings",   label: "Bookings",   icon: BookingsIcon },
-  { to: "/metrics",    label: "Metrics",    icon: MetricsIcon },
-  { to: "/call-coach", label: "Call Coach", icon: CallCoachIcon },
-  { to: "/reviews",    label: "Reviews",    icon: ReviewsIcon },
+  { to: "/dashboard",  label: "Home",       icon: HomeIcon       },
+  { to: "/calls",      label: "Calls",      icon: CallsIcon      },
+  { to: "/leads",      label: "Leads",      icon: LeadsIcon      },
+  { to: "/bookings",   label: "Bookings",   icon: BookingsIcon   },
+  { to: "/metrics",    label: "Metrics",    icon: MetricsIcon    },
+  { to: "/call-coach", label: "Call Coach", icon: CallCoachIcon  },
+  { to: "/reviews",    label: "Reviews",    icon: ReviewsIcon    },
 ];
 
 // ── Plan + parent-mode helpers (mirrors lib/plans.js canAddLocations) ─────
-// Locations nav item is visible only when this returns true. Matches the
-// backend gate enforced by routes/dashboard.js — Pro+ for operating_hq,
-// any HQ tier (hq_starter/hq_growth/hq_enterprise) for rollup_only.
 const HQ_PLAN_IDS = ["hq_starter", "hq_growth", "hq_enterprise"];
 const MULTI_LOCATION_PLAN_IDS = ["pro", "elite", ...HQ_PLAN_IDS];
 
 function canTenantAddLocations(activeTenant) {
   if (!activeTenant) return false;
-  // rollup_only parents (franchise brand corporate) always can — they exist for this purpose
   if (activeTenant.parent_mode === "rollup_only") return true;
-  // operating_hq (default) requires Pro+ plan
   const planId = (activeTenant.plan || "basic").toLowerCase();
   return MULTI_LOCATION_PLAN_IDS.includes(planId);
 }
@@ -72,7 +67,7 @@ function getNavItems(activeTenant) {
 
   // 4. Owner / Admin
 
-  // 4a. Reseller tenant — dedicated nav (no operational items; they don't take calls)
+  // 4a. Reseller tenant — dedicated nav
   if (activeTenant?.account_type === "reseller") {
     const items = [
       { to: "/reseller",       label: "Customers", icon: CustomersIcon },
@@ -90,8 +85,6 @@ function getNavItems(activeTenant) {
     user?.tenant_business_type === "parent" ||
     activeTenant?.business_type === "parent";
 
-  // Locations nav: gated by plan + parent_mode (Pro+ for operating_hq, any HQ tier for rollup_only)
-  // Superadmin always sees it for visibility into the system, even on Basic tenants.
   const showLocations = canTenantAddLocations(activeTenant) || user?.is_super_admin;
 
   const items = [...baseNavItems];
@@ -100,16 +93,15 @@ function getNavItems(activeTenant) {
     items.push({ to: "/locations", label: "Locations", icon: LocationsIcon });
   }
 
- if (isHQ) {
-    items.push({ to: "/team",     label: "Team",       icon: TeamIcon       });
-    items.push({ to: "/tenants",  label: "Businesses", icon: BusinessesIcon });
-    items.push({ to: "/rollup-v5", label: "Rollup",    icon: RollupIcon     });
+  if (isHQ) {
+    items.push({ to: "/team",      label: "Team",       icon: TeamIcon       });
+    items.push({ to: "/tenants",   label: "Businesses", icon: BusinessesIcon });
+    items.push({ to: "/rollup-v5", label: "Rollup",     icon: RollupIcon     });
   }
   if (user?.is_super_admin) {
     items.push({ to: "/admin/tenants", label: "Admin Console", icon: AdminIcon });
   }
 
-  // Settings always last
   items.push({ to: "/settings", label: "Settings", icon: SettingsIcon });
 
   return items;
@@ -174,7 +166,6 @@ function ReviewsIcon({ className }) {
   );
 }
 
-// ── Locations icon — building cluster (matches Heroicons style) ───────────
 function LocationsIcon({ className }) {
   return (
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -199,7 +190,6 @@ function BusinessesIcon({ className }) {
   );
 }
 
-// ── Rollup icon — sparkle (new V5 dashboard) ──────────────────────────────
 function RollupIcon({ className }) {
   return (
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -224,7 +214,6 @@ function AdminsIcon({ className }) {
   );
 }
 
-// ── Customers icon — briefcase (reseller's client businesses) ─────────────
 function CustomersIcon({ className }) {
   return (
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -233,7 +222,6 @@ function CustomersIcon({ className }) {
   );
 }
 
-// ── Plans icon — credit card (reseller's own billing) ─────────────────────
 function PlansIcon({ className }) {
   return (
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -307,11 +295,6 @@ export default function Sidebar({ closeMobile, activeTenant }) {
         })}
       </nav>
 
-      {/* ── Brand footer ──────────────────────────────────────────────
-          Shows tenant logo (or FD fallback for default branding) plus
-          a company-name label that fades in when sidebar is hovered.
-          Sits at the bottom so it doesn't fight with the nav items.
-          ──────────────────────────────────────────────────────────── */}
       <div className="shrink-0 px-3 py-3 border-t border-stone-100">
         <div
           className="flex items-center gap-3 px-2 py-1.5"
@@ -319,11 +302,7 @@ export default function Sidebar({ closeMobile, activeTenant }) {
         >
           <div className="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-stone-100 flex items-center justify-center ring-1 ring-stone-200">
             {logoUrl ? (
-              <img
-                src={logoUrl}
-                alt={companyName}
-                className="w-full h-full object-cover"
-              />
+              <img src={logoUrl} alt={companyName} className="w-full h-full object-cover" />
             ) : (
               <div className="w-full h-full bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center text-white font-black text-xs tracking-tight">
                 FD

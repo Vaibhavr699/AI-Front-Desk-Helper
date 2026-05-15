@@ -77,6 +77,18 @@ require("node-cron").schedule("*/5 * * * *", async () => {
 });
 console.log("[startup] coachingScorer cron scheduled (*/5 * * * *)");
 
+// Phase 6 B1 — coaching rule extractor (every 5 minutes)
+const { runCoachingRuleExtractor } = require("./services/coachingRuleExtractor");
+require("node-cron").schedule("*/5 * * * *", async () => {
+  try {
+    await runCoachingRuleExtractor();
+  } catch (err) {
+    console.error("[ruleExtractor] cron tick error:", err.message);
+  }
+});
+
+console.log("[startup] coachingRuleExtractor cron scheduled (*/5 * * * *)");
+
 const auditLogsRouter = require("./routes/auditLogs");
 const { resolveHostnameToTenant } = require("./lib/hostnameResolver");
 

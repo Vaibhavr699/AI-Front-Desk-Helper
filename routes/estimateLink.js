@@ -6,63 +6,22 @@
  * Hosted landing page for the SMS estimate link sent by the voice AI's
  * send_estimate_link tool. Phase E1 (May 4, 2026).
  *
- * Flow:
- *   1. Caller asks for a price quote on a phone call.
- *   2. AI (after confirming the cell number) calls send_estimate_link.
- *   3. Backend builds URL: https://<host>/q/<tenantId>?call_id=<callId>
- *   4. SMS goes out: "Tap to get your free instant estimate: <link>"
- *   5. Customer taps link → lands here.
- *   6. We render a minimal page that loads chat-widget.js with auto-open
- *      + auto-start-estimator flags via window.__aiWidgetAutoStart. The
- *      widget reads that object (and ?call_id=) for attribution back to
- *      the originating phone call, then forwards source_call_id on lead
- *      capture.
- *
- * Why a backend-hosted page (Option A) instead of redirecting to the
- * tenant's website (Option B): works universally regardless of whether
- * the tenant has the widget embedded on their site, and doesn't depend
- * on a website_url column being populated. Drew picked A as the MVP
- * (May 4, 2026).
- *
- * The page is intentionally minimal — branding comes from the widget
- * itself once it loads (company_name, brand_color, logo_url all pulled
- * from /api/public-tenant/<id>). We only need the company name in the
- * <title> and as a static header for SEO/sharing previews.
- *
- * The widget's contract (chat-widget.js, May 4, 2026):
- *
- *   window.__aiWidgetAutoStart = {
- *     openChat: true,        // open the chat panel automatically
- *     startEstimator: true,  // trigger startEstimatorFlow() after open
- *     callId: "<uuid>"       // optional — for source_call_id attribution
- *   };
- *
- * This must be set BEFORE the chat-widget.js script tag so the module
- * picks it up at IIFE time. We render it inline above the script tag.
+ * Mobile fix May 15, 2026: added top:auto + transform:none resets to the
+ * mobile media query. The desktop centering rules use `transform:
+ * translate(-50%, -50%)` which the widget's own mobile CSS doesn't reset,
+ * leaving the widget shifted half its width off the left side of the
+ * viewport on phones. The two-property reset lets the widget's bottom-
+ * anchored mobile layout take effect cleanly.
  */
 
 const express = require("express");
 const router  = express.Router();
 const db      = require("../lib/db");
 
-/**
- * GET /q/:tenantId?call_id=<uuid>
- *
- * Returns a self-contained HTML page that loads chat-widget.js with
- * auto-open + auto-start-estimator flags. Validates that the tenant
- * exists and has estimator_enabled=true.
- *
- * Status codes:
- *   200 — valid tenant, estimator enabled, page rendered
- *   404 — tenant not found OR estimator not enabled
- *   500 — DB error
- */
 router.get("/q/:tenantId", async (req, res) => {
   const { tenantId } = req.params;
   const callId = req.query.call_id || null;
 
-  // Reject obviously malformed tenant IDs early. Real tenant IDs are
-  // UUIDs — the loose regex catches typos and prevents a DB hit on junk.
   if (!/^[0-9a-f-]{32,36}$/i.test(tenantId)) {
     return res.status(404).type("html").send(renderErrorPage("Estimator not found"));
   }
@@ -95,16 +54,11 @@ router.get("/q/:tenantId", async (req, res) => {
   const companyName = tenant.company_name || tenant.name || "Your Contractor";
   const brandColor  = tenant.brand_color  || "#E8702A";
 
-  // Build the widget script URL from the current request. req.protocol
-  // respects X-Forwarded-Proto when app.set("trust proxy", true) is set
-  // in server.js (Render needs this; default is true in our app).
   const widgetScriptUrl = `${req.protocol}://${req.get("host")}/chat-widget.js`;
 
   console.log("[Estimate Link Page] Served tenant=%s call_id=%s", tenantId, callId || "(none)");
 
   res.set("Content-Type", "text/html; charset=utf-8");
-  // Don't cache — the widget script may change tenant config dynamically
-  // and we want the freshest data each visit.
   res.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
 
   res.send(renderEstimatePage({
@@ -116,22 +70,7 @@ router.get("/q/:tenantId", async (req, res) => {
   }));
 });
 
-// ─────────────────────────────────────────────────────────────────────
-// HTML renderers
-// ─────────────────────────────────────────────────────────────────────
-
 function renderEstimatePage({ tenantId, companyName, brandColor, widgetScriptUrl, callId }) {
-  // Keep the page lean — heavy lifting is in chat-widget.js. We:
-  //   - set the <title> for SEO + sharing previews
-  //   - render a centered loading state while the widget initializes
-  //   - hide the widget's toggle button + callout (we auto-open)
-  //   - reposition + resize the widget container to feel like a full app
-  //   - on mobile, hide the static header and let the widget go fullscreen
-  //   - set window.__aiWidgetAutoStart BEFORE the script loads
-  //
-  // We embed the autostart hint as a JSON literal — JSON.stringify
-  // produces safe JS for any string inputs and avoids template-string
-  // escaping issues with single quotes / newlines / Unicode in callId.
   const autoStartJson = JSON.stringify({
     openChat: true,
     startEstimator: true,
@@ -223,11 +162,18 @@ function renderEstimatePage({ tenantId, companyName, brandColor, widgetScriptUrl
     }
 
     /* On mobile, hide the static header and let the widget go fullscreen
-       using its existing CSS. The widget's mobile media query uses
-       !important so it'll override our desktop overrides above. */
+       using its existing CSS. We MUST reset top + transform here because
+       the widget's mobile CSS doesn't touch those properties — without
+       these resets, the leftover `transform: translate(-50%, -50%)` from
+       our desktop override pulls the widget half-its-width off the left
+       side of the viewport. Fix shipped May 15, 2026. */
     @media (max-width: 640px) {
       .header { display: none; }
       .wrapper { padding: 0; }
+      #ai-chat-container {
+        top: auto !important;
+        transform: none !important;
+      }
     }
   </style>
 </head>
@@ -244,8 +190,6 @@ function renderEstimatePage({ tenantId, companyName, brandColor, widgetScriptUrl
     // Phase E1 (May 4, 2026): tell chat-widget.js to auto-open + auto-start
     // the estimator on this hosted landing page. The widget reads this
     // object at IIFE time, so it MUST be set before the script tag below.
-    // The widget also reads ?call_id=... from the URL as a fallback, but
-    // we set callId here too so the URL stays clean.
     window.__aiWidgetAutoStart = ${autoStartJson};
   </script>
   <script src="${escapeAttr(widgetScriptUrl)}" data-tenant-id="${escapeAttr(tenantId)}"></script>
@@ -284,9 +228,6 @@ function renderErrorPage(message) {
 </html>`;
 }
 
-// HTML-escape a string for use as text content. Used on company_name
-// and any other tenant-supplied data to prevent stored XSS in the
-// hosted page.
 function escapeHtml(s) {
   if (s == null) return "";
   return String(s)
@@ -297,9 +238,6 @@ function escapeHtml(s) {
     .replace(/'/g, "&#39;");
 }
 
-// HTML-escape a string for use inside a quoted attribute. Slightly more
-// permissive than escapeHtml — only need to escape what would break out
-// of a "..." attribute. We use the same helper for safety.
 function escapeAttr(s) {
   return escapeHtml(s);
 }

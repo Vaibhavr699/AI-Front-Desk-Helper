@@ -319,6 +319,20 @@
     }
     console.log("[AI-Widget] Creating UI...");
 
+    // ── Defensive: ensure a viewport meta tag exists ───────────────────────
+    // If a host page embedding the widget didn't include one, mobile
+    // browsers render at a "desktop" width (~980px) and our mobile CSS
+    // media queries (@media max-width:640px) never fire. Defense-in-depth
+    // for third-party contractor sites — our own /q/:tenantId wrapper
+    // already includes the meta tag. Added May 15, 2026.
+    if (!document.querySelector('meta[name="viewport"]')) {
+      const vp = document.createElement("meta");
+      vp.name = "viewport";
+      vp.content = "width=device-width, initial-scale=1, maximum-scale=1";
+      document.head.appendChild(vp);
+      console.log("[AI-Widget] Injected missing viewport meta tag");
+    }
+
     const hoverColor = lightenColor(brandColor, 20);
 
     const style = document.createElement("style");

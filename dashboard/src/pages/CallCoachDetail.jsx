@@ -4,13 +4,17 @@ import { useParams, Link } from "react-router-dom";
 // ═══════════════════════════════════════════════════════════════════════════
 // Call Coach Detail — Phase 6 A4 (May 15, 2026)
 //
-// Per-conversation detail. Consumes:
-//   GET /api/call-coach/conversations/:id
-//
-// Header (lead / call metadata + overall score + persona)
-// 8 dimension cards (score, rationale, evidence quotes)
-// Transcript turns at bottom (customer rows tinted blue)
+// Per-conversation detail page. Receives tenantId from useOutletContext via
+// the WithContext wrapper in App.jsx. authFetch injects the impersonation
+// header so superadmin tenant switching works correctly.
 // ═══════════════════════════════════════════════════════════════════════════
+
+function authFetch(url, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  const impersonate = localStorage.getItem("impersonate_tenant_id");
+  if (impersonate) headers["x-impersonate-tenant-id"] = impersonate;
+  return fetch(url, { ...options, credentials: "include", headers });
+}
 
 const PERSONA_LABELS = {
   researcher:    { label: "Researcher",    color: "bg-blue-100 text-blue-800",       desc: "Wants thorough info, low pressure" },
@@ -41,8 +45,6 @@ function scoreColor(score) {
   return     { bg: "bg-rose-50",      border: "border-rose-200",     text: "text-rose-800",    bar: "bg-rose-500" };
 }
 
-// Defensive transcript parser — handles both JSONB array (current) and
-// legacy text format (just in case). Customer turns get tinted blue in render.
 function formatTranscript(transcript) {
   if (!transcript) return [];
   if (Array.isArray(transcript)) {
@@ -65,8 +67,6 @@ function formatTranscript(transcript) {
   return [];
 }
 
-// Evidence shape from coachingEngine.js is JSONB — could be a string array,
-// an object-array with {text} or {quote}, or wrapped in {quotes: [...]}.
 function evidenceQuotes(evidence) {
   if (!evidence) return [];
   if (Array.isArray(evidence)) return evidence;
@@ -79,7 +79,7 @@ function evidenceText(q) {
   return q?.text || q?.quote || q?.content || JSON.stringify(q);
 }
 
-export default function CallCoachDetail() {
+export default function CallCoachDetail({ tenantId }) {
   const { id } = useParams();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -91,7 +91,7 @@ export default function CallCoachDetail() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`/api/call-coach/conversations/${id}`, { credentials: "include" });
+        const res = await authFetch(`/api/call-coach/conversations/${id}`);
         if (!res.ok) throw new Error(`Failed: ${res.status}`);
         const json = await res.json();
         if (!cancelled) setData(json);
@@ -103,7 +103,7 @@ export default function CallCoachDetail() {
     }
     load();
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, tenantId]);
 
   if (loading) return <div className="p-6 text-center text-gray-500">Loading...</div>;
   if (error) return (

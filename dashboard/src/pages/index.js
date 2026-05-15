@@ -26,3 +26,5 @@ export { default as Locations } from "./Locations";
 export { default as FranchiseeInvite } from "./FranchiseeInvite";
 export { default as Welcome } from "./Welcome";
 export { default as RollupV5 } from "./RollupV5";
+export { default as CallCoach } from "./CallCoach";
+export { default as CallCoachDetail } from "./CallCoachDetail";

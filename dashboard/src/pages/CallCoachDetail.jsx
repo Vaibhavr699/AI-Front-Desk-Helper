@@ -1,20 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Call Coach Detail — Phase 6 A4 (May 15, 2026)
-//
-// Per-conversation detail page. Receives tenantId from useOutletContext via
-// the WithContext wrapper in App.jsx. authFetch injects the impersonation
-// header so superadmin tenant switching works correctly.
-// ═══════════════════════════════════════════════════════════════════════════
-
-function authFetch(url, options = {}) {
-  const headers = { ...(options.headers || {}) };
-  const impersonate = localStorage.getItem("impersonate_tenant_id");
-  if (impersonate) headers["x-impersonate-tenant-id"] = impersonate;
-  return fetch(url, { ...options, credentials: "include", headers });
-}
+import { api } from "../api";
 
 const PERSONA_LABELS = {
   researcher:    { label: "Researcher",    color: "bg-blue-100 text-blue-800",       desc: "Wants thorough info, low pressure" },
@@ -91,9 +77,7 @@ export default function CallCoachDetail({ tenantId }) {
       setLoading(true);
       setError(null);
       try {
-        const res = await authFetch(`/api/call-coach/conversations/${id}`);
-        if (!res.ok) throw new Error(`Failed: ${res.status}`);
-        const json = await res.json();
+        const json = await api(`/api/call-coach/conversations/${id}`);
         if (!cancelled) setData(json);
       } catch (err) {
         if (!cancelled) setError(err.message);

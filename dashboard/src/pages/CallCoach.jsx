@@ -1,28 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { get } from "../api";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Call Coach — Phase 6 A4 List View (May 15, 2026)
+// Call Coach — Phase 6 A4 List View
 //
-// Lists scored conversations for the active tenant with summary tiles, date-
-// range pills, and persona/source/score filters. Each row links into the
-// CallCoachDetail page for the full 8-dimension breakdown + transcript.
-//
-// Backed by routes/callCoach.js:
-//   GET /api/call-coach/summary?days=N
-//   GET /api/call-coach/conversations?dateFrom=...&persona=...&...&limit=...&offset=...
-//
-// Receives tenantId from useOutletContext via CallCoachWithContext in App.jsx.
-// authFetch attaches the impersonation header so superadmin tenant switching
-// works the same way it does in CallCoachDetail.
+// Uses the shared `get` helper from ../api which prepends VITE_API_URL and
+// attaches Bearer auth + impersonation header consistently with the rest
+// of the dashboard.
 // ═══════════════════════════════════════════════════════════════════════════
-
-function authFetch(url, options = {}) {
-  const headers = { ...(options.headers || {}) };
-  const impersonate = localStorage.getItem("impersonate_tenant_id");
-  if (impersonate) headers["x-impersonate-tenant-id"] = impersonate;
-  return fetch(url, { ...options, credentials: "include", headers });
-}
 
 const PERSONA_LABELS = {
   researcher:    { label: "Researcher",    color: "bg-blue-100 text-blue-800"       },
@@ -85,18 +71,14 @@ export default function CallCoach({ tenantId }) {
   const [offset, setOffset] = useState(0);
   const limit = 50;
 
-  // Reset pagination when any filter changes
   useEffect(() => { setOffset(0); }, [days, persona, sourceType, minScore]);
 
-  // Summary tiles
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setSummaryLoading(true);
       try {
-        const res = await authFetch(`/api/call-coach/summary?days=${days}`);
-        if (!res.ok) throw new Error(`Summary failed: ${res.status}`);
-        const json = await res.json();
+        const json = await get("/api/call-coach/summary", { days });
         if (!cancelled) setSummary(json);
       } catch (err) {
         if (!cancelled) console.warn("[CallCoach] summary error:", err.message);
@@ -108,23 +90,20 @@ export default function CallCoach({ tenantId }) {
     return () => { cancelled = true; };
   }, [days, tenantId]);
 
-  // Conversation list
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setListLoading(true);
       setError(null);
       try {
-        const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+        const params = { limit, offset };
         const dateFrom = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-        params.append("dateFrom", dateFrom);
-        if (persona)    params.append("persona", persona);
-        if (sourceType) params.append("source_type", sourceType);
-        if (minScore)   params.append("minScore", minScore);
+        params.dateFrom = dateFrom;
+        if (persona)    params.persona = persona;
+        if (sourceType) params.source_type = sourceType;
+        if (minScore)   params.minScore = minScore;
 
-        const res = await authFetch(`/api/call-coach/conversations?${params}`);
-        if (!res.ok) throw new Error(`List failed: ${res.status}`);
-        const json = await res.json();
+        const json = await get("/api/call-coach/conversations", params);
         if (!cancelled) {
           setConversations(json.conversations || []);
           setTotal(json.total || 0);
@@ -149,7 +128,6 @@ export default function CallCoach({ tenantId }) {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      {/* Header */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Call Coach</h1>
         <p className="mt-1 text-sm text-gray-500">
@@ -157,7 +135,6 @@ export default function CallCoach({ tenantId }) {
         </p>
       </div>
 
-      {/* Date range pills */}
       <div className="mb-4 flex items-center gap-2">
         <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold mr-1">Range:</span>
         {DATE_RANGES.map((r) => (
@@ -175,7 +152,6 @@ export default function CallCoach({ tenantId }) {
         ))}
       </div>
 
-      {/* Summary tiles */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div className="bg-white border border-gray-200 rounded-lg p-4">
           <div className="text-xs uppercase tracking-wide text-gray-500">Average Score</div>
@@ -219,7 +195,6 @@ export default function CallCoach({ tenantId }) {
         </div>
       </div>
 
-      {/* Filters */}
       <div className="bg-white border border-gray-200 rounded-lg p-3 mb-4 flex flex-wrap gap-2 items-center">
         <select
           value={persona}
@@ -267,14 +242,12 @@ export default function CallCoach({ tenantId }) {
         </span>
       </div>
 
-      {/* Errors */}
       {error && (
         <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-md mb-4">
           {error}
         </div>
       )}
 
-      {/* List */}
       {listLoading && conversations.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-lg p-12 text-center text-gray-400">
           Loading conversations…
@@ -331,7 +304,6 @@ export default function CallCoach({ tenantId }) {
             </tbody>
           </table>
 
-          {/* Pagination */}
           {total > limit && (
             <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between text-sm text-gray-600">
               <div>

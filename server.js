@@ -537,7 +537,6 @@ app.use("/api/reviews", require("./routes/reviews"));
 app.use("/", require("./routes/estimateLink"))
 app.use("/api/tenants", authMiddleware, require("./routes/serviceArea"));
 app.use('/api/reseller', require('./routes/reseller'));
-app.use("/api/coaching-test", require("./routes/coachingTest"));
 app.use("/api/public/branding", require("./routes/publicBranding"));
 app.use("/api", authMiddleware, dashboardRoutes);
 app.use("/auth/google/calendar", require("./routes/google-calendar"));

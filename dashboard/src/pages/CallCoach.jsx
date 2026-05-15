@@ -8,9 +8,17 @@ import { Link } from "react-router-dom";
 //   GET /api/call-coach/summary
 //   GET /api/call-coach/conversations
 //
-// Hero tiles + dimension bar chart + filterable conversation table.
-// Click a row → /call-coach/:id for the detail view.
+// Receives tenantId from useOutletContext via the WithContext wrapper in
+// App.jsx. authFetch injects x-impersonate-tenant-id so superadmin tenant
+// switching in the header refreshes data correctly.
 // ═══════════════════════════════════════════════════════════════════════════
+
+function authFetch(url, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  const impersonate = localStorage.getItem("impersonate_tenant_id");
+  if (impersonate) headers["x-impersonate-tenant-id"] = impersonate;
+  return fetch(url, { ...options, credentials: "include", headers });
+}
 
 const PERSONA_LABELS = {
   researcher:    { label: "Researcher",    color: "bg-blue-100 text-blue-800" },
@@ -145,7 +153,7 @@ function DimensionBars({ dimensions }) {
   );
 }
 
-export default function CallCoach() {
+export default function CallCoach({ tenantId }) {
   const [summary, setSummary] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [total, setTotal] = useState(0);
@@ -165,8 +173,8 @@ export default function CallCoach() {
         listParams.set("limit", "100");
 
         const [listRes, summaryRes] = await Promise.all([
-          fetch(`/api/call-coach/conversations?${listParams.toString()}`, { credentials: "include" }),
-          fetch(`/api/call-coach/summary?days=${filters.days}`, { credentials: "include" }),
+          authFetch(`/api/call-coach/conversations?${listParams.toString()}`),
+          authFetch(`/api/call-coach/summary?days=${filters.days}`),
         ]);
 
         if (!listRes.ok)    throw new Error(`List failed: ${listRes.status}`);
@@ -188,7 +196,7 @@ export default function CallCoach() {
     }
     load();
     return () => { cancelled = true; };
-  }, [filters.persona, filters.source_type, filters.days]);
+  }, [filters.persona, filters.source_type, filters.days, tenantId]);
 
   return (
     <div className="p-6 max-w-7xl mx-auto">

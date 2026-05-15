@@ -1,41 +1,46 @@
 "use strict";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// /api/call-coach — Phase 6 A3 + B0 (May 15, 2026)
+// /api/call-coach — Phase 6 A3 + B0 + B2 (May 15, 2026)
 //
 // Read API for the Call Coach dashboard surface. Consumes data populated by:
 //   - services/coachingScorer.js (cron, every 5 min)
+//   - services/coachingRuleExtractor.js (cron, every 5 min)
 //   - lib/coachingEngine.js (scoring + persona detection)
 //
-// B0 (May 15): owner feedback intake. POST/GET endpoints write to
-// coaching_feedback (mig 069). The B1 extractor cron will then turn pending
-// feedback into coaching_rules.
-//
-// Mounted in server.js with authMiddleware. All endpoints are tenant-scoped
-// via req.user.tenant_id. Superadmin impersonation honored via
-// x-impersonate-tenant-id header.
+// B2 (May 15): rule approval queue. Pending rules from coachingRuleExtractor
+// surface inline on CallCoachDetail. Owner approves/rejects/edits before
+// rules go live in voice/SMS prompts (B3).
 //
 // Endpoints:
-//   GET  /conversations                     — list scored conversations
-//   GET  /conversations/:id                 — full detail
-//   GET  /summary                           — aggregate metrics
-//   POST /conversations/:id/feedback        — submit owner feedback (B0)
-//   GET  /conversations/:id/feedback        — list feedback for one convo (B0)
+//   GET    /conversations                            list scored convos
+//   GET    /conversations/:id                        full detail
+//   GET    /summary                                  aggregate metrics
+//   POST   /conversations/:id/feedback               submit owner feedback (B0)
+//   GET    /conversations/:id/feedback               list feedback for convo (B0)
+//   GET    /conversations/:id/rules                  list rules for convo (B2)
+//   POST   /rules/:ruleId/approve                    approve a rule (B2)
+//   POST   /rules/:ruleId/reject                     reject a rule (B2)
+//   PATCH  /rules/:ruleId                            edit a pending rule (B2)
 // ═══════════════════════════════════════════════════════════════════════════
 
 const express = require("express");
 const router = express.Router();
 const db = require("../lib/db");
 
-// Audit logger — defensive import. If lib/auditLogger doesn't expose
-// logAction with the expected signature, we'll fail open (skip audit
-// instead of blocking the request).
 let logAction;
 try {
   ({ logAction } = require("../lib/auditLogger"));
 } catch (_) {
-  logAction = async () => {}; // no-op fallback
+  logAction = async () => {};
 }
+
+const RULE_CATEGORIES = [
+  "rapport", "property_walkthrough", "discovery", "education",
+  "value_framing", "objection_handling", "close", "professionalism",
+  "tone", "scripting", "pricing", "qualification", "other",
+];
+const RULE_TYPES = ["do", "dont", "when_then"];
 
 function getTenantId(req) {
   const impersonate = req.headers["x-impersonate-tenant-id"];
@@ -71,19 +76,10 @@ router.get("/conversations", async (req, res) => {
 
   const listSql = `
     SELECT
-      cc.id,
-      cc.source_type,
-      cc.source_id,
-      cc.scored_at,
-      cc.overall_score,
-      cc.buyer_persona,
-      cc.persona_confidence,
-      cc.outcome,
-      cc.outcome_revenue_cents,
-      cc.outcome_recorded_at,
-      cc.rep_user_id,
-      cc.industry,
-      cc.metadata,
+      cc.id, cc.source_type, cc.source_id, cc.scored_at,
+      cc.overall_score, cc.buyer_persona, cc.persona_confidence,
+      cc.outcome, cc.outcome_revenue_cents, cc.outcome_recorded_at,
+      cc.rep_user_id, cc.industry, cc.metadata,
       du.email AS rep_name
     FROM coaching_conversations cc
     LEFT JOIN dashboard_users du ON du.id = cc.rep_user_id
@@ -221,50 +217,31 @@ router.get("/summary", async (req, res) => {
         COUNT(*)::int AS scored_count,
         SUM(CASE WHEN cc.outcome = 'booked' THEN 1 ELSE 0 END)::int AS booked_count
       FROM coaching_conversations cc
-      WHERE cc.tenant_id = $1
-        AND cc.scored_at IS NOT NULL
-        AND ${windowFilter}
-        ${repFilter}
+      WHERE cc.tenant_id = $1 AND cc.scored_at IS NOT NULL AND ${windowFilter} ${repFilter}
     `;
-
     const dimSql = `
       SELECT cs.dimension,
              ROUND(AVG(cs.score)::numeric, 1) AS avg_score,
              COUNT(*)::int AS count
       FROM coaching_scores cs
       JOIN coaching_conversations cc ON cc.id = cs.conversation_id
-      WHERE cc.tenant_id = $1
-        AND cc.scored_at IS NOT NULL
-        AND ${windowFilter}
-        ${repFilter}
-      GROUP BY cs.dimension
-      ORDER BY cs.dimension
+      WHERE cc.tenant_id = $1 AND cc.scored_at IS NOT NULL AND ${windowFilter} ${repFilter}
+      GROUP BY cs.dimension ORDER BY cs.dimension
     `;
-
     const personaSql = `
       SELECT cc.buyer_persona, COUNT(*)::int AS count
       FROM coaching_conversations cc
-      WHERE cc.tenant_id = $1
-        AND cc.scored_at IS NOT NULL
-        AND ${windowFilter}
-        AND cc.buyer_persona IS NOT NULL
-        ${repFilter}
-      GROUP BY cc.buyer_persona
-      ORDER BY count DESC
+      WHERE cc.tenant_id = $1 AND cc.scored_at IS NOT NULL AND ${windowFilter}
+        AND cc.buyer_persona IS NOT NULL ${repFilter}
+      GROUP BY cc.buyer_persona ORDER BY count DESC
     `;
-
     const trendSql = `
-      SELECT
-        date_trunc('day', cc.scored_at)::date AS day,
-        ROUND(AVG(cc.overall_score)::numeric, 1) AS avg_score,
-        COUNT(*)::int AS count
+      SELECT date_trunc('day', cc.scored_at)::date AS day,
+             ROUND(AVG(cc.overall_score)::numeric, 1) AS avg_score,
+             COUNT(*)::int AS count
       FROM coaching_conversations cc
-      WHERE cc.tenant_id = $1
-        AND cc.scored_at IS NOT NULL
-        AND ${windowFilter}
-        ${repFilter}
-      GROUP BY day
-      ORDER BY day ASC
+      WHERE cc.tenant_id = $1 AND cc.scored_at IS NOT NULL AND ${windowFilter} ${repFilter}
+      GROUP BY day ORDER BY day ASC
     `;
 
     const [overall, dimensions, personas, trend] = await Promise.all([
@@ -296,18 +273,7 @@ router.get("/summary", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// POST /api/call-coach/conversations/:id/feedback   (B0, May 15, 2026)
-//
-// Owner-supplied feedback on a scored conversation. Writes to
-// coaching_feedback (mig 069). The B1 extractor cron picks up rows where
-// rules_extracted_at IS NULL and runs them through GPT-4o to produce
-// coaching_rules.
-//
-// Body shape:
-//   { what_went_right?, what_to_improve?, overall_rating? (1-5) }
-//
-// Validation: at least one of the three must be present + meaningful.
-// "Meaningful" = non-empty after trim for text fields, or rating in 1..5.
+// POST /api/call-coach/conversations/:id/feedback   (B0)
 // ─────────────────────────────────────────────────────────────────────────
 router.post("/conversations/:id/feedback", async (req, res) => {
   const tenantId = getTenantId(req);
@@ -316,13 +282,10 @@ router.post("/conversations/:id/feedback", async (req, res) => {
   const userId = req.user?.id || null;
   const conversationId = req.params.id;
 
-  // Normalize input
-  const whatWentRight  = typeof req.body?.what_went_right === "string"
-                           ? req.body.what_went_right.trim().slice(0, 2000)
-                           : null;
-  const whatToImprove  = typeof req.body?.what_to_improve === "string"
-                           ? req.body.what_to_improve.trim().slice(0, 2000)
-                           : null;
+  const whatWentRight = typeof req.body?.what_went_right === "string"
+    ? req.body.what_went_right.trim().slice(0, 2000) : null;
+  const whatToImprove = typeof req.body?.what_to_improve === "string"
+    ? req.body.what_to_improve.trim().slice(0, 2000) : null;
   let overallRating = req.body?.overall_rating;
   if (overallRating !== null && overallRating !== undefined && overallRating !== "") {
     overallRating = parseInt(overallRating, 10);
@@ -344,7 +307,6 @@ router.post("/conversations/:id/feedback", async (req, res) => {
   }
 
   try {
-    // Verify conversation belongs to tenant — never leak existence cross-tenant
     const convoCheck = await db.query(
       "SELECT id FROM coaching_conversations WHERE id = $1 AND tenant_id = $2 LIMIT 1",
       [conversationId, tenantId]
@@ -364,7 +326,6 @@ router.post("/conversations/:id/feedback", async (req, res) => {
 
     const feedback = insertRes.rows[0];
 
-    // Audit (non-blocking — feedback already persisted)
     Promise.resolve(
       logAction({
         tenant_id: tenantId,
@@ -372,12 +333,7 @@ router.post("/conversations/:id/feedback", async (req, res) => {
         action: "coaching_feedback_submitted",
         resource_type: "coaching_feedback",
         resource_id: feedback.id,
-        metadata: {
-          conversation_id: conversationId,
-          has_right: hasRight,
-          has_improve: hasImprove,
-          rating: overallRating,
-        },
+        metadata: { conversation_id: conversationId, has_right: hasRight, has_improve: hasImprove, rating: overallRating },
       })
     ).catch((err) => console.warn("[callCoach] audit log failed:", err.message));
 
@@ -393,9 +349,6 @@ router.post("/conversations/:id/feedback", async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────
 // GET /api/call-coach/conversations/:id/feedback   (B0)
-//
-// Returns all feedback rows for one conversation, newest first, with author
-// email + count of extracted rules (LEFT JOIN coaching_rules.source_feedback_id).
 // ─────────────────────────────────────────────────────────────────────────
 router.get("/conversations/:id/feedback", async (req, res) => {
   const tenantId = getTenantId(req);
@@ -404,13 +357,8 @@ router.get("/conversations/:id/feedback", async (req, res) => {
   try {
     const result = await db.query(
       `SELECT
-         cf.id,
-         cf.conversation_id,
-         cf.what_went_right,
-         cf.what_to_improve,
-         cf.overall_rating,
-         cf.rules_extracted_at,
-         cf.created_at,
+         cf.id, cf.conversation_id, cf.what_went_right, cf.what_to_improve,
+         cf.overall_rating, cf.rules_extracted_at, cf.created_at,
          cf.submitted_by_user_id,
          du.email AS submitted_by_email,
          COUNT(cr.id) FILTER (WHERE cr.id IS NOT NULL)::int AS extracted_rule_count
@@ -426,6 +374,221 @@ router.get("/conversations/:id/feedback", async (req, res) => {
     res.json({ feedback: result.rows });
   } catch (err) {
     console.error("[callCoach] feedback list error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// GET /api/call-coach/conversations/:id/rules   (B2)
+//
+// Returns ALL coaching_rules for this conversation regardless of status,
+// so the UI can show pending vs approved vs rejected counts. Default UI
+// only displays pending_approval — frontend filters client-side.
+// ─────────────────────────────────────────────────────────────────────────
+router.get("/conversations/:id/rules", async (req, res) => {
+  const tenantId = getTenantId(req);
+  if (!tenantId) return res.status(401).json({ error: "No tenant in session" });
+
+  try {
+    const result = await db.query(
+      `SELECT cr.*,
+              approver.email AS approved_by_email
+       FROM coaching_rules cr
+       LEFT JOIN dashboard_users approver ON approver.id = cr.approved_by_user_id
+       WHERE cr.source_conversation_id = $1 AND cr.tenant_id = $2
+       ORDER BY cr.created_at DESC`,
+      [req.params.id, tenantId]
+    );
+
+    res.json({ rules: result.rows });
+  } catch (err) {
+    console.error("[callCoach] rules list error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// POST /api/call-coach/rules/:ruleId/approve   (B2)
+//
+// Sets status='approved', stamps approved_at + approved_by_user_id.
+// Idempotent: re-approving an approved rule is a no-op. Rejected rules
+// CAN be re-approved (think: "I changed my mind").
+// ─────────────────────────────────────────────────────────────────────────
+router.post("/rules/:ruleId/approve", async (req, res) => {
+  const tenantId = getTenantId(req);
+  if (!tenantId) return res.status(401).json({ error: "No tenant in session" });
+
+  const userId = req.user?.id || null;
+
+  try {
+    const result = await db.query(
+      `UPDATE coaching_rules
+       SET status = 'approved',
+           approved_at = now(),
+           approved_by_user_id = $3,
+           rejected_at = NULL,
+           rejected_reason = NULL
+       WHERE id = $1 AND tenant_id = $2
+       RETURNING *`,
+      [req.params.ruleId, tenantId, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Rule not found" });
+    }
+
+    const rule = result.rows[0];
+    Promise.resolve(
+      logAction({
+        tenant_id: tenantId, user_id: userId,
+        action: "coaching_rule_approved",
+        resource_type: "coaching_rules", resource_id: rule.id,
+        metadata: { category: rule.category, rule_type: rule.rule_type },
+      })
+    ).catch((err) => console.warn("[callCoach] audit log failed:", err.message));
+
+    res.json({ rule });
+  } catch (err) {
+    console.error("[callCoach] rule approve error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// POST /api/call-coach/rules/:ruleId/reject   (B2)
+// Body: { reason? } — optional rejection reason
+// ─────────────────────────────────────────────────────────────────────────
+router.post("/rules/:ruleId/reject", async (req, res) => {
+  const tenantId = getTenantId(req);
+  if (!tenantId) return res.status(401).json({ error: "No tenant in session" });
+
+  const userId = req.user?.id || null;
+  const reason = typeof req.body?.reason === "string"
+    ? req.body.reason.trim().slice(0, 500) || null
+    : null;
+
+  try {
+    const result = await db.query(
+      `UPDATE coaching_rules
+       SET status = 'rejected',
+           rejected_at = now(),
+           rejected_reason = $3
+       WHERE id = $1 AND tenant_id = $2
+       RETURNING *`,
+      [req.params.ruleId, tenantId, reason]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Rule not found" });
+    }
+
+    const rule = result.rows[0];
+    Promise.resolve(
+      logAction({
+        tenant_id: tenantId, user_id: userId,
+        action: "coaching_rule_rejected",
+        resource_type: "coaching_rules", resource_id: rule.id,
+        metadata: { category: rule.category, rule_type: rule.rule_type, reason },
+      })
+    ).catch((err) => console.warn("[callCoach] audit log failed:", err.message));
+
+    res.json({ rule });
+  } catch (err) {
+    console.error("[callCoach] rule reject error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// PATCH /api/call-coach/rules/:ruleId   (B2)
+//
+// Edit a rule's content. Only allowed when status = 'pending_approval' —
+// approved/rejected rules are frozen.
+// Body: { rule_text?, rationale?, category?, rule_type?, example_quote? }
+// ─────────────────────────────────────────────────────────────────────────
+router.patch("/rules/:ruleId", async (req, res) => {
+  const tenantId = getTenantId(req);
+  if (!tenantId) return res.status(401).json({ error: "No tenant in session" });
+
+  const userId = req.user?.id || null;
+  const updates = {};
+
+  if (typeof req.body?.rule_text === "string") {
+    const t = req.body.rule_text.trim();
+    if (t.length === 0) return res.status(400).json({ error: "rule_text cannot be empty" });
+    updates.rule_text = t.slice(0, 1000);
+  }
+  if (typeof req.body?.rationale === "string") {
+    updates.rationale = req.body.rationale.trim().slice(0, 1000);
+  }
+  if (req.body?.category !== undefined) {
+    if (!RULE_CATEGORIES.includes(req.body.category)) {
+      return res.status(400).json({ error: `category must be one of: ${RULE_CATEGORIES.join(", ")}` });
+    }
+    updates.category = req.body.category;
+  }
+  if (req.body?.rule_type !== undefined) {
+    if (!RULE_TYPES.includes(req.body.rule_type)) {
+      return res.status(400).json({ error: `rule_type must be one of: ${RULE_TYPES.join(", ")}` });
+    }
+    updates.rule_type = req.body.rule_type;
+  }
+  if (req.body?.example_quote !== undefined) {
+    if (req.body.example_quote === null || req.body.example_quote === "") {
+      updates.example_quote = null;
+    } else if (typeof req.body.example_quote === "string") {
+      updates.example_quote = req.body.example_quote.trim().slice(0, 500) || null;
+    }
+  }
+
+  const keys = Object.keys(updates);
+  if (keys.length === 0) {
+    return res.status(400).json({ error: "No editable fields provided" });
+  }
+
+  // Verify rule is pending + belongs to tenant
+  const existing = await db.query(
+    "SELECT id, status FROM coaching_rules WHERE id = $1 AND tenant_id = $2 LIMIT 1",
+    [req.params.ruleId, tenantId]
+  );
+  if (existing.rows.length === 0) {
+    return res.status(404).json({ error: "Rule not found" });
+  }
+  if (existing.rows[0].status !== "pending_approval") {
+    return res.status(400).json({
+      error: `Cannot edit a rule with status '${existing.rows[0].status}'. Only pending rules are editable.`,
+    });
+  }
+
+  const setClauses = keys.map((k, i) => `${k} = $${i + 3}`).join(", ");
+  const values = keys.map((k) => updates[k]);
+
+  try {
+    const result = await db.query(
+      `UPDATE coaching_rules
+       SET ${setClauses}
+       WHERE id = $1 AND tenant_id = $2 AND status = 'pending_approval'
+       RETURNING *`,
+      [req.params.ruleId, tenantId, ...values]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Rule not found or no longer editable" });
+    }
+
+    const rule = result.rows[0];
+    Promise.resolve(
+      logAction({
+        tenant_id: tenantId, user_id: userId,
+        action: "coaching_rule_edited",
+        resource_type: "coaching_rules", resource_id: rule.id,
+        metadata: { fields: keys },
+      })
+    ).catch((err) => console.warn("[callCoach] audit log failed:", err.message));
+
+    res.json({ rule });
+  } catch (err) {
+    console.error("[callCoach] rule edit error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });

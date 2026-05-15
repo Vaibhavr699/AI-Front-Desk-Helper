@@ -529,6 +529,7 @@ app.use("/api/admin", authMiddleware, requireSuperAdmin, require("./routes/admin
 app.use("/api/admin/estimator", authMiddleware, requireSuperAdmin, require("./routes/estimatorAdmin"));
 app.use("/api/team", authMiddleware, require("./routes/team"));
 app.use("/api/audit-logs", authMiddleware, auditLogsRouter);
+app.use("/api/call-coach", authMiddleware, require("./routes/callCoach"));
 app.use("/api/franchisee", require("./routes/franchisee"));
 app.use('/api/reseller-public', require('./routes/reseller-public'));
 app.use('/api/reseller/usage', authMiddleware, require('./routes/resellerUsage'));
@@ -544,7 +545,6 @@ app.use("/api/google-calendar", authMiddleware, require("./routes/google-calenda
 app.use("/webhooks", require("./routes/webhooks"));
 app.use("/api/coaching", authMiddleware, require("./routes/coaching"));
 app.use("/api/ai-coach", authMiddleware, require("./routes/aicoach"));
-app.use("/api/call-coach", authMiddleware, require("./routes/callCoach"));
 app.use('/api/rollup-v5', authMiddleware, require('./routes/rollupV5'));
 app.use("/api/scope-options", authMiddleware, require("./routes/scopeOptions"));
 app.use("/api/vertical-services", authMiddleware, require("./routes/verticalServices"));

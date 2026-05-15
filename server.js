@@ -532,6 +532,7 @@ app.use("/api/google-calendar", authMiddleware, require("./routes/google-calenda
 app.use("/webhooks", require("./routes/webhooks"));
 app.use("/api/coaching", authMiddleware, require("./routes/coaching"));
 app.use("/api/ai-coach", authMiddleware, require("./routes/aicoach"));
+app.use("/api/coaching-test", require("./routes/coachingTest"));
 app.use('/api/rollup-v5', authMiddleware, require('./routes/rollupV5'));
 app.use("/api/scope-options", authMiddleware, require("./routes/scopeOptions"));
 app.use("/api/vertical-services", authMiddleware, require("./routes/verticalServices"));

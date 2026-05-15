@@ -4008,6 +4008,7 @@ wss.on("connection", async (twilioSocket, req) => {
   session: {
     input_audio_format: "g711_ulaw",
     output_audio_format: "g711_ulaw",
+    input_audio_transcription: { model: "whisper-1" },
     voice: aiConfig.voice,
    instructions: `${aiConfig.instructions}
 

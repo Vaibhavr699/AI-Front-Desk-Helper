@@ -2,9 +2,10 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "../api";
 import FeedbackModal from "../components/CallCoach/FeedbackModal";
+import PendingRules from "../components/CallCoach/PendingRules";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Call Coach Detail — Phase 6 A4 + B0 (May 15, 2026)
+// Call Coach Detail — Phase 6 A4 + B0 + B2 (May 15, 2026)
 // ═══════════════════════════════════════════════════════════════════════════
 
 const PERSONA_LABELS = {
@@ -95,19 +96,16 @@ export default function CallCoachDetail({ tenantId }) {
   const [error, setError] = useState(null);
 
   const [feedbackList, setFeedbackList] = useState([]);
-  const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [toast, setToast] = useState(null);
+  const [rulesRefreshKey, setRulesRefreshKey] = useState(0);
 
   const loadFeedback = useCallback(async () => {
-    setFeedbackLoading(true);
     try {
       const json = await api(`/api/call-coach/conversations/${id}/feedback`);
       setFeedbackList(json.feedback || []);
     } catch (err) {
       console.warn("[CallCoachDetail] feedback load error:", err.message);
-    } finally {
-      setFeedbackLoading(false);
     }
   }, [id]);
 
@@ -130,7 +128,6 @@ export default function CallCoachDetail({ tenantId }) {
     return () => { cancelled = true; };
   }, [id, tenantId, loadFeedback]);
 
-  // Auto-dismiss toast
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 5000);
@@ -140,6 +137,12 @@ export default function CallCoachDetail({ tenantId }) {
   function handleFeedbackSubmitted(result) {
     setToast(result?.message || "Feedback captured.");
     loadFeedback();
+  }
+
+  // When a rule is approved/rejected/edited, refresh feedback (for extracted_rule_count) + bump rules panel key
+  function handleRuleChange() {
+    loadFeedback();
+    setRulesRefreshKey((k) => k + 1);
   }
 
   if (loading) return <div className="p-6 text-center text-gray-500">Loading...</div>;
@@ -163,7 +166,7 @@ export default function CallCoachDetail({ tenantId }) {
         ← Back to Call Coach
       </Link>
 
-      {/* Header row */}
+      {/* Header */}
       <div className="mt-4 mb-6">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -250,6 +253,13 @@ export default function CallCoachDetail({ tenantId }) {
         })}
       </div>
 
+      {/* Pending Rules — B2 */}
+      <PendingRules
+        key={rulesRefreshKey}
+        conversationId={id}
+        onChange={handleRuleChange}
+      />
+
       {/* Feedback history */}
       {feedbackList.length > 0 && (
         <div className="bg-white border border-gray-200 rounded-lg mb-6 overflow-hidden">
@@ -335,7 +345,7 @@ export default function CallCoachDetail({ tenantId }) {
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-6 right-6 bg-gray-900 text-white px-4 py-3 rounded-lg shadow-lg text-sm max-w-md z-40 animate-in fade-in slide-in-from-bottom-2">
+        <div className="fixed bottom-6 right-6 bg-gray-900 text-white px-4 py-3 rounded-lg shadow-lg text-sm max-w-md z-40">
           {toast}
         </div>
       )}

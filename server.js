@@ -48,6 +48,7 @@ const messagesService = require("./services/messages");
 const emailService = require("./services/email");
 const { getAIConfig, REALTIME_TOOLS, RECOVERY_TOOLS } = require("./lib/orchestrator");
 const { isWithinBusinessHours } = require("./lib/timeUtils");
+const { buildCoachingPromptInjection } = require("./lib/coachingPromptInjection");
 const crmWebhookPayload = require("./lib/crmWebhookPayload");
 const { getLast10Digits, normalizeE164Phone } = require("./lib/phone");
 
@@ -1345,7 +1346,7 @@ function buildSmsServiceAreaBlock(tenant) {
   return lines.join("\n");
 }
 
-function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
+function buildSmsSystemPrompt(thread, tenant = null, availableSlots = [], coachingInjection = "") {
   const companyName = tenant?.company_name || tenant?.name || "our team";
   const toneOfVoice = tenant?.tone_of_voice || "professional";
   const timezone    = tenant?.timezone || BUSINESS_TIMEZONE || "America/Chicago";
@@ -1496,6 +1497,13 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = []) {
     combined += "\n\nFrequently Asked Questions:\n" + tenant.faqs.map(f => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n");
   }
 
+  // Phase 6 B3 (May 15, 2026) — coaching rules appended last so they
+  // override any contradicting defaults above. Empty string when no
+  // approved rules exist; the block disappears entirely from the prompt.
+  if (coachingInjection && coachingInjection.length > 0) {
+    combined += "\n\n" + coachingInjection;
+  }
+
   return [
     combined,
     "\nReturn strict JSON only with keys: reply, lead_capture, should_book, should_cancel, should_reschedule, should_dnc, appointment_date, appointment_time, follow_up_minutes.",
@@ -1526,8 +1534,13 @@ async function runSmsAiOrchestrator(thread, incomingText, tenant = null) {
     }
   }
 
+  // Phase 6 B3 (May 15, 2026) — fetch owner-approved coaching rules
+  // before building the prompt. Returns "" on no rules or any DB error;
+  // never blocks the SMS reply.
+  const coachingInjection = await buildCoachingPromptInjection(tenant?.id);
+
   const input = [
-    { role: "system", content: buildSmsSystemPrompt(thread, tenant, availableSlots) },
+    { role: "system", content: buildSmsSystemPrompt(thread, tenant, availableSlots, coachingInjection) },
     ...thread.history.map((msg) => ({
       role: msg.role,
       content: String(msg.text || "")
@@ -4014,6 +4027,11 @@ wss.on("connection", async (twilioSocket, req) => {
         outboundScript,
       });
 
+      // Phase 6 B3 (May 15, 2026) — splice owner-approved coaching rules
+      // into the voice prompt. Returns "" if no approved rules or any DB
+      // error; never blocks the call.
+      const coachingInjection = await buildCoachingPromptInjection(tenant?.id);
+
       const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 1500;
       const vadThreshold = parseFloat(process.env.REALTIME_VAD_THRESHOLD) || 0.85;
       const sessionUpdate = {
@@ -4023,7 +4041,7 @@ wss.on("connection", async (twilioSocket, req) => {
     output_audio_format: "g711_ulaw",
     input_audio_transcription: { model: "whisper-1" },
     voice: aiConfig.voice,
-   instructions: `${aiConfig.instructions}
+   instructions: `${aiConfig.instructions}${coachingInjection ? "\n\n" + coachingInjection : ""}
 
 Speak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English. DO NOT USE ANY OTHER LANGUAGE AT THE START OF THE CALL.`,
     tools: aiConfig.tools,

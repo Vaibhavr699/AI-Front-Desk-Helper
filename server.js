@@ -65,6 +65,18 @@ const { startResellerUsageReporter } = require("./services/reportResellerUsage")
 const { authMiddleware, requireSuperAdmin } = require("./lib/auth");
 const notificationsService = require("./services/notifications");
 const metricAlerts = require("./services/metricAlerts");
+
+// Phase 6 A2 — coaching scorer (every 5 minutes)
+const { runScoringSweep } = require("./services/coachingScorer");
+require("node-cron").schedule("*/5 * * * *", async () => {
+  try {
+    await runScoringSweep();
+  } catch (err) {
+    console.error("[coachingScorer] cron tick error:", err.message);
+  }
+});
+console.log("[startup] coachingScorer cron scheduled (*/5 * * * *)");
+
 const auditLogsRouter = require("./routes/auditLogs");
 const { resolveHostnameToTenant } = require("./lib/hostnameResolver");
 

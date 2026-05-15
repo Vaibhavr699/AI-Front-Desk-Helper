@@ -179,6 +179,8 @@ export default function App() {
             <Route path="/settings" element={<SettingsWithContext />} />
             <Route path="/tenants" element={<Tenants />} />
             <Route path="/rollup-v5" element={<RollupV5WithContext />} />
+            <Route path="/call-coach" element={<CallCoachWithContext />} />
+            <Route path="/call-coach/:id" element={<CallCoachDetailWithContext />} />
             <Route path="/hq-locations" element={<HqLocations />} />
             <Route path="/admin" element={<Navigate to="/admin/tenants" replace />} />
             <Route path="/admin/tenants" element={<AdminWithContext view="tenants" />} />
@@ -277,4 +279,14 @@ function LocationsWithContext() {
 function RollupV5WithContext() {
   const { tenantId } = useOutletContext();
   return <RollupV5 tenantId={tenantId} />;
+}
+
+function CallCoachWithContext() {
+  const { tenantId } = useOutletContext();
+  return <CallCoach tenantId={tenantId} />;
+}
+
+function CallCoachDetailWithContext() {
+  const { tenantId } = useOutletContext();
+  return <CallCoachDetail tenantId={tenantId} />;
 }

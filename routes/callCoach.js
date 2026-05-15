@@ -11,6 +11,10 @@
 // via req.user.tenant_id. No write endpoints — A3 is read-only. Rescoring
 // and rule extraction land in Phase 6 B.
 //
+// May 15 fix: dashboard_users.name doesn't exist — table only has email,
+// password_hash, role, tenant_id. Using du.email as the rep_name surrogate
+// until a proper full_name column is added.
+//
 // Endpoints:
 //   GET /conversations              — list scored conversations (paginated, filterable)
 //   GET /conversations/:id          — full detail: 8-dim scores + rationale + transcript
@@ -105,7 +109,7 @@ router.get("/conversations", async (req, res) => {
       cc.rep_user_id,
       cc.industry,
       cc.metadata,
-      du.name AS rep_name
+      du.email AS rep_name
     FROM coaching_conversations cc
     LEFT JOIN dashboard_users du ON du.id = cc.rep_user_id
     WHERE ${whereClause}
@@ -154,7 +158,7 @@ router.get("/conversations/:id", async (req, res) => {
     const convoRes = await db.query(
       `SELECT
          cc.*,
-         du.name AS rep_name,
+         du.email AS rep_name,
          du.email AS rep_email
        FROM coaching_conversations cc
        LEFT JOIN dashboard_users du ON du.id = cc.rep_user_id

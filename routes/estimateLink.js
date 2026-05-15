@@ -164,7 +164,7 @@ function renderEstimatePage({ tenantId, companyName, brandColor, widgetScriptUrl
     /* On mobile, hide the static header and let the widget go fullscreen
        using its existing CSS. We MUST reset top + transform here because
        the widget's mobile CSS doesn't touch those properties — without
-       these resets, the leftover `transform: translate(-50%, -50%)` from
+       these resets, the leftover translate(-50%, -50%) transform from
        our desktop override pulls the widget half-its-width off the left
        side of the viewport. Fix shipped May 15, 2026. */
     @media (max-width: 640px) {

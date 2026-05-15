@@ -3,7 +3,7 @@ import { Link, useLocation } from "react-router-dom";
 import { getUser } from "../api";
 import { useBrand } from "../contexts/BrandContext";
 
-// ── Condensed nav — 9 items max ────────────────────────────────────────────
+// ── Condensed nav — 10 items max ───────────────────────────────────────────
 //
 // REMOVED from top nav (pages still exist, accessible within parent pages):
 //   • Outbound       → tab inside Calls page
@@ -12,13 +12,18 @@ import { useBrand } from "../contexts/BrandContext";
 //   • Plans          → tab inside Settings page
 //   • Usage & Billing → tab inside Settings page
 //
+// ADDED May 15, 2026 (Phase 6 A4): Call Coach — AI-scored conversation
+// analytics. Sits between Metrics and Reviews. Visible to managers/owners/
+// admins (anyone with access to baseNavItems), not staff/technicians.
+//
 const baseNavItems = [
-  { to: "/dashboard",  label: "Home",      icon: HomeIcon },
-  { to: "/calls",      label: "Calls",     icon: CallsIcon },
-  { to: "/leads",      label: "Leads",     icon: LeadsIcon },
-  { to: "/bookings",   label: "Bookings",  icon: BookingsIcon },
-  { to: "/metrics",    label: "Metrics",   icon: MetricsIcon },
-  { to: "/reviews",    label: "Reviews",   icon: ReviewsIcon },
+  { to: "/dashboard",  label: "Home",       icon: HomeIcon },
+  { to: "/calls",      label: "Calls",      icon: CallsIcon },
+  { to: "/leads",      label: "Leads",      icon: LeadsIcon },
+  { to: "/bookings",   label: "Bookings",   icon: BookingsIcon },
+  { to: "/metrics",    label: "Metrics",    icon: MetricsIcon },
+  { to: "/call-coach", label: "Call Coach", icon: CallCoachIcon },
+  { to: "/reviews",    label: "Reviews",    icon: ReviewsIcon },
 ];
 
 // ── Plan + parent-mode helpers (mirrors lib/plans.js canAddLocations) ─────
@@ -147,6 +152,16 @@ function MetricsIcon({ className }) {
   return (
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+    </svg>
+  );
+}
+
+// ── Call Coach icon — graduation cap (coaching / training analytics) ──────
+function CallCoachIcon({ className }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" />
     </svg>
   );
 }

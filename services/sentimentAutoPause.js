@@ -113,14 +113,16 @@ async function runAutoPauseCron() {
   let messages;
   try {
     const result = await db.query(
-      `SELECT id, tenant_id, lead_id, body, created_at
-         FROM sms_messages
-        WHERE direction = 'inbound'
-          AND created_at > $1
-          AND lead_id IS NOT NULL
-        LIMIT 500`,
-      [sinceIso]
-    );
+  `SELECT m.id, l.tenant_id, m.lead_id, m.body, m.created_at
+     FROM messages m
+     JOIN leads l ON l.id = m.lead_id
+    WHERE m.channel IN ('sms', 'facebook', 'website')
+      AND m.direction = 'inbound'
+      AND m.created_at > $1
+      AND m.lead_id IS NOT NULL
+    LIMIT 500`,
+  [sinceIso]
+);
     messages = result.rows;
   } catch (err) {
     console.error("[auto-pause-cron] query error: %s", err.message);

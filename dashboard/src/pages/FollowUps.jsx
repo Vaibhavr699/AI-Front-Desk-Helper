@@ -18,9 +18,11 @@ import {
   CalendarCheck,
   MapPin,
   Briefcase
+  Settings2
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { Link } from "react-router-dom";
+import RecoveryConfigDrawer from "../components/RecoveryConfigDrawer";
 
 /** Enhanced Tooltip Component with better visibility */
 function Tooltip({ children, content }) {
@@ -91,6 +93,7 @@ export default function FollowUps({ tenantId }) {
   const [filterSystem, setFilterSystem] = useState("all");
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(15);
+  const [configOpen, setConfigOpen] = useState(false);
 
   // Modal State
   const [modal, setModal] = useState({
@@ -243,6 +246,13 @@ export default function FollowUps({ tenantId }) {
           <h1 className="text-3xl font-bold text-stone-900 tracking-tight">Follow-Up Pipeline</h1>
           <p className="text-stone-500 mt-1">Automate and manage your estimate conversion workflow.</p>
         </div>
+        <button
+          onClick={() => setConfigOpen(true)}
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all border bg-white text-stone-600 border-stone-200 hover:border-stone-400 hover:bg-stone-50 shadow-sm"
+        >
+          <Settings2 className="w-4 h-4" />
+          Configure Follow-ups
+        </button>
       </div>
 
       {/* Enhanced Filter Tabs with Custom Tooltips */}
@@ -482,6 +492,10 @@ export default function FollowUps({ tenantId }) {
         confirmText={modal.confirmText}
         variant={modal.variant}
         loading={processing !== null}
+      />
+      <RecoveryConfigDrawer
+        open={configOpen}
+        onClose={() => setConfigOpen(false)}
       />
     </div>
   );

@@ -280,4 +280,27 @@ router.patch("/leads/:id/cadence", async (req, res) => {
   try {
     const result = await db.query(
       `UPDATE leads
-          SET rec
+          SET recovery_cadence_override = $3
+        WHERE id = $1 AND tenant_id = $2
+        RETURNING *`,
+      [leadId, tenantId, cadence]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Lead not found" });
+    }
+
+    await logAudit({
+      tenantId, userId,
+      action: "lead.recovery_cadence_override",
+      meta: { lead_id: leadId, cadence },
+    });
+
+    res.json({ lead: result.rows[0] });
+  } catch (err) {
+    console.error("[recovery/leads/cadence] tenant=%s lead=%s err=%s", tenantId, leadId, err.message);
+    res.status(500).json({ error: "Failed to update cadence" });
+  }
+});
+
+module.exports = router;

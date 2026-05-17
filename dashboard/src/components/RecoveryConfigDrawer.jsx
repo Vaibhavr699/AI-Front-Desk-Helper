@@ -2,11 +2,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { getRecoverySettings, updateRecoverySettings } from '../api';
 
 const CADENCE_OPTIONS = [
-  { value: 'aggressive', label: 'Aggressive', desc: '8 sends over 21 days' },
-  { value: 'standard',   label: 'Standard',   desc: '5 sends over 21 days' },
-  { value: 'gentle',     label: 'Gentle',     desc: '3 sends over 21 days' },
-  { value: 'single',     label: 'Single',     desc: '1 send on day 3' },
-  { value: 'custom',     label: 'Custom',     desc: 'Set your own day intervals' },
+  { value: 'aggressive', label: 'Aggressive', desc: '8 follow-ups — days 1, 3, 5, 7, 10, 14, 17, 21' },
+  { value: 'standard',   label: 'Standard',   desc: '5 follow-ups — days 1, 3, 7, 14, 21' },
+  { value: 'gentle',     label: 'Gentle',     desc: '3 follow-ups — days 3, 10, 21' },
+  { value: 'single',     label: 'Single',     desc: '1 follow-up — day 3 only' },
+  { value: 'custom',     label: 'Custom',     desc: 'Set your own day intervals (below)' },
 ];
 
 const TRIGGER_KEYS = [
@@ -29,7 +29,6 @@ export default function RecoveryConfigDrawer({ open, onClose }) {
   const [activeTab, setActiveTab] = useState('general');
   const [error, setError] = useState(null);
 
-  // Fetch on open
   useEffect(() => {
     if (!open) return;
     setLoading(true);
@@ -47,7 +46,6 @@ export default function RecoveryConfigDrawer({ open, onClose }) {
       .finally(() => setLoading(false));
   }, [open]);
 
-  // ESC key closes
   useEffect(() => {
     if (!open) return;
     const handler = (e) => { if (e.key === 'Escape') onClose(); };
@@ -57,7 +55,6 @@ export default function RecoveryConfigDrawer({ open, onClose }) {
 
   const isAllowed = useCallback((field) => allowedFields.includes(field), [allowedFields]);
 
-  // Auto-save change (optimistic + revert on error, matching ScopeSettings.jsx pattern)
   const handleChange = useCallback(async (field, value) => {
     if (!isAllowed(field)) return;
     const prev = settings;
@@ -80,15 +77,12 @@ export default function RecoveryConfigDrawer({ open, onClose }) {
 
   return (
     <>
-      {/* Backdrop */}
       <div
         className="fixed inset-0 bg-stone-900/40 z-40 transition-opacity"
         onClick={onClose}
       />
 
-      {/* Drawer */}
       <div className="fixed top-0 right-0 h-full w-full max-w-xl bg-stone-50 z-50 shadow-2xl flex flex-col">
-        {/* Header */}
         <div className="px-6 py-5 border-b border-stone-200 bg-white flex items-start justify-between">
           <div>
             <h2 className="text-xl font-bold text-stone-900">Configure Follow-ups</h2>
@@ -107,7 +101,6 @@ export default function RecoveryConfigDrawer({ open, onClose }) {
           </button>
         </div>
 
-        {/* Tabs */}
         <div className="px-6 bg-white border-b border-stone-200 flex gap-1">
           {[
             { id: 'general',   label: 'General' },
@@ -129,7 +122,6 @@ export default function RecoveryConfigDrawer({ open, onClose }) {
           ))}
         </div>
 
-        {/* Body */}
         <div className="flex-1 overflow-y-auto p-6">
           {loading ? (
             <div className="flex items-center justify-center py-12">
@@ -149,7 +141,6 @@ export default function RecoveryConfigDrawer({ open, onClose }) {
           ) : null}
         </div>
 
-        {/* Saving indicator */}
         {saving && (
           <div className="px-6 py-2 bg-blue-50 border-t border-blue-100 text-xs text-blue-700 flex items-center gap-2">
             <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-700"></div>
@@ -218,6 +209,37 @@ function tierLabelFor(field, isAllowed, plan) {
 
 function GeneralTab({ settings, isAllowed, onChange, plan }) {
   const tierLabel = (f) => tierLabelFor(f, isAllowed, plan);
+
+  // Custom cadence days editor — buffered text, parsed + validated on blur
+  const [customDaysText, setCustomDaysText] = useState(
+    (settings.custom_cadence_days || []).join(', ')
+  );
+  const [customDaysError, setCustomDaysError] = useState(null);
+
+  useEffect(() => {
+    setCustomDaysText((settings.custom_cadence_days || []).join(', '));
+  }, [settings.custom_cadence_days]);
+
+  const handleCustomDaysBlur = () => {
+    setCustomDaysError(null);
+    if (!customDaysText.trim()) {
+      onChange('custom_cadence_days', []);
+      return;
+    }
+    const parts = customDaysText.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+    const days = [];
+    for (const p of parts) {
+      const n = parseInt(p, 10);
+      if (isNaN(n) || n < 0 || n > 90) {
+        setCustomDaysError(`Invalid: "${p}". Use whole numbers 0–90, comma-separated.`);
+        return;
+      }
+      if (!days.includes(n)) days.push(n);
+    }
+    days.sort((a, b) => a - b);
+    onChange('custom_cadence_days', days);
+  };
+
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
@@ -236,13 +258,13 @@ function GeneralTab({ settings, isAllowed, onChange, plan }) {
 
       <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
         <h3 className="text-xs font-bold text-stone-400 uppercase tracking-widest mb-3">Channels</h3>
-        <FieldRow label="SMS"   desc="Text messages"        tier={tierLabel('sms_enabled')}   locked={!isAllowed('sms_enabled')}>
+        <FieldRow label="SMS"   desc="Text messages"     tier={tierLabel('sms_enabled')}   locked={!isAllowed('sms_enabled')}>
           <Toggle checked={settings.sms_enabled}   onChange={(v) => onChange('sms_enabled', v)}   disabled={!isAllowed('sms_enabled')} />
         </FieldRow>
-        <FieldRow label="Email" desc="Email follow-ups"     tier={tierLabel('email_enabled')} locked={!isAllowed('email_enabled')}>
+        <FieldRow label="Email" desc="Email follow-ups"  tier={tierLabel('email_enabled')} locked={!isAllowed('email_enabled')}>
           <Toggle checked={settings.email_enabled} onChange={(v) => onChange('email_enabled', v)} disabled={!isAllowed('email_enabled')} />
         </FieldRow>
-        <FieldRow label="Voice" desc="AI callback calls"    tier={tierLabel('voice_enabled')} locked={!isAllowed('voice_enabled')}>
+        <FieldRow label="Voice" desc="AI callback calls" tier={tierLabel('voice_enabled')} locked={!isAllowed('voice_enabled')}>
           <Toggle checked={settings.voice_enabled} onChange={(v) => onChange('voice_enabled', v)} disabled={!isAllowed('voice_enabled')} />
         </FieldRow>
       </div>
@@ -252,6 +274,9 @@ function GeneralTab({ settings, isAllowed, onChange, plan }) {
           Cadence Preset
           {!isAllowed('cadence_preset') && <TierBadge tier={tierLabel('cadence_preset')} />}
         </h3>
+        <p className="text-xs text-stone-500 mb-3">
+          Estimate recovery sequence has 9 touchpoints. Day 0 (initial confirmation) always sends. The preset controls which of days 1–21 fire as follow-ups.
+        </p>
         <div className="space-y-2">
           {CADENCE_OPTIONS.map(opt => (
             <label
@@ -278,6 +303,34 @@ function GeneralTab({ settings, isAllowed, onChange, plan }) {
             </label>
           ))}
         </div>
+
+        {settings.cadence_preset === 'custom' && (
+          <div className="mt-4 pt-4 border-t border-stone-100">
+            <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">
+              Custom Days
+            </label>
+            <p className="text-xs text-stone-500 mb-2">
+              Comma-separated day numbers (0–90). Day 0 = same day the trigger fires; day 21 = 3 weeks later. Saves on blur. Valid step days for estimate recovery: 1, 3, 5, 7, 10, 14, 17, 21.
+            </p>
+            <input
+              type="text"
+              value={customDaysText}
+              onChange={(e) => setCustomDaysText(e.target.value)}
+              onBlur={handleCustomDaysBlur}
+              placeholder="1, 3, 7, 14, 21"
+              disabled={!isAllowed('custom_cadence_days')}
+              className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50"
+            />
+            {customDaysError && (
+              <p className="text-xs text-red-600 mt-1">{customDaysError}</p>
+            )}
+            {!customDaysError && settings.custom_cadence_days?.length > 0 && (
+              <p className="text-xs text-stone-500 mt-1">
+                {settings.custom_cadence_days.length} send{settings.custom_cadence_days.length !== 1 ? 's' : ''} configured
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
@@ -360,7 +413,6 @@ function AutoPauseTab({ settings, isAllowed, onChange, plan }) {
     (settings.auto_pause_keywords || []).join('\n')
   );
 
-  // Keep textarea in sync if settings change externally
   useEffect(() => {
     setKeywordsText((settings.auto_pause_keywords || []).join('\n'));
   }, [settings.auto_pause_keywords]);
@@ -432,7 +484,6 @@ function AnalyticsTab({ plan }) {
     );
   }
 
-  // Elite placeholder — wire to real analytics endpoint in Phase 10F follow-up
   return (
     <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-5">
       <h3 className="text-xs font-bold text-stone-400 uppercase tracking-widest mb-4">Last 30 Days</h3>

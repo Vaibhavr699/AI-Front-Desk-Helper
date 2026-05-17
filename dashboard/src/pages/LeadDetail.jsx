@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getLeadById, getLeadHistory, updateLead } from '../api';
+import {
+  getLeadById,
+  getLeadHistory,
+  updateLead,
+  pauseLeadRecovery,
+  resumeLeadRecovery,
+  updateLeadCadence,
+} from '../api';
 import Header from '../components/Header';
 import StatusStepper from '../components/StatusStepper';
 
@@ -12,6 +19,7 @@ export default function LeadDetail({ tenantId }) {
   const [loading, setLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState({});
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -22,7 +30,7 @@ export default function LeadDetail({ tenantId }) {
       setLoading(true);
       const [leadData, historyData] = await Promise.all([
         getLeadById(id),
-        getLeadHistory(id)
+        getLeadHistory(id),
       ]);
       setLead(leadData);
       setHistory(historyData || []);
@@ -44,6 +52,39 @@ export default function LeadDetail({ tenantId }) {
     }
   }
 
+  async function handlePauseToggle() {
+    if (recoveryBusy) return;
+    setRecoveryBusy(true);
+    try {
+      if (lead.recovery_paused) {
+        await resumeLeadRecovery(id);
+      } else {
+        await pauseLeadRecovery(id, 'manual');
+      }
+      await fetchData();
+    } catch (err) {
+      console.error("Recovery pause/resume failed:", err);
+      alert("Failed to update recovery status");
+    } finally {
+      setRecoveryBusy(false);
+    }
+  }
+
+  async function handleCadenceChange(e) {
+    if (recoveryBusy) return;
+    const value = e.target.value || null;
+    setRecoveryBusy(true);
+    try {
+      await updateLeadCadence(id, value);
+      await fetchData();
+    } catch (err) {
+      console.error("Cadence override failed:", err);
+      alert("Failed to update cadence");
+    } finally {
+      setRecoveryBusy(false);
+    }
+  }
+
   if (loading) return (
     <div className="min-h-screen bg-stone-50 flex flex-col items-center justify-center">
       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-stone-900"></div>
@@ -61,7 +102,7 @@ export default function LeadDetail({ tenantId }) {
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-full w-full mx-auto">
         <div className="mb-6 flex items-center gap-4">
-          <button 
+          <button
             onClick={() => navigate('/leads')}
             className="p-2 bg-white border border-stone-200 rounded-lg hover:bg-stone-50 transition-colors shadow-sm"
           >
@@ -75,7 +116,7 @@ export default function LeadDetail({ tenantId }) {
             </h1>
             <p className="text-sm text-stone-500">Customer Record · Created {new Date(lead.created_at).toLocaleDateString()}</p>
           </div>
-          
+
           <div className="ml-auto flex gap-3">
             <select
               value={lead.status}
@@ -97,7 +138,7 @@ export default function LeadDetail({ tenantId }) {
             <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-6">
               <div className="flex items-center justify-between mb-6">
                 <h3 className="font-bold text-stone-900 uppercase text-xs tracking-widest">Profile Details</h3>
-                <button 
+                <button
                   onClick={() => isEditing ? handleSave() : setIsEditing(true)}
                   className="text-xs font-bold text-blue-600 hover:text-blue-700 uppercase tracking-wider"
                 >
@@ -129,7 +170,7 @@ export default function LeadDetail({ tenantId }) {
                       />
                     ) : (
                       <div className={`text-stone-900 text-sm font-medium ${mono ? 'font-mono' : ''}`}>
-                        {isRevenue 
+                        {isRevenue
                           ? ((lead[key] || 0) / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
                           : (lead[key] || <span className="text-stone-300 italic">Not provided</span>)
                         }
@@ -153,6 +194,70 @@ export default function LeadDetail({ tenantId }) {
                     </div>
                   )}
                 </div>
+              </div>
+            </div>
+
+            {/* Recovery Section (Phase 10) */}
+            <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-6">
+              <div className="flex items-center gap-2 mb-6">
+                <div className="p-1.5 bg-amber-100 rounded-lg text-amber-600">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <h3 className="font-bold text-stone-900 uppercase text-xs tracking-widest">Recovery</h3>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Status</label>
+                  {lead.recovery_paused ? (
+                    <div>
+                      <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-amber-50 text-amber-700 text-[10px] font-bold uppercase rounded-md border border-amber-100">
+                        ⏸ Paused
+                      </span>
+                      {lead.recovery_paused_reason && (
+                        <p className="text-xs text-stone-500 mt-1.5">Reason: <span className="font-medium text-stone-700">{lead.recovery_paused_reason}</span></p>
+                      )}
+                      {lead.recovery_paused_at && (
+                        <p className="text-[10px] text-stone-400 font-mono mt-0.5">Since {new Date(lead.recovery_paused_at).toLocaleString()}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold uppercase rounded-md border border-emerald-100">
+                      ● Active
+                    </span>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Cadence Override</label>
+                  <select
+                    value={lead.recovery_cadence_override || ''}
+                    onChange={handleCadenceChange}
+                    disabled={recoveryBusy}
+                    className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50"
+                  >
+                    <option value="">Use tenant default</option>
+                    <option value="aggressive">Aggressive</option>
+                    <option value="standard">Standard</option>
+                    <option value="gentle">Gentle</option>
+                    <option value="single">Single</option>
+                    <option value="off">Off (no follow-ups)</option>
+                  </select>
+                </div>
+
+                <button
+                  onClick={handlePauseToggle}
+                  disabled={recoveryBusy}
+                  className={`w-full text-xs font-bold uppercase tracking-wider py-2 rounded-lg transition-colors disabled:opacity-50 ${
+                    lead.recovery_paused
+                      ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
+                      : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
+                  }`}
+                >
+                  {recoveryBusy ? '...' : (lead.recovery_paused ? 'Resume Recovery' : 'Pause Recovery')}
+                </button>
               </div>
             </div>
 
@@ -181,7 +286,7 @@ export default function LeadDetail({ tenantId }) {
                       <div className="text-stone-900 text-[10px] font-mono">{new Date(lead.last_consent_at).toLocaleString()}</div>
                     </div>
                   </div>
-                  
+
                   <div>
                     <label className="block text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">Disclosure Agreed To</label>
                     <div className="text-stone-600 text-[11px] bg-stone-50 p-3 rounded-xl border border-stone-100 italic leading-relaxed">
@@ -279,30 +384,4 @@ export default function LeadDetail({ tenantId }) {
                                   <p className="text-[10px] text-stone-500 font-mono">Disposition: {event.disposition}</p>
                                 </div>
                               </div>
-                              <span className="px-2 py-0.5 bg-stone-200 text-stone-600 text-[9px] font-bold rounded uppercase tracking-widest">{event.status}</span>
-                            </div>
-                            <div className="text-stone-600 text-sm leading-relaxed whitespace-pre-wrap italic">
-                              {event.transcript || "No transcript available for this call."}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className={`max-w-[85%] rounded-2xl px-5 py-3 shadow-sm text-sm border ${
-                            isUser 
-                              ? 'bg-blue-600 text-white border-blue-500 rounded-bl-none' 
-                              : 'bg-white text-stone-900 border-stone-200 rounded-br-none'
-                          }`}>
-                            <p className="leading-relaxed">{event.body}</p>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </main>
-    </div>
-  );
-}
+                              <span className="px-2 py-0.5 bg-stone-200 text-stone-600 text-[9px] font-bold rounded uppercase tracking-widest">

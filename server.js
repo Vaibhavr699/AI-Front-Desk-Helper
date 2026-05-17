@@ -63,6 +63,7 @@ const billingRoutes = require("./routes/billing");
 const outboundRoutes = require("./routes/outbound");
 const { startOutboundEngine } = require("./services/outboundEngine");
 const { startResellerUsageReporter } = require("./services/reportResellerUsage");
+const { startAutoPauseCron } = require("./services/sentimentAutoPause");
 const { authMiddleware, requireSuperAdmin } = require("./lib/auth");
 const notificationsService = require("./services/notifications");
 const metricAlerts = require("./services/metricAlerts");
@@ -2611,7 +2612,39 @@ async function runSmsFollowUps() {
       }
     }
 
-    // ── Cooldown: 30 min after last inbound (was 10 — too aggressive) ─
+  // ── Cooldown: 30 min after last inbound (was 10 — too aggressive) ─
+
+    // ── Phase 10 recovery gate (May 16, 2026) ───────────────────────
+    // Checks tenant master toggle, SMS channel toggle, trigger toggle,
+    // quiet hours, and per-lead override (recovery_paused / cadence='off').
+    // Quiet hours: keep the timer armed so we retry next tick. All other
+    // skip reasons clear the timer — they're tenant policy decisions
+    // that won't resolve on their own.
+    if (thread.tenantId && thread.leadId) {
+      try {
+        const { canSendRecovery } = require("./lib/recoverySettings");
+        const gate = await canSendRecovery({
+          tenantId: thread.tenantId,
+          channel:  "sms",
+          trigger:  "nurturing",
+          leadId:   thread.leadId,
+        });
+        if (!gate.allowed) {
+          console.log(
+            "[FollowUp] recovery gate blocked phone=%s leadId=%s reason=%s",
+            thread.phone, thread.leadId, gate.reason
+          );
+          if (gate.reason !== "quiet_hours") thread.needsFollowUpAt = null;
+          continue;
+        }
+      } catch (err) {
+        // Fail open — gate errors shouldn't break the existing flow.
+        console.error(
+          "[FollowUp] recovery gate check failed phone=%s err=%s — proceeding",
+          thread.phone, err.message
+        );
+      }
+    }
 
     // ── Cooldown: 30 min after last inbound (was 10 — too aggressive) ─
     // Prevents the "checking in" message from firing in the middle of an
@@ -5824,5 +5857,6 @@ loadTenants().then(() => {
     console.log(`AI front desk backend listening on port ${PORT}`);
     startOutboundEngine().catch(e => console.error("Outbound Engine start failed:", e));
     startResellerUsageReporter();
+    startAutoPauseCron();
   });
 });

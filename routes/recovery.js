@@ -1,9 +1,9 @@
 // routes/recovery.js
 // Phase 10 — Recovery Toggle System routes
+// Mounted at /api/recovery with authMiddleware applied at server.js mount level
 
 const express = require('express');
 const router = express.Router();
-const { requireAuth } = require('../lib/auth');
 const { auditLog } = require('../lib/auditLogger');
 const { supabase } = require('../lib/supabase');
 const {
@@ -29,7 +29,7 @@ const PRO_FIELDS = [
   'cohort_analysis_opt_in'
 ];
 
-// Elite = same as Pro for now; Phase 10E (DISC) deferred until 8A ships
+// Elite = same as Pro for now; Phase 10E (DISC-adaptive) deferred until 8A ships
 const ELITE_FIELDS = PRO_FIELDS;
 
 const ELITE_PLANS = ['elite', 'white_label', 'reseller', 'franchise', 'franchise_hq'];
@@ -42,9 +42,9 @@ function getAllowedFields(plan) {
 }
 
 // =====================================================================
-// GET /api/recovery-settings
+// GET /api/recovery/settings
 // =====================================================================
-router.get('/recovery-settings', requireAuth, async (req, res) => {
+router.get('/settings', async (req, res) => {
   try {
     const settings = await getRecoverySettings(req.tenantId);
     const plan = req.tenant?.plan || 'basic';
@@ -55,15 +55,15 @@ router.get('/recovery-settings', requireAuth, async (req, res) => {
       plan
     });
   } catch (err) {
-    console.error('[recovery-settings GET]', err);
+    console.error('[recovery/settings GET]', err);
     res.status(500).json({ error: 'failed to load recovery settings' });
   }
 });
 
 // =====================================================================
-// PATCH /api/recovery-settings
+// PATCH /api/recovery/settings
 // =====================================================================
-router.patch('/recovery-settings', requireAuth, async (req, res) => {
+router.patch('/settings', async (req, res) => {
   try {
     const tenantId = req.tenantId;
     const userId   = req.userId;
@@ -106,20 +106,23 @@ router.patch('/recovery-settings', requireAuth, async (req, res) => {
     await auditLog({
       tenantId, userId,
       action: 'recovery_settings.update',
-      meta: { updated_fields: Object.keys(updates).filter(k => k !== 'updated_at'), rejected }
+      meta: {
+        updated_fields: Object.keys(updates).filter(k => k !== 'updated_at'),
+        rejected
+      }
     });
 
     res.json({ settings: data, rejected });
   } catch (err) {
-    console.error('[recovery-settings PATCH]', err);
+    console.error('[recovery/settings PATCH]', err);
     res.status(500).json({ error: 'failed to update recovery settings' });
   }
 });
 
 // =====================================================================
-// POST /api/leads/:id/pause-recovery
+// POST /api/recovery/leads/:id/pause
 // =====================================================================
-router.post('/leads/:id/pause-recovery', requireAuth, async (req, res) => {
+router.post('/leads/:id/pause', async (req, res) => {
   try {
     const { id: leadId } = req.params;
     const { reason } = req.body || {};
@@ -148,15 +151,15 @@ router.post('/leads/:id/pause-recovery', requireAuth, async (req, res) => {
 
     res.json({ lead: data });
   } catch (err) {
-    console.error('[pause-recovery]', err);
+    console.error('[recovery/leads/pause]', err);
     res.status(500).json({ error: 'failed to pause recovery' });
   }
 });
 
 // =====================================================================
-// POST /api/leads/:id/resume-recovery
+// POST /api/recovery/leads/:id/resume
 // =====================================================================
-router.post('/leads/:id/resume-recovery', requireAuth, async (req, res) => {
+router.post('/leads/:id/resume', async (req, res) => {
   try {
     const { id: leadId } = req.params;
 
@@ -184,16 +187,16 @@ router.post('/leads/:id/resume-recovery', requireAuth, async (req, res) => {
 
     res.json({ lead: data });
   } catch (err) {
-    console.error('[resume-recovery]', err);
+    console.error('[recovery/leads/resume]', err);
     res.status(500).json({ error: 'failed to resume recovery' });
   }
 });
 
 // =====================================================================
-// PATCH /api/leads/:id/recovery-cadence
+// PATCH /api/recovery/leads/:id/cadence
 // Per-lead cadence override: aggressive | standard | gentle | single | off | null
 // =====================================================================
-router.patch('/leads/:id/recovery-cadence', requireAuth, async (req, res) => {
+router.patch('/leads/:id/cadence', async (req, res) => {
   try {
     const { id: leadId } = req.params;
     const { cadence } = req.body || {};
@@ -222,7 +225,7 @@ router.patch('/leads/:id/recovery-cadence', requireAuth, async (req, res) => {
 
     res.json({ lead: data });
   } catch (err) {
-    console.error('[recovery-cadence]', err);
+    console.error('[recovery/leads/cadence]', err);
     res.status(500).json({ error: 'failed to update cadence' });
   }
 });

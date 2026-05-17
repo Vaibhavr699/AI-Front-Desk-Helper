@@ -1,31 +1,57 @@
-// services/sentimentAutoPause.js
-// Phase 10D — Auto-pause leads on negative sentiment / opt-out keywords
-//
-// v1 (this file): keyword-based. Polls inbound messages on a cron and
-//                 also exposes a sync function for real-time webhook use.
-// v2 (later):     sentiment scoring via existing GPT-4o pipeline,
-//                 gated by auto_pause_sentiment_threshold.
+"use strict";
 
-const { supabase } = require('../lib/supabase');
-const { auditLog } = require('../lib/auditLogger');
+/**
+ * services/sentimentAutoPause.js
+ *
+ * Phase 10D — Auto-pause leads on negative sentiment / opt-out keywords.
+ *
+ * v1 (this file): keyword-based, zero LLM cost. Polls inbound messages
+ *                 on a cron AND exposes checkAndAutoPause() for real-time
+ *                 use from inbound SMS webhook handlers.
+ * v2 (future):    layer sentiment scoring on top, gated by
+ *                 auto_pause_sentiment_threshold (already in mig 074).
+ *
+ * NOTE: this complements the existing hasRecentNegativeSentiment() in
+ * services/estimateRecovery.js. Both write to leads.recovery_paused;
+ * both are idempotent. Once we see real data, we can consolidate.
+ */
+
+const db = require("../lib/db");
 const {
   getRecoverySettings,
-  matchesOptOutKeywords
-} = require('../lib/recoverySettings');
+  matchesOptOutKeywords,
+} = require("../lib/recoverySettings");
 
-const POLL_WINDOW_MINUTES = 10;     // overlap window vs cron interval = safety margin
-const CRON_INTERVAL_MS = 5 * 60 * 1000;
+const POLL_WINDOW_MINUTES = 10;        // overlap with cron interval = safety margin
+const CRON_INTERVAL_MS    = 5 * 60 * 1000;
 
-// ---------------------------------------------------------------------
-// Synchronous check — safe to call from inbound SMS webhook for
-// real-time pause. Idempotent: won't re-pause an already-paused lead.
-// ---------------------------------------------------------------------
+// Defensive audit-log wrapper
+async function logAudit(payload) {
+  try {
+    const { auditLog } = require("../lib/auditLogger");
+    await auditLog(payload);
+  } catch (err) {
+    console.warn("[auto-pause] audit log skipped: %s", err.message);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Synchronous check — safe from inbound webhook for real-time pause.
+// Idempotent: won't re-pause an already-paused lead.
+// ─────────────────────────────────────────────────────────────────────────────
 async function checkAndAutoPause({ tenantId, leadId, messageText }) {
   if (!tenantId || !leadId || !messageText) {
     return { paused: false, keyword: null };
   }
 
-  const settings = await getRecoverySettings(tenantId);
+  let settings;
+  try {
+    settings = await getRecoverySettings(tenantId);
+  } catch (err) {
+    console.error("[auto-pause] getRecoverySettings failed tenant=%s err=%s", tenantId, err.message);
+    return { paused: false, keyword: null };
+  }
+
   if (!settings.auto_pause_enabled) {
     return { paused: false, keyword: null };
   }
@@ -33,107 +59,118 @@ async function checkAndAutoPause({ tenantId, leadId, messageText }) {
   const matchedKeyword = matchesOptOutKeywords(messageText, settings);
   if (!matchedKeyword) return { paused: false, keyword: null };
 
-  // Skip if already paused
-  const { data: existing } = await supabase
-    .from('leads')
-    .select('id, recovery_paused')
-    .eq('id', leadId)
-    .eq('tenant_id', tenantId)
-    .maybeSingle();
+  try {
+    const existing = await db.query(
+      `SELECT id, recovery_paused
+         FROM leads
+        WHERE id = $1 AND tenant_id = $2
+        LIMIT 1`,
+      [leadId, tenantId]
+    );
+    if (existing.rows.length === 0) return { paused: false, keyword: null };
+    if (existing.rows[0].recovery_paused) {
+      return { paused: false, keyword: matchedKeyword };
+    }
 
-  if (!existing) return { paused: false, keyword: null };
-  if (existing.recovery_paused) return { paused: false, keyword: matchedKeyword };
+    await db.query(
+      `UPDATE leads
+          SET recovery_paused        = true,
+              recovery_paused_reason = $3,
+              recovery_paused_at     = now(),
+              recovery_paused_by     = NULL
+        WHERE id = $1 AND tenant_id = $2`,
+      [leadId, tenantId, `auto:keyword:${matchedKeyword}`]
+    );
 
-  const { error: updateErr } = await supabase
-    .from('leads')
-    .update({
-      recovery_paused: true,
-      recovery_paused_reason: `auto:keyword:${matchedKeyword}`,
-      recovery_paused_at: new Date().toISOString(),
-      recovery_paused_by: null   // null = system action
-    })
-    .eq('id', leadId)
-    .eq('tenant_id', tenantId);
+    await logAudit({
+      tenantId,
+      userId: null,
+      action: "lead.recovery_auto_paused",
+      meta: { lead_id: leadId, keyword: matchedKeyword, source: "keyword_match" },
+    });
 
-  if (updateErr) {
-    console.error('[auto-pause] update failed:', updateErr);
-    return { paused: false, keyword: matchedKeyword, error: updateErr.message };
+    console.log("[auto-pause] tenant=%s lead=%s keyword=\"%s\"", tenantId, leadId, matchedKeyword);
+    return { paused: true, keyword: matchedKeyword };
+  } catch (err) {
+    console.error("[auto-pause] update failed tenant=%s lead=%s err=%s", tenantId, leadId, err.message);
+    return { paused: false, keyword: matchedKeyword, error: err.message };
   }
-
-  await auditLog({
-    tenantId,
-    userId: null,
-    action: 'lead.recovery_auto_paused',
-    meta: { lead_id: leadId, keyword: matchedKeyword, source: 'keyword_match' }
-  });
-
-  console.log(`[auto-pause] tenant=${tenantId} lead=${leadId} keyword="${matchedKeyword}"`);
-  return { paused: true, keyword: matchedKeyword };
 }
 
-// ---------------------------------------------------------------------
-// Cron handler — scans last N minutes of inbound messages.
-// Catches anything that slipped past real-time hooks.
-// ---------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
+// Cron handler — scans last N min of inbound messages for opt-out keywords.
+// Catches anything that slipped past the real-time hook.
+//
+// IMPORTANT: this query assumes inbound SMS lives in a table with columns:
+//   tenant_id, lead_id, body, direction='inbound', created_at
+//
+// If your schema uses a different table (e.g. sms_log, messages) or column
+// names (e.g. text instead of body), adjust the SQL below.
+// ─────────────────────────────────────────────────────────────────────────────
 async function runAutoPauseCron() {
-  const since = new Date(Date.now() - POLL_WINDOW_MINUTES * 60 * 1000).toISOString();
+  const sinceIso = new Date(Date.now() - POLL_WINDOW_MINUTES * 60 * 1000).toISOString();
 
-  // NOTE: verify this table name matches your schema.
-  // Likely candidates: sms_messages, messages, sms_log, twilio_messages.
-  // The query needs: tenant_id, lead_id, body/text, direction, created_at.
-  const { data: messages, error } = await supabase
-    .from('sms_messages')          // <-- VERIFY this matches your table
-    .select('id, tenant_id, lead_id, body, created_at')
-    .eq('direction', 'inbound')
-    .gte('created_at', since)
-    .limit(500);
-
-  if (error) {
-    console.error('[auto-pause-cron] query error:', error);
-    return { checked: 0, paused: 0, error: error.message };
+  let messages;
+  try {
+    const result = await db.query(
+      `SELECT id, tenant_id, lead_id, body, created_at
+         FROM sms_messages
+        WHERE direction = 'inbound'
+          AND created_at > $1
+          AND lead_id IS NOT NULL
+        LIMIT 500`,
+      [sinceIso]
+    );
+    messages = result.rows;
+  } catch (err) {
+    console.error("[auto-pause-cron] query error: %s", err.message);
+    return { checked: 0, paused: 0, error: err.message };
   }
 
   let pausedCount = 0;
-  for (const msg of messages || []) {
-    if (!msg.lead_id) continue;
+  for (const msg of messages) {
     try {
-      const result = await checkAndAutoPause({
+      const r = await checkAndAutoPause({
         tenantId: msg.tenant_id,
         leadId: msg.lead_id,
-        messageText: msg.body
+        messageText: msg.body,
       });
-      if (result.paused) pausedCount++;
+      if (r.paused) pausedCount += 1;
     } catch (err) {
-      console.error('[auto-pause-cron] per-message error:', err);
+      console.error("[auto-pause-cron] per-message error: %s", err.message);
     }
   }
 
   if (pausedCount > 0) {
-    console.log(`[auto-pause-cron] scanned=${messages?.length || 0} paused=${pausedCount}`);
+    console.log("[auto-pause-cron] scanned=%d paused=%d", messages.length, pausedCount);
   }
-  return { checked: messages?.length || 0, paused: pausedCount };
+  return { checked: messages.length, paused: pausedCount };
 }
 
-// ---------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
 // Cron starter — call once from server.js boot
-// ---------------------------------------------------------------------
+// ─────────────────────────────────────────────────────────────────────────────
 function startAutoPauseCron() {
-  // Delayed first run so DB pool is warm
+  // First run delayed 30s so DB pool is warm
   setTimeout(
-    () => runAutoPauseCron().catch(e => console.error('[auto-pause-cron] init', e)),
+    () => runAutoPauseCron().catch(e => console.error("[auto-pause-cron] init err: %s", e.message)),
     30000
   );
+
   setInterval(
-    () => runAutoPauseCron().catch(e => console.error('[auto-pause-cron] tick', e)),
+    () => runAutoPauseCron().catch(e => console.error("[auto-pause-cron] tick err: %s", e.message)),
     CRON_INTERVAL_MS
   );
+
   console.log(
-    `[auto-pause-cron] started — interval=${CRON_INTERVAL_MS / 1000}s, window=${POLL_WINDOW_MINUTES}min`
+    "[startup] sentimentAutoPause cron scheduled — interval=%ds window=%dmin",
+    CRON_INTERVAL_MS / 1000,
+    POLL_WINDOW_MINUTES
   );
 }
 
 module.exports = {
   checkAndAutoPause,
   runAutoPauseCron,
-  startAutoPauseCron
+  startAutoPauseCron,
 };

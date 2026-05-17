@@ -17,7 +17,7 @@ import {
   Send,
   CalendarCheck,
   MapPin,
-  Briefcase
+  Briefcase,
   Settings2
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";

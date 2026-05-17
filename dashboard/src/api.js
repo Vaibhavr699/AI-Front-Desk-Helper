@@ -597,6 +597,62 @@ export function updateScopeOptions(changes) {
   });
 }
 
+// ── Recovery Toggle System (May 16, 2026) ─────────────────────────────────
+// Phase 10. Backs the Configure Follow-ups drawer on the Follow-ups tab
+// and the Recovery section on LeadDetail. Tenant-level toggles are gated
+// by plan tier on the backend — Basic gets only master_enabled, Pro gets
+// channels/triggers/cadence/quiet hours/auto-pause, Elite gets analytics.
+
+/**
+ * Load current recovery settings + tier allow-list for the calling tenant.
+ * Returns { settings, tier_allowed_fields, presets, plan }.
+ */
+export function getRecoverySettings() {
+  return api("/api/recovery/settings");
+}
+
+/**
+ * Update one or more recovery_settings fields.
+ * Fields not in tier_allowed_fields are silently rejected by the backend
+ * and returned in the `rejected` array of the response.
+ * Returns { settings, rejected }.
+ */
+export function updateRecoverySettings(updates) {
+  return api("/api/recovery/settings", {
+    method: "PATCH",
+    body: JSON.stringify(updates),
+  });
+}
+
+/**
+ * Manually pause recovery sends for a single lead.
+ * Cron + estimateRecovery service will skip this lead until resumed.
+ */
+export function pauseLeadRecovery(leadId, reason = "manual") {
+  return api(`/api/recovery/leads/${leadId}/pause`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export function resumeLeadRecovery(leadId) {
+  return api(`/api/recovery/leads/${leadId}/resume`, {
+    method: "POST",
+  });
+}
+
+/**
+ * Override the tenant cadence preset for a single lead.
+ * Valid values: 'aggressive' | 'standard' | 'gentle' | 'single' | 'off' | null
+ * Passing null clears the override (lead reverts to tenant default).
+ */
+export function updateLeadCadence(leadId, cadence) {
+  return api(`/api/recovery/leads/${leadId}/cadence`, {
+    method: "PATCH",
+    body: JSON.stringify({ cadence }),
+  });
+}
+
 // ── Franchise zee subscribe (Apr 29, 2026) ────────────────────────────────
 // Phase 6 Franchise. Initiates Stripe Checkout for a zee paying their own
 // subscription. Returns { url, type } where url is the Stripe checkout URL

@@ -3,6 +3,7 @@
 const db = require("../lib/db");
 const twilio = require("../lib/twilio");
 const { getLast10Digits, normalizeE164Phone } = require("../lib/phone");
+const { canSendRecovery, getCadenceDays } = require("../lib/recoverySettings");
 
 function normalizeRecoveryPhone(raw) {
   const value = String(raw || "").trim();
@@ -745,10 +746,112 @@ async function executeStep(recovery) {
     return;
   }
 
-  const stepDef = ALL_STEPS.get(recovery.current_step);
+const stepDef = ALL_STEPS.get(recovery.current_step);
   if (!stepDef) {
     await markDormant(recovery.id);
     return;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Phase 10A/C/D recovery gate (May 16, 2026)
+  //
+  // Tenant-level toggles + per-lead override layered on top of the
+  // existing sequence engine.
+  //   master_off / *_disabled / lead_paused → reschedule 24h
+  //     (don't lose the recovery — tenant may toggle back on later)
+  //   quiet_hours                            → reschedule 1h
+  //     (retry inside the same calendar day once window passes)
+  //   lead_cadence_off                       → cancel
+  //     (explicit per-lead opt-out from recovery)
+  //
+  // Fail-open on errors so a DB hiccup never silently drops a recovery.
+  // ─────────────────────────────────────────────────────────────────────
+  let phase10Settings = null;
+  try {
+    const channel = stepDef.channel === "call" ? "voice" : "sms";
+    const isMissedCall =
+      recovery.lead_source === "missed_call" ||
+      (recovery.current_step || "").startsWith("missed_call_");
+    const trigger = isMissedCall ? "missed_call" : "estimate_recovery";
+
+    const gate = await canSendRecovery({
+      tenantId: recovery.tenant_id,
+      channel,
+      trigger,
+      leadId:   recovery.lead_id,
+    });
+
+    if (!gate.allowed) {
+      console.log(
+        "[Recovery] Phase 10 gate blocked id=%s step=%s channel=%s trigger=%s reason=%s",
+        recovery.id, recovery.current_step, channel, trigger, gate.reason
+      );
+
+      if (gate.reason === "lead_cadence_off") {
+        await markCancelled(recovery.id);
+        return;
+      }
+
+      const rescheduleHours = gate.reason === "quiet_hours" ? 1 : 24;
+      const next = addHours(new Date(), rescheduleHours);
+      await db.query(
+        "UPDATE estimate_recoveries SET next_action_at = $1, updated_at = now() WHERE id = $2",
+        [next.toISOString(), recovery.id]
+      );
+      return;
+    }
+
+    phase10Settings = gate.settings;
+  } catch (err) {
+    console.error(
+      "[Recovery] Phase 10 gate check failed id=%s err=%s — proceeding to send",
+      recovery.id, err.message
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Phase 10B cadence preset filter (May 16, 2026)
+  //
+  // Applies only to the 21-day GHOST_SEQUENCE. Objection / inquiry /
+  // missed-call sequences have their own pacing and aren't filtered by
+  // the cadence preset. If the current ghost step's day offset isn't in
+  // the tenant's cadence preset days (e.g. preset='gentle' → [3,10,21]
+  // skips day1/day5/day7/day14/day17 sends), advance the sequence as if
+  // the step fired — the sequence progresses, just without that message.
+  // ─────────────────────────────────────────────────────────────────────
+  const GHOST_STEP_DAYS = {
+    day1_checkin:    1,
+    day3_value:      3,
+    day5_call:       5,
+    day7_urgency:    7,
+    day10_call:      10,
+    day14_softclose: 14,
+    day17_call:      17,
+    day21_hardclose: 21,
+  };
+  const stepDay = GHOST_STEP_DAYS[recovery.current_step];
+  if (stepDay !== undefined && phase10Settings) {
+    let leadOverride = null;
+    if (recovery.lead_id) {
+      try {
+        const leadResult = await db.query(
+          "SELECT recovery_cadence_override FROM leads WHERE id = $1 LIMIT 1",
+          [recovery.lead_id]
+        );
+        leadOverride = leadResult.rows[0]?.recovery_cadence_override || null;
+      } catch (err) {
+        console.error("[Recovery] lead override lookup failed: %s", err.message);
+      }
+    }
+    const cadenceDays = getCadenceDays(phase10Settings, leadOverride);
+    if (cadenceDays.length > 0 && !cadenceDays.includes(stepDay)) {
+      console.log(
+        "[Recovery] Cadence skip id=%s step=%s day=%d cadence=%j — advancing",
+        recovery.id, recovery.current_step, stepDay, cadenceDays
+      );
+      await advanceStep(recovery, stepDef);
+      return;
+    }
   }
 
   const tenant = await db.query(

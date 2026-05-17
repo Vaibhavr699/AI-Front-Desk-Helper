@@ -1,12 +1,26 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { getRecoverySettings, updateRecoverySettings } from '../api';
 
+// Maps each ghost-sequence day to its channel (per GHOST_SEQUENCE in
+// services/estimateRecovery.js). Days not in this map don't fire for
+// estimate recovery — they'd only be useful for future custom sequences.
+const SEQUENCE_DAY_CHANNELS = {
+  1:  'sms',
+  3:  'sms',
+  5:  'call',
+  7:  'sms',
+  10: 'call',
+  14: 'sms',
+  17: 'call',
+  21: 'sms',
+};
+
 const CADENCE_OPTIONS = [
-  { value: 'aggressive', label: 'Aggressive', desc: '8 follow-ups — days 1, 3, 5, 7, 10, 14, 17, 21' },
-  { value: 'standard',   label: 'Standard',   desc: '5 follow-ups — days 1, 3, 7, 14, 21' },
-  { value: 'gentle',     label: 'Gentle',     desc: '3 follow-ups — days 3, 10, 21' },
-  { value: 'single',     label: 'Single',     desc: '1 follow-up — day 3 only' },
-  { value: 'custom',     label: 'Custom',     desc: 'Set your own day intervals (below)' },
+  { value: 'aggressive', label: 'Aggressive', days: [1, 3, 5, 7, 10, 14, 17, 21] },
+  { value: 'standard',   label: 'Standard',   days: [1, 3, 7, 14, 21] },
+  { value: 'gentle',     label: 'Gentle',     days: [3, 10, 21] },
+  { value: 'single',     label: 'Single',     days: [3] },
+  { value: 'custom',     label: 'Custom',     days: null },
 ];
 
 const TRIGGER_KEYS = [
@@ -19,6 +33,55 @@ const TRIGGER_KEYS = [
 ];
 
 const ELITE_PLANS = ['elite', 'white_label', 'reseller', 'franchise', 'franchise_hq'];
+
+function summarizeSchedule(days) {
+  if (!days?.length) return { sms: 0, call: 0, total: 0, invalid: 0 };
+  let sms = 0, call = 0, invalid = 0;
+  for (const d of days) {
+    const ch = SEQUENCE_DAY_CHANNELS[d];
+    if (ch === 'call') call++;
+    else if (ch === 'sms') sms++;
+    else invalid++;
+  }
+  return { sms, call, total: sms + call, invalid };
+}
+
+function ScheduleChips({ days }) {
+  if (!days?.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1 mt-1.5">
+      {days.map(day => {
+        const ch = SEQUENCE_DAY_CHANNELS[day];
+        const styleClass = ch === 'call'
+          ? 'bg-purple-50 text-purple-700 border-purple-200'
+          : ch === 'sms'
+          ? 'bg-blue-50 text-blue-700 border-blue-200'
+          : 'bg-stone-100 text-stone-400 border-stone-200';
+        const title = ch
+          ? `Day ${day} · ${ch === 'call' ? 'AI Call' : 'SMS'}`
+          : `Day ${day} · No matching estimate recovery step (will be ignored)`;
+        return (
+          <span
+            key={day}
+            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border ${styleClass}`}
+            title={title}
+          >
+            D{day}
+            <span>{ch === 'call' ? '📞' : ch === 'sms' ? '📱' : '·'}</span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function formatScheduleSummary(s) {
+  if (s.total === 0) return 'No matching steps';
+  const parts = [];
+  if (s.sms > 0)  parts.push(`${s.sms} SMS`);
+  if (s.call > 0) parts.push(`${s.call} AI call${s.call !== 1 ? 's' : ''}`);
+  return `${s.total} follow-up${s.total !== 1 ? 's' : ''} · ${parts.join(' + ')}`;
+}
 
 export default function RecoveryConfigDrawer({ open, onClose }) {
   const [settings, setSettings] = useState(null);
@@ -152,8 +215,6 @@ export default function RecoveryConfigDrawer({ open, onClose }) {
   );
 }
 
-// ─── Sub-components ─────────────────────────────────────────────────
-
 function Toggle({ checked, onChange, disabled }) {
   return (
     <button
@@ -210,7 +271,6 @@ function tierLabelFor(field, isAllowed, plan) {
 function GeneralTab({ settings, isAllowed, onChange, plan }) {
   const tierLabel = (f) => tierLabelFor(f, isAllowed, plan);
 
-  // Custom cadence days editor — buffered text, parsed + validated on blur
   const [customDaysText, setCustomDaysText] = useState(
     (settings.custom_cadence_days || []).join(', ')
   );
@@ -275,33 +335,43 @@ function GeneralTab({ settings, isAllowed, onChange, plan }) {
           {!isAllowed('cadence_preset') && <TierBadge tier={tierLabel('cadence_preset')} />}
         </h3>
         <p className="text-xs text-stone-500 mb-3">
-          Estimate recovery sequence has 9 touchpoints. Day 0 (initial confirmation) always sends. The preset controls which of days 1–21 fire as follow-ups.
+          Estimate recovery sends Day 0 confirmation (always), then follows up across 21 days. 📱 = SMS · 📞 = AI call. Email isn't part of this sequence — use the Channels toggles for email follow-ups in other flows.
         </p>
         <div className="space-y-2">
-          {CADENCE_OPTIONS.map(opt => (
-            <label
-              key={opt.value}
-              className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
-                settings.cadence_preset === opt.value
-                  ? 'border-blue-500 bg-blue-50'
-                  : 'border-stone-200 hover:border-stone-300'
-              } ${!isAllowed('cadence_preset') ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              <input
-                type="radio"
-                name="cadence_preset"
-                value={opt.value}
-                checked={settings.cadence_preset === opt.value}
-                onChange={() => onChange('cadence_preset', opt.value)}
-                disabled={!isAllowed('cadence_preset')}
-                className="h-4 w-4 text-blue-600"
-              />
-              <div className="flex-1">
-                <div className="text-sm font-semibold text-stone-900">{opt.label}</div>
-                <div className="text-xs text-stone-500">{opt.desc}</div>
-              </div>
-            </label>
-          ))}
+          {CADENCE_OPTIONS.map(opt => {
+            const summary = opt.days ? summarizeSchedule(opt.days) : null;
+            return (
+              <label
+                key={opt.value}
+                className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+                  settings.cadence_preset === opt.value
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-stone-200 hover:border-stone-300'
+                } ${!isAllowed('cadence_preset') ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="cadence_preset"
+                  value={opt.value}
+                  checked={settings.cadence_preset === opt.value}
+                  onChange={() => onChange('cadence_preset', opt.value)}
+                  disabled={!isAllowed('cadence_preset')}
+                  className="h-4 w-4 text-blue-600 mt-0.5"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-stone-900">{opt.label}</div>
+                  {opt.value === 'custom' ? (
+                    <div className="text-xs text-stone-500">Set your own day intervals (below)</div>
+                  ) : (
+                    <>
+                      <div className="text-xs text-stone-500">{formatScheduleSummary(summary)}</div>
+                      <ScheduleChips days={opt.days} />
+                    </>
+                  )}
+                </div>
+              </label>
+            );
+          })}
         </div>
 
         {settings.cadence_preset === 'custom' && (
@@ -310,7 +380,7 @@ function GeneralTab({ settings, isAllowed, onChange, plan }) {
               Custom Days
             </label>
             <p className="text-xs text-stone-500 mb-2">
-              Comma-separated day numbers (0–90). Day 0 = same day the trigger fires; day 21 = 3 weeks later. Saves on blur. Valid step days for estimate recovery: 1, 3, 5, 7, 10, 14, 17, 21.
+              Comma-separated day numbers (0–90). Valid estimate recovery step days: 1, 3, 5, 7, 10, 14, 17, 21. Other days save but won't fire for estimate recovery. Saves on blur.
             </p>
             <input
               type="text"
@@ -325,9 +395,15 @@ function GeneralTab({ settings, isAllowed, onChange, plan }) {
               <p className="text-xs text-red-600 mt-1">{customDaysError}</p>
             )}
             {!customDaysError && settings.custom_cadence_days?.length > 0 && (
-              <p className="text-xs text-stone-500 mt-1">
-                {settings.custom_cadence_days.length} send{settings.custom_cadence_days.length !== 1 ? 's' : ''} configured
-              </p>
+              <>
+                <p className="text-xs text-stone-500 mt-2">
+                  {formatScheduleSummary(summarizeSchedule(settings.custom_cadence_days))}
+                  {summarizeSchedule(settings.custom_cadence_days).invalid > 0 && (
+                    <span className="text-stone-400"> ({summarizeSchedule(settings.custom_cadence_days).invalid} day{summarizeSchedule(settings.custom_cadence_days).invalid !== 1 ? 's' : ''} won't match a step)</span>
+                  )}
+                </p>
+                <ScheduleChips days={settings.custom_cadence_days} />
+              </>
             )}
           </div>
         )}

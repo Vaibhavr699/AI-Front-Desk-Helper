@@ -73,6 +73,22 @@ const {
   CADENCE_PRESETS,
 } = require("../lib/recoverySettings");
 
+// Plan lookup — authMiddleware sets req.tenantId but not the full tenant
+// row, so we hit the DB. Single SELECT, cheap. Falls back to 'basic' on
+// any error so locked controls stay locked rather than silently unlocking.
+async function getTenantPlan(tenantId) {
+  try {
+    const r = await db.query(
+      "SELECT plan FROM tenants WHERE id = $1 LIMIT 1",
+      [tenantId]
+    );
+    return r.rows[0]?.plan || "basic";
+  } catch (err) {
+    console.error("[recovery] getTenantPlan failed: %s", err.message);
+    return "basic";
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /api/recovery/settings
 // ═══════════════════════════════════════════════════════════════════════════
@@ -82,7 +98,7 @@ router.get("/settings", async (req, res) => {
 
   try {
     const settings = await getRecoverySettings(tenantId);
-    const plan = req.tenant?.plan || req.user?.plan || "basic";
+    const plan = await getTenantPlan(tenantId);
 
     res.json({
       settings,
@@ -104,7 +120,7 @@ router.patch("/settings", async (req, res) => {
   if (!tenantId) return res.status(401).json({ error: "Not authenticated" });
 
   const userId = req.userId || req.user?.id || null;
-  const plan   = req.tenant?.plan || req.user?.plan || "basic";
+  const plan = await getTenantPlan(tenantId);
   const allowed = getAllowedFields(plan);
 
   const updates  = {};

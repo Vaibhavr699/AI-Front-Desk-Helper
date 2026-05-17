@@ -384,4 +384,30 @@ export default function LeadDetail({ tenantId }) {
                                   <p className="text-[10px] text-stone-500 font-mono">Disposition: {event.disposition}</p>
                                 </div>
                               </div>
-                              <span className="px-2 py-0.5 bg-stone-200 text-stone-600 text-[9px] font-bold rounded uppercase tracking-widest">
+                             <span className="px-2 py-0.5 bg-stone-200 text-stone-600 text-[9px] font-bold rounded uppercase tracking-widest">{event.status}</span>
+                            </div>
+                            <div className="text-stone-600 text-sm leading-relaxed whitespace-pre-wrap italic">
+                              {event.transcript || "No transcript available for this call."}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className={`max-w-[85%] rounded-2xl px-5 py-3 shadow-sm text-sm border ${
+                            isUser
+                              ? 'bg-blue-600 text-white border-blue-500 rounded-bl-none'
+                              : 'bg-white text-stone-900 border-stone-200 rounded-br-none'
+                          }`}>
+                            <p className="leading-relaxed">{event.body}</p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}

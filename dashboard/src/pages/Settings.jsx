@@ -4764,7 +4764,7 @@ Thanks!`;
                      <h3 className="text-sm font-black text-amber-900">Estimator Add-On cancelled — grace period active</h3>
                      <p className="text-xs text-amber-800 mt-1 leading-relaxed">
                        You'll keep access through <strong>{new Date(tenant.estimator_addon_period_end).toLocaleDateString()}</strong>. After that the Quick Quote button disappears from your chat widget. Change your mind?{" "}
-                       
+                       <a
                          href="https://billing.stripe.com/p/login"
                          target="_blank"
                          rel="noopener noreferrer"

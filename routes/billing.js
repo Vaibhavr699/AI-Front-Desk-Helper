@@ -225,4 +225,53 @@ const planMap = {
   }
 });
 
+// ── POST /api/billing/cancel-estimator ─────────────────────────────────────
+// Phase 7 E (May 18, 2026) — cancel estimator add-on with grace period.
+// Sets cancel_at_period_end=true on the Stripe subscription. Customer keeps
+// access through current_period_end. Webhook customer.subscription.updated
+// fires immediately and writes estimator_addon_cancelled_at + period_end.
+// At period_end, subscription.deleted fires and flips purchased=false.
+//
+// We also write cancelled_at + period_end synchronously here so the dashboard
+// UI updates immediately without waiting for the Stripe webhook round-trip.
+router.post("/cancel-estimator", async (req, res) => {
+  try {
+    const tenantId = getGuaranteedTenantId(req);
+    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+
+    const tenantRes = await db.query(
+      "SELECT estimator_addon_purchased, stripe_estimator_subscription_id FROM tenants WHERE id = $1",
+      [tenantId]
+    );
+    const tenant = tenantRes.rows[0];
+    if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+    if (!tenant.estimator_addon_purchased || !tenant.stripe_estimator_subscription_id) {
+      return res.status(400).json({ error: "No active estimator add-on subscription to cancel" });
+    }
+
+    const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+    const sub = await stripe.subscriptions.update(tenant.stripe_estimator_subscription_id, {
+      cancel_at_period_end: true,
+    });
+
+    const periodEnd = sub.current_period_end
+      ? new Date(sub.current_period_end * 1000).toISOString()
+      : null;
+    await db.query(
+      `UPDATE tenants
+          SET estimator_addon_cancelled_at = now(),
+              estimator_addon_period_end = $1,
+              updated_at = now()
+        WHERE id = $2`,
+      [periodEnd, tenantId]
+    );
+
+    console.log("[Billing] Estimator add-on cancelled tenantId=%s period_end=%s", tenantId, periodEnd);
+    res.json({ success: true, period_end: periodEnd });
+  } catch (e) {
+    console.error("[Billing] /cancel-estimator error:", e);
+    res.status(500).json({ error: e.message || "Server error" });
+  }
+});
+
 module.exports = router;

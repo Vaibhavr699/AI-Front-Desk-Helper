@@ -319,6 +319,20 @@
     }
     console.log("[AI-Widget] Creating UI...");
 
+    // ── Defensive: ensure a viewport meta tag exists ───────────────────────
+    // If a host page embedding the widget didn't include one, mobile
+    // browsers render at a "desktop" width (~980px) and our mobile CSS
+    // media queries (@media max-width:640px) never fire. Defense-in-depth
+    // for third-party contractor sites — our own /q/:tenantId wrapper
+    // already includes the meta tag. Added May 15, 2026.
+    if (!document.querySelector('meta[name="viewport"]')) {
+      const vp = document.createElement("meta");
+      vp.name = "viewport";
+      vp.content = "width=device-width, initial-scale=1, maximum-scale=1";
+      document.head.appendChild(vp);
+      console.log("[AI-Widget] Injected missing viewport meta tag");
+    }
+
     const hoverColor = lightenColor(brandColor, 20);
 
     const style = document.createElement("style");
@@ -751,8 +765,27 @@
     // ESTIMATOR FLOW (Phase 7 V1 — May 2, 2026)
     // ════════════════════════════════════════════════════════════════════════
 
-    function startEstimatorFlow() {
+    async function startEstimatorFlow() {
       if (!estimatorEnabled || !estimatorConfig) return;
+
+      // Phase 7 close-out (May 18, 2026) — re-fetch estimator config to pick
+      // up any admin scope toggle changes since the widget loaded. Without
+      // this, customers with the widget open before an owner toggles ceilings
+      // (or any scope option) see stale "Includes:" text in the quote result.
+      // Pricing itself is computed server-side at submit time so it always
+      // reflects current admin state — only the customer-facing scope strings
+      // were going stale. Silent failure falls back to cached config.
+      try {
+        const freshConfig = await fetch(`${apiBase}/api/estimator/tenant-config/${tenantId}`)
+          .then(r => r.ok ? r.json() : null);
+        if (freshConfig) {
+          estimatorConfig = freshConfig;
+          console.log("[AI-Widget] Estimator config refreshed on Quick Quote click");
+        }
+      } catch (err) {
+        console.warn("[AI-Widget] Estimator config refresh failed (using cached):", err.message);
+      }
+
       // Reset state. NOTE: sourceCallId is module-scoped (NOT in estimatorState),
       // so it survives this reset and gets attached to the lead at capture time.
       estimatorActive = true;

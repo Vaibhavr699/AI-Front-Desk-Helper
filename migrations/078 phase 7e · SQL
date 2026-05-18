@@ -1,0 +1,71 @@
+-- ============================================================================
+-- Migration 078: Phase 7 E — Widget-to-Lead Estimate Carryover + Variance Coaching v2
+-- May 18, 2026
+--
+-- Adds columns to leads table so the Phase 7 customer-facing widget's
+-- ballpark estimate persists on lead conversion, and reps see it on the
+-- dashboard lead detail (and later rep mobile app). When the rep enters
+-- their real quote, GPT-4o-generated variance coaching surfaces to help
+-- them defend price differences.
+--
+-- Design principle: ONLY the ballpark NUMBER + scope summary STRING carry
+-- over from the widget. No scope/modifier/measurement sync. Widget and
+-- rep quote app stay independent tools sharing one data point.
+-- ============================================================================
+
+-- 1. Widget estimate carryover columns
+ALTER TABLE leads
+  ADD COLUMN IF NOT EXISTS widget_estimate_low_cents INT,
+  ADD COLUMN IF NOT EXISTS widget_estimate_high_cents INT,
+  ADD COLUMN IF NOT EXISTS widget_estimate_scope_summary TEXT,
+  ADD COLUMN IF NOT EXISTS widget_estimated_at TIMESTAMPTZ;
+
+-- 2. Rep quote tracking columns
+ALTER TABLE leads
+  ADD COLUMN IF NOT EXISTS rep_quote_total_cents INT,
+  ADD COLUMN IF NOT EXISTS rep_quote_entered_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS rep_quote_entered_by_user_id UUID;
+
+-- 3. Variance coaching v2 — GPT-4o-generated likely_reasons + talking_points
+-- Stored as JSONB so we can iterate the schema without migrations.
+-- Shape:
+-- {
+--   "computed_at": "ISO timestamp",
+--   "variance_percent": 43,
+--   "variance_direction": "above_ballpark" | "below_ballpark",
+--   "midpoint_widget": 140000,
+--   "rep_quote": 200000,
+--   "likely_reasons": ["...", "...", "..."],
+--   "suggested_talking_points": ["...", "..."]
+-- }
+ALTER TABLE leads
+  ADD COLUMN IF NOT EXISTS variance_coaching JSONB;
+
+-- 4. Index for dashboard "leads with widget estimates" filter
+CREATE INDEX IF NOT EXISTS idx_leads_widget_estimate
+  ON leads(tenant_id, widget_estimated_at DESC)
+  WHERE widget_estimate_low_cents IS NOT NULL;
+
+-- 5. Index for "leads with variance coaching to review" filter
+CREATE INDEX IF NOT EXISTS idx_leads_variance_coaching
+  ON leads(tenant_id, rep_quote_entered_at DESC)
+  WHERE variance_coaching IS NOT NULL;
+
+-- 6. Verify additions
+SELECT
+  column_name,
+  data_type,
+  is_nullable
+FROM information_schema.columns
+WHERE table_name = 'leads'
+  AND column_name IN (
+    'widget_estimate_low_cents',
+    'widget_estimate_high_cents',
+    'widget_estimate_scope_summary',
+    'widget_estimated_at',
+    'rep_quote_total_cents',
+    'rep_quote_entered_at',
+    'rep_quote_entered_by_user_id',
+    'variance_coaching'
+  )
+ORDER BY column_name;

@@ -468,6 +468,28 @@ export function resumeAi(leadId) {
   });
 }
 
+// ── Phase 7 E (May 18, 2026) — Rep quote entry + variance coaching ────────
+// Called when the rep enters their real in-home quote total. Backend writes
+// rep_quote_total_cents, clears any stale variance_coaching, then awaits
+// GPT-4o variance coaching generation (~2-5s) if the quote differs from
+// the widget ballpark by >=15%.
+//
+// totalDollars: number — the rep's quote in dollars (e.g. 1800 or 2475.50)
+// Backend accepts either total_dollars (decimal) or total_cents (integer).
+//
+// Returns: { lead, variance_coaching_generated }
+//   - lead: updated lead row with rep_quote_* and variance_coaching fields
+//   - variance_coaching_generated: true if GPT-4o coaching was generated
+//     (false when within threshold, no widget estimate, or GPT-4o failed)
+//
+// Throws on 4xx/5xx with the backend error message.
+export function submitRepQuote(leadId, totalDollars) {
+  return api(`/api/leads/${leadId}/quote-entered`, {
+    method: "POST",
+    body: JSON.stringify({ total_dollars: totalDollars }),
+  });
+}
+
 export function getPhoneNumbers(tenantId) {
   return api(`/api/phone-numbers?tenant_id=${tenantId}`);
 }

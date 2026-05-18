@@ -7,6 +7,7 @@ import {
   pauseLeadRecovery,
   resumeLeadRecovery,
   updateLeadCadence,
+  submitRepQuote,
 } from '../api';
 import Header from '../components/Header';
 import StatusStepper from '../components/StatusStepper';
@@ -20,6 +21,12 @@ export default function LeadDetail({ tenantId }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState({});
   const [recoveryBusy, setRecoveryBusy] = useState(false);
+
+  // Phase 7 E — rep quote entry state
+  const [quoteInput, setQuoteInput] = useState('');
+  const [submittingQuote, setSubmittingQuote] = useState(false);
+  const [editingQuote, setEditingQuote] = useState(false);
+  const [quoteError, setQuoteError] = useState(null);
 
   useEffect(() => {
     fetchData();
@@ -85,6 +92,40 @@ export default function LeadDetail({ tenantId }) {
     }
   }
 
+  // ──── Phase 7 E — Submit rep quote, trigger variance coaching ────────
+  async function handleQuoteSubmit() {
+    if (submittingQuote) return;
+    setQuoteError(null);
+
+    const trimmed = String(quoteInput).trim();
+    if (!trimmed) {
+      setQuoteError("Enter a quote amount");
+      return;
+    }
+    const dollars = parseFloat(trimmed);
+    if (!Number.isFinite(dollars) || dollars < 0) {
+      setQuoteError("Enter a valid positive number");
+      return;
+    }
+    if (dollars > 1_000_000) {
+      setQuoteError("Quote cannot exceed $1,000,000");
+      return;
+    }
+
+    setSubmittingQuote(true);
+    try {
+      const result = await submitRepQuote(id, dollars);
+      setLead(result.lead);
+      setQuoteInput('');
+      setEditingQuote(false);
+    } catch (err) {
+      console.error("Quote submit failed:", err);
+      setQuoteError(err.message || "Failed to save quote");
+    } finally {
+      setSubmittingQuote(false);
+    }
+  }
+
   if (loading) return (
     <div className="min-h-screen bg-stone-50 flex flex-col items-center justify-center">
       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-stone-900"></div>
@@ -97,6 +138,13 @@ export default function LeadDetail({ tenantId }) {
       <button onClick={() => navigate('/leads')} className="mt-4 text-blue-600 hover:underline">Back to Leads</button>
     </div>
   );
+
+  // Phase 7 E — derive display state
+  const hasWidgetEstimate = lead.widget_estimate_low_cents != null && lead.widget_estimate_high_cents != null;
+  const hasRepQuote = lead.rep_quote_total_cents != null;
+  const showQuoteCard = hasWidgetEstimate || hasRepQuote;
+  const showQuoteInput = !hasRepQuote || editingQuote;
+  const variance = lead.variance_coaching;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -313,8 +361,187 @@ export default function LeadDetail({ tenantId }) {
             )}
           </div>
 
-          {/* Right: Conversation History & Activity Feed */}
+          {/* Right: Widget Estimate / Conversation History */}
           <div className="lg:col-span-2 space-y-6">
+
+            {/* ═══ Phase 7 E — Widget Estimate + Rep Quote + Variance Coaching ═══ */}
+            {showQuoteCard && (
+              <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-6">
+
+                {/* Widget Estimate (what customer saw on website) */}
+                {hasWidgetEstimate && (
+                  <div className="mb-5">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="p-1.5 bg-indigo-100 rounded-lg text-indigo-600">
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                        </svg>
+                      </div>
+                      <h3 className="font-bold text-stone-900 uppercase text-xs tracking-widest">Widget Ballpark Shown to Customer</h3>
+                    </div>
+
+                    <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4">
+                      <div className="text-2xl font-bold text-indigo-900">
+                        ${Math.round(lead.widget_estimate_low_cents / 100).toLocaleString()}
+                        <span className="text-indigo-400 mx-2">–</span>
+                        ${Math.round(lead.widget_estimate_high_cents / 100).toLocaleString()}
+                      </div>
+                      {lead.widget_estimate_scope_summary && (
+                        <div className="text-sm text-indigo-700 mt-1.5 leading-relaxed">
+                          {lead.widget_estimate_scope_summary}
+                        </div>
+                      )}
+                      {lead.widget_estimated_at && (
+                        <div className="text-[10px] text-indigo-500 font-mono mt-2">
+                          Shown {new Date(lead.widget_estimated_at).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Rep Quote (what rep priced in person) */}
+                <div className={hasWidgetEstimate ? 'pt-5 border-t border-stone-100' : ''}>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-emerald-100 rounded-lg text-emerald-600">
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      </div>
+                      <h3 className="font-bold text-stone-900 uppercase text-xs tracking-widest">Your Real Quote</h3>
+                    </div>
+                    {hasRepQuote && !editingQuote && (
+                      <button
+                        onClick={() => {
+                          setQuoteInput((lead.rep_quote_total_cents / 100).toString());
+                          setEditingQuote(true);
+                          setQuoteError(null);
+                        }}
+                        className="text-xs font-bold text-blue-600 hover:text-blue-700 uppercase tracking-wider"
+                      >
+                        Edit
+                      </button>
+                    )}
+                  </div>
+
+                  {hasRepQuote && !editingQuote && (
+                    <div>
+                      <div className="text-2xl font-bold text-stone-900">
+                        ${Math.round(lead.rep_quote_total_cents / 100).toLocaleString()}
+                      </div>
+                      {lead.rep_quote_entered_at && (
+                        <div className="text-[10px] text-stone-400 font-mono mt-1">
+                          Entered {new Date(lead.rep_quote_entered_at).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {showQuoteInput && (
+                    <div>
+                      <div className="flex gap-2">
+                        <div className="flex-1 relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 text-sm font-medium pointer-events-none">$</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="1800.00"
+                            value={quoteInput}
+                            onChange={(e) => { setQuoteInput(e.target.value); setQuoteError(null); }}
+                            onKeyDown={(e) => { if (e.key === 'Enter' && !submittingQuote) handleQuoteSubmit(); }}
+                            disabled={submittingQuote}
+                            className="w-full pl-7 bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50"
+                          />
+                        </div>
+                        <button
+                          onClick={handleQuoteSubmit}
+                          disabled={submittingQuote || !quoteInput}
+                          className="bg-blue-600 text-white text-xs font-bold uppercase tracking-wider px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors whitespace-nowrap"
+                        >
+                          {submittingQuote ? 'Analyzing…' : (editingQuote ? 'Update' : 'Save Quote')}
+                        </button>
+                        {editingQuote && (
+                          <button
+                            onClick={() => { setEditingQuote(false); setQuoteInput(''); setQuoteError(null); }}
+                            disabled={submittingQuote}
+                            className="text-xs font-bold text-stone-500 hover:text-stone-700 uppercase tracking-wider px-2 disabled:opacity-50"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </div>
+                      {quoteError && (
+                        <p className="text-xs text-rose-600 mt-1.5">{quoteError}</p>
+                      )}
+                      {submittingQuote && (
+                        <p className="text-[11px] text-stone-500 mt-1.5 italic">Saving and analyzing variance with AI coach…</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Variance Coaching (only when generated) */}
+                {variance && (
+                  <div className="mt-5 pt-5 border-t border-stone-100">
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className={`p-1.5 rounded-lg ${
+                        Math.abs(variance.variance_percent || 0) > 30
+                          ? 'bg-amber-100 text-amber-600'
+                          : 'bg-blue-100 text-blue-600'
+                      }`}>
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                        </svg>
+                      </div>
+                      <h3 className="font-bold text-stone-900 uppercase text-xs tracking-widest">Variance Coaching</h3>
+                      <span className={`ml-auto inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                        variance.variance_direction === 'above_ballpark'
+                          ? 'bg-amber-100 text-amber-700'
+                          : 'bg-blue-100 text-blue-700'
+                      }`}>
+                        {variance.variance_percent > 0 ? '+' : ''}{variance.variance_percent}% {variance.variance_direction === 'above_ballpark' ? 'above' : 'below'} ballpark
+                      </span>
+                    </div>
+
+                    {Array.isArray(variance.likely_reasons) && variance.likely_reasons.length > 0 && (
+                      <div className="mb-4">
+                        <div className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">Likely Reasons for the Gap</div>
+                        <ul className="space-y-2">
+                          {variance.likely_reasons.map((reason, idx) => (
+                            <li key={idx} className="text-sm text-stone-700 leading-relaxed flex gap-2">
+                              <span className="text-stone-400 flex-shrink-0 mt-0.5">•</span>
+                              <span>{reason}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {Array.isArray(variance.suggested_talking_points) && variance.suggested_talking_points.length > 0 && (
+                      <div>
+                        <div className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">Suggested Talking Points</div>
+                        <div className="space-y-2">
+                          {variance.suggested_talking_points.map((point, idx) => (
+                            <div key={idx} className="bg-emerald-50 border border-emerald-100 rounded-lg p-3 text-sm text-emerald-900 italic leading-relaxed">
+                              "{point}"
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {variance.computed_at && (
+                      <div className="text-[10px] text-stone-400 font-mono mt-3 pt-3 border-t border-stone-50">
+                        AI-generated {new Date(variance.computed_at).toLocaleString()}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Conversation Feed */}
             <div className="bg-white rounded-2xl border border-stone-200 shadow-sm flex flex-col h-[700px]">
               <div className="p-6 border-b border-stone-100 flex items-center justify-between bg-white sticky top-0 z-10 rounded-t-2xl">
                 <h3 className="font-bold text-stone-900 uppercase text-xs tracking-widest">Conversation Feed</h3>

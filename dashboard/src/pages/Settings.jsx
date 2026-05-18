@@ -17,6 +17,7 @@ import {
   updateFollowupStatus,
   disconnectGoogleCalendar,
   createAddonNumberCheckout,
+  cancelEstimatorAddon,
   getServiceRateOverrides,
   updateServiceRateOverride,
   getVerticalServices,
@@ -402,8 +403,38 @@ const TABS = [
  { id: "billing",      label: "Usage & Billing",      icon: BarChart3  },
 ];
 
-// PHASE 7 — Plan tiers that include estimator addon by default
+// PHASE 7 E — Estimator entitlement (May 18, 2026)
+// Plan tiers that include estimator at no extra cost.
 const ESTIMATOR_INCLUDED_PLANS = ["elite", "franchise", "hq_starter", "hq_growth", "hq_enterprise"];
+
+// Returns true if tenant is entitled to estimator (any route, free or paid).
+// Routes, in informational priority order:
+//   1. grandfathered (had estimator_enabled=true at mig 079 time)
+//   2. plan === "elite"
+//   3. brand_mode === "white_label" (covers WL Elite + WL reseller customers)
+//   4. reseller_tier !== null (any reseller customer)
+//   5. franchise plan family (franchise / hq_starter / hq_growth / hq_enterprise)
+//   6. estimator_addon_purchased = true ($20/mo add-on paid)
+// All routes collapse to a single boolean here; the Plans-tab banners
+// disambiguate which route applies for messaging.
+function isEstimatorEntitled(tenant) {
+  if (!tenant) return false;
+  if (tenant.estimator_grandfathered === true) return true;
+  if (tenant.plan === "elite") return true;
+  if (tenant.brand_mode === "white_label") return true;
+  if (tenant.reseller_tier) return true;
+  if (ESTIMATOR_INCLUDED_PLANS.includes(tenant.plan)) return true;
+  if (tenant.estimator_addon_purchased === true) return true;
+  return false;
+}
+
+// Can the tenant SEE the $20/mo upsell? True only for Basic/Pro tenants who
+// aren't entitled by any other route.
+function canPurchaseEstimatorAddon(tenant) {
+  if (!tenant) return false;
+  if (isEstimatorEntitled(tenant)) return false;
+  return tenant.plan === "basic" || tenant.plan === "pro";
+}
 
 export default function Settings({ tenantId }) {
   const { success, error: toastError } = useToast();
@@ -1383,9 +1414,7 @@ export default function Settings({ tenantId }) {
               // network-wide usage on /reseller via ResellerUsageCard with
               // correct reseller-tier rates ($0.15/min vs $0.30/min Basic).
               if (tab.id === "billing" && tenant?.reseller_tier) return false;
-              if (tab.id === "estimator" &&
-                  !tenant?.estimator_addon_purchased &&
-                  !ESTIMATOR_INCLUDED_PLANS.includes(tenant?.plan)) return false;
+              if (tab.id === "estimator" && !isEstimatorEntitled(tenant)) return false;
               return true;
             }).map((tab) => (
               <button
@@ -4720,8 +4749,101 @@ Thanks!`;
           )}
              {activeTab === "plans" && (
              <div className="space-y-8">
-               {/* Phase 7 — Estimator Add-On upsell card */}
-               {(tenant?.plan === "basic" || tenant?.plan === "pro") && !tenant?.estimator_addon_purchased && (
+               {/* Phase 7 E — Estimator Add-On status block.
+                   Mutually exclusive states (in render order):
+                     1. Grace period   — purchased + cancelled, ticking toward period_end
+                     2. Active paid    — purchased + Basic/Pro, no grace
+                     3. Grandfathered  — pre-paywall legacy access
+                     4. Entitled tier  — Elite / WL / Reseller / Franchise (free)
+                     5. Upsell         — Basic/Pro not entitled by any other route */}
+
+               {tenant?.estimator_addon_purchased && tenant?.estimator_addon_cancelled_at && tenant?.estimator_addon_period_end && (
+                 <div className="p-5 bg-amber-50 border-2 border-amber-200 rounded-2xl flex items-start gap-3">
+                   <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                   <div className="flex-1">
+                     <h3 className="text-sm font-black text-amber-900">Estimator Add-On cancelled — grace period active</h3>
+                     <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+                       You'll keep access through <strong>{new Date(tenant.estimator_addon_period_end).toLocaleDateString()}</strong>. After that the Quick Quote button disappears from your chat widget. Change your mind?{" "}
+                       
+                         href="https://billing.stripe.com/p/login"
+                         target="_blank"
+                         rel="noopener noreferrer"
+                         className="text-amber-900 underline underline-offset-2 font-bold hover:no-underline"
+                       >
+                         Reactivate via Stripe portal
+                       </a>
+                       .
+                     </p>
+                   </div>
+                 </div>
+               )}
+
+               {tenant?.estimator_addon_purchased && !tenant?.estimator_addon_cancelled_at && (tenant?.plan === "basic" || tenant?.plan === "pro") && (
+                 <div className="p-5 bg-emerald-50 border border-emerald-200 rounded-2xl">
+                   <div className="flex items-start justify-between gap-3 flex-wrap">
+                     <div className="flex items-start gap-3 flex-1 min-w-0">
+                       <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                       <div>
+                         <h3 className="text-sm font-bold text-emerald-900">Estimator Add-On active — $20/mo</h3>
+                         <p className="text-xs text-emerald-800 mt-0.5 leading-relaxed">
+                           The Quick Quote button is live in your chat widget. Configure it in the <strong>Estimator</strong> tab.
+                         </p>
+                       </div>
+                     </div>
+                     <button
+                       type="button"
+                       onClick={async () => {
+                         if (!window.confirm(
+                           "Cancel the Estimator Add-On? You'll keep access through the end of your current billing period, then the Quick Quote button will disappear from your chat widget. You can reactivate any time before that date."
+                         )) return;
+                         try {
+                           const res = await cancelEstimatorAddon(tenantId);
+                           const dateStr = res.period_end
+                             ? new Date(res.period_end).toLocaleDateString()
+                             : "the end of your billing period";
+                           success(`Add-on cancelled. Access continues through ${dateStr}.`);
+                           loadTenant();
+                         } catch (e) {
+                           toastError(`Cancel failed: ${e.message}`);
+                         }
+                       }}
+                       className="px-3 py-1.5 bg-white border border-emerald-300 text-emerald-700 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-100 transition-all shrink-0"
+                     >
+                       Cancel
+                     </button>
+                   </div>
+                 </div>
+               )}
+
+               {!tenant?.estimator_addon_purchased && tenant?.estimator_grandfathered && (
+                 <div className="p-5 bg-blue-50 border border-blue-200 rounded-2xl flex items-start gap-3">
+                   <Crown className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+                   <div className="flex-1">
+                     <h3 className="text-sm font-bold text-blue-900">Estimator included (Grandfathered)</h3>
+                     <p className="text-xs text-blue-800 mt-0.5 leading-relaxed">
+                       You had the Estimator enabled before it became a paid add-on, so you keep access at no extra cost. Configure it in the <strong>Estimator</strong> tab.
+                     </p>
+                   </div>
+                 </div>
+               )}
+
+               {!tenant?.estimator_addon_purchased && !tenant?.estimator_grandfathered && isEstimatorEntitled(tenant) && (
+                 <div className="p-5 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-3">
+                   <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                   <div className="flex-1">
+                     <h3 className="text-sm font-bold text-emerald-900">Estimator included with your plan</h3>
+                     <p className="text-xs text-emerald-800 mt-0.5 leading-relaxed">
+                       {tenant?.plan === "elite" && "Your Elite plan includes the Estimator at no extra cost. "}
+                       {tenant?.brand_mode === "white_label" && tenant?.plan !== "elite" && "Your white-label plan includes the Estimator at no extra cost. "}
+                       {tenant?.reseller_tier && "Your reseller plan includes the Estimator at no extra cost. "}
+                       {(tenant?.plan === "franchise" || ["hq_starter","hq_growth","hq_enterprise"].includes(tenant?.plan)) && "Your franchise plan includes the Estimator at no extra cost. "}
+                       Configure it in the <strong>Estimator</strong> tab.
+                     </p>
+                   </div>
+                 </div>
+               )}
+
+               {canPurchaseEstimatorAddon(tenant) && (
                  <div className="relative overflow-hidden bg-gradient-to-br from-emerald-50 to-emerald-50/30 border-2 border-emerald-200 rounded-3xl p-6 md:p-8">
                    <div className="absolute top-0 right-0 p-8 opacity-[0.06] pointer-events-none">
                      <Calculator className="w-32 h-32" />
@@ -4735,15 +4857,15 @@ Thanks!`;
                          <div className="flex items-center gap-2 mb-1 flex-wrap">
                            <h3 className="text-lg font-black text-emerald-900 tracking-tight">Estimator Add-On</h3>
                            <span className="px-2 py-0.5 bg-emerald-600 text-white text-[10px] font-black uppercase tracking-widest rounded-md shadow-sm">
-                             $15/mo
+                             $20/mo
                            </span>
                          </div>
                          <p className="text-sm text-emerald-900/80 leading-relaxed mb-3 max-w-xl">
-                           Add a "💰 Quick Quote" button to your chat widget. Homeowners get an instant ballpark range, you get a qualified lead with full project details — service type, room counts, square footage, and the calculated quote.
+                           Add a "💰 Quick Quote" button to your chat widget. Homeowners get an instant ballpark range, you get a qualified lead with full project details — service type, scope answers, square footage, and the calculated quote.
                          </p>
                          <div className="flex flex-wrap gap-3 text-[11px] text-emerald-700 font-bold">
-                           <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" />4 services included</span>
-                           <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" />State-based regional pricing</span>
+                           <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" />All vertical services included</span>
+                           <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" />Regional pricing automatic</span>
                            <span className="flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" />Lead capture built in</span>
                          </div>
                        </div>
@@ -4765,19 +4887,6 @@ Thanks!`;
                      >
                        Add to Plan →
                      </button>
-                   </div>
-                 </div>
-               )}
-
-               {/* Confirmation banner if just purchased */}
-               {(tenant?.plan === "basic" || tenant?.plan === "pro") && tenant?.estimator_addon_purchased && (
-                 <div className="p-5 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-3">
-                   <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-                   <div className="flex-1">
-                     <h3 className="text-sm font-bold text-emerald-900">Estimator Add-On active</h3>
-                     <p className="text-xs text-emerald-800 mt-0.5 leading-relaxed">
-                       The Quick Quote button is live in your chat widget. Configure it in the <strong>Estimator</strong> tab. Manage billing via the Stripe portal in the section below.
-                     </p>
                    </div>
                  </div>
                )}

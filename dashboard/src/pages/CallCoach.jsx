@@ -3,7 +3,15 @@ import { Link } from "react-router-dom";
 import { get } from "../api";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Call Coach — Phase 6 A4 List View
+// Call Coach — Phase 6 A4 + A6 List View
+// Last updated: May 18, 2026 (A6 one-sided handling)
+//
+// A6: Adds "Show one-sided" toggle (default OFF). When OFF, the API filters
+// out conversations where the transcript was one-sided/silent/insufficient
+// — typically the 26 backfilled pre-Whisper-fix calls polluting the
+// dashboard with persona='unknown' and meaningless 5.0-5.3 scores. When
+// toggled ON, those calls appear with a "Not Analyzable" badge instead
+// of the persona pill so the owner understands why they're empty.
 //
 // Uses the shared `get` helper from ../api which prepends VITE_API_URL and
 // attaches Bearer auth + impersonation header consistently with the rest
@@ -40,6 +48,14 @@ const SOURCE_LABELS = {
   live_coach:       "Live coach",
 };
 
+// A6: human-readable labels for the skip reasons surfaced by the API
+const SKIP_REASON_LABELS = {
+  one_sided_transcript:         "No customer speech captured",
+  silent_call:                  "Silent / hung up",
+  insufficient_customer_speech: "Customer barely spoke",
+  empty_transcript:             "Empty transcript",
+};
+
 const DATE_RANGES = [
   { label: "7d",  days: 7   },
   { label: "30d", days: 30  },
@@ -59,19 +75,22 @@ export default function CallCoach({ tenantId }) {
   const [persona, setPersona]       = useState("");
   const [sourceType, setSourceType] = useState("");
   const [minScore, setMinScore]     = useState("");
+  // A6: default OFF — hide one-sided calls until the owner explicitly opts in
+  const [showOneSided, setShowOneSided] = useState(false);
 
   const [summary, setSummary]               = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
 
   const [conversations, setConversations] = useState([]);
   const [total, setTotal]                 = useState(0);
+  const [hiddenCount, setHiddenCount]     = useState(0);
   const [listLoading, setListLoading]     = useState(true);
   const [error, setError]                 = useState(null);
 
   const [offset, setOffset] = useState(0);
   const limit = 50;
 
-  useEffect(() => { setOffset(0); }, [days, persona, sourceType, minScore]);
+  useEffect(() => { setOffset(0); }, [days, persona, sourceType, minScore, showOneSided]);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,11 +121,14 @@ export default function CallCoach({ tenantId }) {
         if (persona)    params.persona = persona;
         if (sourceType) params.source_type = sourceType;
         if (minScore)   params.minScore = minScore;
+        // A6: API defaults hideOneSided=true; only pass false when toggled on
+        if (showOneSided) params.hideOneSided = "false";
 
         const json = await get("/api/call-coach/conversations", params);
         if (!cancelled) {
           setConversations(json.conversations || []);
           setTotal(json.total || 0);
+          setHiddenCount(json.hidden_count || 0);
         }
       } catch (err) {
         if (!cancelled) setError(err.message);
@@ -116,7 +138,7 @@ export default function CallCoach({ tenantId }) {
     }
     load();
     return () => { cancelled = true; };
-  }, [days, persona, sourceType, minScore, offset, tenantId]);
+  }, [days, persona, sourceType, minScore, showOneSided, offset, tenantId]);
 
   const avgOverall    = summary?.overall?.avg_overall != null
                           ? parseFloat(summary.overall.avg_overall).toFixed(1) : "—";
@@ -125,6 +147,7 @@ export default function CallCoach({ tenantId }) {
   const bookRate      = scoredCount > 0 ? Math.round((bookedCount / scoredCount) * 100) : 0;
   const topWeakness   = summary?.top_weakness;
   const weaknessLabel = topWeakness ? DIMENSION_LABELS[topWeakness.dimension] : null;
+  const summaryHiddenCount = summary?.hidden_count ?? 0;
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -169,7 +192,14 @@ export default function CallCoach({ tenantId }) {
           <div className="text-3xl font-bold mt-1 text-gray-900">
             {summaryLoading ? "…" : scoredCount.toLocaleString()}
           </div>
-          <div className="text-xs text-gray-500 mt-1">Last {days} days</div>
+          <div className="text-xs text-gray-500 mt-1">
+            Last {days} days
+            {summaryHiddenCount > 0 && (
+              <span className="ml-1 text-gray-400">
+                · {summaryHiddenCount} not analyzable
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="bg-white border border-gray-200 rounded-lg p-4">
@@ -228,9 +258,30 @@ export default function CallCoach({ tenantId }) {
           <option value="6">6+ (good)</option>
         </select>
 
-        {(persona || sourceType || minScore) && (
+        {/* A6: Show one-sided toggle */}
+        <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none ml-1">
+          <input
+            type="checkbox"
+            checked={showOneSided}
+            onChange={(e) => setShowOneSided(e.target.checked)}
+            className="rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+          />
+          <span>
+            Show one-sided calls
+            {hiddenCount > 0 && !showOneSided && (
+              <span className="ml-1 text-gray-400">({hiddenCount})</span>
+            )}
+          </span>
+        </label>
+
+        {(persona || sourceType || minScore || showOneSided) && (
           <button
-            onClick={() => { setPersona(""); setSourceType(""); setMinScore(""); }}
+            onClick={() => {
+              setPersona("");
+              setSourceType("");
+              setMinScore("");
+              setShowOneSided(false);
+            }}
             className="text-xs text-gray-500 hover:text-gray-700 ml-1"
           >
             Clear filters
@@ -241,6 +292,21 @@ export default function CallCoach({ tenantId }) {
           {listLoading ? "Loading…" : `${total.toLocaleString()} total`}
         </span>
       </div>
+
+      {/* A6: When hidden calls exist and toggle is off, show a subtle hint */}
+      {!showOneSided && hiddenCount > 0 && !listLoading && (
+        <div className="mb-4 bg-gray-50 border border-gray-200 rounded-md px-4 py-2.5 text-xs text-gray-600 flex items-center justify-between">
+          <span>
+            <span className="font-medium">{hiddenCount.toLocaleString()}</span> {hiddenCount === 1 ? "call was" : "calls were"} hidden because the customer side of the transcript wasn't captured (silent calls, hang-ups, or pre-fix recordings).
+          </span>
+          <button
+            onClick={() => setShowOneSided(true)}
+            className="text-brand-600 hover:underline font-medium whitespace-nowrap ml-3"
+          >
+            Show anyway
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-md mb-4">
@@ -274,29 +340,55 @@ export default function CallCoach({ tenantId }) {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {conversations.map((c) => {
+                // A6: render skipped rows with a "Not Analyzable" badge
+                const isSkipped = !!(c.persona_skip_reason || c.scoring_skip_reason);
+                const skipLabel = SKIP_REASON_LABELS[c.persona_skip_reason || c.scoring_skip_reason] || "Not analyzable";
                 const personaMeta = PERSONA_LABELS[c.buyer_persona] || PERSONA_LABELS.unknown;
                 const sourceLabel = SOURCE_LABELS[c.source_type] || c.source_type;
                 return (
-                  <tr key={c.id} className="hover:bg-gray-50 transition-colors">
+                  <tr
+                    key={c.id}
+                    className={`transition-colors ${isSkipped ? "bg-gray-50/60 hover:bg-gray-100/60" : "hover:bg-gray-50"}`}
+                  >
                     <td className="px-4 py-3 text-sm whitespace-nowrap">
-                      <Link to={`/call-coach/${c.id}`} className="text-brand-600 hover:underline font-medium">
+                      <Link
+                        to={`/call-coach/${c.id}`}
+                        className={`font-medium hover:underline ${isSkipped ? "text-gray-500" : "text-brand-600"}`}
+                      >
                         {c.scored_at ? new Date(c.scored_at).toLocaleString() : "—"}
                       </Link>
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-700">{sourceLabel}</td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${personaMeta.color}`}>
-                        {personaMeta.label}
-                      </span>
+                    <td className={`px-4 py-3 text-sm ${isSkipped ? "text-gray-500" : "text-gray-700"}`}>
+                      {sourceLabel}
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-700">{c.rep_name || "—"}</td>
-                    <td className="px-4 py-3 text-sm text-gray-700 capitalize">
+                    <td className="px-4 py-3">
+                      {isSkipped ? (
+                        <span
+                          className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500 italic"
+                          title={skipLabel}
+                        >
+                          {skipLabel}
+                        </span>
+                      ) : (
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${personaMeta.color}`}>
+                          {personaMeta.label}
+                        </span>
+                      )}
+                    </td>
+                    <td className={`px-4 py-3 text-sm ${isSkipped ? "text-gray-400" : "text-gray-700"}`}>
+                      {c.rep_name || "—"}
+                    </td>
+                    <td className={`px-4 py-3 text-sm capitalize ${isSkipped ? "text-gray-400" : "text-gray-700"}`}>
                       {c.outcome ? c.outcome.replace(/_/g, " ") : "—"}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <span className={`text-base font-bold ${scoreColor(c.overall_score)}`}>
-                        {c.overall_score != null ? parseFloat(c.overall_score).toFixed(1) : "—"}
-                      </span>
+                      {isSkipped ? (
+                        <span className="text-base font-normal text-gray-300">—</span>
+                      ) : (
+                        <span className={`text-base font-bold ${scoreColor(c.overall_score)}`}>
+                          {c.overall_score != null ? parseFloat(c.overall_score).toFixed(1) : "—"}
+                        </span>
+                      )}
                     </td>
                   </tr>
                 );

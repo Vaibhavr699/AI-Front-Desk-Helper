@@ -11,9 +11,19 @@
 //   POST /validate                 → input validation only
 //   GET  /tenant-config/:tenantId  → widget config bundle
 //   POST /lead                     → capture estimator_payload to leads
+//                                    + persist widget ballpark to widget_*
+//                                    cols for Phase 7 E carryover
 //   POST /log-events               → synthetic conversation messages
 //   GET  /rate-overrides/:tenantId → per-service rate override read
 //   PATCH /rate-overrides/:tenantId → per-service rate override upsert
+//
+// Phase 7 E (May 18, 2026): When the widget completes a quote and converts
+// to a lead, persist the ballpark range + a human-readable scope summary
+// onto the leads table so the rep (on dashboard + future rep mobile) sees
+// "Customer was shown $X-$Y for this scope" when they arrive for the
+// in-home walkthrough. Later, when the rep enters their real quote via
+// POST /api/leads/:id/quote-entered (in routes/leads.js), variance
+// coaching surfaces if the gap is >15%.
 //
 // Admin-only endpoint (GET /vertical/:slug) lives in routes/estimatorAdmin.js
 // and mounts at /api/admin/estimator with requireSuperAdmin gate.
@@ -23,6 +33,7 @@ const express = require("express");
 const db = require("../lib/db");
 const estimator = require("../lib/estimator");
 const leadsService = require("../services/leads");
+const scopeOptionsHelper = require("../lib/scopeOptionsHelper");
 
 const router = express.Router();
 
@@ -220,6 +231,12 @@ router.get("/tenant-config/:tenantId", async (req, res) => {
 // estimator_payload is the full submission state (service, inputs, modifier
 // selections). quote_result is the calculateRange output (range, breakdown).
 // Both stored as JSONB on leads.estimator_payload column.
+//
+// Phase 7 E (May 18, 2026): When quote_result is a real range (not
+// specialized), ALSO write the ballpark to leads.widget_estimate_* cols
+// for rep-side carryover. Only updates widget_* if quote_result.range_*
+// is present — preserves prior widget estimate if this submission was
+// specialized but a previous one had a real number (COALESCE pattern).
 router.post("/lead", async (req, res) => {
   try {
     const {
@@ -259,7 +276,38 @@ router.post("/lead", async (req, res) => {
       submitted_at: new Date().toISOString(),
     };
 
-    // Update lead with contact info + estimator payload in one query
+    // ── Phase 7 E: derive widget estimate carryover values ────────────
+    // Only set widget_* fields when quote_result has a real range (not a
+    // "specialized" project routing). When specialized, leave the existing
+    // widget_* cols untouched via COALESCE in the UPDATE below.
+    let widgetLow = null;
+    let widgetHigh = null;
+    let widgetScopeSummary = null;
+    let setWidgetEstimatedAt = false;
+    if (
+      quote_result &&
+      !quote_result.specialized &&
+      typeof quote_result.range_min_cents === "number" &&
+      typeof quote_result.range_max_cents === "number" &&
+      quote_result.range_min_cents >= 0 &&
+      quote_result.range_max_cents >= quote_result.range_min_cents
+    ) {
+      widgetLow = Math.round(quote_result.range_min_cents);
+      widgetHigh = Math.round(quote_result.range_max_cents);
+      // scopeToSummaryString never throws — defensive helper that returns a
+      // string for any input shape, falling back to "Estimate requested".
+      try {
+        widgetScopeSummary = scopeOptionsHelper.scopeToSummaryString(estimator_payload);
+      } catch (summaryErr) {
+        console.warn("[Estimator] scope summary build failed (non-fatal):", summaryErr.message);
+        widgetScopeSummary = null;
+      }
+      setWidgetEstimatedAt = true;
+    }
+
+    // Update lead with contact info + estimator payload + Phase 7 E carryover
+    // cols in one query. COALESCE on widget_* preserves prior estimate when
+    // this submission was specialized.
     await db.query(
       `UPDATE leads
           SET name              = COALESCE($2, name),
@@ -267,6 +315,10 @@ router.post("/lead", async (req, res) => {
               address           = COALESCE($4, address),
               project_type      = COALESCE($5, project_type),
               estimator_payload = $6,
+              widget_estimate_low_cents     = COALESCE($7, widget_estimate_low_cents),
+              widget_estimate_high_cents    = COALESCE($8, widget_estimate_high_cents),
+              widget_estimate_scope_summary = COALESCE($9, widget_estimate_scope_summary),
+              widget_estimated_at           = CASE WHEN $10::boolean THEN now() ELSE widget_estimated_at END,
               updated_at        = now()
         WHERE id = $1`,
       [
@@ -276,15 +328,20 @@ router.post("/lead", async (req, res) => {
         address || null,
         project_type || null,
         JSON.stringify(fullPayload),
+        widgetLow,
+        widgetHigh,
+        widgetScopeSummary,
+        setWidgetEstimatedAt,
       ]
     );
 
     console.log(
-      "[Estimator] /lead captured tenantId=%s leadId=%s service=%s specialized=%s",
+      "[Estimator] /lead captured tenantId=%s leadId=%s service=%s specialized=%s widget_carryover=%s",
       tenant_id,
       lead.id,
       estimator_payload.service_slug || "(none)",
-      quote_result?.specialized || false
+      quote_result?.specialized || false,
+      setWidgetEstimatedAt ? `$${Math.round(widgetLow/100)}-$${Math.round(widgetHigh/100)}` : "none"
     );
 
     // ─────────────────────────────────────────────────────────────

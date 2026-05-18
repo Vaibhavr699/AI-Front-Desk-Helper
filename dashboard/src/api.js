@@ -557,6 +557,12 @@ export function createEstimatorAddonCheckout(tenantId) {
   });
 }
 
+export function cancelEstimatorAddon(tenantId) {
+  return api(`/api/billing/cancel-estimator${tenantId ? `?tenant_id=${tenantId}` : ""}`, {
+    method: "POST",
+  });
+}
+
 // ── Per-service rate overrides (May 4, 2026) ──────────────────────────────
 // Phase 7 V1.5. Lets tenants tune their estimator rates from Settings without
 // SQL access. Each override is a percentage adjustment applied to default rates.

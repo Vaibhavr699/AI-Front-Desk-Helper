@@ -1,7 +1,8 @@
 "use strict";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Coaching Rule Extractor — Phase 6 B1 (May 15, 2026)
+// Coaching Rule Extractor — Phase 6 B1 + B1.5
+// May 15, 2026 (B1 initial); May 18, 2026 (B1.5 tenant capability injection)
 //
 // Polls coaching_feedback every 5 minutes. For each pending feedback row
 // with text content, runs GPT-4o (structured outputs) to extract zero or
@@ -18,6 +19,22 @@
 // approve. B3 splices approved rules into voice + SMS prompts.
 //
 // Per-tenant scoped throughout — no cross-tenant rule leakage (Q4 decision).
+//
+// ═══ B1.5 (May 18) — Tenant Capability Injection ════════════════════════
+// Before GPT-4o runs, load tenant capabilities (industry, vertical services,
+// estimator enabled, active channels, business hours, service area, brand
+// mode) and inject into the system prompt. This prevents the extractor
+// from proposing rules that depend on features the tenant doesn't have.
+//
+// Example of the bug B1.5 fixes:
+//   Owner feedback: "rep should send estimator link instead of quoting price"
+//   BEFORE: Rule extracted = "Always send the estimator link for price questions"
+//           — but tenant has estimator_enabled=false → rule is impossible
+//   AFTER:  GPT-4o sees "Estimator: DISABLED" in tenant capabilities → rule
+//           extracted = "Redirect price questions to in-home estimate booking"
+//
+// Tenant context load is best-effort. Failures degrade to no-context
+// extraction (the original B1 behavior). Never blocks rule extraction.
 // ═══════════════════════════════════════════════════════════════════════════
 
 const db = require("../lib/db");
@@ -83,9 +100,201 @@ function truncateTranscript(transcript) {
   return text.slice(0, TRANSCRIPT_CONTEXT_CHARS) + "\n…(truncated)";
 }
 
-function buildSystemPrompt(industry) {
-  const trade = industry || "home services";
-  return `You are an expert sales coach for ${trade} contractors who hire an AI receptionist to answer calls and book estimates.
+// ──── B1.5: Load tenant capabilities for prompt injection ──────────────────
+//
+// Returns a normalized tenant context object, or null on any failure.
+// Uses SELECT * so missing/renamed columns don't break the query — the
+// prompt builder then conditionally includes only the sections it has data
+// for. Belt-and-suspenders: every property access has an OR fallback for
+// known column-name variations across deploys.
+async function loadTenantContext(tenantId) {
+  if (!tenantId) return null;
+  try {
+    // Pull tenant row + vertical name in a single round trip.
+    // SELECT * is intentional: we don't want a column rename to break
+    // rule extraction. Each field is defensively read below.
+    const tenantRes = await db.query(
+      `SELECT t.*,
+              v.name AS vertical_name,
+              v.slug AS vertical_slug
+         FROM tenants t
+         LEFT JOIN verticals v ON v.id = t.vertical_id
+        WHERE t.id = $1
+        LIMIT 1`,
+      [tenantId]
+    );
+
+    if (tenantRes.rows.length === 0) return null;
+    const tenant = tenantRes.rows[0];
+
+    // Services offered — pulled from vertical_services if vertical_id present.
+    // Wrapped in its own try so a schema variation here doesn't lose the
+    // entire tenant context (which is much more valuable than the service
+    // list alone).
+    let services = [];
+    if (tenant.vertical_id) {
+      try {
+        const svcRes = await db.query(
+          `SELECT name
+             FROM vertical_services
+            WHERE vertical_id = $1
+            ORDER BY name ASC
+            LIMIT 20`,
+          [tenant.vertical_id]
+        );
+        services = svcRes.rows.map((r) => r.name).filter(Boolean);
+      } catch (svcErr) {
+        console.warn(
+          "[ruleExtractor] vertical_services lookup failed (non-fatal):",
+          svcErr.message
+        );
+      }
+    }
+
+    return {
+      industry: tenant.industry || null,
+      vertical_name: tenant.vertical_name || null,
+      vertical_slug: tenant.vertical_slug || null,
+      brand_mode: tenant.brand_mode || null,
+      // Estimator capability (memory line 14)
+      estimator_enabled: tenant.estimator_enabled === true,
+      // Channel capabilities — try multiple known column names
+      voice_enabled:
+        tenant.voice_enabled === true ||
+        tenant.inbound_voice_enabled === true ||
+        tenant.ai_voice_enabled === true,
+      sms_enabled:
+        tenant.sms_enabled === true ||
+        tenant.inbound_sms_enabled === true ||
+        tenant.ai_sms_enabled === true,
+      outbound_enabled:
+        tenant.outbound_enabled === true ||
+        tenant.outbound_calls_enabled === true ||
+        tenant.outbound_ai_enabled === true,
+      // Business hours — could be JSONB, text, or split fields
+      business_hours:
+        tenant.business_hours ||
+        tenant.hours_of_operation ||
+        tenant.operating_hours ||
+        null,
+      // Service area — could be array, JSONB, or text summary
+      service_area:
+        tenant.service_area ||
+        tenant.service_zip_codes ||
+        tenant.service_area_description ||
+        null,
+      services_offered: services,
+    };
+  } catch (err) {
+    console.warn(
+      "[ruleExtractor] tenant context load failed, falling back to no-context extraction:",
+      err.message
+    );
+    return null;
+  }
+}
+
+// ──── B1.5: Format tenant capabilities into a prompt block ─────────────────
+//
+// Returns a string block ready to splice into the system prompt, or empty
+// string if no usable data. Each capability is its own line — easy for
+// GPT-4o to parse and reference. ENABLED vs DISABLED phrasing is explicit
+// because GPT-4o follows positive-framed constraints better than negatives.
+function formatTenantCapabilitiesBlock(ctx) {
+  if (!ctx) return "";
+
+  const lines = [];
+
+  // Industry + vertical
+  const tradeLabel = ctx.vertical_name || ctx.industry || null;
+  if (tradeLabel) {
+    lines.push(`- Industry / trade: ${tradeLabel}`);
+  }
+
+  // Services offered (the actual products/services this tenant sells)
+  if (ctx.services_offered && ctx.services_offered.length > 0) {
+    lines.push(`- Services offered: ${ctx.services_offered.join(", ")}`);
+  }
+
+  // Estimator capability — the original bug B1.5 was built to fix
+  if (ctx.estimator_enabled) {
+    lines.push(
+      `- Estimator widget: ENABLED — rules MAY reference sending the estimator link when customer asks about price`
+    );
+  } else {
+    lines.push(
+      `- Estimator widget: DISABLED — do NOT propose rules that involve sending estimator links. Price questions should redirect to scheduling an in-home estimate.`
+    );
+  }
+
+  // Channel capabilities
+  const channels = [];
+  if (ctx.voice_enabled) channels.push("inbound voice");
+  if (ctx.sms_enabled) channels.push("SMS");
+  if (ctx.outbound_enabled) channels.push("outbound voice");
+  if (channels.length > 0) {
+    lines.push(
+      `- Active channels: ${channels.join(", ")} — rules apply to ${channels.join(" and ")} conversations`
+    );
+  }
+
+  // Business hours
+  if (ctx.business_hours) {
+    let hoursDisplay;
+    if (typeof ctx.business_hours === "string") {
+      hoursDisplay = ctx.business_hours;
+    } else if (typeof ctx.business_hours === "object") {
+      hoursDisplay = JSON.stringify(ctx.business_hours);
+    } else {
+      hoursDisplay = String(ctx.business_hours);
+    }
+    lines.push(
+      `- Business hours: ${hoursDisplay} — after-hours rules apply outside this window`
+    );
+  }
+
+  // Service area
+  if (ctx.service_area) {
+    let areaDisplay;
+    if (Array.isArray(ctx.service_area)) {
+      const count = ctx.service_area.length;
+      areaDisplay = count > 0
+        ? `${count} zip code${count === 1 ? "" : "s"} (${ctx.service_area.slice(0, 3).join(", ")}${count > 3 ? "…" : ""})`
+        : null;
+    } else if (typeof ctx.service_area === "object") {
+      areaDisplay = JSON.stringify(ctx.service_area);
+    } else {
+      areaDisplay = String(ctx.service_area);
+    }
+    if (areaDisplay) {
+      lines.push(
+        `- Service area: ${areaDisplay} — rules about out-of-area handling apply outside this area`
+      );
+    }
+  }
+
+  // Brand mode — only relevant if white-label (don't add noise for AI-branded)
+  if (ctx.brand_mode === "white_label") {
+    lines.push(
+      `- Branding: White-label — do NOT reference "AI Front Desk Helper" by name in rule text; keep proposed rules brand-agnostic`
+    );
+  }
+
+  if (lines.length === 0) return "";
+
+  return `\n\nTENANT CAPABILITIES (extract rules consistent with these — do NOT propose rules that depend on features the tenant doesn't have):\n\n${lines.join("\n")}\n`;
+}
+
+function buildSystemPrompt(conversation, tenantContext) {
+  // B1.5: prefer vertical name / explicit industry from tenant over the
+  // industry stored on the conversation row, which can lag if the tenant's
+  // vertical changed since the call was scored.
+  const trade =
+    (tenantContext && (tenantContext.vertical_name || tenantContext.industry)) ||
+    conversation?.industry ||
+    "home services";
+
+  const basePrompt = `You are an expert sales coach for ${trade} contractors who hire an AI receptionist to answer calls and book estimates.
 
 The business owner has reviewed a recorded AI conversation and provided feedback. Your job is to extract specific, actionable coaching RULES that will be injected into the AI's system prompt on future calls.
 
@@ -104,6 +313,9 @@ Rule types:
 - "when_then" — when X happens, do Y
 
 CRITICAL: If the feedback is vague, uninformative (e.g. "great job"), or about a spam/junk call where no meaningful rules apply, return an empty rules array. Do NOT invent rules to fill space. Quality over quantity. Hard maximum 5 rules per feedback.`;
+
+  // B1.5: append tenant capabilities block (empty string if no context)
+  return basePrompt + formatTenantCapabilitiesBlock(tenantContext);
 }
 
 function buildUserPrompt(feedback, conversation) {
@@ -133,8 +345,8 @@ function buildUserPrompt(feedback, conversation) {
   return parts.join("\n");
 }
 
-async function extractRulesFromFeedback(feedback, conversation) {
-  const systemPrompt = buildSystemPrompt(conversation.industry);
+async function extractRulesFromFeedback(feedback, conversation, tenantContext) {
+  const systemPrompt = buildSystemPrompt(conversation, tenantContext);
   const userPrompt = buildUserPrompt(feedback, conversation);
 
   const completion = await openai.chat.completions.create({
@@ -192,9 +404,13 @@ async function processOneFeedback(feedbackRow) {
 
   const conversation = convoRes.rows[0];
 
+  // B1.5: load tenant context BEFORE calling GPT-4o. Best-effort — if this
+  // returns null, the extractor still works (just without capability awareness).
+  const tenantContext = await loadTenantContext(feedbackRow.tenant_id);
+
   let rules;
   try {
-    rules = await extractRulesFromFeedback(feedbackRow, conversation);
+    rules = await extractRulesFromFeedback(feedbackRow, conversation, tenantContext);
   } catch (err) {
     // GPT-4o failure — leave rules_extracted_at NULL so next cron retries.
     console.error(`[ruleExtractor] GPT-4o error for feedback ${feedbackRow.id}:`, err.message);
@@ -235,7 +451,11 @@ async function processOneFeedback(feedbackRow) {
     [feedbackRow.id]
   );
 
-  return { rule_count: rules.length, error: null };
+  return {
+    rule_count: rules.length,
+    error: null,
+    used_tenant_context: !!tenantContext,
+  };
 }
 
 async function runCoachingRuleExtractor() {
@@ -276,18 +496,31 @@ async function runCoachingRuleExtractor() {
 
   let totalRules = 0;
   let errors = 0;
+  let withContext = 0;
+  let withoutContext = 0;
 
   for (const feedback of pending) {
     const result = await processOneFeedback(feedback);
-    if (result.error) errors++;
-    else totalRules += result.rule_count;
+    if (result.error) {
+      errors++;
+    } else {
+      totalRules += result.rule_count;
+      if (result.used_tenant_context) withContext++;
+      else withoutContext++;
+    }
   }
 
   const elapsedMs = Date.now() - startedAt;
   console.log(
-    `[ruleExtractor] processed ${pending.length} feedback (${totalRules} rules), ` +
+    `[ruleExtractor] processed ${pending.length} feedback (${totalRules} rules, ` +
+    `${withContext} with-context, ${withoutContext} without-context), ` +
     `${ratingOnlyCount} rating-only stamped, ${errors} errors, ${elapsedMs}ms`
   );
 }
 
-module.exports = { runCoachingRuleExtractor };
+module.exports = {
+  runCoachingRuleExtractor,
+  // Exported for tests / introspection
+  loadTenantContext,
+  formatTenantCapabilitiesBlock,
+};

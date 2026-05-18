@@ -1,0 +1,64 @@
+-- ============================================================================
+-- Migration 079: Phase 7 E — Estimator $20/mo Add-On
+-- May 18, 2026
+--
+-- Pricing model (locked May 15):
+--   - Basic + Pro tiers: $20/mo add-on required to enable estimator
+--   - Elite tier: estimator INCLUDED in plan (no add-on needed)
+--   - White-label / Reseller / Franchise: estimator INCLUDED (no add-on)
+--   - All current estimator_enabled=true tenants: GRANDFATHERED in (free
+--     forever, including Gladiators + Paragon Exteriors)
+--
+-- Entitlement logic (computed by services/estimatorAddon.js):
+--   tenant has estimator access IF any of:
+--     - estimator_grandfathered = true
+--     - plan = 'elite'
+--     - brand_mode = 'white_label'
+--     - reseller_tier IS NOT NULL  (covers reseller customer tenants)
+--     - plan = 'hq_starter' OR 'hq_growth' OR 'hq_enterprise'  (franchise)
+--     - billing_responsibility = 'parent_pays' (covers franchise zees on HQ plan)
+--     - estimator_addon_active = true  (paying $20/mo add-on)
+--
+-- 7-day grace on cancellation: when customer cancels, we set
+-- estimator_addon_cancelled_at but keep estimator_addon_active = true
+-- until period end. Cron job daily checks for expired cancellations and
+-- flips estimator_enabled = false at that point.
+-- ============================================================================
+
+-- 1. Add columns to tenants
+ALTER TABLE tenants
+  ADD COLUMN IF NOT EXISTS estimator_grandfathered BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS estimator_addon_active BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS estimator_addon_subscription_item_id TEXT,
+  ADD COLUMN IF NOT EXISTS estimator_addon_activated_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS estimator_addon_cancelled_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS estimator_addon_period_end TIMESTAMPTZ;
+
+-- 2. Grandfather all current estimator_enabled tenants
+-- This is the critical migration safety net: ALL tenants that have
+-- estimator_enabled=true at migration time get free access forever.
+-- Includes Gladiators (a2942de5...) and any other early adopters.
+UPDATE tenants
+   SET estimator_grandfathered = TRUE
+ WHERE estimator_enabled = TRUE
+   AND estimator_grandfathered = FALSE;
+
+-- 3. Index for the cron that checks for expired cancellations
+CREATE INDEX IF NOT EXISTS idx_tenants_estimator_addon_period_end
+  ON tenants(estimator_addon_period_end)
+  WHERE estimator_addon_active = TRUE
+    AND estimator_addon_cancelled_at IS NOT NULL;
+
+-- 4. Verify
+SELECT
+  COUNT(*) FILTER (WHERE estimator_grandfathered = TRUE) AS grandfathered_count,
+  COUNT(*) FILTER (WHERE plan = 'elite') AS elite_count,
+  COUNT(*) FILTER (WHERE brand_mode = 'white_label') AS white_label_count,
+  COUNT(*) FILTER (WHERE reseller_tier IS NOT NULL) AS reseller_count,
+  COUNT(*) FILTER (WHERE plan IN ('hq_starter','hq_growth','hq_enterprise')) AS hq_count,
+  COUNT(*) FILTER (WHERE estimator_addon_active = TRUE) AS addon_active_count,
+  COUNT(*) AS total_tenants
+FROM tenants
+WHERE (deleted_at IS NULL OR deleted_at IS NULL);
+-- Note: replace second `deleted_at IS NULL` with your actual deletion guard
+-- column if different. Most tenants likely fall under grandfathered or elite.

@@ -1,12 +1,20 @@
 "use strict";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// /api/call-coach — Phase 6 A3 + B0 + B2 (May 15, 2026)
+// /api/call-coach — Phase 6 A3 + B0 + B2 + A6
+// Last updated: May 18, 2026 (A6 one-sided handling)
 //
 // Read API for the Call Coach dashboard surface. Consumes data populated by:
 //   - services/coachingScorer.js (cron, every 5 min)
 //   - services/coachingRuleExtractor.js (cron, every 5 min)
 //   - lib/coachingEngine.js (scoring + persona detection)
+//
+// A6 (May 18): Filter one-sided / silent / insufficient-customer-speech
+// conversations from the dashboard by default. The 26 backfill calls scored
+// 5.0-5.3 from pre-Whisper-fix one-sided transcripts polluted the average
+// score. Summary aggregations now always exclude rows with
+// scoring_skip_reason IS NOT NULL. List endpoint accepts ?hideOneSided
+// (default true) so owners see only analyzable calls.
 //
 // B2 (May 15): rule approval queue. Pending rules from coachingRuleExtractor
 // surface inline on CallCoachDetail. Owner approves/rejects/edits before
@@ -52,6 +60,11 @@ function getTenantId(req) {
 
 // ─────────────────────────────────────────────────────────────────────────
 // GET /api/call-coach/conversations
+//
+// A6: hideOneSided query param (default true) excludes rows where the
+// transcript was one-sided/silent/insufficient. When explicitly set to
+// false ('0' or 'false'), all rows return including the skipped ones —
+// owner can review what was filtered out.
 // ─────────────────────────────────────────────────────────────────────────
 router.get("/conversations", async (req, res) => {
   const tenantId = getTenantId(req);
@@ -60,8 +73,18 @@ router.get("/conversations", async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
   const offset = parseInt(req.query.offset, 10) || 0;
 
+  // A6: hideOneSided defaults true. Accept "false" or "0" to disable.
+  const hideOneSidedRaw = req.query.hideOneSided;
+  const hideOneSided = !(hideOneSidedRaw === "false" || hideOneSidedRaw === "0");
+
   const filters = ["cc.tenant_id = $1", "cc.scored_at IS NOT NULL"];
   const params = [tenantId];
+
+  if (hideOneSided) {
+    // Show only analyzable calls — those without skip reasons
+    filters.push("cc.persona_skip_reason IS NULL");
+    filters.push("cc.scoring_skip_reason IS NULL");
+  }
 
   if (req.query.persona)     { params.push(req.query.persona);        filters.push(`cc.buyer_persona = $${params.length}`); }
   if (req.query.source_type) { params.push(req.query.source_type);    filters.push(`cc.source_type = $${params.length}`); }
@@ -80,6 +103,7 @@ router.get("/conversations", async (req, res) => {
       cc.overall_score, cc.buyer_persona, cc.persona_confidence,
       cc.outcome, cc.outcome_revenue_cents, cc.outcome_recorded_at,
       cc.rep_user_id, cc.industry, cc.metadata,
+      cc.persona_skip_reason, cc.scoring_skip_reason, cc.customer_turn_count,
       du.email AS rep_name
     FROM coaching_conversations cc
     LEFT JOIN dashboard_users du ON du.id = cc.rep_user_id
@@ -94,16 +118,29 @@ router.get("/conversations", async (req, res) => {
     WHERE ${whereClause}
   `;
 
+  // A6: Also return the count of one-sided calls so the dashboard can show
+  // "X calls hidden — show all" affordance when hideOneSided is active.
+  const hiddenCountSql = `
+    SELECT COUNT(*)::int AS hidden_count
+    FROM coaching_conversations cc
+    WHERE cc.tenant_id = $1
+      AND cc.scored_at IS NOT NULL
+      AND (cc.persona_skip_reason IS NOT NULL OR cc.scoring_skip_reason IS NOT NULL)
+  `;
+
   try {
     const listParams = [...params, limit, offset];
-    const [listRes, countRes] = await Promise.all([
+    const [listRes, countRes, hiddenRes] = await Promise.all([
       db.query(listSql, listParams),
       db.query(countSql, params),
+      db.query(hiddenCountSql, [tenantId]),
     ]);
 
     res.json({
       conversations: listRes.rows,
       total: countRes.rows[0].total,
+      hidden_count: hiddenRes.rows[0].hidden_count,
+      hide_one_sided: hideOneSided,
       limit,
       offset,
     });
@@ -115,6 +152,10 @@ router.get("/conversations", async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────
 // GET /api/call-coach/conversations/:id
+//
+// A6: Detail includes persona_skip_reason / scoring_skip_reason /
+// customer_turn_count so the detail page can render a "Not Analyzable"
+// banner instead of empty scores.
 // ─────────────────────────────────────────────────────────────────────────
 router.get("/conversations/:id", async (req, res) => {
   const tenantId = getTenantId(req);
@@ -193,6 +234,11 @@ router.get("/conversations/:id", async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────
 // GET /api/call-coach/summary
+//
+// A6: ALL summary aggregations exclude rows where scoring_skip_reason IS
+// NOT NULL. The 26 backfilled 5.0-5.3 scores from one-sided transcripts
+// were dragging avg_overall down — they're meaningless data, not legit
+// low scores, so they shouldn't pollute the headline metric.
 // ─────────────────────────────────────────────────────────────────────────
 router.get("/summary", async (req, res) => {
   const tenantId = getTenantId(req);
@@ -209,6 +255,8 @@ router.get("/summary", async (req, res) => {
   }
 
   const windowFilter = `cc.scored_at > now() - INTERVAL '${days} days'`;
+  // A6: Always exclude skipped rows from aggregations
+  const analyzable = `cc.scoring_skip_reason IS NULL`;
 
   try {
     const overallSql = `
@@ -217,7 +265,11 @@ router.get("/summary", async (req, res) => {
         COUNT(*)::int AS scored_count,
         SUM(CASE WHEN cc.outcome = 'booked' THEN 1 ELSE 0 END)::int AS booked_count
       FROM coaching_conversations cc
-      WHERE cc.tenant_id = $1 AND cc.scored_at IS NOT NULL AND ${windowFilter} ${repFilter}
+      WHERE cc.tenant_id = $1
+        AND cc.scored_at IS NOT NULL
+        AND ${analyzable}
+        AND ${windowFilter}
+        ${repFilter}
     `;
     const dimSql = `
       SELECT cs.dimension,
@@ -225,14 +277,22 @@ router.get("/summary", async (req, res) => {
              COUNT(*)::int AS count
       FROM coaching_scores cs
       JOIN coaching_conversations cc ON cc.id = cs.conversation_id
-      WHERE cc.tenant_id = $1 AND cc.scored_at IS NOT NULL AND ${windowFilter} ${repFilter}
+      WHERE cc.tenant_id = $1
+        AND cc.scored_at IS NOT NULL
+        AND ${analyzable}
+        AND ${windowFilter}
+        ${repFilter}
       GROUP BY cs.dimension ORDER BY cs.dimension
     `;
     const personaSql = `
       SELECT cc.buyer_persona, COUNT(*)::int AS count
       FROM coaching_conversations cc
-      WHERE cc.tenant_id = $1 AND cc.scored_at IS NOT NULL AND ${windowFilter}
-        AND cc.buyer_persona IS NOT NULL ${repFilter}
+      WHERE cc.tenant_id = $1
+        AND cc.scored_at IS NOT NULL
+        AND cc.persona_skip_reason IS NULL
+        AND ${windowFilter}
+        AND cc.buyer_persona IS NOT NULL
+        ${repFilter}
       GROUP BY cc.buyer_persona ORDER BY count DESC
     `;
     const trendSql = `
@@ -240,15 +300,31 @@ router.get("/summary", async (req, res) => {
              ROUND(AVG(cc.overall_score)::numeric, 1) AS avg_score,
              COUNT(*)::int AS count
       FROM coaching_conversations cc
-      WHERE cc.tenant_id = $1 AND cc.scored_at IS NOT NULL AND ${windowFilter} ${repFilter}
+      WHERE cc.tenant_id = $1
+        AND cc.scored_at IS NOT NULL
+        AND ${analyzable}
+        AND ${windowFilter}
+        ${repFilter}
       GROUP BY day ORDER BY day ASC
     `;
+    // A6: surface count of hidden (skipped) calls in window so dashboard
+    // can show "X calls couldn't be analyzed — review" affordance.
+    const hiddenSql = `
+      SELECT COUNT(*)::int AS hidden_count
+      FROM coaching_conversations cc
+      WHERE cc.tenant_id = $1
+        AND cc.scored_at IS NOT NULL
+        AND cc.scoring_skip_reason IS NOT NULL
+        AND ${windowFilter}
+        ${repFilter}
+    `;
 
-    const [overall, dimensions, personas, trend] = await Promise.all([
+    const [overall, dimensions, personas, trend, hidden] = await Promise.all([
       db.query(overallSql, params),
       db.query(dimSql, params),
       db.query(personaSql, params),
       db.query(trendSql, params),
+      db.query(hiddenSql, params),
     ]);
 
     let topWeakness = null;
@@ -265,6 +341,7 @@ router.get("/summary", async (req, res) => {
       personas: personas.rows,
       trend: trend.rows,
       top_weakness: topWeakness,
+      hidden_count: hidden.rows[0].hidden_count,
     });
   } catch (err) {
     console.error("[callCoach] summary error:", err.message);

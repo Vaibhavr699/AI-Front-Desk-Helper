@@ -11,6 +11,20 @@ const authLib = require("../lib/auth");
 const { logAction } = require("../lib/auditLogger");
 const db = require("../lib/db");
 
+// Phase 7 E (May 18, 2026) — variance coaching service. Lazy-loaded with
+// try/catch so this file deploys cleanly even if varianceCoaching.js hasn't
+// shipped yet (defensive against deploy ordering). If unavailable, the
+// quote-entered endpoint still writes the quote but skips coaching.
+let varianceCoaching = null;
+try {
+  varianceCoaching = require("../services/varianceCoaching");
+} catch (err) {
+  console.warn(
+    "[Leads API] varianceCoaching service not available — quote variance coaching will be skipped:",
+    err.message
+  );
+}
+
 // All routes require authentication and at least Manager-level access
 router.use(function(req, res, next) { return authLib.authMiddleware(req, res, next); });
 router.use(function(req, res, next) { return authLib.requireRole([authLib.ROLES.OWNER, authLib.ROLES.ADMIN, authLib.ROLES.MANAGER])(req, res, next); });
@@ -29,6 +43,38 @@ async function checkLeadAccess(lead, req) {
     isParentOfOwner = check.rows.length > 0;
   }
   return isOwner || isParentOfOwner || req.user?.is_super_admin;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 7 E (May 18, 2026) — augment a lead row with the widget estimate
+// + rep quote + variance coaching columns. Doing this as a focused
+// follow-up SELECT lets us stay agnostic to whatever leadsService.getLeadById
+// returns (SELECT * vs explicit column list). Adds ~1ms latency, guarantees
+// the dashboard always sees the Phase 7 E fields.
+// ─────────────────────────────────────────────────────────────────────
+async function loadPhase7eFields(leadId) {
+  try {
+    const result = await db.query(
+      `SELECT widget_estimate_low_cents,
+              widget_estimate_high_cents,
+              widget_estimate_scope_summary,
+              widget_estimated_at,
+              rep_quote_total_cents,
+              rep_quote_entered_at,
+              rep_quote_entered_by_user_id,
+              variance_coaching
+         FROM leads
+        WHERE id = $1
+        LIMIT 1`,
+      [leadId]
+    );
+    return result.rows[0] || {};
+  } catch (err) {
+    // If the columns don't exist yet (migration 078 not run), silently
+    // return empty so the dashboard renders without the widget card.
+    console.warn("[Leads API] Phase 7 E column load failed (non-fatal):", err.message);
+    return {};
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -134,7 +180,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-/** GET /api/leads/:id - Get a single lead's profile */
+/** GET /api/leads/:id - Get a single lead's profile (Phase 7 E augmented) */
 router.get("/:id", async (req, res) => {
   try {
     const lead = await leadsService.getLeadById(req.params.id);
@@ -142,6 +188,11 @@ router.get("/:id", async (req, res) => {
     if (!(await checkLeadAccess(lead, req))) {
       return res.status(403).json({ error: "Forbidden" });
     }
+
+    // Phase 7 E — merge in widget estimate + rep quote + variance coaching
+    // columns regardless of what leadsService.getLeadById selected.
+    const phase7eFields = await loadPhase7eFields(lead.id);
+    const enriched = { ...lead, ...phase7eFields };
 
     await logAction({
       tenant_id: String(lead.tenant_id),
@@ -154,7 +205,7 @@ router.get("/:id", async (req, res) => {
       user_agent: req.get("user-agent") || null,
     }).catch(() => {});
 
-    res.json(lead);
+    res.json(enriched);
   } catch (err) {
     console.error("[Leads API] Get failed:", err.message);
     res.status(500).json({ error: "Internal server error" });
@@ -250,6 +301,150 @@ router.get("/:id/history", async (req, res) => {
     res.json(history);
   } catch (err) {
     console.error("[Leads API] History failed:", err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ============================================================================
+// PHASE 7 E (May 18, 2026) — Rep Quote Entry + Variance Coaching
+// ============================================================================
+
+/**
+ * POST /api/leads/:id/quote-entered
+ *
+ * Called from the dashboard (and later rep mobile app) when the rep enters
+ * their real in-home quote total. Writes the quote, then triggers GPT-4o
+ * variance coaching if the quote differs from the widget ballpark by
+ * >=15%. Returns the enriched lead with variance_coaching populated.
+ *
+ * Body (accepts either):
+ *   { total_cents: 200000 }           — integer cents
+ *   { total_dollars: 2000.00 }        — decimal dollars (UI sends this)
+ *
+ * Response:
+ *   200 { lead, variance_coaching_generated: boolean }
+ *   400 — bad input
+ *   403 — access denied
+ *   404 — lead not found
+ *
+ * Variance coaching is awaited (not fire-and-forget) so the user sees the
+ * coaching on the same response that confirms the save. GPT-4o takes 2-5
+ * seconds — acceptable UX for a "save quote" action. If the coaching call
+ * fails, the response still returns success — the rep's quote is saved.
+ */
+router.post("/:id/quote-entered", async (req, res) => {
+  try {
+    const lead = await leadsService.getLeadById(req.params.id);
+    if (!lead) return res.status(404).json({ error: "Lead not found" });
+    if (!(await checkLeadAccess(lead, req))) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    // ── Parse + validate input (accept cents or dollars) ─────────────
+    const body = req.body || {};
+    let totalCents = null;
+
+    if (typeof body.total_cents === "number" && Number.isFinite(body.total_cents)) {
+      totalCents = Math.round(body.total_cents);
+    } else if (typeof body.total_cents === "string" && /^\d+$/.test(body.total_cents.trim())) {
+      totalCents = parseInt(body.total_cents.trim(), 10);
+    } else if (typeof body.total_dollars === "number" && Number.isFinite(body.total_dollars)) {
+      totalCents = Math.round(body.total_dollars * 100);
+    } else if (typeof body.total_dollars === "string" && /^\d+(\.\d+)?$/.test(body.total_dollars.trim())) {
+      totalCents = Math.round(parseFloat(body.total_dollars.trim()) * 100);
+    }
+
+    if (totalCents === null) {
+      return res.status(400).json({
+        error: "Provide total_cents (integer) or total_dollars (number) in the request body",
+      });
+    }
+    if (totalCents < 0) {
+      return res.status(400).json({ error: "Quote total cannot be negative" });
+    }
+    if (totalCents > 100_000_000) {
+      return res.status(400).json({ error: "Quote total exceeds $1,000,000 cap. Contact support." });
+    }
+
+    const userId = req.user?.sub ? String(req.user.sub) : null;
+
+    // ── Write the rep quote + clear stale variance coaching ──────────
+    //
+    // Clearing variance_coaching first means the dashboard never shows
+    // stale coaching for the old quote while the new coaching is being
+    // generated. The frontend can show "Analyzing..." in the gap.
+    await db.query(
+      `UPDATE leads
+          SET rep_quote_total_cents        = $1,
+              rep_quote_entered_at         = now(),
+              rep_quote_entered_by_user_id = $2,
+              variance_coaching            = NULL,
+              updated_at                   = now()
+        WHERE id = $3`,
+      [totalCents, userId, lead.id]
+    );
+
+    // Audit log (non-blocking)
+    await logAction({
+      tenant_id: String(lead.tenant_id),
+      user_id: userId,
+      action: "rep_quote_entered",
+      entity_type: "lead",
+      entity_id: String(lead.id),
+      new_value: {
+        total_cents: totalCents,
+        total_dollars: Math.round(totalCents / 100),
+        widget_low_cents: lead.widget_estimate_low_cents || null,
+        widget_high_cents: lead.widget_estimate_high_cents || null,
+      },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
+
+    console.log(
+      "[Leads API] Rep quote entered leadId=%s tenant=%s user=%s totalCents=%d",
+      lead.id, lead.tenant_id, userId, totalCents
+    );
+
+    // ── Trigger variance coaching (awaited; ~3 sec) ──────────────────
+    //
+    // Failure modes (any return null/skipped):
+    //   - varianceCoaching service not loaded → skip silently
+    //   - Lead has no widget estimate → skipped 'no_widget_estimate'
+    //   - Variance < 15% threshold → skipped 'within_threshold'
+    //   - GPT-4o error → returns { ok: false }
+    //
+    // The endpoint always succeeds with the quote saved regardless.
+    let coachingGenerated = false;
+    if (varianceCoaching && typeof varianceCoaching.computeVarianceCoaching === "function") {
+      try {
+        const result = await varianceCoaching.computeVarianceCoaching({ leadId: lead.id });
+        coachingGenerated = !!(result?.ok && !result?.skipped);
+        if (result?.skipped) {
+          console.log(
+            "[Leads API] Variance coaching skipped leadId=%s reason=%s",
+            lead.id, result.reason
+          );
+        }
+      } catch (vcErr) {
+        console.error(
+          "[Leads API] Variance coaching threw leadId=%s err=%s",
+          lead.id, vcErr.message
+        );
+      }
+    }
+
+    // ── Re-read lead with Phase 7 E fields included ──────────────────
+    const freshLead = await leadsService.getLeadById(lead.id);
+    const phase7eFields = await loadPhase7eFields(lead.id);
+    const enriched = { ...freshLead, ...phase7eFields };
+
+    res.json({
+      lead: enriched,
+      variance_coaching_generated: coachingGenerated,
+    });
+  } catch (err) {
+    console.error("[Leads API] Quote entered failed leadId=%s err=%s", req.params.id, err.message);
     res.status(500).json({ error: "Internal server error" });
   }
 });

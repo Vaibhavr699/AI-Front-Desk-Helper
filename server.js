@@ -3848,7 +3848,8 @@ wss.on("connection", async (twilioSocket, req) => {
   }
 
   const crmLeadSentRef = { sent: false };
-  const openaiModelCandidates = [...new Set([process.env.OPENAI_MODEL, "gpt-4o-realtime-preview-2024-12-17", "gpt-realtime"])]
+ const openaiModelCandidates = [...new Set([process.env.OPENAI_MODEL, "gpt-realtime", "gpt-realtime-2025-08-28"])]
+  .filter(Boolean);
     .filter(Boolean);
 
   function sendToOpenAI(payload) {
@@ -3978,12 +3979,23 @@ wss.on("connection", async (twilioSocket, req) => {
   
   function connectOpenAI(modelIndex) {
     let model = (tenant && tenant.voice_model) ? tenant.voice_model : (openaiModelCandidates[modelIndex] || openaiModelCandidates[0]);
-    
-    // Safeguard: Ensure we use a valid realtime model name
-    if (model === "gpt-4o-realtime") {
-      console.warn(`[AI-Desk] Invalid model "gpt-4o-realtime" detected for tenant ${tenant?.slug || "unknown"}. Falling back to "gpt-4o-realtime-preview".`);
-      model = "gpt-4o-realtime-preview";
-    }
+
+// Safeguard: redirect any deprecated realtime model strings to current GA.
+// OpenAI removed the entire gpt-4o-realtime-preview family on May 12, 2026.
+// Map any stored legacy model strings to gpt-realtime so tenants who set
+// a model via Settings months ago don't get model_not_found errors.
+const DEPRECATED_REALTIME_MODELS = new Set([
+  "gpt-4o-realtime",
+  "gpt-4o-realtime-preview",
+  "gpt-4o-realtime-preview-2024-10-01",
+  "gpt-4o-realtime-preview-2024-12-17",
+  "gpt-4o-realtime-preview-2025-06-03",
+  "gpt-4o-mini-realtime-preview",
+]);
+if (DEPRECATED_REALTIME_MODELS.has(model)) {
+  console.warn(`[AI-Desk] Deprecated realtime model "${model}" detected for tenant ${tenant?.slug || "unknown"}. Forcing to "gpt-realtime".`);
+  model = "gpt-realtime";
+}
 
     const url = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`;
     openaiSocket = new WebSocket(url, {
@@ -4849,15 +4861,15 @@ sendToOpenAI(sessionUpdate);
         console.error("[AI-Desk] OpenAI error type=%s", data.type, data);
         
         // Handle invalid_model error by attempting fallback to a known good model
-        if (data.error && data.error.code === "invalid_model") {
-           console.error("[AI-Desk] Critical: Invalid model error from OpenAI. Attempting fallback to gpt-4o-realtime-preview.");
-           if (openaiSocket && openaiSocket.readyState === WebSocket.OPEN) {
-             openaiSocket.close();
-           }
-           // Force fallback to gpt-4o-realtime-preview explicitly
-           if (tenant) tenant.voice_model = "gpt-4o-realtime-preview";
-           connectOpenAI(0);
-        }
+        if (data.error && (data.error.code === "invalid_model" || data.error.code === "model_not_found")) {
+   console.error("[AI-Desk] Model error from OpenAI. Attempting fallback to gpt-realtime.");
+   if (openaiSocket && openaiSocket.readyState === WebSocket.OPEN) {
+     openaiSocket.close();
+   }
+   // Force fallback to current GA model
+   if (tenant) tenant.voice_model = "gpt-realtime";
+   connectOpenAI(0);
+}
       }
     });
 

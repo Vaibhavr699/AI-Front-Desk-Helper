@@ -3850,7 +3850,6 @@ wss.on("connection", async (twilioSocket, req) => {
   const crmLeadSentRef = { sent: false };
  const openaiModelCandidates = [...new Set([process.env.OPENAI_MODEL, "gpt-realtime", "gpt-realtime-2025-08-28"])]
   .filter(Boolean);
-    .filter(Boolean);
 
   function sendToOpenAI(payload) {
     const message = typeof payload === "string" ? payload : JSON.stringify(payload);

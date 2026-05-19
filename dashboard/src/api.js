@@ -490,6 +490,18 @@ export function submitRepQuote(leadId, totalDollars) {
   });
 }
 
+// ── Phase 8E (May 19, 2026) — DISC Feedback Capture ───────────────────────
+// Backs the Customer Intel card on LeadDetail. Owner/rep submits a verdict
+// on whether the AI's DISC classification was accurate. Modal posts directly
+// via the shared `post` helper; this helper is for reading prior feedback
+// so the card can render the locked verdict state.
+//
+// Returns { feedback: [...] } — array of feedback rows, most recent first.
+// Empty array if no feedback has been submitted yet.
+export function getDiscFeedback(leadId) {
+  return api(`/api/disc-feedback/leads/${leadId}`);
+}
+
 export function getPhoneNumbers(tenantId) {
   return api(`/api/phone-numbers?tenant_id=${tenantId}`);
 }

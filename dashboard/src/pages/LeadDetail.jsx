@@ -8,9 +8,11 @@ import {
   resumeLeadRecovery,
   updateLeadCadence,
   submitRepQuote,
+  getDiscFeedback,
 } from '../api';
 import Header from '../components/Header';
 import StatusStepper from '../components/StatusStepper';
+import DiscFeedbackModal from '../components/CallCoach/DiscFeedbackModal';
 
 // ──── Phase 8A — DISC display metadata ───────────────────────────────────────
 //
@@ -51,6 +53,10 @@ export default function LeadDetail({ tenantId }) {
   const [editingQuote, setEditingQuote] = useState(false);
   const [quoteError, setQuoteError] = useState(null);
 
+  // Phase 8E — DISC feedback state
+  const [discFeedback, setDiscFeedback] = useState([]);
+  const [discFeedbackOpen, setDiscFeedbackOpen] = useState(false);
+
   useEffect(() => {
     fetchData();
   }, [id, tenantId]);
@@ -58,12 +64,14 @@ export default function LeadDetail({ tenantId }) {
   async function fetchData() {
     try {
       setLoading(true);
-      const [leadData, historyData] = await Promise.all([
+      const [leadData, historyData, feedbackData] = await Promise.all([
         getLeadById(id),
         getLeadHistory(id),
+        getDiscFeedback(id).catch(() => ({ feedback: [] })), // tolerate 404 pre-classification
       ]);
       setLead(leadData);
       setHistory(historyData || []);
+      setDiscFeedback(feedbackData?.feedback || []);
       setEditData(leadData);
     } catch (err) {
       console.error("Failed to fetch lead data:", err);
@@ -198,6 +206,14 @@ export default function LeadDetail({ tenantId }) {
 
   const primaryMeta = discClassified ? DISC_META[discPrimary] : null;
   const secondaryMeta = discSecondary ? DISC_META[discSecondary] : null;
+
+  // ──── Phase 8E — derive feedback display state ──────────────────────────
+  // Most recent human verdict (owner or rep) on this lead's classification.
+  // AI self-grade rows are visible to know the AI flagged something, but
+  // they don't count as "human validated".
+  const latestHumanFeedback = discFeedback.find((f) => f.submitted_by_role !== 'ai');
+  const aiFlaggedThis = discFeedback.some((f) => f.submitted_by_role === 'ai');
+  const canSubmitFeedback = discClassified && !latestHumanFeedback;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -415,6 +431,92 @@ export default function LeadDetail({ tenantId }) {
                     </div>
                     {personaSignals?.reasoning && (
                       <div className="text-[11px] text-stone-500 italic leading-relaxed mt-1">{personaSignals.reasoning}</div>
+                    )}
+                  </div>
+                )}
+
+                {/* ──── Phase 8E — AI flagged banner (if AI marked uncertain) ──── */}
+                {aiFlaggedThis && !latestHumanFeedback && (
+                  <div className="mt-4 pt-4 border-t border-stone-100">
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                      <div className="flex items-start gap-2">
+                        <svg className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <div className="text-xs text-amber-900 leading-relaxed">
+                          <span className="font-bold">AI flagged this for review.</span> Confidence was borderline — your verdict will help refine future classifications.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ──── Phase 8E — Feedback affordance / prior verdict ──── */}
+                {discClassified && (
+                  <div className="mt-4 pt-4 border-t border-stone-100">
+                    {latestHumanFeedback ? (
+                      // Show prior verdict — locked, no re-submission
+                      <div className={`rounded-lg p-3 ${
+                        latestHumanFeedback.was_accurate
+                          ? 'bg-emerald-50 border border-emerald-200'
+                          : 'bg-rose-50 border border-rose-200'
+                      }`}>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`text-xs font-bold uppercase tracking-wider ${
+                            latestHumanFeedback.was_accurate ? 'text-emerald-700' : 'text-rose-700'
+                          }`}>
+                            {latestHumanFeedback.was_accurate ? '✓ Confirmed Accurate' : '✗ Corrected'}
+                          </span>
+                          <span className="text-[10px] text-stone-500 font-mono ml-auto">
+                            {new Date(latestHumanFeedback.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                        {!latestHumanFeedback.was_accurate && (
+                          <div className="text-xs text-rose-900 leading-relaxed">
+                            You said the actual type was <span className="font-bold">{latestHumanFeedback.corrected_primary}</span>
+                            {latestHumanFeedback.corrected_secondary && (
+                              <span> / {latestHumanFeedback.corrected_secondary}</span>
+                            )}
+                          </div>
+                        )}
+                        {latestHumanFeedback.reason && (
+                          <div className="text-[11px] text-stone-600 italic leading-relaxed mt-1">
+                            "{latestHumanFeedback.reason}"
+                          </div>
+                        )}
+                        {latestHumanFeedback.submitted_by_email && (
+                          <div className="text-[10px] text-stone-400 mt-1 font-mono">
+                            — {latestHumanFeedback.submitted_by_email}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      // No prior verdict — show feedback prompt
+                      <div>
+                        <div className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">Was this accurate?</div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={async () => {
+                              try {
+                                await import('../api').then((m) => m.post(`/api/disc-feedback/leads/${id}`, { was_accurate: true }));
+                                fetchData();
+                              } catch (err) {
+                                console.error('Quick feedback failed:', err);
+                                alert('Failed to submit feedback');
+                              }
+                            }}
+                            className="flex-1 py-2 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-xs font-bold text-emerald-700 uppercase tracking-wider transition-colors"
+                          >
+                            ✓ Yes
+                          </button>
+                          <button
+                            onClick={() => setDiscFeedbackOpen(true)}
+                            className="flex-1 py-2 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-xs font-bold text-rose-700 uppercase tracking-wider transition-colors"
+                          >
+                            ✗ No, correct it
+                          </button>
+                        </div>
+                      </div>
                     )}
                   </div>
                 )}
@@ -818,6 +920,21 @@ export default function LeadDetail({ tenantId }) {
           </div>
         </div>
       </main>
+
+      {/* Phase 8E — DISC correction modal */}
+      {discClassified && (
+        <DiscFeedbackModal
+          leadId={id}
+          classified={{
+            primary: discPrimary,
+            secondary: discSecondary,
+            confidence: discConfidence,
+          }}
+          open={discFeedbackOpen}
+          onClose={() => setDiscFeedbackOpen(false)}
+          onSubmitted={() => fetchData()}
+        />
+      )}
     </div>
   );
 }

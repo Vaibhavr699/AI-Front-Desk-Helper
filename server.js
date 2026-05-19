@@ -4922,7 +4922,11 @@ sendToOpenAI(sessionUpdate);
       }
 
       // --- Lead/CRM Integration ---
-     from = msg.start?.customParameters?.From || msg.start?.from || null;
+     // Preserve URL-extracted `from` if msg.start doesn't carry it forward.
+// Twilio Stream doesn't put From in msg.start.customParameters unless you
+// add <Parameter> elements to the TwiML, which we don't. URL query string
+// is the reliable source (set in buildTenantWsUrl).
+from = msg.start?.customParameters?.From || msg.start?.from || from || null;
       if (from && tenant) {
         leadsService.getOrCreateLead(tenant.id, from, null, leadSource, 'voice').then(lead => {
           if (lead) {

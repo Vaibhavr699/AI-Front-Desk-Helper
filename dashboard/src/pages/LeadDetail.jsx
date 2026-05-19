@@ -12,6 +12,29 @@ import {
 import Header from '../components/Header';
 import StatusStepper from '../components/StatusStepper';
 
+// ──── Phase 8A — DISC display metadata ───────────────────────────────────────
+//
+// 4-quadrant DISC labels with color tokens matching existing card aesthetics
+// (Recovery=amber, Compliance=blue, Widget=indigo, Variance=blue/amber,
+//  Rep Quote=emerald). DISC gets its own family — purple/rose/teal/slate —
+// so it's visually distinct from coaching/recovery/quote concerns.
+const DISC_META = {
+  D: { label: 'Dominant',      tagline: 'Direct, results-focused, fast decisions',                      bg: 'bg-rose-50',    border: 'border-rose-200',   text: 'text-rose-900',   badge: 'bg-rose-100 text-rose-700',     bar: 'bg-rose-500' },
+  I: { label: 'Influencer',    tagline: 'Relational, enthusiastic, sells the vision',                  bg: 'bg-amber-50',   border: 'border-amber-200',  text: 'text-amber-900',  badge: 'bg-amber-100 text-amber-700',   bar: 'bg-amber-500' },
+  S: { label: 'Steady',        tagline: 'Supportive, patient, consensus-driven',                       bg: 'bg-emerald-50', border: 'border-emerald-200',text: 'text-emerald-900',badge: 'bg-emerald-100 text-emerald-700',bar: 'bg-emerald-500' },
+  C: { label: 'Conscientious', tagline: 'Analytical, precise, needs documentation',                    bg: 'bg-indigo-50',  border: 'border-indigo-200', text: 'text-indigo-900', badge: 'bg-indigo-100 text-indigo-700', bar: 'bg-indigo-500' },
+};
+
+const PERSONA_LABELS = {
+  researcher: 'The Researcher',
+  protector: 'The Protector',
+  status_seeker: 'The Status Seeker',
+  pragmatist: 'The Pragmatist',
+  negotiator: 'The Negotiator',
+  collaborator: 'The Collaborator',
+  unknown: 'Unclassified',
+};
+
 export default function LeadDetail({ tenantId }) {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -146,6 +169,36 @@ export default function LeadDetail({ tenantId }) {
   const showQuoteInput = !hasRepQuote || editingQuote;
   const variance = lead.variance_coaching;
 
+  // ──── Phase 8A — Customer Intel display state ──────────────────────────
+  //
+  // Show the card whenever we have ANY signal — DISC OR persona. Within
+  // the card, gracefully degrade based on what's classified.
+  //
+  // Three display states for DISC:
+  //   1. classified (primary in D/I/S/C, no skip reason)
+  //   2. low-confidence (primary='unknown' with skip_reason='low_confidence_classification')
+  //   3. skipped (primary='unknown' with other skip_reason — not enough speech)
+  //
+  // The persona has its own classified/unclassified state independent of DISC.
+  const discPrimary = lead.disc_primary;
+  const discSecondary = lead.disc_secondary;
+  const discScores = lead.disc_scores; // { D, I, S, C } summing to 1.0
+  const discConfidence = lead.disc_confidence;
+  const discSignals = lead.disc_signals;
+  const discClassified = discPrimary && discPrimary !== 'unknown' && DISC_META[discPrimary];
+  const discLowConf = discPrimary === 'unknown' && discScores; // we have scores but conf was low
+
+  const personaKey = lead.buyer_persona;
+  const personaConfidence = lead.persona_confidence;
+  const personaSignals = lead.persona_signals;
+  const personaClassified = personaKey && personaKey !== 'unknown';
+
+  // Show card if EITHER classified, OR we at least have skip-reason context to display
+  const showIntelCard = discClassified || discLowConf || personaClassified || lead.disc_detected_at || lead.persona_detected_at;
+
+  const primaryMeta = discClassified ? DISC_META[discPrimary] : null;
+  const secondaryMeta = discSecondary ? DISC_META[discSecondary] : null;
+
   return (
     <div className="min-h-screen flex flex-col">
       <main className="flex-1 max-w-full w-full mx-auto">
@@ -244,6 +297,136 @@ export default function LeadDetail({ tenantId }) {
                 </div>
               </div>
             </div>
+
+            {/* ═══ Phase 8A — Customer Intel (DISC + Persona) ═══ */}
+            {showIntelCard && (
+              <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-6">
+                <div className="flex items-center justify-between mb-5">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 bg-purple-100 rounded-lg text-purple-600">
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    </div>
+                    <h3 className="font-bold text-stone-900 uppercase text-xs tracking-widest">Customer Intel</h3>
+                  </div>
+                  <span className="text-[9px] font-bold text-purple-600 bg-purple-50 px-2 py-0.5 rounded uppercase tracking-widest">v0 · learning</span>
+                </div>
+
+                {/* ──── DISC Primary ──── */}
+                {discClassified ? (
+                  <div className={`${primaryMeta.bg} ${primaryMeta.border} border rounded-xl p-4 mb-4`}>
+                    <div className="flex items-baseline gap-2 mb-1">
+                      <span className={`text-3xl font-black ${primaryMeta.text} tracking-tight`}>
+                        {discPrimary}
+                        {secondaryMeta && (
+                          <span className="text-lg font-bold text-stone-400 ml-1">/{discSecondary}</span>
+                        )}
+                      </span>
+                      <span className={`text-sm font-bold ${primaryMeta.text}`}>{primaryMeta.label}</span>
+                      {secondaryMeta && (
+                        <span className="text-[10px] font-semibold text-stone-500">— with {secondaryMeta.label} traits</span>
+                      )}
+                    </div>
+                    <div className={`text-xs ${primaryMeta.text} opacity-80 leading-relaxed`}>
+                      {primaryMeta.tagline}
+                    </div>
+                    {typeof discConfidence === 'number' && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="text-[10px] font-bold text-stone-400 uppercase tracking-widest">Confidence</span>
+                        <span className={`text-[10px] font-mono font-bold ${
+                          discConfidence >= 0.7 ? 'text-emerald-700' :
+                          discConfidence >= 0.5 ? 'text-amber-700' :
+                          'text-rose-700'
+                        }`}>{(discConfidence * 100).toFixed(0)}%</span>
+                        {discConfidence < 0.5 && (
+                          <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded uppercase">Low — verify in person</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : discLowConf ? (
+                  <div className="bg-stone-50 border border-stone-200 rounded-xl p-4 mb-4">
+                    <div className="text-sm font-bold text-stone-700 mb-1">Mixed signals</div>
+                    <div className="text-xs text-stone-500 leading-relaxed">
+                      Customer showed traits across multiple styles — not enough dominance in one to commit. See score breakdown below.
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-stone-50 border border-stone-200 rounded-xl p-4 mb-4">
+                    <div className="text-sm font-bold text-stone-700 mb-1">Not enough customer speech</div>
+                    <div className="text-xs text-stone-500 leading-relaxed">
+                      DISC classification needs at least 2 customer turns. This call was too short or one-sided.
+                    </div>
+                  </div>
+                )}
+
+                {/* ──── DISC Score Breakdown (always shown when scores exist) ──── */}
+                {discScores && (
+                  <div className="mb-4">
+                    <div className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">DISC Profile Breakdown</div>
+                    <div className="space-y-1.5">
+                      {['D', 'I', 'S', 'C'].map((q) => {
+                        const pct = Math.round((discScores[q] || 0) * 100);
+                        const meta = DISC_META[q];
+                        const isPrimary = q === discPrimary;
+                        const isSecondary = q === discSecondary;
+                        return (
+                          <div key={q} className="flex items-center gap-2">
+                            <span className={`text-[10px] font-black w-3 ${isPrimary ? meta.text : 'text-stone-400'}`}>{q}</span>
+                            <div className="flex-1 h-2 bg-stone-100 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full ${meta.bar} transition-all`}
+                                style={{ width: `${pct}%`, opacity: isPrimary ? 1 : isSecondary ? 0.7 : 0.35 }}
+                              />
+                            </div>
+                            <span className={`text-[10px] font-mono w-8 text-right ${isPrimary ? 'font-bold text-stone-700' : 'text-stone-400'}`}>{pct}%</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* ──── DISC Cues ──── */}
+                {discSignals?.primary_cues?.length > 0 && (
+                  <div className="mb-4">
+                    <div className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">Key Signals</div>
+                    <ul className="space-y-1">
+                      {discSignals.primary_cues.slice(0, 3).map((cue, idx) => (
+                        <li key={idx} className="text-xs text-stone-600 leading-relaxed flex gap-2">
+                          <span className="text-stone-400 flex-shrink-0 mt-0.5">•</span>
+                          <span>{cue}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* ──── Persona Cross-Reference (smaller, Phase 6 data) ──── */}
+                {personaClassified && (
+                  <div className="pt-4 border-t border-stone-100">
+                    <div className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">Cross-Reference (Persona)</div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-stone-700">{PERSONA_LABELS[personaKey] || personaKey}</span>
+                      {typeof personaConfidence === 'number' && (
+                        <span className="text-[10px] font-mono text-stone-400">{(personaConfidence * 100).toFixed(0)}% conf</span>
+                      )}
+                    </div>
+                    {personaSignals?.reasoning && (
+                      <div className="text-[11px] text-stone-500 italic leading-relaxed mt-1">{personaSignals.reasoning}</div>
+                    )}
+                  </div>
+                )}
+
+                {/* ──── Footer: timestamp ──── */}
+                {lead.disc_detected_at && (
+                  <div className="text-[10px] text-stone-400 font-mono mt-4 pt-3 border-t border-stone-100">
+                    AI-classified {new Date(lead.disc_detected_at).toLocaleString()}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Recovery Section (Phase 10) */}
             <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-6">

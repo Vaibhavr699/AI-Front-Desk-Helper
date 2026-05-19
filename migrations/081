@@ -1,0 +1,15 @@
+ALTER TABLE coaching_conversations
+  ADD COLUMN disc_primary text,         -- 'D' | 'I' | 'S' | 'C' | 'unknown'
+  ADD COLUMN disc_secondary text,       -- same enum or null
+  ADD COLUMN disc_scores jsonb,         -- {D: 0.0-1.0, I: 0.0-1.0, S: 0.0-1.0, C: 0.0-1.0}
+  ADD COLUMN disc_confidence numeric(3,2),
+  ADD COLUMN disc_signals jsonb,        -- {primary_cues, secondary_cues, reasoning}
+  ADD COLUMN disc_skip_reason text;
+
+ALTER TABLE leads
+  ADD COLUMN disc_primary text,
+  ADD COLUMN disc_secondary text,
+  ADD COLUMN disc_scores jsonb,
+  ADD COLUMN disc_confidence numeric(3,2),
+  ADD COLUMN disc_signals jsonb,
+  ADD COLUMN disc_detected_at timestamptz;

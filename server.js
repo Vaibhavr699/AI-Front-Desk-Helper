@@ -544,6 +544,7 @@ app.use("/api/admin/estimator", authMiddleware, requireSuperAdmin, require("./ro
 app.use("/api/team", authMiddleware, require("./routes/team"));
 app.use("/api/audit-logs", authMiddleware, auditLogsRouter);
 app.use("/api/call-coach", authMiddleware, require("./routes/callCoach"));
+app.use("/api/disc-feedback", authMiddleware, require("./routes/discFeedback"));
 app.use("/api/franchisee", require("./routes/franchisee"));
 app.use('/api/reseller-public', require('./routes/reseller-public'));
 app.use('/api/reseller/usage', authMiddleware, require('./routes/resellerUsage'));

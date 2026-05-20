@@ -2618,6 +2618,8 @@ export default function Settings({ tenantId }) {
                         onChange={(e) => handleUpdateForm("outbound_voice", e.target.value)}
                         className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-blue-500/5 transition-all outline-none font-bold text-xs appearance-none"
                       >
+                         <option value="cedar">Cedar (recommended — most natural)</option>
+                         <option value="marin">Marin (recommended — most natural)</option>
                          <option value="ash">Ash (Male - Deep)</option>
                          <option value="echo">Echo (Male - Calm)</option>
                          <option value="alloy">Alloy (Male - Neutral)</option>

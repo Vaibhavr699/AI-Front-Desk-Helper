@@ -370,28 +370,6 @@ export async function cancelBooking(id, reason = null) {
   });
 }
 
-export async function getTechnicians(tenantId) {
-  return api(`/api/technicians?tenant_id=${tenantId}`);
-}
-
-export async function createTechnician(tenantId, data) {
-  return api(`/api/technicians?tenant_id=${tenantId}`, {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
-}
-
-export async function updateTechnician(id, data) {
-  return api(`/api/technicians/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(data),
-  });
-}
-
-export async function deleteTechnician(id) {
-  return api(`/api/technicians/${id}`, { method: "DELETE" });
-}
-
 export function getFollowups(tenantId) {
   return api(`/api/followups?tenant_id=${tenantId}`);
 }
@@ -708,6 +686,14 @@ export function updateLeadCadence(leadId, cadence) {
     method: "PATCH",
     body: JSON.stringify({ cadence }),
   });
+}
+
+// ── Phase 8B (May 20, 2026) — assign an estimator to a lead's booking ─────
+// Writes bookings.technician_id for the lead's most recent active booking.
+// The assigned technician receives the pre-visit briefing SMS.
+// technicianId = a technicians.id, or null to unassign.
+export function assignLeadTech(leadId, technicianId) {
+  return patch(`/api/leads/${leadId}/assign-tech`, { technician_id: technicianId });
 }
 
 // ── Franchise zee subscribe (Apr 29, 2026) ────────────────────────────────

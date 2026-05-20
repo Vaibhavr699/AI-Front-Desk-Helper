@@ -763,7 +763,15 @@ router.get("/metrics", async (req, res) => {
             NULLIF(AVG(b.actual_revenue_cents), 0),
             AVG(b.estimated_revenue_cents)
           ) as avg_job_value,
-          COALESCE(AVG(EXTRACT(EPOCH FROM (b.created_at - l.created_at))/60), 0) as avg_time_to_book,
+          COALESCE(
+            PERCENTILE_CONT(0.5) WITHIN GROUP (
+              ORDER BY EXTRACT(EPOCH FROM (b.created_at - l.created_at)) / 60
+            ) FILTER (
+              WHERE b.created_at >= l.created_at
+                AND EXTRACT(EPOCH FROM (b.created_at - l.created_at)) / 60 BETWEEN 0 AND 4320
+            ),
+            0
+          ) as avg_time_to_book,
           (SELECT COUNT(*) FROM estimate_recoveries WHERE tenant_id = ANY($1) AND status = 'converted' AND created_at > $2) as recovered_count,
           (SELECT COUNT(*) FROM estimate_recoveries WHERE tenant_id = ANY($1) AND created_at > $2) as total_recoveries
          FROM bookings b
@@ -1090,7 +1098,7 @@ router.get("/metrics", async (req, res) => {
         })),
         ops: {
           avg_job_value: avgJobValue,
-          avg_time_to_book: Math.round(parseInt(opsStats.rows[0]?.avg_time_to_book || 0, 10)),
+          avg_time_to_book: Math.round(parseFloat(opsStats.rows[0]?.avg_time_to_book || 0)),
           recovered_count: recoveredCount,
           followup_conv: followupConv,
         }

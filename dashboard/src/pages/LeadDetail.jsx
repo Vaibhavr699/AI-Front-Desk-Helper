@@ -13,7 +13,7 @@ import {
 } from '../api';
 import Header from '../components/Header';
 import StatusStepper from '../components/StatusStepper';
-import DiscFeedbackModal from '../components/coach/DiscFeedbackModal';
+import DiscFeedbackModal from '../components/CallCoach/DiscFeedbackModal';
 
 // ──── Phase 8A — DISC display metadata ───────────────────────────────────────
 //

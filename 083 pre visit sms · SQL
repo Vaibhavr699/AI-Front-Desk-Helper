@@ -1,0 +1,59 @@
+-- ============================================================================
+-- Migration 083 — Phase 8B Pre-Visit Briefing SMS
+-- Date: May 20, 2026
+--
+-- Sends an SMS briefing to the rep/owner ~1 hour before each booked
+-- appointment. The briefing includes the customer's DISC profile,
+-- persona classification, project type, lead value, and key behavioral
+-- signals from the conversation that produced the booking.
+--
+-- Architecture:
+--   - Cron runs every 15 min, looks for bookings 45-75min out with
+--     pre_visit_sms_sent_at IS NULL
+--   - Per-booking GPT-4o composer reads DISC from coaching_conversations
+--   - SMS sent to tenant.pre_visit_sms_recipient_phone (Option C) — if
+--     NULL, falls back to tenant's account-level owner phone
+--   - Tenants opt out by setting pre_visit_sms_enabled=false (default true)
+--
+-- Why on bookings (not a new table):
+--   The briefing is a property of an appointment, not a standalone entity.
+--   Idempotency naturally lives next to the booking row. No need for a
+--   separate pre_visit_briefings table — it would just mirror bookings 1:1.
+--
+-- Why store the body:
+--   Audit/debugging. If a rep complains "the SMS said the wrong thing,"
+--   we need to see exactly what GPT-4o composed. Also lets the dashboard
+--   later render "what we sent to the rep" on the lead timeline (8D).
+-- ============================================================================
+
+BEGIN;
+
+-- ─── Booking-level columns ────────────────────────────────────────────
+-- Idempotency: cron skips bookings where pre_visit_sms_sent_at IS NOT NULL.
+ALTER TABLE bookings
+  ADD COLUMN IF NOT EXISTS pre_visit_sms_sent_at       timestamptz,
+  ADD COLUMN IF NOT EXISTS pre_visit_sms_body          text,
+  ADD COLUMN IF NOT EXISTS pre_visit_sms_recipient     text;
+
+-- ─── Tenant-level settings ────────────────────────────────────────────
+-- pre_visit_sms_enabled defaults TRUE so existing tenants get the feature
+-- automatically. Disabling requires explicit opt-out in Settings.
+--
+-- pre_visit_sms_recipient_phone NULLABLE — if NULL, the cron falls back
+-- to the tenant's owner phone (looked up via dashboard_users where role
+-- is owner, ordered by created_at).
+ALTER TABLE tenants
+  ADD COLUMN IF NOT EXISTS pre_visit_sms_enabled        boolean NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS pre_visit_sms_recipient_phone text;
+
+-- ─── Index for the cron sweep ─────────────────────────────────────────
+-- The cron query scans bookings within a 30-minute window every 15 min.
+-- Partial index on un-sent + non-cancelled bookings keeps it cheap as
+-- the bookings table grows. Without this, the sweep does a full scan
+-- of bookings on every tick.
+CREATE INDEX IF NOT EXISTS idx_bookings_pre_visit_sms_pending
+  ON bookings (preferred_date, appointment_time)
+  WHERE pre_visit_sms_sent_at IS NULL
+    AND status != 'Cancelled';
+
+COMMIT;

@@ -69,7 +69,7 @@ const WINDOW_MAX_AHEAD = 75;
  *
  * Priority:
  *   0. The booking's assigned technician's phone (Phase 8B tech routing).
- *      bookings.technician_id → dashboard_users.phone. This is the whole
+ *      bookings.technician_id → technicians.phone. This is the whole
  *      point of tech assignment: the briefing follows whoever is actually
  *      doing the visit.
  *   1. tenant.pre_visit_sms_recipient_phone (Option C explicit setting)
@@ -84,10 +84,12 @@ const WINDOW_MAX_AHEAD = 75;
  */
 async function resolveRecipientPhone(tenant, booking) {
   // Path 0: assigned technician's phone (Phase 8B — May 20, 2026)
+  // bookings.technician_id FKs to the `technicians` table — a person who
+  // does estimate visits, separate from dashboard login accounts.
   if (booking?.technician_id) {
     try {
       const techRes = await db.query(
-        `SELECT phone FROM dashboard_users
+        `SELECT phone FROM technicians
           WHERE id = $1
             AND phone IS NOT NULL
             AND phone != ''

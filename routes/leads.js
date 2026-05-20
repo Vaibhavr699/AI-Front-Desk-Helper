@@ -120,22 +120,24 @@ async function loadDiscFields(leadId) {
   }
 }
 
-/ ─────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────
 // Phase 8B (May 20, 2026) — tech assignment.
 //
 // Hoists onto the lead response:
-//   - assigned_technician      : { id, email, phone } | null
-//   - assignable_technicians   : [{ id, email, role, phone }]
+//   - assigned_technician      : { id, name, email, phone } | null
+//   - assignable_technicians   : [{ id, name, email, phone }]
 //   - assignment_booking_id    : the booking the assignment lives on | null
 //
-// The assignment lives on bookings.technician_id. A lead can have several
-// bookings — we use the most recent NON-CANCELLED one. If the lead has no
-// such booking, assignment_booking_id is null and the dashboard disables
-// the control.
+// The assignment lives on bookings.technician_id, which is a FK to the
+// `technicians` table (NOT dashboard_users — technicians are a separate
+// population: people who do estimate visits, who may not have a dashboard
+// login). A lead can have several bookings — we use the most recent
+// NON-CANCELLED one. If the lead has no such booking, assignment_booking_id
+// is null and the dashboard disables the control.
 //
-// assignable_technicians is every dashboard_user on the lead's tenant —
-// any of them can be the estimator for a visit. Each carries `phone` so
-// the dashboard can warn when a chosen tech has no number on file.
+// assignable_technicians is every technician on the lead's tenant. Each
+// carries `phone` so the dashboard can warn when a chosen tech has no
+// number on file (the pre-visit briefing SMS needs it).
 // ─────────────────────────────────────────────────────────────────────
 async function loadAssignmentFields(lead) {
   try {
@@ -150,32 +152,29 @@ async function loadAssignmentFields(lead) {
       [lead.id]
     );
     const booking = bookingRes.rows[0] || null;
- 
+
     // 2. Assigned technician detail (if a booking exists and has one).
     let assignedTechnician = null;
     if (booking?.technician_id) {
       const techRes = await db.query(
-        `SELECT id, email, phone FROM dashboard_users WHERE id = $1 LIMIT 1`,
+        `SELECT id, name, email, phone FROM technicians WHERE id = $1 LIMIT 1`,
         [booking.technician_id]
       );
       assignedTechnician = techRes.rows[0] || null;
     }
- 
-    // 3. All assignable team members on the lead's tenant.
-    const teamRes = await db.query(
-      `SELECT id, email, role, phone
-         FROM dashboard_users
+
+    // 3. All assignable technicians on the lead's tenant.
+    const techsRes = await db.query(
+      `SELECT id, name, email, phone
+         FROM technicians
         WHERE tenant_id = $1
-        ORDER BY
-          CASE WHEN role IN ('owner','admin') THEN 1
-               WHEN role = 'manager' THEN 2 ELSE 3 END,
-          email ASC`,
+        ORDER BY name ASC`,
       [lead.tenant_id]
     );
- 
+
     return {
       assigned_technician: assignedTechnician,
-      assignable_technicians: teamRes.rows,
+      assignable_technicians: techsRes.rows,
       assignment_booking_id: booking?.id || null,
     };
   } catch (err) {
@@ -301,6 +300,11 @@ router.get("/:id", async (req, res) => {
       return res.status(403).json({ error: "Forbidden" });
     }
 
+    // Phase 7 E — merge in widget estimate + rep quote + variance coaching
+    // columns regardless of what leadsService.getLeadById selected.
+    // Phase 8A — also hoist DISC + persona from coaching_conversations
+    // so LeadDetail.jsx can render the Customer Intel card.
+    // Run both in parallel — they're independent table queries.
     const [phase7eFields, discFields, assignmentFields] = await Promise.all([
       loadPhase7eFields(lead.id),
       loadDiscFields(lead.id),
@@ -394,6 +398,20 @@ router.patch("/:id/do-not-contact", async (req, res) => {
   }
 });
 
+/**
+ * PATCH /api/leads/:id/assign-tech
+ *
+ * Phase 8B (May 20, 2026) — assign (or clear) the estimator for a lead's
+ * most recent non-cancelled booking. The assigned technician receives the
+ * pre-visit briefing SMS instead of the tenant-level recipient.
+ *
+ * Body: { technician_id: string | null }
+ *   - technician_id = a technicians.id on the same tenant → assign
+ *   - technician_id = null                                → unassign
+ *
+ * Returns the enriched lead (same shape as GET /:id) so the dashboard can
+ * refresh in place.
+ */
 router.patch("/:id/assign-tech", async (req, res) => {
   try {
     const lead = await leadsService.getLeadById(req.params.id);
@@ -401,14 +419,14 @@ router.patch("/:id/assign-tech", async (req, res) => {
     if (!(await checkLeadAccess(lead, req))) {
       return res.status(403).json({ error: "Forbidden" });
     }
- 
+
     const { technician_id } = req.body || {};
     if (technician_id !== null && typeof technician_id !== "string") {
       return res.status(400).json({
-        error: "Body must include 'technician_id' as a string (the team member's id) or null to unassign",
+        error: "Body must include 'technician_id' as a string (the technician's id) or null to unassign",
       });
     }
- 
+
     // The lead's most recent non-cancelled booking is what we assign on.
     const bookingRes = await db.query(
       `SELECT id FROM bookings
@@ -424,12 +442,12 @@ router.patch("/:id/assign-tech", async (req, res) => {
         code: "NO_ACTIVE_BOOKING",
       });
     }
- 
+
     // If assigning (not clearing), validate the technician belongs to the
     // lead's tenant — prevents cross-tenant assignment.
     if (technician_id) {
       const techRes = await db.query(
-        `SELECT id, email, phone FROM dashboard_users
+        `SELECT id, name, email, phone FROM technicians
           WHERE id = $1 AND tenant_id = $2
           LIMIT 1`,
         [technician_id, lead.tenant_id]
@@ -441,13 +459,13 @@ router.patch("/:id/assign-tech", async (req, res) => {
         });
       }
     }
- 
+
     // Write the assignment.
     await db.query(
       `UPDATE bookings SET technician_id = $1 WHERE id = $2`,
       [technician_id, booking.id]
     );
- 
+
     await logAction({
       tenant_id: String(lead.tenant_id),
       user_id: req.user?.sub ? String(req.user.sub) : null,
@@ -462,7 +480,7 @@ router.patch("/:id/assign-tech", async (req, res) => {
       ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
       user_agent: req.get("user-agent") || null,
     }).catch(() => {});
- 
+
     // Return the enriched lead so the dashboard refreshes in place.
     const [phase7eFields, discFields, assignmentFields] = await Promise.all([
       loadPhase7eFields(lead.id),

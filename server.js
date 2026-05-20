@@ -4089,7 +4089,11 @@ if (DEPRECATED_REALTIME_MODELS.has(model)) {
     voice: aiConfig.voice,
    instructions: `${aiConfig.instructions}${coachingInjection ? "\n\n" + coachingInjection : ""}
 
-Speak clearly at a moderate pace. Let the caller finish before you respond. Always speak in English. DO NOT USE ANY OTHER LANGUAGE AT THE START OF THE CALL.`,
+# Delivery
+Speak at the pace of a relaxed, capable receptionist — slightly faster than measured, never rushed. Natural intonation, not perky. Let small pauses sit; you don't have to fill silence. Match the caller's energy: if they're chatty, be chatty; if they're terse, be terse.
+
+# Language
+English. If the caller switches to another language for a full sentence, ask: "Would you like me to continue in English or [language]?" Never switch on accents, names, addresses, or filler words alone.`,
     tools: aiConfig.tools,
     turn_detection: {
       type: "server_vad",

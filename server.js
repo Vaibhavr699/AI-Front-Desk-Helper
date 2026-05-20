@@ -3512,6 +3512,7 @@ wss.on("connection", async (twilioSocket, req) => {
   const parsedUrl = new URL(rawUrl, "http://localhost");
   const pathname = parsedUrl.pathname || "";
   const q = Object.fromEntries(parsedUrl.searchParams.entries());
+  console.log("[AI-Desk DEBUG] WS connect rawUrl=%s pathname=%s q=%j", rawUrl, pathname, q);
 
   let isNurturing = q.type === "nurturing";
   const recoveryId = q.recoveryId;

@@ -1287,7 +1287,7 @@ export default function Settings({ tenantId }) {
       estimator_enabled: form.estimator_enabled,
       estimator_pop_enabled: form.estimator_pop_enabled,
       cost_region: form.cost_region || null,
-      cost_custom_percentage: form.cost_region === "custom" ? form.cost_custom_percentage : null
+      cost_custom_percentage: form.cost_region === "custom" ? form.cost_custom_percentage : null,
       pre_visit_sms_enabled: form.pre_visit_sms_enabled,
       pre_visit_sms_recipient_phone: form.pre_visit_sms_recipient_phone.trim() || null
     };

@@ -15,6 +15,7 @@ const emailService = require("../services/email");
 const nurturingService = require("../services/nurturing");
 const notificationsService = require("../services/notifications");
 const { logAction } = require("../lib/auditLogger");
+const { buildCustomerIntel } = require("../lib/customerIntel");
  const locationBilling = require("../lib/locationBilling");
 const { buildTenantInsert } = require("../lib/tenantInsert");
 const {
@@ -989,6 +990,17 @@ router.get("/metrics", async (req, res) => {
     const rawAvgJobValue = parseFloat(opsStats.rows[0]?.avg_job_value || 0);
     const avgJobValue    = Math.round(rawAvgJobValue);
 
+   
+    // Phase 8D — Customer Intel (DISC × conversion). Always all-time,
+    // tenant-scoped to the resolved targets. Fails soft to null so a
+    // query error here never breaks the rest of the metrics response.
+    let customer_intel = null;
+    try {
+      customer_intel = await buildCustomerIntel(db, tenantIds);
+    } catch (ciErr) {
+      console.error("[Metrics] buildCustomerIntel failed:", ciErr.message);
+    }
+
     res.json({
       period: "30d",
       isRollup,
@@ -1100,6 +1112,7 @@ router.get("/metrics", async (req, res) => {
         emails_sent: parseInt(nurturingRow.emails_sent, 10),
         referrals_generated: parseInt(nurturingRow.referrals_generated, 10)
       },
+      customer_intel,
     });
   } catch (e) {
     console.error(e);

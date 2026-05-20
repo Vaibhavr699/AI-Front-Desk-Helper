@@ -9,6 +9,7 @@ const followUp = require("./followUp");
 const calendar = require("../calendar");
 const notificationService = require("./notifications");
 const { getLast10Digits, normalizeE164Phone } = require("../lib/phone");
+const leadsService = require("./leads");
 
 /** Normalize and validate booking payload from AI (handles camelCase, extra fields, bad dates). */
 function normalizeBookingData(data, isUpdate = false) {
@@ -119,6 +120,77 @@ async function createBooking(tenantId, callId, data, leadId = null, leadSource =
   }
   const booking = res.rows[0];
   console.log("[AI-Desk] Booking saved id=%s tenantId=%s contact=%s", booking.id, tenantId, norm.contact_phone);
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Belt-and-suspenders lead linking (May 20, 2026)
+  //
+  // The WebSocket handler's lead-linking path is brittle — the `from`
+  // variable sometimes stays null at the moment the start event fires
+  // (Twilio Media Streams handshake quirk), so server.js calls
+  // createBooking with leadId=null. The result: booking has no lead_id,
+  // no row appears on the Leads page for the customer, DISC profile +
+  // persona never attach to a lead, and the existing lead (if there is
+  // one) doesn't get updated.
+  //
+  // Fix: at booking time, the contact_phone is ALWAYS populated (the
+  // book_appointment tool requires it). Use that to find or create a
+  // lead, then link the booking + call + lead together. This makes
+  // booking → lead linkage independent of whatever state the WS handler
+  // is in.
+  //
+  // If a leadId was already passed in (the happy path), this block
+  // skips. If not, we find/create + link + update.
+  // ─────────────────────────────────────────────────────────────────────
+  let finalLeadId = booking.lead_id || leadId || null;
+  if (!finalLeadId && norm.contact_phone) {
+    try {
+      const lead = await leadsService.getOrCreateLead(
+        tenantId,
+        norm.contact_phone,
+        norm.contact_name,
+        leadSource || 'voice_booking',
+        'voice'
+      );
+      if (lead) {
+        finalLeadId = lead.id;
+        console.log("[AI-Desk] Belt-and-suspenders lead-link bookingId=%s leadId=%s phone=%s",
+          booking.id, lead.id, norm.contact_phone);
+
+        // Link the booking row back to the lead
+        await db.query(
+          "UPDATE bookings SET lead_id = $1 WHERE id = $2",
+          [lead.id, booking.id]
+        );
+        booking.lead_id = lead.id;
+
+        // Update lead with booking info + flip status to Booked
+        await leadsService.updateLeadInfo(lead.id, {
+          name:         norm.contact_name,
+          email:        norm.contact_email,
+          address:      norm.address,
+          project_type: norm.scope || norm.job_type,
+          notes:        norm.notes,
+        }).catch((e) => console.error("[AI-Desk] Lead info update (post-booking) failed:", e.message));
+
+        await leadsService.updateLeadStatus(lead.id, 'Booked')
+          .catch((e) => console.error("[AI-Desk] Lead status flip (post-booking) failed:", e.message));
+
+        // Link the call row to the lead as well — so the dashboard Call
+        // detail page shows the lead linkage and so DISC analysis (which
+        // runs against calls.lead_id) properly attaches downstream.
+        if (callId) {
+          await db.query(
+            "UPDATE calls SET lead_id = $1 WHERE id = $2 AND lead_id IS NULL",
+            [lead.id, callId]
+          ).catch((e) => console.error("[AI-Desk] Call lead-link (post-booking) failed:", e.message));
+        }
+      }
+    } catch (e) {
+      // Never fail the booking on lead-link error — log and continue.
+      console.error("[AI-Desk] Belt-and-suspenders lead linking crashed bookingId=%s err=%s",
+        booking.id, e.message);
+    }
+  }
 
   // 📅 New booking notification (non-blocking — must never fail the booking)
   notificationService.notifyNewBooking(tenantId, {

@@ -9,10 +9,11 @@ import {
   updateLeadCadence,
   submitRepQuote,
   getDiscFeedback,
+  assignLeadTech,
 } from '../api';
 import Header from '../components/Header';
 import StatusStepper from '../components/StatusStepper';
-import DiscFeedbackModal from '../components/CallCoach/DiscFeedbackModal';
+import DiscFeedbackModal from '../components/coach/DiscFeedbackModal';
 
 // ──── Phase 8A — DISC display metadata ───────────────────────────────────────
 //
@@ -56,6 +57,9 @@ export default function LeadDetail({ tenantId }) {
   // Phase 8E — DISC feedback state
   const [discFeedback, setDiscFeedback] = useState([]);
   const [discFeedbackOpen, setDiscFeedbackOpen] = useState(false);
+
+  // Phase 8B — tech assignment state
+  const [assigningTech, setAssigningTech] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -120,6 +124,22 @@ export default function LeadDetail({ tenantId }) {
       alert("Failed to update cadence");
     } finally {
       setRecoveryBusy(false);
+    }
+  }
+
+  // ──── Phase 8B — assign / unassign the estimator for this lead ────────
+  async function handleAssignTech(e) {
+    if (assigningTech) return;
+    const value = e.target.value || null; // "" → null (unassign)
+    setAssigningTech(true);
+    try {
+      const updated = await assignLeadTech(id, value);
+      setLead(updated);
+    } catch (err) {
+      console.error("Tech assignment failed:", err);
+      alert(err.message || "Failed to assign estimator");
+    } finally {
+      setAssigningTech(false);
     }
   }
 
@@ -529,6 +549,71 @@ export default function LeadDetail({ tenantId }) {
                 )}
               </div>
             )}
+
+            {/* ═══ Phase 8B — Assigned Estimator ═══ */}
+            <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-6">
+              <div className="flex items-center gap-2 mb-5">
+                <div className="p-1.5 bg-teal-100 rounded-lg text-teal-600">
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-1.13a4 4 0 100-8 4 4 0 000 8z" />
+                  </svg>
+                </div>
+                <h3 className="font-bold text-stone-900 uppercase text-xs tracking-widest">Assigned Estimator</h3>
+              </div>
+
+              {lead.assignment_booking_id ? (
+                <div className="space-y-3">
+                  <select
+                    value={lead.assigned_technician?.id || ''}
+                    onChange={handleAssignTech}
+                    disabled={assigningTech}
+                    className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50"
+                  >
+                    <option value="">— Unassigned —</option>
+                    {(lead.assignable_technicians || []).map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}{t.phone ? '' : ' (no phone)'}
+                      </option>
+                    ))}
+                  </select>
+
+                  {lead.assigned_technician ? (
+                    lead.assigned_technician.phone ? (
+                      <div className="bg-teal-50 border border-teal-100 rounded-lg p-3">
+                        <div className="text-xs text-teal-900 leading-relaxed">
+                          <span className="font-bold">{lead.assigned_technician.name}</span> will get the
+                          pre-visit briefing SMS at{' '}
+                          <span className="font-mono">{lead.assigned_technician.phone}</span> about an hour
+                          before the appointment.
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                        <div className="text-xs text-amber-900 leading-relaxed">
+                          <span className="font-bold">No phone on file for this estimator.</span> Add a cell
+                          number on the Team page (Technicians tab) so they can receive the pre-visit
+                          briefing — otherwise it falls back to the account's default recipient.
+                        </div>
+                      </div>
+                    )
+                  ) : (
+                    <p className="text-xs text-stone-400 leading-relaxed">
+                      No estimator assigned. The pre-visit briefing goes to the account's default recipient.
+                    </p>
+                  )}
+
+                  {(lead.assignable_technicians || []).length === 0 && (
+                    <p className="text-xs text-stone-400 leading-relaxed italic">
+                      No technicians added yet. Add estimators on the Team page → Technicians tab.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-stone-400 leading-relaxed italic">
+                  Assign an estimator once an appointment is booked for this lead.
+                </p>
+              )}
+            </div>
 
             {/* Recovery Section (Phase 10) */}
             <div className="bg-white rounded-2xl border border-stone-200 shadow-sm p-6">

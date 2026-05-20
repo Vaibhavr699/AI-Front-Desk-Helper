@@ -91,6 +91,19 @@ require("node-cron").schedule("*/5 * * * *", async () => {
 
 console.log("[startup] coachingRuleExtractor cron scheduled (*/5 * * * *)");
 
+// Phase 8B — Pre-visit briefing SMS (every 15 minutes, May 20, 2026)
+// Sends a heads-up SMS to the rep/owner ~1 hour before each booked
+// appointment with the customer's DISC profile + project info.
+const { runPreVisitBriefingSweep } = require("./services/preVisitBriefing");
+require("node-cron").schedule("*/15 * * * *", async () => {
+  try {
+    await runPreVisitBriefingSweep();
+  } catch (err) {
+    console.error("[preVisitBriefing] cron tick error:", err.message);
+  }
+});
+console.log("[startup] preVisitBriefing cron scheduled (*/15 * * * *)");
+
 const auditLogsRouter = require("./routes/auditLogs");
 const { resolveHostnameToTenant } = require("./lib/hostnameResolver");
 

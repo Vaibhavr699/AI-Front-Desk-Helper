@@ -4944,12 +4944,15 @@ from = msg.start?.customParameters?.From || msg.start?.from || from || null;
 
       // --- Caller Memory Upgrade ---
       if (callSid) {
-        from = msg.start?.customParameters?.From || msg.start?.from || null; // Twilio might pass it
-        // If not in start params, we might need to get it from the call log or metadata
-        // But let's check if we can get it from msg.start.callSid
-        if (!from) {
-          // Fallback: use the 'from' value we already have if any
-        }
+        // CRITICAL: preserve the URL-query-string `from` if Twilio didn't pass
+        // it as a customParameter. Twilio's <Stream> doesn't include <Parameter>
+        // elements in our TwiML (see routes/twilio.js voice handler), so
+        // customParameters.From is undefined and msg.start.from is undefined.
+        // Without `|| from` at the end of this OR chain, this line wipes the
+        // value extracted from the WebSocket URL at handler startup, breaking
+        // lead linking, DNC lookups, and cancellation flows that depend on
+        // the caller's phone number.
+        from = msg.start?.customParameters?.From || msg.start?.from || from || null;
 
         if (from) {
           let history = null;

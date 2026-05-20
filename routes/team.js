@@ -52,37 +52,8 @@ async function safeLogAction(payload) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Phone normalization (Phase 8B tech-routing — May 20, 2026)
-//
-// The pre-visit briefing SMS sends to E.164 numbers. We store whatever the
-// user types but normalize to E.164 (+1XXXXXXXXXX) when it's a plain 10- or
-// 11-digit US number. If it's already E.164 or non-US we keep it verbatim.
-// Empty string → null (clears the field).
-// ─────────────────────────────────────────────────────────────────────────
-function normalizePhone(raw) {
-  if (raw == null) return undefined;          // field absent — caller skips update
-  const trimmed = String(raw).trim();
-  if (trimmed === "") return null;            // explicit clear
-
-  if (trimmed.startsWith("+")) {
-    // Already E.164-ish — strip spaces/dashes/parens, keep the +.
-    const cleaned = "+" + trimmed.slice(1).replace(/[^\d]/g, "");
-    return cleaned.length >= 8 ? cleaned : trimmed;
-  }
-
-  const digits = trimmed.replace(/[^\d]/g, "");
-  if (digits.length === 10) return "+1" + digits;
-  if (digits.length === 11 && digits.startsWith("1")) return "+" + digits;
-
-  // Unrecognized shape — store as typed; the SMS layer will reject if invalid.
-  return trimmed;
-}
-
 /**
  * GET /api/team
- *
- * Phase 8B: now returns `phone` so the Team tab can display + edit it.
  */
 router.get("/", requireTeamManager, async (req, res) => {
   try {
@@ -96,7 +67,7 @@ router.get("/", requireTeamManager, async (req, res) => {
     if (targetTenantId && targetTenantId !== "all") {
       query = `
         SELECT
-          u.id, u.email, u.role, u.tenant_id, u.phone,
+          u.id, u.email, u.role, u.tenant_id,
           t.name AS tenant_name, t.business_type, u.created_at
         FROM dashboard_users u
         JOIN tenants t ON u.tenant_id = t.id
@@ -109,7 +80,7 @@ router.get("/", requireTeamManager, async (req, res) => {
     } else if (isParentAdmin) {
       query = `
         SELECT
-          u.id, u.email, u.role, u.tenant_id, u.phone,
+          u.id, u.email, u.role, u.tenant_id,
           t.name AS tenant_name, t.business_type, u.created_at
         FROM dashboard_users u
         JOIN tenants t ON u.tenant_id = t.id
@@ -124,7 +95,7 @@ router.get("/", requireTeamManager, async (req, res) => {
     } else {
       query = `
         SELECT
-          u.id, u.email, u.role, u.tenant_id, u.phone,
+          u.id, u.email, u.role, u.tenant_id,
           t.name AS tenant_name, t.business_type, u.created_at
         FROM dashboard_users u
         JOIN tenants t ON u.tenant_id = t.id
@@ -166,13 +137,10 @@ router.get("/", requireTeamManager, async (req, res) => {
 
 /**
  * POST /api/team/invite
- *
- * Phase 8B: accepts an optional `phone` so an estimator's cell can be set
- * at invite time. Phone is normalized to E.164 when it's a plain US number.
  */
 router.post("/invite", requireTeamManager, async (req, res) => {
   try {
-    const { email, role, location_id, phone } = req.body;
+    const { email, role, location_id } = req.body;
 
     if (!email || !role || !location_id) {
       return res.status(400).json({ error: "Email, role, and location_id are required" });
@@ -184,7 +152,6 @@ router.post("/invite", requireTeamManager, async (req, res) => {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    const normalizedPhone = normalizePhone(phone); // undefined if not supplied
     const parentId = req.user.tenant_id;
     const isParentAdmin = req.user?.tenant_business_type === "parent";
 
@@ -235,13 +202,11 @@ router.post("/invite", requireTeamManager, async (req, res) => {
     const tempPassword = crypto.randomBytes(32).toString("hex");
     const hash = await auth.hashPassword(tempPassword);
 
-    // phone column added in migration 084. normalizedPhone is `undefined`
-    // when the caller omitted it (defaults to NULL) or a string/null.
     const rInsert = await db.query(
-      `INSERT INTO dashboard_users (email, password_hash, tenant_id, role, phone)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, email, tenant_id, role, phone`,
-      [normalizedEmail, hash, authorizedLocationId, role, normalizedPhone ?? null]
+      `INSERT INTO dashboard_users (email, password_hash, tenant_id, role)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, email, tenant_id, role`,
+      [normalizedEmail, hash, authorizedLocationId, role]
     );
 
     const newUser = rInsert.rows[0];
@@ -272,7 +237,6 @@ router.post("/invite", requireTeamManager, async (req, res) => {
         invited_role: newUser.role,
         invited_tenant_id: String(newUser.tenant_id),
         invited_location_name: locationName,
-        invited_has_phone: !!newUser.phone,
       },
       ip_address: getRequestIp(req),
       user_agent: req.get("user-agent") || null,
@@ -285,101 +249,10 @@ router.post("/invite", requireTeamManager, async (req, res) => {
         email: newUser.email,
         role: newUser.role,
         tenant_id: newUser.tenant_id,
-        phone: newUser.phone,
       },
     });
   } catch (err) {
     console.error("POST /api/team/invite error:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-/**
- * PATCH /api/team/:id
- *
- * Phase 8B (May 20, 2026) — edit an existing team member. Currently used
- * to set/clear a member's `phone` so they can receive pre-visit briefing
- * SMS when assigned to a booking. Scoped to the caller's organization with
- * the same authorization model as DELETE.
- *
- * Body: { phone?: string }   — empty string clears the phone.
- */
-router.patch("/:id", requireTeamManager, async (req, res) => {
-  try {
-    const targetUserId = req.params.id;
-    const parentId = req.user.tenant_id;
-    const isParentAdmin = req.user?.tenant_business_type === "parent";
-
-    // Confirm the target user belongs to the caller's org.
-    const rCheck = await db.query(
-      `SELECT u.id, u.email, u.role, u.tenant_id, u.phone, t.name AS tenant_name
-         FROM dashboard_users u
-         JOIN tenants t ON u.tenant_id = t.id
-        WHERE u.id = $1 AND (t.id = $2 OR t.parent_id = $2)`,
-      [targetUserId, parentId]
-    );
-
-    if (rCheck.rows.length === 0) {
-      return res.status(403).json({ error: "User not found in your organization." });
-    }
-
-    const targetUser = rCheck.rows[0];
-
-    // Branch managers can only edit members of their own branch.
-    if (!isParentAdmin && String(targetUser.tenant_id) !== String(parentId)) {
-      return res.status(403).json({ error: "You can only edit members of your own branch." });
-    }
-
-    // Build the update set. Only `phone` is editable for now.
-    const updates = [];
-    const params = [];
-    let idx = 1;
-
-    if (Object.prototype.hasOwnProperty.call(req.body, "phone")) {
-      const normalizedPhone = normalizePhone(req.body.phone); // string | null
-      updates.push(`phone = $${idx++}`);
-      params.push(normalizedPhone);
-    }
-
-    if (updates.length === 0) {
-      return res.status(400).json({ error: "No editable fields provided." });
-    }
-
-    updates.push(`updated_at = now()`);
-    params.push(targetUserId);
-
-    const rUpdate = await db.query(
-      `UPDATE dashboard_users
-          SET ${updates.join(", ")}
-        WHERE id = $${idx}
-        RETURNING id, email, role, tenant_id, phone`,
-      params
-    );
-
-    const updatedUser = rUpdate.rows[0];
-
-    await safeLogAction({
-      tenant_id: String(req.user.tenant_id),
-      user_id: String(req.user.sub),
-      action: "settings_updated",
-      entity_type: "user",
-      entity_id: String(updatedUser.id),
-      old_value: { phone: targetUser.phone || null },
-      new_value: {
-        updated_user_id: String(updatedUser.id),
-        updated_email: updatedUser.email,
-        phone: updatedUser.phone || null,
-      },
-      ip_address: getRequestIp(req),
-      user_agent: req.get("user-agent") || null,
-    });
-
-    res.json({
-      message: "User updated successfully",
-      user: updatedUser,
-    });
-  } catch (err) {
-    console.error("PATCH /api/team/:id error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });

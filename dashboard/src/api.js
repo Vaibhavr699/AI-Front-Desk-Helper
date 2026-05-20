@@ -320,6 +320,23 @@ export function removeTeamMember(id) {
   });
 }
 
+export function getTechnicians(tenantId = null) {
+  const url = tenantId ? `/api/technicians?tenant_id=${tenantId}` : "/api/technicians";
+  return api(url);
+}
+
+export function createTechnician(data) {
+  return post("/api/technicians", data);
+}
+
+export function updateTechnician(id, data) {
+  return patch(`/api/technicians/${id}`, data);
+}
+
+export function deleteTechnician(id) {
+  return del(`/api/technicians/${id}`);
+}
+
 export function getConversationTimeline(leadId) {
   return api(`/api/conversations/${leadId}/timeline`);
 }

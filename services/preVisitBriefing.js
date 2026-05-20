@@ -65,24 +65,57 @@ const WINDOW_MAX_AHEAD = 75;
 // ─────────────────────────────────────────────────────────────────────
 
 /**
- * Resolve who should receive the pre-visit briefing for this tenant.
+ * Resolve who should receive the pre-visit briefing for this booking.
  *
  * Priority:
+ *   0. The booking's assigned technician's phone (Phase 8B tech routing).
+ *      bookings.technician_id → dashboard_users.phone. This is the whole
+ *      point of tech assignment: the briefing follows whoever is actually
+ *      doing the visit.
  *   1. tenant.pre_visit_sms_recipient_phone (Option C explicit setting)
  *   2. The founding owner dashboard user's phone (auto-fallback)
  *
- * Returns null if neither is available — caller skips the send and leaves
+ * `booking` is optional — when omitted (or it has no technician_id), the
+ * resolver simply falls through to Path 1/2, so existing callers and
+ * un-assigned bookings keep working unchanged.
+ *
+ * Returns null if nothing is resolvable — caller skips the send and leaves
  * pre_visit_sms_sent_at NULL so we don't burn the slot.
  */
-async function resolveRecipientPhone(tenant) {
+async function resolveRecipientPhone(tenant, booking) {
+  // Path 0: assigned technician's phone (Phase 8B — May 20, 2026)
+  if (booking?.technician_id) {
+    try {
+      const techRes = await db.query(
+        `SELECT phone FROM dashboard_users
+          WHERE id = $1
+            AND phone IS NOT NULL
+            AND phone != ''
+          LIMIT 1`,
+        [booking.technician_id]
+      );
+      const techPhone = (techRes.rows[0]?.phone || "").trim();
+      if (techPhone) {
+        console.log("[PreVisitBriefing] Routing booking=%s to assigned technician=%s",
+          booking.id, booking.technician_id);
+        return techPhone;
+      }
+      // Tech assigned but no phone on file — fall through to tenant phone.
+      console.warn("[PreVisitBriefing] Booking=%s has assigned tech=%s with no phone — falling back",
+        booking.id, booking.technician_id);
+    } catch (err) {
+      console.warn("[PreVisitBriefing] Assigned-tech phone lookup failed booking=%s err=%s",
+        booking?.id, err.message);
+      // fall through
+    }
+  }
+
   // Path 1: explicit tenant setting
   const explicit = (tenant?.pre_visit_sms_recipient_phone || "").trim();
   if (explicit) return explicit;
 
-  // Path 2: founding owner's phone from dashboard_users
-  // dashboard_users is the standard auth table per existing code; role
-  // column convention from authLib.ROLES.OWNER. If your schema differs,
-  // adjust this single query.
+  // Path 2: founding owner's phone from dashboard_users.
+  // The `phone` column on dashboard_users is added in migration 084.
   try {
     const res = await db.query(
       `SELECT phone FROM dashboard_users
@@ -330,8 +363,9 @@ async function processOneBooking(booking) {
       return;
     }
 
-    // Recipient resolution
-    const recipientPhone = await resolveRecipientPhone(tenant);
+    // Recipient resolution — Phase 8B passes the booking so an assigned
+    // technician (booking.technician_id) is routed to first (Path 0).
+    const recipientPhone = await resolveRecipientPhone(tenant, booking);
     if (!recipientPhone) {
       // Don't mark sent — owner might configure recipient mid-window
       console.warn("[PreVisitBriefing] No recipient resolvable for tenant=%s booking=%s — leaving for retry",
@@ -421,7 +455,7 @@ async function runPreVisitBriefingSweep() {
     const result = await db.query(
       `SELECT b.id, b.tenant_id, b.lead_id, b.contact_name, b.contact_phone,
               b.address, b.scope, b.preferred_date, b.appointment_time,
-              b.estimated_revenue_cents, b.status
+              b.estimated_revenue_cents, b.status, b.technician_id
          FROM bookings b
          JOIN tenants t ON t.id = b.tenant_id
         WHERE b.pre_visit_sms_sent_at IS NULL

@@ -19,7 +19,8 @@ import {
   HelpCircle,
   Clock,
   DollarSign,
-  ClipboardList
+  ClipboardList,
+  Users
 } from "lucide-react";
 
 import { MetricHero } from "../components/metrics/MetricHero";
@@ -35,6 +36,28 @@ const getTrend = (c, cT, p, pT) => {
   if (!cT || !pT) return "0%";
   const diff = Math.round(((c/cT)*100) - ((p/pT)*100));
   return `${diff >= 0 ? '+' : ''}${diff}%`;
+};
+
+// ─────────────────────────────────────────────────────────────────────────
+// fmtTimeToBook — guards the "Avg Time to Book" card against garbage backend
+// values (e.g. 51066min = 35 days, caused by averaging created_at→booked_at
+// across leads imported weeks before they ever booked).
+//
+// This is a DISPLAY-SIDE clamp. The real fix belongs in the /metrics route
+// query — it should filter the interval to a sane window and ideally use
+// median, not mean. Until that's done, this stops a fake number from showing:
+//   < 3 hr   -> minutes
+//   < 24 hr  -> hours
+//   <= 3 day -> days
+//   > 3 day  -> em-dash (treated as a data artifact, not a real value)
+// ─────────────────────────────────────────────────────────────────────────
+const fmtTimeToBook = (mins) => {
+  const m = Number(mins);
+  if (!m || m <= 0) return "—";
+  if (m < 180) return `${Math.round(m)} min`;
+  if (m < 1440) return `${(m / 60).toFixed(1)} hr`;
+  if (m <= 4320) return `${(m / 1440).toFixed(1)} days`;
+  return "—"; // > 3 days: almost certainly a backfill artifact
 };
 
 const ALL_MARKETING_SOURCES = [
@@ -360,7 +383,7 @@ function PerformanceView({ metrics, timeRange }) {
           />
           <OpsCard 
             label="Avg Time to Book" 
-            value={`${dm.ops?.avg_time_to_book || 8}min`} 
+            value={fmtTimeToBook(dm.ops?.avg_time_to_book)} 
             subText="First call to booked" 
             icon={Clock} 
           />
@@ -379,6 +402,15 @@ function PerformanceView({ metrics, timeRange }) {
           />
         </div>
       </section>
+
+      {/* ══════════════════════════════════════════════════════════════════
+          PHASE 8D — CUSTOMER INTEL
+          DISC profile × conversion outcome. Reads metrics.customer_intel,
+          which the /metrics route builds ALWAYS all-time (the dashboard
+          timeRange selector is intentionally ignored — settled-outcome
+          counts are too small for a 30d window to be meaningful).
+          ══════════════════════════════════════════════════════════════════ */}
+      <CustomerIntelSection customerIntel={metrics.customer_intel} />
 
       {/* Net Revenue Flow */}
       <div className="pt-8 border-t border-gray-100">
@@ -448,6 +480,148 @@ function OpsCard({ label, value, subText, badge, badgeColor, trend, icon: Icon }
       </div>
       <div className="text-[10px] font-medium text-gray-400">{subText}</div>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// PHASE 8D — CUSTOMER INTEL SECTION
+//
+// Reads metrics.customer_intel (built backend-side, ALWAYS all-time).
+// DISC profile × conversion outcome. Per-bucket thin-data guard: a bucket
+// shows a real conversion % only when settled outcomes >= min_settled;
+// otherwise it renders "Collecting" instead of a misleading number.
+//
+// Coach-advice layer is intentionally NOT here — deferred to Phase 9.
+// ─────────────────────────────────────────────────────────────────────────
+function CustomerIntelSection({ customerIntel }) {
+  // Backend may be pre-deploy, or tenant may have zero leads — fail soft.
+  if (!customerIntel || !Array.isArray(customerIntel.buckets) || customerIntel.buckets.length === 0) {
+    return null;
+  }
+
+  const { buckets, totals, min_settled, any_bucket_ready } = customerIntel;
+
+  const DISC_DOT = {
+    D: 'bg-rose-500',
+    I: 'bg-amber-500',
+    S: 'bg-emerald-500',
+    C: 'bg-blue-500',
+    UNKNOWN: 'bg-gray-300',
+  };
+
+  const fmtRev = (c) => `$${Math.round((c || 0) / 100).toLocaleString()}`;
+
+  return (
+    <section className="space-y-4 pt-4">
+      <SectionTitle title="Customer Intel" />
+
+      <div className="bg-white border border-gray-200/60 rounded-xl shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/10">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center shrink-0">
+              <Users size={16} />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-gray-900 leading-tight">
+                Which customer types convert
+              </h3>
+              <p className="text-[10px] text-gray-400 font-medium">
+                DISC profile vs. paying jobs — won = job marked Won
+              </p>
+            </div>
+          </div>
+          <div className="px-2.5 py-1 rounded-full bg-gray-50 border border-gray-100 text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+            All-time
+          </div>
+        </div>
+
+        {/* Tenant-wide thin-data banner — shown once, not per row */}
+        {!any_bucket_ready && (
+          <div className="px-6 py-3 bg-amber-50/60 border-b border-amber-100 flex items-start gap-3">
+            <div className="w-4 h-4 mt-0.5 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center text-[10px] font-black shrink-0">
+              i
+            </div>
+            <p className="text-[11px] text-amber-800 leading-relaxed">
+              Still collecting data. Conversion rates appear once a customer
+              type reaches <strong>{min_settled} settled outcomes</strong>{' '}
+              (won + lost). Counts below are live.
+            </p>
+          </div>
+        )}
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-[11px] whitespace-nowrap">
+            <thead>
+              <tr className="text-[10px] text-gray-400 uppercase tracking-wider border-b border-gray-100 font-bold">
+                <th className="px-6 py-3">Customer type</th>
+                <th className="px-4 py-3 text-right">Leads</th>
+                <th className="px-4 py-3 text-right">Open</th>
+                <th className="px-4 py-3 text-right">Won</th>
+                <th className="px-4 py-3 text-right">Lost</th>
+                <th className="px-4 py-3 text-right">Converts</th>
+                <th className="px-6 py-3 text-right">Won revenue</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {buckets.map((b) => (
+                <tr key={b.disc} className="hover:bg-gray-50/30 transition-colors group">
+                  <td className="px-6 py-4 font-bold text-gray-700">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-2 h-2 rounded-full shadow-sm ${DISC_DOT[b.disc] || 'bg-gray-300'}`} />
+                      <span className="leading-tight">
+                        {b.disc === 'UNKNOWN' ? b.label : `${b.disc} · ${b.label}`}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-4 text-right font-bold text-gray-900">{b.total}</td>
+                  <td className="px-4 py-4 text-right font-medium text-gray-500">{b.open}</td>
+                  <td className="px-4 py-4 text-right font-bold text-emerald-600">{b.won}</td>
+                  <td className="px-4 py-4 text-right font-bold text-gray-500">{b.lost}</td>
+                  <td className="px-4 py-4 text-right">
+                    {b.enough_data ? (
+                      <span
+                        className={`font-bold ${
+                          b.conversion_rate >= 50
+                            ? 'text-emerald-600'
+                            : b.conversion_rate >= 25
+                            ? 'text-amber-600'
+                            : 'text-rose-500'
+                        }`}
+                      >
+                        {b.conversion_rate}%
+                      </span>
+                    ) : (
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-gray-300">
+                        Collecting
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4 text-right font-bold text-gray-900 font-mono">
+                    {b.won_revenue_cents > 0 ? fmtRev(b.won_revenue_cents) : '—'}
+                  </td>
+                </tr>
+              ))}
+              {/* Totals row */}
+              <tr className="border-t-2 border-gray-100 font-bold bg-gray-50/10">
+                <td className="px-6 py-4 text-gray-900">Total</td>
+                <td className="px-4 py-4 text-right text-gray-900">{totals.total}</td>
+                <td className="px-4 py-4 text-right text-gray-500">{totals.open}</td>
+                <td className="px-4 py-4 text-right text-emerald-600">{totals.won}</td>
+                <td className="px-4 py-4 text-right text-gray-500">{totals.lost}</td>
+                <td className="px-4 py-4 text-right text-gray-900">
+                  {totals.settled > 0
+                    ? `${Math.round((totals.won / totals.settled) * 100)}%`
+                    : '—'}
+                </td>
+                <td className="px-6 py-4 text-right text-gray-900 font-mono">
+                  {totals.won_revenue_cents > 0 ? fmtRev(totals.won_revenue_cents) : '—'}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   );
 }
 

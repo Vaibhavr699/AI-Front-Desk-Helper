@@ -78,6 +78,49 @@ async function loadPhase7eFields(leadId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Phase 8A (May 20, 2026) — hoist latest DISC + persona from
+// coaching_conversations onto the lead response so LeadDetail.jsx can
+// render the Customer Intel card. We pick the most recent classified
+// row (disc_primary IS NOT NULL OR buyer_persona != 'unknown') because
+// the latest classification is the most representative; older calls
+// may have failed classification or had less customer speech.
+//
+// If no coaching_conversations row exists, all fields come back NULL
+// and the card stays hidden — graceful fallback for leads that haven't
+// had a voice interaction yet.
+// ─────────────────────────────────────────────────────────────────────
+async function loadDiscFields(leadId) {
+  try {
+    const result = await db.query(
+      `SELECT disc_primary,
+              disc_secondary,
+              disc_scores,
+              disc_confidence,
+              disc_signals,
+              disc_skip_reason,
+              buyer_persona,
+              persona_confidence,
+              persona_signals,
+              persona_skip_reason,
+              persona_detected_at,
+              created_at AS disc_detected_at
+         FROM coaching_conversations
+        WHERE lead_id = $1
+          AND (disc_primary IS NOT NULL OR (buyer_persona IS NOT NULL AND buyer_persona != 'unknown'))
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [leadId]
+    );
+    return result.rows[0] || {};
+  } catch (err) {
+    // Don't fail the lead load on a DISC lookup error — log and return
+    // empty so the page renders without the Customer Intel card.
+    console.warn("[Leads API] Phase 8A DISC field load failed (non-fatal):", err.message);
+    return {};
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Phase 8.3 (May 12, 2026) — Facebook page access token lookup.
 //
 // This is the SINGLE PLACE the FB token column is read. If your actual
@@ -180,7 +223,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-/** GET /api/leads/:id - Get a single lead's profile (Phase 7 E augmented) */
+/** GET /api/leads/:id - Get a single lead's profile (Phase 7 E + 8A augmented) */
 router.get("/:id", async (req, res) => {
   try {
     const lead = await leadsService.getLeadById(req.params.id);
@@ -191,8 +234,14 @@ router.get("/:id", async (req, res) => {
 
     // Phase 7 E — merge in widget estimate + rep quote + variance coaching
     // columns regardless of what leadsService.getLeadById selected.
-    const phase7eFields = await loadPhase7eFields(lead.id);
-    const enriched = { ...lead, ...phase7eFields };
+    // Phase 8A — also hoist DISC + persona from coaching_conversations
+    // so LeadDetail.jsx can render the Customer Intel card.
+    // Run both in parallel — they're independent table queries.
+    const [phase7eFields, discFields] = await Promise.all([
+      loadPhase7eFields(lead.id),
+      loadDiscFields(lead.id),
+    ]);
+    const enriched = { ...lead, ...phase7eFields, ...discFields };
 
     await logAction({
       tenant_id: String(lead.tenant_id),
@@ -434,10 +483,13 @@ router.post("/:id/quote-entered", async (req, res) => {
       }
     }
 
-    // ── Re-read lead with Phase 7 E fields included ──────────────────
+    // ── Re-read lead with Phase 7 E + Phase 8A fields included ───────
     const freshLead = await leadsService.getLeadById(lead.id);
-    const phase7eFields = await loadPhase7eFields(lead.id);
-    const enriched = { ...freshLead, ...phase7eFields };
+    const [phase7eFields, discFields] = await Promise.all([
+      loadPhase7eFields(lead.id),
+      loadDiscFields(lead.id),
+    ]);
+    const enriched = { ...freshLead, ...phase7eFields, ...discFields };
 
     res.json({
       lead: enriched,

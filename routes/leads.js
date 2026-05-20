@@ -120,6 +120,75 @@ async function loadDiscFields(leadId) {
   }
 }
 
+/ ─────────────────────────────────────────────────────────────────────
+// Phase 8B (May 20, 2026) — tech assignment.
+//
+// Hoists onto the lead response:
+//   - assigned_technician      : { id, email, phone } | null
+//   - assignable_technicians   : [{ id, email, role, phone }]
+//   - assignment_booking_id    : the booking the assignment lives on | null
+//
+// The assignment lives on bookings.technician_id. A lead can have several
+// bookings — we use the most recent NON-CANCELLED one. If the lead has no
+// such booking, assignment_booking_id is null and the dashboard disables
+// the control.
+//
+// assignable_technicians is every dashboard_user on the lead's tenant —
+// any of them can be the estimator for a visit. Each carries `phone` so
+// the dashboard can warn when a chosen tech has no number on file.
+// ─────────────────────────────────────────────────────────────────────
+async function loadAssignmentFields(lead) {
+  try {
+    // 1. Most recent non-cancelled booking for this lead.
+    const bookingRes = await db.query(
+      `SELECT id, technician_id
+         FROM bookings
+        WHERE lead_id = $1
+          AND status != 'Cancelled'
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [lead.id]
+    );
+    const booking = bookingRes.rows[0] || null;
+ 
+    // 2. Assigned technician detail (if a booking exists and has one).
+    let assignedTechnician = null;
+    if (booking?.technician_id) {
+      const techRes = await db.query(
+        `SELECT id, email, phone FROM dashboard_users WHERE id = $1 LIMIT 1`,
+        [booking.technician_id]
+      );
+      assignedTechnician = techRes.rows[0] || null;
+    }
+ 
+    // 3. All assignable team members on the lead's tenant.
+    const teamRes = await db.query(
+      `SELECT id, email, role, phone
+         FROM dashboard_users
+        WHERE tenant_id = $1
+        ORDER BY
+          CASE WHEN role IN ('owner','admin') THEN 1
+               WHEN role = 'manager' THEN 2 ELSE 3 END,
+          email ASC`,
+      [lead.tenant_id]
+    );
+ 
+    return {
+      assigned_technician: assignedTechnician,
+      assignable_technicians: teamRes.rows,
+      assignment_booking_id: booking?.id || null,
+    };
+  } catch (err) {
+    // Non-fatal — page renders without the assignment control.
+    console.warn("[Leads API] Phase 8B assignment field load failed (non-fatal):", err.message);
+    return {
+      assigned_technician: null,
+      assignable_technicians: [],
+      assignment_booking_id: null,
+    };
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Phase 8.3 (May 12, 2026) — Facebook page access token lookup.
 //
@@ -232,16 +301,12 @@ router.get("/:id", async (req, res) => {
       return res.status(403).json({ error: "Forbidden" });
     }
 
-    // Phase 7 E — merge in widget estimate + rep quote + variance coaching
-    // columns regardless of what leadsService.getLeadById selected.
-    // Phase 8A — also hoist DISC + persona from coaching_conversations
-    // so LeadDetail.jsx can render the Customer Intel card.
-    // Run both in parallel — they're independent table queries.
-    const [phase7eFields, discFields] = await Promise.all([
+    const [phase7eFields, discFields, assignmentFields] = await Promise.all([
       loadPhase7eFields(lead.id),
       loadDiscFields(lead.id),
+      loadAssignmentFields(lead),
     ]);
-    const enriched = { ...lead, ...phase7eFields, ...discFields };
+    const enriched = { ...lead, ...phase7eFields, ...discFields, ...assignmentFields };
 
     await logAction({
       tenant_id: String(lead.tenant_id),
@@ -325,6 +390,88 @@ router.patch("/:id/do-not-contact", async (req, res) => {
     });
   } catch (err) {
     console.error("[Leads API] DNC toggle failed leadId=%s err=%s", req.params.id, err.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.patch("/:id/assign-tech", async (req, res) => {
+  try {
+    const lead = await leadsService.getLeadById(req.params.id);
+    if (!lead) return res.status(404).json({ error: "Lead not found" });
+    if (!(await checkLeadAccess(lead, req))) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+ 
+    const { technician_id } = req.body || {};
+    if (technician_id !== null && typeof technician_id !== "string") {
+      return res.status(400).json({
+        error: "Body must include 'technician_id' as a string (the team member's id) or null to unassign",
+      });
+    }
+ 
+    // The lead's most recent non-cancelled booking is what we assign on.
+    const bookingRes = await db.query(
+      `SELECT id FROM bookings
+        WHERE lead_id = $1 AND status != 'Cancelled'
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [lead.id]
+    );
+    const booking = bookingRes.rows[0];
+    if (!booking) {
+      return res.status(409).json({
+        error: "This lead has no active booking. Assign a technician once an appointment is booked.",
+        code: "NO_ACTIVE_BOOKING",
+      });
+    }
+ 
+    // If assigning (not clearing), validate the technician belongs to the
+    // lead's tenant — prevents cross-tenant assignment.
+    if (technician_id) {
+      const techRes = await db.query(
+        `SELECT id, email, phone FROM dashboard_users
+          WHERE id = $1 AND tenant_id = $2
+          LIMIT 1`,
+        [technician_id, lead.tenant_id]
+      );
+      if (techRes.rows.length === 0) {
+        return res.status(400).json({
+          error: "Technician not found on this lead's location.",
+          code: "INVALID_TECHNICIAN",
+        });
+      }
+    }
+ 
+    // Write the assignment.
+    await db.query(
+      `UPDATE bookings SET technician_id = $1 WHERE id = $2`,
+      [technician_id, booking.id]
+    );
+ 
+    await logAction({
+      tenant_id: String(lead.tenant_id),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "booking_updated",
+      entity_type: "booking",
+      entity_id: String(booking.id),
+      new_value: {
+        lead_id: String(lead.id),
+        assigned_technician_id: technician_id ? String(technician_id) : null,
+        change: technician_id ? "tech_assigned" : "tech_unassigned",
+      },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
+ 
+    // Return the enriched lead so the dashboard refreshes in place.
+    const [phase7eFields, discFields, assignmentFields] = await Promise.all([
+      loadPhase7eFields(lead.id),
+      loadDiscFields(lead.id),
+      loadAssignmentFields(lead),
+    ]);
+    res.json({ ...lead, ...phase7eFields, ...discFields, ...assignmentFields });
+  } catch (err) {
+    console.error("[Leads API] assign-tech failed leadId=%s err=%s", req.params.id, err.message);
     res.status(500).json({ error: "Internal server error" });
   }
 });

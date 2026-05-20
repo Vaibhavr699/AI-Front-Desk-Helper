@@ -504,6 +504,8 @@ export default function Settings({ tenantId }) {
     estimator_pop_enabled: false,
     cost_region: null,
     cost_custom_percentage: null,
+    pre_visit_sms_enabled: true,
+    pre_visit_sms_recipient_phone: "",
     // ── Service Area (mig 068, May 14, 2026) ──────────────────
     // type: "none" | "states" | "radius" | "zips"
     // "none" = no boundary stored (NULL in DB); prompt rules skipped entirely.
@@ -672,6 +674,8 @@ export default function Settings({ tenantId }) {
         estimator_pop_enabled: t.estimator_pop_enabled === true,
         cost_region: t.cost_region || null,
         cost_custom_percentage: t.cost_custom_percentage ?? null,
+        pre_visit_sms_enabled: t.pre_visit_sms_enabled !== false,
+        pre_visit_sms_recipient_phone: t.pre_visit_sms_recipient_phone || "",
         // Service area (mig 068)
         service_area_type: t.service_area?.type || "none",
         service_area_states: t.service_area?.type === "states" ? (t.service_area.values || []) : [],
@@ -1284,6 +1288,8 @@ export default function Settings({ tenantId }) {
       estimator_pop_enabled: form.estimator_pop_enabled,
       cost_region: form.cost_region || null,
       cost_custom_percentage: form.cost_region === "custom" ? form.cost_custom_percentage : null
+      pre_visit_sms_enabled: form.pre_visit_sms_enabled,
+      pre_visit_sms_recipient_phone: form.pre_visit_sms_recipient_phone.trim() || null
     };
 
     if (form.facebook_page_access_token) payload.facebook_page_access_token = form.facebook_page_access_token;
@@ -3437,8 +3443,64 @@ export default function Settings({ tenantId }) {
                   </p>
                 </div>
               </section>
+
+              {/* ─────────────────────────────────────────────────────────────
+                   7. Pre-Visit Briefing SMS (Phase 8B, mig 083)
+                   Texts the estimator a heads-up ~1hr before each appointment.
+                   ───────────────────────────────────────────────────────────── */}
+              <section className="pt-4 border-t border-gray-100">
+                <div className="flex items-start justify-between gap-4 mb-4 flex-wrap">
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
+                      <MessageSquare className="w-4 h-4 text-primary" />
+                      Pre-visit briefing text
+                    </h3>
+                    <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-xl">
+                      About an hour before each booked appointment, the assistant texts a short
+                      briefing — customer name, project, value, and a read on how to approach them.
+                      If a technician is assigned to the booking, the text goes to them; otherwise
+                      it falls back to the number below.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateForm("pre_visit_sms_enabled", !form.pre_visit_sms_enabled)}
+                    className={`relative w-12 h-7 rounded-full transition-colors shrink-0 ${
+                      form.pre_visit_sms_enabled ? "bg-gray-900" : "bg-gray-300"
+                    }`}
+                    aria-pressed={form.pre_visit_sms_enabled}
+                    aria-label="Toggle pre-visit briefing"
+                  >
+                    <div
+                      className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${
+                        form.pre_visit_sms_enabled ? "translate-x-5" : "translate-x-0.5"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {form.pre_visit_sms_enabled && (
+                  <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                    <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-2">
+                      Fallback recipient phone
+                    </label>
+                    <input
+                      type="tel"
+                      value={form.pre_visit_sms_recipient_phone}
+                      onChange={(e) => handleUpdateForm("pre_visit_sms_recipient_phone", e.target.value)}
+                      placeholder="+1 (402) 555-1234"
+                      className="w-full md:max-w-sm px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-mono text-sm focus:ring-4 focus:ring-primary/5 transition-all outline-none placeholder:text-slate-400"
+                    />
+                    <p className="text-xs text-gray-500 mt-1.5 italic leading-relaxed">
+                      Used when no technician is assigned to the booking. Leave blank to fall back
+                      to the business owner's number. Assign technicians per-booking from the
+                      <strong> Bookings → Crew</strong> tab.
+                    </p>
+                  </div>
+                )}
+              </section>
             </div>
-          )} 
+          )}
 
           {activeTab === "estimator" && (
             <div className="space-y-10 animate-in fade-in slide-in-from-right-4 duration-500">

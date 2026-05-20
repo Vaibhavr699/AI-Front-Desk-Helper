@@ -555,6 +555,7 @@ app.use("/api/stripe", authMiddleware, require("./routes/stripe"));
 app.use("/api/admin", authMiddleware, requireSuperAdmin, require("./routes/admin"));
 app.use("/api/admin/estimator", authMiddleware, requireSuperAdmin, require("./routes/estimatorAdmin"));
 app.use("/api/team", authMiddleware, require("./routes/team"));
+app.use("/api/technicians", require("./routes/technicians"));
 app.use("/api/audit-logs", authMiddleware, auditLogsRouter);
 app.use("/api/call-coach", authMiddleware, require("./routes/callCoach"));
 app.use("/api/disc-feedback", authMiddleware, require("./routes/discFeedback"));

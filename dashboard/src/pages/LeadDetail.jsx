@@ -30,45 +30,50 @@ const DISC_META = {
 
 // ──── Phase 8F — DISC sales advice playbooks ─────────────────────────────────
 //
-// Synthesized from Groovy Hues' DISC sales training (the "Presenting to
-// High D/I/S/C" material) into rep-facing imperative guidance. Five fixed
-// fields per type so the card renders a clean, scannable block. This is
-// advice for how to WORK the customer — the layer on top of the DISC
-// label that Phase 8A produces. Gated on a confident classification:
-// an unprofiled or low-confidence lead shows nothing.
+// Rep-facing playbooks for working a customer by DISC type. Synthesized
+// from Groovy Hues' DISC sales training plus established DISC selling
+// practice, written specifically for in-home painting estimates. Six
+// fixed fields per type. This is the action layer on top of the DISC
+// label Phase 8A produces — gated on a confident classification, so an
+// unprofiled or low-confidence lead shows nothing.
 const DISC_ADVICE = {
   D: {
-    open:    'Skip the small talk. Get to the point within the first minute.',
-    pace:    'Fast and efficient — they value directness and decisiveness.',
-    leadWith:'The bottom line: timeline and price range up front.',
-    close:   'Direct ask, now — "I can hold a crew slot next week, want it?"',
-    avoid:   'Long rapport-building, hedging, or presenting too many options.',
+    headline: 'Wants the bottom line — fast.',
+    open:    'Firm handshake, eye contact, get to the point inside a minute. No weather talk.',
+    pace:    'Move fast and decisive. Hesitation reads as weakness to a D.',
+    leadWith:'The result and the number — timeline and price range up front, big picture first.',
+    objection:'Their objection is usually about control or time. Don\'t over-explain — "Here it is in 30 seconds" and give them the decision.',
+    close:   'Ask straight out, today: "I can hold a crew for next week — want me to lock it in?"',
+    avoid:   'Small talk, hedging, ten options, or making them sit through fine detail they didn\'t ask for.',
   },
   I: {
-    open:    'Warm and friendly — genuine conversation is welcome here.',
-    pace:    'Energetic and expressive. Match their enthusiasm.',
-    leadWith:'The vision — how great it will look, happy customers nearby.',
-    close:   'Collaborative — "Let\'s pick a start date together."',
-    avoid:   'Dry spec sheets, a cold numbers-first pitch, or rushing them.',
+    headline: 'Wants to like you — and be liked.',
+    open:    'Warm, smiling, genuine. Compliment the home. Let them talk first.',
+    pace:    'Energetic and conversational. Match their energy — keep it positive.',
+    leadWith:'The vision and the experience — how stunning it\'ll look, the neighbors who love theirs.',
+    objection:'An I rarely says no outright — they go vague or "need to think." Re-engage with a story: a recent job nearby that turned out great.',
+    close:   'Make it a shared win: "Let\'s get your start date on the calendar — I think you\'re going to love this."',
+    avoid:   'Dry spec sheets, a cold numbers-first pitch, negativity, or rushing the relationship.',
   },
   S: {
-    open:    'Calm and unhurried. Let them set the pace.',
-    pace:    'Slow and steady — never apply pressure.',
-    leadWith:'Reassurance — guarantees, references, exactly what to expect.',
-    close:   'Soft — "No rush, take the evening, I\'ll follow up tomorrow."',
-    avoid:   'Hard closes, urgency tactics, or any surprises.',
+    headline: 'Wants to be able to trust you.',
+    open:    'Calm, unhurried, friendly. Let them set the pace — never crowd them.',
+    pace:    'Slow and steady. Be the advisor, not the salesperson.',
+    leadWith:'Reassurance — guarantees, references, your warranty, exactly what to expect step by step.',
+    objection:'Their objection is fear of a wrong decision. Don\'t pressure — reassure: walk them through the process again, offer a reference to call.',
+    close:   'Soft and patient: "No rush — take the evening, talk it over, I\'ll check in tomorrow." They come back.',
+    avoid:   'Hard closes, urgency or scarcity tactics, surprises, or any sudden change to the plan.',
   },
   C: {
-    open:    'Professional and prepared. Have your materials organized.',
-    pace:    'Methodical — answer every question thoroughly.',
-    leadWith:'Specifics — prep process, paint specs, line-item breakdown.',
-    close:   'Evidence-based — quote and warranty terms in writing to review.',
-    avoid:   'Vague claims, pressure, or glossing over the details.',
+    headline: 'Wants information — and lots of it.',
+    open:    'Professional and prepared. Materials organized. Be precise from the first sentence.',
+    pace:    'Methodical. Expect to be cross-questioned — answer every question fully and accurately.',
+    leadWith:'The specifics — prep process, paint products and coats, a clear line-item breakdown.',
+    objection:'A C\'s objection is a request for more data, not a no. Welcome it — answer with facts, references, written detail. Never an emotional appeal.',
+    close:   'Evidence-based: hand them the detailed written quote and warranty terms to review on their own time.',
+    avoid:   'Vague claims, pressure, glossing over detail, or rushing their need to analyze.',
   },
 };
-
-// Expect questions like: "When do you start? How long will it take? How
-// do I prepare?" — a C customer asking these is a buying signal, not doubt.
 
 const PERSONA_LABELS = {
   researcher: 'The Researcher',
@@ -466,29 +471,35 @@ export default function LeadDetail({ tenantId }) {
                   </div>
                 )}
 
-               {/* ──── Phase 8F — How to work this customer ──── */}
+              {/* ──── Phase 8F — How to work this customer ──── */}
                 {discClassified && DISC_ADVICE[discPrimary] && (
                   <div className="mb-4">
                     <div className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">
                       How to Work This Customer
                     </div>
-                    <div className={`${primaryMeta.bg} ${primaryMeta.border} border rounded-xl p-4 space-y-2.5`}>
-                      {[
-                        { label: 'Open',      value: DISC_ADVICE[discPrimary].open },
-                        { label: 'Pace',      value: DISC_ADVICE[discPrimary].pace },
-                        { label: 'Lead with', value: DISC_ADVICE[discPrimary].leadWith },
-                        { label: 'Close',     value: DISC_ADVICE[discPrimary].close },
-                        { label: 'Avoid',     value: DISC_ADVICE[discPrimary].avoid },
-                      ].map(({ label, value }) => (
-                        <div key={label} className="flex gap-2.5">
-                          <span className={`text-[10px] font-bold uppercase tracking-wider ${primaryMeta.text} opacity-70 w-16 flex-shrink-0 pt-0.5`}>
-                            {label}
-                          </span>
-                          <span className={`text-xs ${primaryMeta.text} leading-relaxed flex-1`}>
-                            {value}
-                          </span>
-                        </div>
-                      ))}
+                    <div className={`${primaryMeta.bg} ${primaryMeta.border} border rounded-xl p-4`}>
+                      <div className={`text-xs font-bold ${primaryMeta.text} mb-3`}>
+                        {DISC_ADVICE[discPrimary].headline}
+                      </div>
+                      <div className="space-y-2.5">
+                        {[
+                          { label: 'Open',      value: DISC_ADVICE[discPrimary].open },
+                          { label: 'Pace',      value: DISC_ADVICE[discPrimary].pace },
+                          { label: 'Lead with', value: DISC_ADVICE[discPrimary].leadWith },
+                          { label: 'Objection', value: DISC_ADVICE[discPrimary].objection },
+                          { label: 'Close',     value: DISC_ADVICE[discPrimary].close },
+                          { label: 'Avoid',     value: DISC_ADVICE[discPrimary].avoid },
+                        ].map(({ label, value }) => (
+                          <div key={label} className="flex gap-2.5">
+                            <span className={`text-[10px] font-bold uppercase tracking-wider ${primaryMeta.text} opacity-70 w-16 flex-shrink-0 pt-0.5`}>
+                              {label}
+                            </span>
+                            <span className={`text-xs ${primaryMeta.text} leading-relaxed flex-1`}>
+                              {value}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                     {secondaryMeta && (
                       <p className="text-[10px] text-stone-400 italic mt-2 leading-relaxed">

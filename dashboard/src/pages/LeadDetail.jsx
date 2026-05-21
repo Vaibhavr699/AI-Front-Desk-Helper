@@ -28,6 +28,48 @@ const DISC_META = {
   C: { label: 'Conscientious', tagline: 'Analytical, precise, needs documentation',                    bg: 'bg-indigo-50',  border: 'border-indigo-200', text: 'text-indigo-900', badge: 'bg-indigo-100 text-indigo-700', bar: 'bg-indigo-500' },
 };
 
+// ──── Phase 8F — DISC sales advice playbooks ─────────────────────────────────
+//
+// Synthesized from Groovy Hues' DISC sales training (the "Presenting to
+// High D/I/S/C" material) into rep-facing imperative guidance. Five fixed
+// fields per type so the card renders a clean, scannable block. This is
+// advice for how to WORK the customer — the layer on top of the DISC
+// label that Phase 8A produces. Gated on a confident classification:
+// an unprofiled or low-confidence lead shows nothing.
+const DISC_ADVICE = {
+  D: {
+    open:    'Skip the small talk. Get to the point within the first minute.',
+    pace:    'Fast and efficient — they value directness and decisiveness.',
+    leadWith:'The bottom line: timeline and price range up front.',
+    close:   'Direct ask, now — "I can hold a crew slot next week, want it?"',
+    avoid:   'Long rapport-building, hedging, or presenting too many options.',
+  },
+  I: {
+    open:    'Warm and friendly — genuine conversation is welcome here.',
+    pace:    'Energetic and expressive. Match their enthusiasm.',
+    leadWith:'The vision — how great it will look, happy customers nearby.',
+    close:   'Collaborative — "Let\'s pick a start date together."',
+    avoid:   'Dry spec sheets, a cold numbers-first pitch, or rushing them.',
+  },
+  S: {
+    open:    'Calm and unhurried. Let them set the pace.',
+    pace:    'Slow and steady — never apply pressure.',
+    leadWith:'Reassurance — guarantees, references, exactly what to expect.',
+    close:   'Soft — "No rush, take the evening, I\'ll follow up tomorrow."',
+    avoid:   'Hard closes, urgency tactics, or any surprises.',
+  },
+  C: {
+    open:    'Professional and prepared. Have your materials organized.',
+    pace:    'Methodical — answer every question thoroughly.',
+    leadWith:'Specifics — prep process, paint specs, line-item breakdown.',
+    close:   'Evidence-based — quote and warranty terms in writing to review.',
+    avoid:   'Vague claims, pressure, or glossing over the details.',
+  },
+};
+
+// Expect questions like: "When do you start? How long will it take? How
+// do I prepare?" — a C customer asking these is a buying signal, not doubt.
+
 const PERSONA_LABELS = {
   researcher: 'The Researcher',
   protector: 'The Protector',
@@ -424,6 +466,38 @@ export default function LeadDetail({ tenantId }) {
                   </div>
                 )}
 
+               {/* ──── Phase 8F — How to work this customer ──── */}
+                {discClassified && DISC_ADVICE[discPrimary] && (
+                  <div className="mb-4">
+                    <div className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-2">
+                      How to Work This Customer
+                    </div>
+                    <div className={`${primaryMeta.bg} ${primaryMeta.border} border rounded-xl p-4 space-y-2.5`}>
+                      {[
+                        { label: 'Open',      value: DISC_ADVICE[discPrimary].open },
+                        { label: 'Pace',      value: DISC_ADVICE[discPrimary].pace },
+                        { label: 'Lead with', value: DISC_ADVICE[discPrimary].leadWith },
+                        { label: 'Close',     value: DISC_ADVICE[discPrimary].close },
+                        { label: 'Avoid',     value: DISC_ADVICE[discPrimary].avoid },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="flex gap-2.5">
+                          <span className={`text-[10px] font-bold uppercase tracking-wider ${primaryMeta.text} opacity-70 w-16 flex-shrink-0 pt-0.5`}>
+                            {label}
+                          </span>
+                          <span className={`text-xs ${primaryMeta.text} leading-relaxed flex-1`}>
+                            {value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {secondaryMeta && (
+                      <p className="text-[10px] text-stone-400 italic mt-2 leading-relaxed">
+                        Primary style shown. This customer also shows {secondaryMeta.label} traits — adapt if the read feels off in person.
+                      </p>
+                    )}
+                  </div>
+                )}
+                
                 {/* ──── DISC Cues ──── */}
                 {discSignals?.primary_cues?.length > 0 && (
                   <div className="mb-4">

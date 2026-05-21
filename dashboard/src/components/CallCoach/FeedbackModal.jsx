@@ -9,7 +9,7 @@ import { post } from "../../api";
 // turns pending feedback into coaching_rules.
 // ═══════════════════════════════════════════════════════════════════════════
 
-export default function FeedbackModal({ conversationId, open, onClose, onSubmitted }) {
+export default function FeedbackModal({ conversationId, sourceType, open, onClose, onSubmitted }) {
   const [rating, setRating] = useState(0);
   const [hoverRating, setHoverRating] = useState(0);
   const [whatWentRight, setWhatWentRight] = useState("");
@@ -31,6 +31,30 @@ export default function FeedbackModal({ conversationId, open, onClose, onSubmitt
 
   if (!open) return null;
 
+   // Channel-aware copy — Phase 6E extended this modal to SMS conversations,
+  // but the wording was voice-only. Branch on source_type so an SMS
+  // conversation doesn't say "call" / "on the line" / "over the phone".
+  const isSms = sourceType === "ai_sms";
+  const copy = isSms
+    ? {
+        title: "Coach the AI on this conversation",
+        subtitle:
+          "Your feedback trains the AI to handle SMS conversations like this better. Be specific about what to do or avoid — the AI will turn it into a rule for future conversations.",
+        rightPlaceholder:
+          "e.g. Good job pushing back when the customer said 'just text me a price' — kept the conversation going and booked the estimate.",
+        improvePlaceholder:
+          "e.g. When a customer asks about competitor pricing over text, the AI should redirect to our value (free 2-year warranty) instead of texting a number.",
+      }
+    : {
+        title: "Coach the AI on this call",
+        subtitle:
+          "Your feedback trains the AI to handle calls like this better. Be specific about what to do or avoid — the AI will turn it into a rule for future conversations.",
+        rightPlaceholder:
+          "e.g. Good job pushing back when the caller said 'just send me a price' — kept them on the line and got the appointment.",
+        improvePlaceholder:
+          "e.g. When a caller asks about competitor pricing, the AI should redirect to our value (free 2-year warranty) instead of giving a number over the phone.",
+      };
+  
   const trimmedRight   = whatWentRight.trim();
   const trimmedImprove = whatToImprove.trim();
   const canSubmit = (trimmedRight.length > 0 || trimmedImprove.length > 0 || rating > 0) && !submitting;
@@ -66,11 +90,8 @@ export default function FeedbackModal({ conversationId, open, onClose, onSubmitt
       <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="px-6 pt-6 pb-4 border-b border-gray-100">
-          <h2 className="text-xl font-bold text-gray-900">Coach the AI on this call</h2>
-          <p className="mt-1 text-sm text-gray-500 leading-relaxed">
-            Your feedback trains the AI to handle calls like this better.
-            Be specific about what to do or avoid — the AI will turn it into a rule for future conversations.
-          </p>
+          <h2 className="text-xl font-bold text-gray-900">{copy.title}</h2>
+          <p className="mt-1 text-sm text-gray-500 leading-relaxed">{copy.subtitle}</p>
         </div>
 
         {/* Body */}
@@ -125,7 +146,7 @@ export default function FeedbackModal({ conversationId, open, onClose, onSubmitt
             <textarea
               value={whatWentRight}
               onChange={(e) => setWhatWentRight(e.target.value.slice(0, 2000))}
-              placeholder="e.g. Good job pushing back when the caller said 'just send me a price' — kept them on the line and got the appointment."
+              placeholder={copy.rightPlaceholder}
               rows={4}
               disabled={submitting}
               className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent disabled:bg-gray-50"
@@ -143,7 +164,7 @@ export default function FeedbackModal({ conversationId, open, onClose, onSubmitt
             <textarea
               value={whatToImprove}
               onChange={(e) => setWhatToImprove(e.target.value.slice(0, 2000))}
-              placeholder="e.g. When a caller asks about competitor pricing, the AI should redirect to our value (free 2-year warranty) instead of giving a number over the phone."
+              placeholder={copy.improvePlaceholder}
               rows={6}
               disabled={submitting}
               className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent disabled:bg-gray-50"

@@ -70,6 +70,7 @@ const metricAlerts = require("./services/metricAlerts");
 
 // Phase 6 A2 — coaching scorer (every 5 minutes)
 const { runScoringSweep } = require("./services/coachingScorer");
+const { mulawFrameRms } = require("./services/audioSignalAnalyzer");
 require("node-cron").schedule("*/5 * * * *", async () => {
   try {
     await runScoringSweep();
@@ -3797,6 +3798,57 @@ wss.on("connection", async (twilioSocket, req) => {
   let to = q.To || q.to || null;
   let transcript = "";
   let transferAttempted = false;
+
+  // ── Phase 9A — audio signal collector ───────────────────────────────
+  // Lightweight per-connection accumulator. Filled by taps in the event
+  // handlers below; flushed to calls.audio_signals_raw on call-end. NO
+  // analysis happens here — the cron (coachingScorer → audioSignalAnalyzer)
+  // does all the heavy work off the live voice path.
+  const audioSignals = {
+    schema: 1,
+    customer_turns: [],          // { start_ms, end_ms, word_count }
+    agent_turns: [],             // { start_ms, end_ms, word_count }
+    customer_interruptions: 0,
+    agent_interruptions: 0,
+    customer_frames: [],         // per-inbound-frame RMS energy integers
+    frames_captured: 0,
+    direction: isOutbound ? "outbound" : "inbound",
+    _callStartMs: Date.now(),    // t0 for all *_ms offsets (underscore = internal)
+    _custTurnOpen: null,         // { start_ms } while customer is mid-turn
+    _agentTurnOpen: null,        // { start_ms } while agent is mid-turn
+  };
+  // ── Phase 9A — flush collector to calls.audio_signals_raw ────────────
+  // Called on call-end (whichever path fires). Idempotent via the
+  // _audioFlushed guard — a call can exit through msg.event==="stop" AND
+  // the socket "close" handler, but we must only write once. Closes any
+  // still-open customer turn first. Never throws — a failed write just
+  // means no audio row for this call, which the cron treats as skip_reason.
+  let _audioFlushed = false;
+  async function flushAudioSignals() {
+    if (_audioFlushed) return;
+    _audioFlushed = true;
+    try {
+      // Close a turn left open if the call ended mid-customer-speech.
+      if (audioSignals._custTurnOpen) {
+        audioSignals.customer_turns.push({
+          start_ms: audioSignals._custTurnOpen.start_ms,
+          end_ms: Date.now() - audioSignals._callStartMs,
+          word_count: 0,
+        });
+        audioSignals._custTurnOpen = null;
+      }
+      // Strip internal scratch fields before persisting.
+      const { _callStartMs, _custTurnOpen, _agentTurnOpen, ...clean } = audioSignals;
+      await safePoolQuery(
+        "UPDATE calls SET audio_signals_raw = $1 WHERE id = $2",
+        [JSON.stringify(clean), callId]
+      );
+      console.log("[AI-Desk][9A] audio_signals_raw written callId=%s custTurns=%d frames=%d",
+        callId, clean.customer_turns.length, clean.frames_captured);
+    } catch (e) {
+      console.error("[AI-Desk][9A] flushAudioSignals failed callId=%s: %s", callId, e.message);
+    }
+  }
   let hasBooked = false;
   let hasScheduledHangup = false;
   let shouldIgnoreSpeech = false;
@@ -4175,6 +4227,15 @@ sendToOpenAI(sessionUpdate);
 
       if (data.type === "input_audio_buffer.speech_started") {
          resetSilenceTimers(); // caller spoke → reset silence clock
+
+        // ── Phase 9A — customer turn opens; detect interruption ──────────
+        // A customer turn begins. If the agent is still mid-response, the
+        // customer is talking over the agent — count it as a customer
+        // interruption. Recorded before the shouldIgnoreSpeech early-return
+        // so finalization-phase speech still gets timed honestly.
+        audioSignals._custTurnOpen = { start_ms: Date.now() - audioSignals._callStartMs };
+        if (responseInProgress) audioSignals.customer_interruptions++;
+
         if (shouldIgnoreSpeech) {
           console.log("[AI-Desk] Ignoring user speech during finalization");
           return;
@@ -4200,6 +4261,20 @@ sendToOpenAI(sessionUpdate);
 
       if (data.type === "input_audio_buffer.speech_stopped") {
         console.log("[AI-Desk] User stopped speaking");
+
+        // ── Phase 9A — customer turn closes ──────────────────────────────
+        // Close the open customer turn with an end timestamp. word_count is
+        // filled in later by the transcription-completed tap (Insert 4).
+        // Pushed now so turn ordering is correct even if transcription is
+        // slow or never arrives.
+        if (audioSignals._custTurnOpen) {
+          audioSignals.customer_turns.push({
+            start_ms: audioSignals._custTurnOpen.start_ms,
+            end_ms: Date.now() - audioSignals._callStartMs,
+            word_count: 0,
+          });
+          audioSignals._custTurnOpen = null;
+        }
       }
 
       if (data.type === "conversation.item.input_audio_transcription.completed") {
@@ -4209,6 +4284,19 @@ sendToOpenAI(sessionUpdate);
           transcript += `User: ${text}\n`;
           if (leadId && tenant) {
             messagesService.saveMessage(tenant.id, leadId, "voice", "inbound", text);
+          }
+
+          // ── Phase 9A — backfill word_count onto the latest customer turn ──
+          // Insert 2 pushed customer turns with word_count: 0 when speech
+          // stopped. The transcript for that turn arrives here (slightly
+          // later). Attach the word count to the most recent customer turn
+          // that doesn't have one yet.
+          const words = text.trim().split(/\s+/).filter(Boolean).length;
+          for (let i = audioSignals.customer_turns.length - 1; i >= 0; i--) {
+            if (audioSignals.customer_turns[i].word_count === 0) {
+              audioSignals.customer_turns[i].word_count = words;
+              break;
+            }
           }
         }
       }
@@ -4220,6 +4308,22 @@ sendToOpenAI(sessionUpdate);
     transcript += `Assistant: ${text}\n`;
     if (leadId && tenant) {
       messagesService.saveMessage(tenant.id, leadId, "voice", "outbound", text);
+    }
+
+    // ── Phase 9A — record this agent turn ────────────────────────────
+    // The agent has no VAD speech events (VAD is on inbound caller audio
+    // only), so each completed agent transcript IS one agent turn. We
+    // don't have precise agent speech start/stop timestamps, so end_ms is
+    // "now" and start_ms is left null — the analyzer's computeWpm skips
+    // turns with non-finite timestamps, so agent WPM will simply be null
+    // for v1. Word count is still captured for raw_features / future use.
+    {
+      const agentWords = text.trim().split(/\s+/).filter(Boolean).length;
+      audioSignals.agent_turns.push({
+        start_ms: null,
+        end_ms: Date.now() - audioSignals._callStartMs,
+        word_count: agentWords,
+      });
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -5018,10 +5122,27 @@ from = msg.start?.customParameters?.From || msg.start?.from || from || null;
       if (!shouldIgnoreSpeech) {
         sendToOpenAI({ type: "input_audio_buffer.append", audio: msg.media.payload });
       }
+
+      // ── Phase 9A — per-frame customer amplitude ──────────────────────
+      // Decode this inbound μ-law frame to one RMS energy integer and
+      // store it. Variance of these across the call = amplitude variance.
+      // Wrapped in try/catch and capped so a decode hiccup or a very long
+      // call can never disturb the audio relay above or grow memory
+      // unbounded. Runs AFTER the sendToOpenAI relay so audio is never
+      // delayed by this.
+      try {
+        if (audioSignals.customer_frames.length < 9000) {
+          const buf = Buffer.from(msg.media.payload, "base64");
+          audioSignals.customer_frames.push(mulawFrameRms(buf));
+          audioSignals.frames_captured++;
+        }
+      } catch (e) {
+        // swallow — amplitude is best-effort, never break the audio path
+      }
       return;
     }
 
-    if (msg.event === "stop") {
+   if (msg.event === "stop") {
       if (openaiSocket?.readyState === WebSocket.OPEN) {
         openaiSocket.close();
       }
@@ -5033,10 +5154,13 @@ from = msg.start?.customParameters?.From || msg.start?.from || from || null;
         metadata: { leadCapture: currentLeadCapture },
         markEnded: true
       });
-    }
+
+      await flushAudioSignals(); // Phase 9A
+    } 
   };
 
   twilioSocket.on("close", async () => {
+    await flushAudioSignals(); // Phase 9A
     clearSilenceTimers();
     if (openaiSocket?.readyState === WebSocket.OPEN) {
       openaiSocket.close();

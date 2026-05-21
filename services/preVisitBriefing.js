@@ -171,7 +171,7 @@ async function composeBriefingBody({ booking, lead, tenant, discRow }) {
 
   const discLabel = {
     D: "Dominant — direct, fast decisions, doesn't want chitchat",
-    I: "Influential — social, wants connection, talk benefits",
+    I: "Influencer — social, wants connection, talk benefits",
     S: "Steady — wants reassurance, hates pressure, build trust slow",
     C: "Conscientious — analytical, wants data + details, be precise",
   };

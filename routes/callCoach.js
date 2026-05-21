@@ -88,6 +88,16 @@ router.get("/conversations", async (req, res) => {
 
   if (req.query.persona)     { params.push(req.query.persona);        filters.push(`cc.buyer_persona = $${params.length}`); }
   if (req.query.source_type) { params.push(req.query.source_type);    filters.push(`cc.source_type = $${params.length}`); }
+  // Phase 6E (May 22, 2026) — channel filter for the Voice/SMS toggle.
+  // Maps a friendly channel name to the underlying source_type values.
+  // Voice spans both inbound + outbound calls; SMS is the single ai_sms
+  // value. Left as a separate param from source_type so the existing
+  // exact-match filter above is untouched.
+  if (req.query.channel === "voice") {
+    filters.push(`cc.source_type IN ('ai_call_inbound', 'ai_call_outbound')`);
+  } else if (req.query.channel === "sms") {
+    filters.push(`cc.source_type = 'ai_sms'`);
+  }
   if (req.query.outcome)     { params.push(req.query.outcome);        filters.push(`cc.outcome = $${params.length}`); }
   if (req.query.rep_user_id) { params.push(req.query.rep_user_id);    filters.push(`cc.rep_user_id = $${params.length}`); }
   if (req.query.minScore)    { params.push(parseFloat(req.query.minScore)); filters.push(`cc.overall_score >= $${params.length}`); }

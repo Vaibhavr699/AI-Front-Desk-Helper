@@ -6,7 +6,21 @@
  * Phase 10 — Recovery Toggle System routes.
  *
  * Mounted at /api/recovery with authMiddleware applied at the mount level
- * (server.js). All endpoints assume req.tenantId is set by auth middleware.
+ * (server.js).
+ *
+ * TENANT RESOLUTION (fixed May 22, 2026):
+ *   Previously every handler read `req.tenantId || req.user?.tenant_id`.
+ *   `req.tenantId` is NEVER set by authMiddleware — it does not exist —
+ *   so this silently fell back to req.user.tenant_id. Under superadmin
+ *   impersonation that resolved to the SUPERADMIN's own tenant, not the
+ *   impersonated tenant: GET /settings loaded the wrong tenant's tier
+ *   allow-list (disabling the master toggle in the UI), and PATCH wrote
+ *   recovery settings to the wrong tenant.
+ *
+ *   Fix: use getGuaranteedTenantId(req) from lib/auth.js — the same
+ *   helper /api/leads, /api/metrics, etc. use. It honors the
+ *   x-impersonate-tenant-id header for superadmins, the requested tenant
+ *   for parent/HQ users, and the JWT tenant_id otherwise.
  *
  * Endpoints:
  *   GET    /api/recovery/settings              — load current settings + tier allow-list
@@ -20,7 +34,8 @@
  * with an upgrade tooltip.
  *
  * Security:
- *   - All writes scoped to req.tenantId — caller can't mutate another tenant.
+ *   - All writes scoped to the resolved tenantId — caller can't mutate
+ *     another tenant.
  *   - Allow-list keys are hardcoded identifiers; no SQL injection vector
  *     from req.body keys reaching the dynamic UPDATE.
  */
@@ -28,6 +43,7 @@
 const express = require("express");
 const router  = express.Router();
 const db      = require("../lib/db");
+const { getGuaranteedTenantId } = require("../lib/auth");
 
 // Defensive audit-log wrapper — won't crash a route if auditLogger is missing.
 async function logAudit(payload) {
@@ -73,9 +89,10 @@ const {
   CADENCE_PRESETS,
 } = require("../lib/recoverySettings");
 
-// Plan lookup — authMiddleware sets req.tenantId but not the full tenant
-// row, so we hit the DB. Single SELECT, cheap. Falls back to 'basic' on
-// any error so locked controls stay locked rather than silently unlocking.
+// Plan lookup — authMiddleware sets req.user but not the full tenant row
+// for the resolved (possibly impersonated) tenant, so we hit the DB.
+// Single SELECT, cheap. Falls back to 'basic' on any error so locked
+// controls stay locked rather than silently unlocking.
 async function getTenantPlan(tenantId) {
   try {
     const r = await db.query(
@@ -93,7 +110,7 @@ async function getTenantPlan(tenantId) {
 // GET /api/recovery/settings
 // ═══════════════════════════════════════════════════════════════════════════
 router.get("/settings", async (req, res) => {
-  const tenantId = req.tenantId || req.user?.tenant_id;
+  const tenantId = getGuaranteedTenantId(req);
   if (!tenantId) return res.status(401).json({ error: "Not authenticated" });
 
   try {
@@ -116,7 +133,7 @@ router.get("/settings", async (req, res) => {
 // PATCH /api/recovery/settings
 // ═══════════════════════════════════════════════════════════════════════════
 router.patch("/settings", async (req, res) => {
-  const tenantId = req.tenantId || req.user?.tenant_id;
+  const tenantId = getGuaranteedTenantId(req);
   if (!tenantId) return res.status(401).json({ error: "Not authenticated" });
 
   const userId = req.userId || req.user?.id || null;
@@ -201,7 +218,7 @@ router.patch("/settings", async (req, res) => {
 // POST /api/recovery/leads/:id/pause
 // ═══════════════════════════════════════════════════════════════════════════
 router.post("/leads/:id/pause", async (req, res) => {
-  const tenantId = req.tenantId || req.user?.tenant_id;
+  const tenantId = getGuaranteedTenantId(req);
   if (!tenantId) return res.status(401).json({ error: "Not authenticated" });
 
   const userId = req.userId || req.user?.id || null;
@@ -241,7 +258,7 @@ router.post("/leads/:id/pause", async (req, res) => {
 // POST /api/recovery/leads/:id/resume
 // ═══════════════════════════════════════════════════════════════════════════
 router.post("/leads/:id/resume", async (req, res) => {
-  const tenantId = req.tenantId || req.user?.tenant_id;
+  const tenantId = getGuaranteedTenantId(req);
   if (!tenantId) return res.status(401).json({ error: "Not authenticated" });
 
   const userId = req.userId || req.user?.id || null;
@@ -281,7 +298,7 @@ router.post("/leads/:id/resume", async (req, res) => {
 // Per-lead override: aggressive | standard | gentle | single | off | null
 // ═══════════════════════════════════════════════════════════════════════════
 router.patch("/leads/:id/cadence", async (req, res) => {
-  const tenantId = req.tenantId || req.user?.tenant_id;
+  const tenantId = getGuaranteedTenantId(req);
   if (!tenantId) return res.status(401).json({ error: "Not authenticated" });
 
   const userId = req.userId || req.user?.id || null;

@@ -547,6 +547,11 @@ app.use("/api/estimator", require("./routes/estimator"));
 app.use("/twilio", twilioRoutes);
 app.use("/api/webhooks", require("./routes/webhooks"));
 app.use("/api/auth", authRoutes);
+// ── Phase 6 C: Rep mobile app routes ──
+// Mounted BEFORE the `/api` catch-all on L521 — /api/rep/auth/login + /totp
+// must stay public (no JWT yet), and the rest of /api/rep/* gates itself via
+// repAuthChain inside its own routes (lib/requireRep.js).
+app.use("/api/rep", require("./routes/rep"));
 app.use("/api/billing", authMiddleware, billingRoutes);
 app.use("/api/outbound", authMiddleware, outboundRoutes);
 app.use("/api/leads", leadRoutes);

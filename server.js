@@ -104,6 +104,20 @@ require("node-cron").schedule("*/15 * * * *", async () => {
 });
 console.log("[startup] preVisitBriefing cron scheduled (*/15 * * * *)");
 
+// Phase 6E — SMS coaching scorer (every 15 minutes, May 21, 2026)
+// Reconstructs completed SMS conversations from the messages table and
+// scores them, the SMS analogue of coachingScorer (voice). A conversation
+// is "complete" once it's been quiet for 12 hours.
+const { runSmsCoachingSweep } = require("./services/smsCoachingScorer");
+require("node-cron").schedule("*/15 * * * *", async () => {
+  try {
+    await runSmsCoachingSweep();
+  } catch (err) {
+    console.error("[smsCoachingScorer] cron tick error:", err.message);
+  }
+});
+console.log("[startup] smsCoachingScorer cron scheduled (*/15 * * * *)");
+
 const auditLogsRouter = require("./routes/auditLogs");
 const { resolveHostnameToTenant } = require("./lib/hostnameResolver");
 

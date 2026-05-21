@@ -22,7 +22,7 @@ const baseNavItems = [
   { to: "/leads",      label: "Leads",      icon: LeadsIcon      },
   { to: "/bookings",   label: "Bookings",   icon: BookingsIcon   },
   { to: "/metrics",    label: "Metrics",    icon: MetricsIcon    },
-  { to: "/call-coach", label: "Call Coach", icon: CallCoachIcon  },
+  { to: "/call-coach", label: "AI Coaching", icon: CallCoachIcon  },
   { to: "/reviews",    label: "Reviews",    icon: ReviewsIcon    },
 ];
 

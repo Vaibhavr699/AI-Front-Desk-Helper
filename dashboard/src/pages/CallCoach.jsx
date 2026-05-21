@@ -3,15 +3,21 @@ import { Link } from "react-router-dom";
 import { get } from "../api";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Call Coach — Phase 6 A4 + A6 List View
-// Last updated: May 18, 2026 (A6 one-sided handling)
+// AI Coaching — Phase 6 A4 + A6 + 6E (List View)
+// Last updated: May 22, 2026 (6E pass 2 — Voice/SMS channel toggle + rename)
 //
-// A6: Adds "Show one-sided" toggle (default OFF). When OFF, the API filters
-// out conversations where the transcript was one-sided/silent/insufficient
-// — typically the 26 backfilled pre-Whisper-fix calls polluting the
-// dashboard with persona='unknown' and meaningless 5.0-5.3 scores. When
-// toggled ON, those calls appear with a "Not Analyzable" badge instead
-// of the persona pill so the owner understands why they're empty.
+// 6E (May 22): Renamed "Call Coach" → "AI Coaching" since the coaching
+// engine now spans BOTH voice calls and SMS conversations. Added a
+// Voice / SMS / All channel toggle that drives the API `channel` param:
+//   - Voice → source_type IN (ai_call_inbound, ai_call_outbound)
+//   - SMS   → source_type = ai_sms
+//   - All   → no channel filter
+// The route path stays /call-coach (only the visible label changed) so
+// existing links and bookmarks don't break.
+//
+// A6: "Show one-sided" toggle (default OFF). When OFF, the API filters
+// out conversations where the transcript was one-sided/silent/insufficient.
+// When ON, those appear with a "Not Analyzable" badge.
 //
 // Uses the shared `get` helper from ../api which prepends VITE_API_URL and
 // attaches Bearer auth + impersonation header consistently with the rest
@@ -62,6 +68,14 @@ const DATE_RANGES = [
   { label: "90d", days: 90  },
 ];
 
+// 6E: channel toggle options. `value` is sent to the API as ?channel=…
+// ("" = no channel filter, i.e. All).
+const CHANNELS = [
+  { value: "",      label: "All"   },
+  { value: "voice", label: "Voice" },
+  { value: "sms",   label: "SMS"   },
+];
+
 function scoreColor(score) {
   if (score == null) return "text-gray-400";
   const s = parseFloat(score);
@@ -72,6 +86,7 @@ function scoreColor(score) {
 
 export default function CallCoach({ tenantId }) {
   const [days, setDays]             = useState(30);
+  const [channel, setChannel]       = useState(""); // 6E: "" | "voice" | "sms"
   const [persona, setPersona]       = useState("");
   const [sourceType, setSourceType] = useState("");
   const [minScore, setMinScore]     = useState("");
@@ -90,7 +105,7 @@ export default function CallCoach({ tenantId }) {
   const [offset, setOffset] = useState(0);
   const limit = 50;
 
-  useEffect(() => { setOffset(0); }, [days, persona, sourceType, minScore, showOneSided]);
+  useEffect(() => { setOffset(0); }, [days, channel, persona, sourceType, minScore, showOneSided]);
 
   useEffect(() => {
     let cancelled = false;
@@ -100,7 +115,7 @@ export default function CallCoach({ tenantId }) {
         const json = await get("/api/call-coach/summary", { days });
         if (!cancelled) setSummary(json);
       } catch (err) {
-        if (!cancelled) console.warn("[CallCoach] summary error:", err.message);
+        if (!cancelled) console.warn("[AICoaching] summary error:", err.message);
       } finally {
         if (!cancelled) setSummaryLoading(false);
       }
@@ -118,6 +133,8 @@ export default function CallCoach({ tenantId }) {
         const params = { limit, offset };
         const dateFrom = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
         params.dateFrom = dateFrom;
+        // 6E: channel toggle. Empty string = All (omit param entirely).
+        if (channel)    params.channel = channel;
         if (persona)    params.persona = persona;
         if (sourceType) params.source_type = sourceType;
         if (minScore)   params.minScore = minScore;
@@ -138,7 +155,7 @@ export default function CallCoach({ tenantId }) {
     }
     load();
     return () => { cancelled = true; };
-  }, [days, persona, sourceType, minScore, showOneSided, offset, tenantId]);
+  }, [days, channel, persona, sourceType, minScore, showOneSided, offset, tenantId]);
 
   const avgOverall    = summary?.overall?.avg_overall != null
                           ? parseFloat(summary.overall.avg_overall).toFixed(1) : "—";
@@ -152,10 +169,28 @@ export default function CallCoach({ tenantId }) {
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Call Coach</h1>
+        <h1 className="text-2xl font-bold text-gray-900">AI Coaching</h1>
         <p className="mt-1 text-sm text-gray-500">
-          AI-scored conversations across 8 dimensions with persona detection and rationale-backed feedback.
+          AI-scored voice and SMS conversations across 8 dimensions, with persona detection and rationale-backed feedback.
         </p>
+      </div>
+
+      {/* 6E: Voice / SMS / All channel toggle */}
+      <div className="mb-4 flex items-center gap-2">
+        <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold mr-1">Channel:</span>
+        {CHANNELS.map((ch) => (
+          <button
+            key={ch.value || "all"}
+            onClick={() => setChannel(ch.value)}
+            className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${
+              channel === ch.value
+                ? "bg-brand-100 text-brand-700"
+                : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+            }`}
+          >
+            {ch.label}
+          </button>
+        ))}
       </div>
 
       <div className="mb-4 flex items-center gap-2">
@@ -183,12 +218,12 @@ export default function CallCoach({ tenantId }) {
             <span className="text-base text-gray-400 font-normal"> / 10</span>
           </div>
           <div className="text-xs text-gray-500 mt-1">
-            Across {scoredCount} scored {scoredCount === 1 ? "call" : "calls"}
+            Across {scoredCount} scored {scoredCount === 1 ? "conversation" : "conversations"}
           </div>
         </div>
 
         <div className="bg-white border border-gray-200 rounded-lg p-4">
-          <div className="text-xs uppercase tracking-wide text-gray-500">Calls Scored</div>
+          <div className="text-xs uppercase tracking-wide text-gray-500">Conversations Scored</div>
           <div className="text-3xl font-bold mt-1 text-gray-900">
             {summaryLoading ? "…" : scoredCount.toLocaleString()}
           </div>
@@ -274,9 +309,10 @@ export default function CallCoach({ tenantId }) {
           </span>
         </label>
 
-        {(persona || sourceType || minScore || showOneSided) && (
+        {(channel || persona || sourceType || minScore || showOneSided) && (
           <button
             onClick={() => {
+              setChannel("");
               setPersona("");
               setSourceType("");
               setMinScore("");
@@ -297,7 +333,7 @@ export default function CallCoach({ tenantId }) {
       {!showOneSided && hiddenCount > 0 && !listLoading && (
         <div className="mb-4 bg-gray-50 border border-gray-200 rounded-md px-4 py-2.5 text-xs text-gray-600 flex items-center justify-between">
           <span>
-            <span className="font-medium">{hiddenCount.toLocaleString()}</span> {hiddenCount === 1 ? "call was" : "calls were"} hidden because the customer side of the transcript wasn't captured (silent calls, hang-ups, or pre-fix recordings).
+            <span className="font-medium">{hiddenCount.toLocaleString()}</span> {hiddenCount === 1 ? "conversation was" : "conversations were"} hidden because the customer side of the transcript wasn't captured (silent calls, hang-ups, or pre-fix recordings).
           </span>
           <button
             onClick={() => setShowOneSided(true)}
@@ -320,9 +356,13 @@ export default function CallCoach({ tenantId }) {
         </div>
       ) : conversations.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-lg p-12 text-center">
-          <div className="text-gray-500 text-sm font-medium">No scored conversations in this window.</div>
+          <div className="text-gray-500 text-sm font-medium">
+            No scored {channel === "sms" ? "SMS conversations" : channel === "voice" ? "calls" : "conversations"} in this window.
+          </div>
           <div className="text-gray-400 text-xs mt-1">
-            New calls are scored every 5 minutes by the coaching engine.
+            {channel === "sms"
+              ? "SMS conversations are scored after a thread has been quiet for 12 hours."
+              : "New calls are scored every 5 minutes by the coaching engine."}
           </div>
         </div>
       ) : (

@@ -29,6 +29,7 @@
 
 const db = require("../lib/db");
 const { analyzeConversation } = require("../lib/coachingEngine");
+const { analyzeAndPersistForCall } = require("./audioSignalAnalyzer");
 
 const MIN_DURATION_MINUTES = 0.5;
 const MIN_TRANSCRIPT_LEN = 50;
@@ -169,6 +170,18 @@ async function runScoringSweep({
 
         const conversationId = insertResult.rows[0].id;
         rowsCreated++;
+
+         // ── Phase 9A — audio signal analysis (off the live voice path) ──────
+        // The conversation row now exists, so call_audio_signals has a valid
+        // FK target. analyzeAndPersistForCall reads calls.audio_signals_raw,
+        // computes the signals, and upserts call_audio_signals. It NEVER
+        // throws — a bad/missing audio blob must not disturb call scoring or
+        // the rest of the batch — so no try/catch is needed around it.
+        await analyzeAndPersistForCall({
+          callId: call.call_id,
+          conversationId,
+          tenantId: call.tenant_id,
+        });
 
         try {
           const result = await analyzeConversation({ conversationId });

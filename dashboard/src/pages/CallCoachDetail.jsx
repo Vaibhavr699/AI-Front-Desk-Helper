@@ -353,6 +353,7 @@ export default function CallCoachDetail({ tenantId }) {
       {/* Modal */}
       <FeedbackModal
         conversationId={id}
+        sourceType={conversation.source_type}
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         onSubmitted={handleFeedbackSubmitted}

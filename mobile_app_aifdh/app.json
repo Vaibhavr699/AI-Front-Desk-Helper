@@ -10,11 +10,13 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.airepcoach.app",
       "infoPlist": {
         "NSFaceIDUsageDescription": "AI Rep Coach uses Face ID to unlock the app on this device."
       }
     },
     "android": {
+      "package": "com.airepcoach.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/AI_Rep_coach.png",

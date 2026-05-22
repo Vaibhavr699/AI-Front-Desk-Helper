@@ -68,6 +68,7 @@ router.get("/", requireTeamManager, async (req, res) => {
       query = `
         SELECT
           u.id, u.email, u.role, u.tenant_id,
+          u.rep_seat_active, u.rep_seat_tier, u.rep_seat_activated_at,
           t.name AS tenant_name, t.business_type, u.created_at
         FROM dashboard_users u
         JOIN tenants t ON u.tenant_id = t.id
@@ -81,6 +82,7 @@ router.get("/", requireTeamManager, async (req, res) => {
       query = `
         SELECT
           u.id, u.email, u.role, u.tenant_id,
+          u.rep_seat_active, u.rep_seat_tier, u.rep_seat_activated_at,
           t.name AS tenant_name, t.business_type, u.created_at
         FROM dashboard_users u
         JOIN tenants t ON u.tenant_id = t.id
@@ -96,6 +98,7 @@ router.get("/", requireTeamManager, async (req, res) => {
       query = `
         SELECT
           u.id, u.email, u.role, u.tenant_id,
+          u.rep_seat_active, u.rep_seat_tier, u.rep_seat_activated_at,
           t.name AS tenant_name, t.business_type, u.created_at
         FROM dashboard_users u
         JOIN tenants t ON u.tenant_id = t.id
@@ -253,6 +256,71 @@ router.post("/invite", requireTeamManager, async (req, res) => {
     });
   } catch (err) {
     console.error("POST /api/team/invite error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// PATCH /api/team/:id/rep-seat — Phase 6C
+// Activates or deactivates a rep seat on a team member. Body:
+//   { active: boolean, tier?: "standard" | "pro" | "elite" }
+// Manager/owner only, and only for users within the caller's tenant scope.
+router.patch("/:id/rep-seat", requireTeamManager, async (req, res) => {
+  try {
+    const targetUserId = req.params.id;
+    const { active, tier } = req.body || {};
+    if (typeof active !== "boolean") {
+      return res.status(400).json({ error: "active (boolean) required" });
+    }
+    const allowedTiers = ["standard", "pro", "elite"];
+    if (active && tier && !allowedTiers.includes(tier)) {
+      return res.status(400).json({ error: "Invalid tier" });
+    }
+
+    const parentId = req.user.tenant_id;
+    const isParentAdmin = req.user?.tenant_business_type === "parent";
+
+    const scope = isParentAdmin
+      ? `(u.tenant_id = $2 OR t.parent_id = $2)`
+      : `u.tenant_id = $2`;
+    const rCheck = await db.query(
+      `SELECT u.id, u.email, u.tenant_id, u.rep_seat_active, u.rep_seat_tier
+         FROM dashboard_users u
+         JOIN tenants t ON u.tenant_id = t.id
+        WHERE u.id = $1 AND ${scope}`,
+      [targetUserId, parentId],
+    );
+    if (rCheck.rows.length === 0) {
+      return res.status(404).json({ error: "User not found in your scope" });
+    }
+    const before = rCheck.rows[0];
+
+    const finalTier = active ? (tier || before.rep_seat_tier || "standard") : before.rep_seat_tier;
+    const result = await db.query(
+      `UPDATE dashboard_users
+          SET rep_seat_active = $1,
+              rep_seat_tier = $2,
+              rep_seat_activated_at = CASE WHEN $1 AND rep_seat_activated_at IS NULL THEN now() ELSE rep_seat_activated_at END,
+              updated_at = now()
+        WHERE id = $3
+        RETURNING id, email, rep_seat_active, rep_seat_tier, rep_seat_activated_at`,
+      [active, finalTier, targetUserId],
+    );
+
+    await safeLogAction({
+      tenant_id: String(req.user.tenant_id),
+      user_id: String(req.user.sub),
+      action: "rep_seat_updated",
+      entity_type: "user",
+      entity_id: String(targetUserId),
+      old_value: { active: before.rep_seat_active, tier: before.rep_seat_tier },
+      new_value: { active, tier: finalTier },
+      ip_address: getRequestIp(req),
+      user_agent: req.get("user-agent") || null,
+    });
+
+    res.json({ user: result.rows[0] });
+  } catch (err) {
+    console.error("PATCH /api/team/:id/rep-seat error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });

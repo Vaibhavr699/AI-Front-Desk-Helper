@@ -1,12 +1,72 @@
 import { useState, useEffect } from "react";
 import {
-  getTeam, inviteTeamMember, removeTeamMember, getTenants, getUser, get,
+  getTeam, inviteTeamMember, removeTeamMember, updateRepSeat, getTenants, getUser, get,
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import {
   Users, Crown, MapPin, Trash2, Mail, Plus, AlertCircle, Building2,
-  Shield, User, History,
+  Shield, User, History, Smartphone,
 } from "lucide-react";
+
+const REP_TIER_OPTIONS = [
+  { value: "standard", label: "Standard · $119/mo" },
+  { value: "pro",      label: "Pro · $199/mo" },
+  { value: "elite",    label: "Elite · $249/mo" },
+];
+
+function RepSeatControl({ user, onChange }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const active = user.rep_seat_active === true;
+  const tier = user.rep_seat_tier || "standard";
+
+  async function setSeat(next) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await updateRepSeat(user.id, next);
+      onChange(result.user);
+    } catch (err) {
+      setError(err.message || "Failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5 items-start">
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={active}
+          disabled={busy}
+          onChange={(e) => setSeat({ active: e.target.checked, tier })}
+          className="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-stone-500"
+        />
+        <span className="text-xs font-semibold text-stone-700 inline-flex items-center gap-1">
+          <Smartphone size={12} className="text-stone-500" />
+          {active ? "Active" : "Off"}
+        </span>
+      </label>
+      {active && (
+        <select
+          value={tier}
+          disabled={busy}
+          onChange={(e) => setSeat({ active: true, tier: e.target.value })}
+          className="text-xs rounded-md border border-stone-300 bg-white px-1.5 py-1 text-stone-700"
+        >
+          {REP_TIER_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      )}
+      {error && <span className="text-[10px] text-red-600">{error}</span>}
+    </div>
+  );
+}
 
 // ─── Action badge config ───────────────────────────────────────────────────
 const ACTION_BADGES = {
@@ -364,13 +424,14 @@ export default function Team() {
                   <th className="px-6 py-4">User</th>
                   <th className="px-6 py-4">Assigned Location</th>
                   <th className="px-6 py-4">Role</th>
+                  <th className="px-6 py-4">Rep seat</th>
                   <th className="px-6 py-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100">
                 {team.length === 0 ? (
                   <tr>
-                    <td colSpan="4" className="px-6 py-8 text-center text-stone-500">No team members found.</td>
+                    <td colSpan="5" className="px-6 py-8 text-center text-stone-500">No team members found.</td>
                   </tr>
                 ) : (
                   team.map(user => {
@@ -413,6 +474,20 @@ export default function Team() {
                               <User className="w-3.5 h-3.5" /> Staff
                             </span>
                           )}
+                        </td>
+                        <td className="px-6 py-4">
+                          <RepSeatControl
+                            user={user}
+                            onChange={(updated) =>
+                              setTeam((prev) =>
+                                prev.map((u) =>
+                                  u.id === updated.id
+                                    ? { ...u, rep_seat_active: updated.rep_seat_active, rep_seat_tier: updated.rep_seat_tier, rep_seat_activated_at: updated.rep_seat_activated_at }
+                                    : u
+                                )
+                              )
+                            }
+                          />
                         </td>
                         <td className="px-6 py-4 text-right">
                           <button

@@ -320,6 +320,10 @@ export function removeTeamMember(id) {
   });
 }
 
+export function updateRepSeat(id, { active, tier }) {
+  return patch(`/api/team/${id}/rep-seat`, { active, tier });
+}
+
 export function getTechnicians(tenantId = null) {
   const url = tenantId ? `/api/technicians?tenant_id=${tenantId}` : "/api/technicians";
   return api(url);

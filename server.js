@@ -4,7 +4,7 @@ const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 process.on("uncaughtException", (err) => {
-  console.error("FATAL: Uncaught Exception:", err.stack || err);voice:
+  console.error("FATAL: Uncaught Exception:", err.stack || err);
   // Give logs a moment to flush
   setTimeout(() => process.exit(1), 500);
 });
@@ -3957,7 +3957,7 @@ wss.on("connection", async (twilioSocket, req) => {
         sendToOpenAI({
           type: "response.create",
           response: {
-            modalities: ["audio", "text"]
+            output_modalities: ["audio"]
           }
         });
       }
@@ -4932,9 +4932,14 @@ sendToOpenAI(sessionUpdate);
               sendToOpenAI({
                 type: "session.update",
                 session: {
-                  input_audio_transcription: {
-                    model: "whisper-1",
-                    language: lang,
+                  type: "realtime",
+                  audio: {
+                    input: {
+                      transcription: {
+                        model: "whisper-1",
+                        language: lang,
+                      },
+                    },
                   },
                 },
               });

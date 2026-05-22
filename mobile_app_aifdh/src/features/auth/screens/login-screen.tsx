@@ -68,7 +68,7 @@ export function LoginScreen() {
                   Welcome back
                 </Text>
                 <Text className="text-center text-base text-ink-muted">
-                  Sign in to continue to AI Front Desk Helper.
+                  Sign in to continue to AI Rep Coach.
                 </Text>
               </View>
             </View>

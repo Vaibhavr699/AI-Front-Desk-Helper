@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "ai-front-desk-mobile",
-    "slug": "ai-front-desk-mobile",
+    "name": "AI Rep Coach",
+    "slug": "ai-rep-coach",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSFaceIDUsageDescription": "AI Front Desk Helper uses Face ID to unlock the app on this device."
+        "NSFaceIDUsageDescription": "AI Rep Coach uses Face ID to unlock the app on this device."
       }
     },
     "android": {
@@ -47,7 +47,7 @@
       [
         "expo-local-authentication",
         {
-          "faceIDPermission": "AI Front Desk Helper uses Face ID to unlock the app on this device."
+          "faceIDPermission": "AI Rep Coach uses Face ID to unlock the app on this device."
         }
       ],
       [

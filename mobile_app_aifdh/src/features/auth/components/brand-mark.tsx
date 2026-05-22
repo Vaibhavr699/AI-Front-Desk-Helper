@@ -5,7 +5,7 @@ type Props = ViewProps & {
   size?: number;
 };
 
-const logo = require("@/assets/images/favicon copy.png");
+const logo = require("@/assets/images/AI_Rep_coach.png");
 
 export function BrandMark({ size = 96, className, ...rest }: Props) {
   return (

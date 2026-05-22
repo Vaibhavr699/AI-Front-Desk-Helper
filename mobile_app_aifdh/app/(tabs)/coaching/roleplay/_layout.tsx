@@ -12,6 +12,8 @@ export default function RoleplayLayout() {
     >
       <Stack.Screen name="index" />
       <Stack.Screen name="scenario/[id]" />
+      <Stack.Screen name="session/[id]" options={{ gestureEnabled: false }} />
+      <Stack.Screen name="results/[id]" options={{ gestureEnabled: false }} />
     </Stack>
   );
 }

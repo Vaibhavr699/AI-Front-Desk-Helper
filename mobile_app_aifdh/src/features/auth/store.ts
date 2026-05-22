@@ -237,7 +237,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return { success: false, cancelled: false };
     }
     const result = await authenticateWithBiometric(
-      `Unlock AI Front Desk Helper`,
+      `Unlock AI Rep Coach`,
     );
     if (result.success) {
       set({ isUnlocked: true, lastError: null });
@@ -262,7 +262,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       };
     }
     const result = await authenticateWithBiometric(
-      `Enable ${cap.label} for AI Front Desk Helper`,
+      `Enable ${cap.label} for AI Rep Coach`,
     );
     if (!result.success) {
       return {

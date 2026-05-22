@@ -16,5 +16,6 @@ router.use("/leads", require("./leads"));
 router.use("/appointments", require("./appointments"));
 router.use("/coaching", require("./coaching"));
 router.use("/roleplay", require("./roleplay"));
+router.use("/in-home", require("./in-home"));
 
 module.exports = router;

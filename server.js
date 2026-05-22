@@ -3527,7 +3527,26 @@ app.use((req, res, next) => {
 });
 
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+const wss = new WebSocket.Server({ noServer: true });
+const { createInHomeWss } = require("./lib/repInHomeWs");
+const inHomeWs = createInHomeWss();
+
+server.on("upgrade", (req, socket, head) => {
+  let url;
+  try {
+    url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+  } catch {
+    socket.destroy();
+    return;
+  }
+  if (url.pathname.startsWith(inHomeWs.PATH_PREFIX)) {
+    inHomeWs.routeUpgrade(req, socket, head, url);
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    wss.emit("connection", ws, req);
+  });
+});
 
 wss.on("connection", async (twilioSocket, req) => {
   let isInitializing = true;

@@ -19,7 +19,7 @@ export function WelcomeScreen() {
                 Welcome to
               </Text>
               <Text className="text-center text-3xl font-bold tracking-wider text-ink-primary md:text-4xl">
-                AI FRONT DESK{"\n"}HELPER
+                AI REP COACH
               </Text>
               <Text className="mt-2 max-w-xs text-center text-base leading-relaxed text-ink-muted md:max-w-md">
                 Your in-home sales co-pilot. Walk in informed, close with confidence.

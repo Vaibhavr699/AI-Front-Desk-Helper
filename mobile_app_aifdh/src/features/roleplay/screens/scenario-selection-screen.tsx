@@ -43,10 +43,9 @@ export function ScenarioSelectionScreen({ scenarioId }: Props) {
   async function handleStart() {
     if (!scenario || start.isPending) return;
     try {
-      await start.mutateAsync({ scenario_id: scenario.id });
-      Alert.alert(
-        "Session started",
-        "Live Roleplay screen ships in the next iteration. The session is saved to your history.",
+      const result = await start.mutateAsync({ scenario_id: scenario.id });
+      router.replace(
+        `/(tabs)/coaching/roleplay/session/${result.session.id}` as never,
       );
     } catch (err) {
       Alert.alert(

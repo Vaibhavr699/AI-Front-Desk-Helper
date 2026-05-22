@@ -4,11 +4,11 @@ import { Linking, Pressable, Text, View } from "react-native";
 import { APP_VERSION } from "@/src/config/env";
 import { colors } from "@/src/shared/theme/tokens";
 
-const SUPPORT_EMAIL = "support@aifrontdeskhelper.com";
+const SUPPORT_EMAIL = "support@airepcoach.com";
 
 export function SupportCard() {
   function contact() {
-    Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=AI%20Front%20Desk%20Helper%20support`);
+    Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=AI%20Rep%20Coach%20support`);
   }
 
   return (
@@ -33,7 +33,7 @@ export function SupportCard() {
       </Pressable>
       <View className="border-t border-surface-divider pt-3">
         <Text className="text-xs text-ink-dim">
-          AI Front Desk Helper · v{APP_VERSION}
+          AI Rep Coach · v{APP_VERSION}
         </Text>
       </View>
     </View>

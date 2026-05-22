@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { Alert, Linking, Pressable, Text, View } from "react-native";
 
 import { colors } from "@/src/shared/theme/tokens";
@@ -10,6 +11,8 @@ type Props = {
 };
 
 export function LeadActionBar({ lead }: Props) {
+  const router = useRouter();
+
   function call() {
     if (lead.phone) Linking.openURL(`tel:${lead.phone}`);
   }
@@ -22,23 +25,37 @@ export function LeadActionBar({ lead }: Props) {
   function enterQuote() {
     Alert.alert("Enter quote", "Quote-entry flow coming next.");
   }
+  function startInHome() {
+    router.push(`/in-home/prepare/${lead.id}` as never);
+  }
 
   return (
-    <View className="flex-row gap-2">
-      <ActionButton
-        icon="call"
-        label="Call"
-        onPress={call}
-        disabled={!lead.phone}
-      />
-      <ActionButton
-        icon="chatbox-ellipses"
-        label="SMS"
-        onPress={sms}
-        disabled={!lead.phone}
-      />
-      <ActionButton icon="create" label="Note" onPress={addNote} />
-      <ActionButton icon="pricetag" label="Quote" onPress={enterQuote} />
+    <View className="gap-2">
+      <Pressable
+        onPress={startInHome}
+        className="h-12 flex-row items-center justify-center gap-2 rounded-2xl bg-brand-600 active:bg-brand-700"
+      >
+        <Ionicons name="radio" size={18} color="#ffffff" />
+        <Text className="text-sm font-semibold text-white">
+          Start in-home session
+        </Text>
+      </Pressable>
+      <View className="flex-row gap-2">
+        <ActionButton
+          icon="call"
+          label="Call"
+          onPress={call}
+          disabled={!lead.phone}
+        />
+        <ActionButton
+          icon="chatbox-ellipses"
+          label="SMS"
+          onPress={sms}
+          disabled={!lead.phone}
+        />
+        <ActionButton icon="create" label="Note" onPress={addNote} />
+        <ActionButton icon="pricetag" label="Quote" onPress={enterQuote} />
+      </View>
     </View>
   );
 }

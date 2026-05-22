@@ -4237,7 +4237,7 @@ sendToOpenAI(sessionUpdate);
       try {
         data = JSON.parse(msg.toString());
         if (data.type !== "response.audio.delta") {
-           console.log("[DEBUG] OpenAI Event:", data.type, data.event_id || "");
+           
         }
       } catch (e) {
         return;
@@ -4256,8 +4256,7 @@ sendToOpenAI(sessionUpdate);
         responseInProgress = false;
       }
 
-      if (data.type === "response.audio.delta" && data.delta) {
-        // console.log("[DEBUG] Received audio delta from OpenAI (length: %d)", data.delta.length);
+      if (data.type === "response.output_audio.delta" && data.delta) {
         sendAudioToTwilio(data.delta);
         return;
       }

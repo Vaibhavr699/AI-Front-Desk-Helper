@@ -44,3 +44,7 @@ export async function enterQuote(
   });
   return data;
 }
+
+export async function sendBriefingToPhone(leadId: string): Promise<void> {
+  await api.post(`/rep/leads/${leadId}/send-briefing`);
+}

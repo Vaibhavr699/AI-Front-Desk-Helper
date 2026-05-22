@@ -17,6 +17,7 @@ export type TrustedDeviceEntry = {
 export type RepProfile = {
   id: string;
   email: string;
+  phone: string | null;
   role: string;
   tenant: {
     id: string;

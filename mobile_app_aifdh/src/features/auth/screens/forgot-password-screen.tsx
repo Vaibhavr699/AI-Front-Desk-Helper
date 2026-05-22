@@ -1,6 +1,8 @@
 import { useRouter } from "expo-router";
-import { Pressable, Text, View } from "react-native";
+import { Linking, Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+const SUPPORT_EMAIL = "support@airepcoach.com";
 
 export function ForgotPasswordScreen() {
   const router = useRouter();
@@ -8,6 +10,14 @@ export function ForgotPasswordScreen() {
   function goBack() {
     if (router.canGoBack()) router.back();
     else router.replace("/(auth)/login");
+  }
+
+  function emailSupport() {
+    const subject = encodeURIComponent("AI Rep Coach — password reset request");
+    const body = encodeURIComponent(
+      "Hi,\n\nI need help resetting my AI Rep Coach password.\n\nMy work email: \nCompany / tenant: \n\nThanks.",
+    );
+    Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=${subject}&body=${body}`);
   }
 
   return (
@@ -23,21 +33,36 @@ export function ForgotPasswordScreen() {
           </Pressable>
         </View>
 
-        <View className="mx-auto w-full max-w-md flex-1 justify-center gap-6">
+        <View className="mx-auto w-full max-w-md flex-1 justify-center gap-8">
           <View className="gap-2">
             <Text className="text-3xl font-bold text-ink-primary md:text-4xl">
-              Forgot password
+              Reset your password
             </Text>
             <Text className="text-base text-ink-muted">
-              Password reset is coming soon. Contact your tenant admin to reset
-              your account, or reach out to support.
+              Self-serve password reset is not available yet. Your tenant admin
+              can reset it for you, or our support team can help directly.
             </Text>
           </View>
+
+          <View className="gap-3">
+            <Pressable
+              onPress={emailSupport}
+              className="h-14 items-center justify-center rounded-2xl bg-brand-600 active:bg-brand-700"
+            >
+              <Text className="text-base font-semibold text-white">
+                Email support
+              </Text>
+            </Pressable>
+            <Text className="text-center text-xs text-ink-dim">
+              {SUPPORT_EMAIL}
+            </Text>
+          </View>
+
           <Pressable
             onPress={goBack}
-            className="h-14 items-center justify-center rounded-2xl bg-brand-600 active:bg-brand-700"
+            className="h-12 items-center justify-center rounded-2xl active:bg-surface-raised"
           >
-            <Text className="text-base font-semibold text-white">
+            <Text className="text-sm font-medium text-ink-secondary">
               Back to sign in
             </Text>
           </Pressable>

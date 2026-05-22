@@ -14,13 +14,14 @@ const express = require("express");
 const db = require("../../lib/db");
 const repAuth = require("../../lib/repAuth");
 const { repAuthChain } = require("../../lib/requireRep");
+const { normalizeE164Phone } = require("../../lib/phone");
 
 const router = express.Router();
 
 router.get("/", ...repAuthChain, async (req, res) => {
   try {
     const r = await db.query(
-      `SELECT u.id, u.email, u.role, u.tenant_id,
+      `SELECT u.id, u.email, u.role, u.tenant_id, u.phone,
               u.rep_seat_tier, u.rep_seat_activated_at,
               u.coaching_delivery_prefs, u.preferred_earbud_device,
               u.expo_push_token IS NOT NULL AS push_registered,
@@ -50,6 +51,7 @@ router.get("/", ...repAuthChain, async (req, res) => {
     res.json({
       id: u.id,
       email: u.email,
+      phone: u.phone || null,
       role: u.role,
       tenant: {
         id: u.tenant_id,
@@ -96,6 +98,18 @@ router.patch("/", ...repAuthChain, async (req, res) => {
     if (typeof req.body?.preferred_earbud_device === "string" || req.body?.preferred_earbud_device === null) {
       updates.push(`preferred_earbud_device = $${p++}`);
       values.push(req.body.preferred_earbud_device);
+    }
+    if (typeof req.body?.phone === "string" || req.body?.phone === null) {
+      const raw = req.body.phone;
+      let phoneValue = null;
+      if (raw && raw.trim().length > 0) {
+        phoneValue = normalizeE164Phone(raw);
+        if (!phoneValue) {
+          return res.status(400).json({ error: "Phone must be a valid number", code: "PHONE_INVALID" });
+        }
+      }
+      updates.push(`phone = $${p++}`);
+      values.push(phoneValue);
     }
     if (updates.length === 0) {
       return res.status(400).json({ error: "No editable fields in body" });

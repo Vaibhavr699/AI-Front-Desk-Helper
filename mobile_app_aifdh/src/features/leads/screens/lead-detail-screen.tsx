@@ -97,7 +97,7 @@ export function LeadDetailBody({ lead }: { lead: LeadDetail }) {
           <VarianceCoachingCard coaching={lead.variance_coaching} />
         ) : null}
 
-        <IntelligenceCard intelligence={lead.intelligence} />
+        <IntelligenceCard intelligence={lead.intelligence} leadId={lead.id} />
 
         <ConversationHistory messages={lead.messages} calls={lead.calls} />
       </View>

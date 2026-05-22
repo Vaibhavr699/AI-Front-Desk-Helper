@@ -10,6 +10,7 @@ const calendar = require("../calendar");
 const notificationService = require("./notifications");
 const { getLast10Digits, normalizeE164Phone } = require("../lib/phone");
 const leadsService = require("./leads");
+const pushNotifications = require("./pushNotifications");
 
 /** Normalize and validate booking payload from AI (handles camelCase, extra fields, bad dates). */
 function normalizeBookingData(data, isUpdate = false) {
@@ -254,6 +255,9 @@ async function createBooking(tenantId, callId, data, leadId = null, leadSource =
   if (tenant && tenant.follow_up_enabled) {
     followUp.scheduleFollowUps(tenantId, booking).catch((e) => console.error("Follow-up schedule:", e));
   }
+  pushNotifications.notifyAppointmentBooked(booking).catch((e) =>
+    console.error("[AI-Desk] push notify booked failed bookingId=%s: %s", booking.id, e.message)
+  );
   return { booking, crmSynced };
 }
 

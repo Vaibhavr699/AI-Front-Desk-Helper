@@ -6,8 +6,8 @@
 //                                     widget estimate, persona, history, etc.
 //   POST /:id/quote-entered         — rep submits their real quote total;
 //                                     server computes variance + coaching
-//   POST /:id/send-briefing         — SMS briefing to rep's phone (501 stub
-//                                     until Phase 8 C SMS endpoint exists)
+//   POST /:id/send-briefing         — SMS briefing to rep's own phone
+//                                     (Phase 8C — May 22, 2026)
 //
 // All queries are tenant-scoped via req.rep.tenant_id. The lead :id is also
 // re-checked against tenant_id on detail to prevent cross-tenant access by
@@ -29,6 +29,8 @@ const express = require("express");
 const db = require("../../lib/db");
 const repAuth = require("../../lib/repAuth");
 const { repAuthChain } = require("../../lib/requireRep");
+const twilioLib = require("../../lib/twilio");
+const { composeBriefingBody } = require("../../services/preVisitBriefing");
 
 const router = express.Router();
 
@@ -352,23 +354,105 @@ router.post("/:id/quote-entered", ...repAuthChain, async (req, res) => {
   }
 });
 
-// ── POST /api/rep/leads/:id/send-briefing ───────────────────────────────────
-// Spec: "SMS briefing to rep's phone (Phase 8 C)". The Phase 8 C SMS endpoint
-// doesn't exist yet, and dashboard_users has no phone column. Return 501
-// with a clear code so the rep app can grey-out the button until it ships.
+// ── POST /api/rep/leads/:id/send-briefing — Phase 8C ────────────────────────
+// Composes the same briefing the Phase 8B cron sends (preVisitBriefing) and
+// texts it to the rep's own phone on demand. Requires the rep has set their
+// phone in profile settings.
 // ────────────────────────────────────────────────────────────────────────────
 router.post("/:id/send-briefing", ...repAuthChain, async (req, res) => {
-  // Confirm the lead exists + is in this tenant before responding so we don't
-  // leak that 501 differs from 404 on a guessed UUID.
-  const r = await db.query(
-    "SELECT id FROM leads WHERE id = $1 AND tenant_id = $2",
-    [req.params.id, req.rep.tenant_id]
-  );
-  if (!r.rows[0]) return res.status(404).json({ error: "Lead not found" });
-  res.status(501).json({
-    error: "SMS briefing not yet available — depends on Phase 8 C delivery.",
-    code: "PHASE_8C_NOT_READY",
-  });
+  try {
+    const leadCheck = await db.query(
+      "SELECT id FROM leads WHERE id = $1 AND tenant_id = $2",
+      [req.params.id, req.rep.tenant_id]
+    );
+    if (!leadCheck.rows[0]) return res.status(404).json({ error: "Lead not found" });
+
+    const repRow = (await db.query(
+      "SELECT phone FROM dashboard_users WHERE id = $1",
+      [req.rep.id]
+    )).rows[0];
+    if (!repRow?.phone) {
+      return res.status(400).json({
+        error: "Add your phone number in Settings to receive briefings.",
+        code: "REP_PHONE_MISSING",
+      });
+    }
+
+    const bookingRes = await db.query(
+      `SELECT b.id, b.tenant_id, b.lead_id, b.contact_name, b.contact_phone,
+              b.address, b.scope, b.preferred_date, b.appointment_time,
+              b.estimated_revenue_cents, b.status, b.technician_id
+         FROM bookings b
+        WHERE b.lead_id = $1
+          AND b.status != 'Cancelled'
+        ORDER BY (b.preferred_date::timestamp + COALESCE(b.appointment_time, '00:00')::interval) DESC
+        LIMIT 1`,
+      [req.params.id]
+    );
+    const booking = bookingRes.rows[0] || null;
+
+    const leadRes = await db.query(
+      "SELECT id, name, phone, project_type, address, estimated_value FROM leads WHERE id = $1",
+      [req.params.id]
+    );
+    const lead = leadRes.rows[0];
+
+    const tenantRes = await db.query(
+      "SELECT id, name, timezone, twilio_phone_number, twilio_account_sid, twilio_auth_token FROM tenants WHERE id = $1",
+      [req.rep.tenant_id]
+    );
+    const tenant = tenantRes.rows[0];
+    if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+
+    let discRow = null;
+    const discRes = await db.query(
+      `SELECT disc_primary, disc_secondary, disc_scores, disc_confidence,
+              disc_signals, buyer_persona, persona_confidence, persona_signals
+         FROM coaching_conversations
+        WHERE lead_id = $1
+          AND (disc_primary IS NOT NULL OR (buyer_persona IS NOT NULL AND buyer_persona != 'unknown'))
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [req.params.id]
+    );
+    discRow = discRes.rows[0] || null;
+
+    const body = await composeBriefingBody({
+      booking: booking || {
+        contact_name: lead.name,
+        address: lead.address,
+        scope: lead.project_type,
+        preferred_date: null,
+        appointment_time: null,
+        estimated_revenue_cents: lead.estimated_value ? Math.round(lead.estimated_value * 100) : null,
+      },
+      lead,
+      tenant,
+      discRow,
+    });
+
+    const client = twilioLib.getClientForTenant(tenant);
+    const fromNumber = tenant.twilio_phone_number || process.env.TWILIO_PHONE_NUMBER;
+    if (!client || !fromNumber) {
+      return res.status(503).json({
+        error: "SMS not configured for this tenant.",
+        code: "TWILIO_NOT_CONFIGURED",
+      });
+    }
+    await client.messages.create({ from: fromNumber, to: repRow.phone, body });
+
+    await repAuth.logRepEvent(req, {
+      user_id: req.rep.id,
+      tenant_id: req.rep.tenant_id,
+      event_type: "rep_briefing_sms_sent",
+      metadata: { lead_id: req.params.id, booking_id: booking?.id || null },
+    });
+
+    res.json({ status: "ok" });
+  } catch (e) {
+    console.error("[rep/leads send-briefing]", e);
+    res.status(500).json({ error: "Server error" });
+  }
 });
 
 module.exports = router;

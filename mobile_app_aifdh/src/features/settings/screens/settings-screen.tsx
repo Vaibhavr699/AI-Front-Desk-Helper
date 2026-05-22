@@ -15,6 +15,7 @@ import { AudioCard } from "../components/audio-card";
 import { BiometricCard } from "../components/biometric-card";
 import { CoachingDeliveryCard } from "../components/coaching-delivery-card";
 import { NotificationsCard } from "../components/notifications-card";
+import { PhoneCard } from "../components/phone-card";
 import { ProfileCard } from "../components/profile-card";
 import { SignOutCard } from "../components/sign-out-card";
 import { SupportCard } from "../components/support-card";
@@ -45,6 +46,7 @@ export function SettingsScreen() {
         >
           <View className="mx-auto w-full max-w-2xl gap-4 px-4 md:px-8">
             <ProfileCard profile={data} />
+            <PhoneCard phone={data.phone} />
             <BiometricCard />
             <NotificationsCard />
             <TrustedDevicesCard devices={data.trusted_devices} />

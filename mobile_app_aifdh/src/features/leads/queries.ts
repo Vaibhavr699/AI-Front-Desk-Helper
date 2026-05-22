@@ -5,7 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 
-import { enterQuote, fetchLeadDetail, fetchLeads } from "./api";
+import { enterQuote, fetchLeadDetail, fetchLeads, sendBriefingToPhone } from "./api";
 import type { LeadFilter } from "./types";
 
 export const leadsKeys = {
@@ -47,6 +47,12 @@ export function useLeadDetail(leadId: string | null) {
     queryFn: () => fetchLeadDetail(leadId as string),
     enabled: !!leadId,
     staleTime: 30_000,
+  });
+}
+
+export function useSendBriefing(leadId: string) {
+  return useMutation({
+    mutationFn: () => sendBriefingToPhone(leadId),
   });
 }
 

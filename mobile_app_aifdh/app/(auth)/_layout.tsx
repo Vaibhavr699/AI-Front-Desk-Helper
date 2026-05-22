@@ -15,6 +15,7 @@ export default function AuthLayout() {
       <Stack.Screen name="login" />
       <Stack.Screen name="totp" />
       <Stack.Screen name="unlock" options={{ animation: "fade" }} />
+      <Stack.Screen name="enroll-biometric" options={{ animation: "fade" }} />
       <Stack.Screen name="forgot-password" />
     </Stack>
   );

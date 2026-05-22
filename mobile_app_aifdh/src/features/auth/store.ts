@@ -15,6 +15,13 @@ import {
   writeBiometricEnrollment,
   type BiometricType,
 } from "./biometric";
+
+type BiometricCapabilitySnapshot = {
+  hasHardware: boolean;
+  hasEnrolledInOs: boolean;
+  type: BiometricType | null;
+  label: string;
+};
 import { getOrCreateDeviceFingerprint } from "./device";
 import type { EnrollmentPayload, TrustedDevicePayload } from "./types";
 
@@ -35,8 +42,12 @@ type AuthState = {
   isBusy: boolean;
   biometricEnrolled: boolean;
   biometricType: BiometricType | null;
+  biometricCapability: BiometricCapabilitySnapshot | null;
+  enrollPromptDismissed: boolean;
   isUnlocked: boolean;
   hydrate: () => Promise<void>;
+  refreshBiometricCapability: () => Promise<BiometricCapabilitySnapshot>;
+  dismissEnrollPrompt: () => void;
   signIn: (email: string, password: string) => Promise<void>;
   verifyTotp: (code: string, trustDevice: boolean) => Promise<void>;
   cancelTotp: () => void;
@@ -95,14 +106,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isBusy: false,
   biometricEnrolled: false,
   biometricType: null,
+  biometricCapability: null,
+  enrollPromptDismissed: false,
   isUnlocked: false,
 
   hydrate: async () => {
-    const [token, user, enrolled, biometricType] = await Promise.all([
+    const [token, user, enrolled, biometricType, capability] = await Promise.all([
       secureStorage.get(STORAGE_KEYS.sessionToken),
       secureStorage.getJson<RepUser>(STORAGE_KEYS.currentUser),
       readBiometricEnrolled(),
       readBiometricType(),
+      getBiometricCapability(),
     ]);
     if (token && user) {
       authTokenHolder.set(token);
@@ -112,6 +126,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         user,
         biometricEnrolled: enrolled,
         biometricType,
+        biometricCapability: capability,
         isUnlocked: !enrolled,
       });
       return;
@@ -120,9 +135,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       status: "unauthenticated",
       biometricEnrolled: enrolled,
       biometricType,
+      biometricCapability: capability,
       isUnlocked: false,
     });
   },
+
+  refreshBiometricCapability: async () => {
+    const cap = await getBiometricCapability();
+    set({ biometricCapability: cap });
+    return cap;
+  },
+
+  dismissEnrollPrompt: () => set({ enrollPromptDismissed: true }),
 
   signIn: async (email, password) => {
     set({ isBusy: true, lastError: null });
@@ -148,6 +172,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           pendingEmail: null,
           isBusy: false,
           isUnlocked: true,
+          enrollPromptDismissed: false,
         });
         return;
       }
@@ -189,6 +214,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         pendingEmail: null,
         isBusy: false,
         isUnlocked: true,
+        enrollPromptDismissed: false,
       });
     } catch (err) {
       set({ isBusy: false, lastError: toMessage(err) });
@@ -223,6 +249,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         lastError: null,
         isBusy: false,
         isUnlocked: false,
+        enrollPromptDismissed: false,
       });
     } catch (err) {
       set({ isBusy: false, lastError: toMessage(err) });

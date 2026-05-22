@@ -4,6 +4,7 @@ import {
   fetchProfile,
   revokeTrustedDevice,
   updateCoachingDeliveryPrefs,
+  updateRepPhone,
 } from "./api";
 import type { CoachingDeliveryPrefs } from "./types";
 
@@ -25,6 +26,16 @@ export function useUpdateCoachingDeliveryPrefs() {
   return useMutation({
     mutationFn: (prefs: CoachingDeliveryPrefs) =>
       updateCoachingDeliveryPrefs(prefs),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.profile() });
+    },
+  });
+}
+
+export function useUpdateRepPhone() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (phone: string | null) => updateRepPhone(phone),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: settingsKeys.profile() });
     },

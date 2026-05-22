@@ -16,9 +16,10 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useResponsive } from "@/src/shared/hooks/use-responsive";
 import { colors } from "@/src/shared/theme/tokens";
 
+import { FilterChips } from "../components/filter-chips";
 import { LeadCard } from "../components/lead-card";
 import { useLeadDetail, useLeadsList } from "../queries";
-import type { LeadSummary } from "../types";
+import type { LeadFilter, LeadSummary } from "../types";
 
 import { LeadDetailBody } from "./lead-detail-screen";
 
@@ -28,6 +29,7 @@ export function LeadsListScreen() {
 
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [filter, setFilter] = useState<LeadFilter>("all");
 
   useEffect(() => {
     const id = setTimeout(() => setDebouncedSearch(searchInput.trim()), 300);
@@ -44,12 +46,16 @@ export function LeadsListScreen() {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = useLeadsList({ filter: "all", search: debouncedSearch, mine: true });
+  } = useLeadsList({ filter, search: debouncedSearch, mine: true });
 
   const leads: LeadSummary[] =
     data?.pages.flatMap((page) => page.leads) ?? [];
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelectedId(null);
+  }, [filter, debouncedSearch]);
 
   useEffect(() => {
     if (isTablet && leads.length > 0 && !selectedId) {
@@ -102,6 +108,7 @@ export function LeadsListScreen() {
     <SafeAreaView className="flex-1 bg-surface-base" edges={["top"]}>
       <Header />
       <SearchBar value={searchInput} onChange={setSearchInput} />
+      <FilterChips value={filter} onChange={setFilter} />
 
       {isLoading ? (
         <View className="flex-1 items-center justify-center">

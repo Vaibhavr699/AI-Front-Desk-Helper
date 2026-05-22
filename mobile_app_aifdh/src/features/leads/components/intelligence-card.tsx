@@ -1,13 +1,17 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Text, View } from "react-native";
+import { useState } from "react";
+import { Pressable, Text, View } from "react-native";
 
+import { isApiError } from "@/src/shared/api/errors";
 import { DiscBadge } from "@/src/features/appointments/components/disc-badge";
 import { colors } from "@/src/shared/theme/tokens";
 
+import { useSendBriefing } from "../queries";
 import type { CustomerIntelligence } from "../types";
 
 type Props = {
   intelligence: CustomerIntelligence | null;
+  leadId: string;
 };
 
 const DISC_DESCRIPTIONS: Record<string, string> = {
@@ -17,7 +21,27 @@ const DISC_DESCRIPTIONS: Record<string, string> = {
   C: "Cautious, detail-oriented, accuracy-focused. Bring data, expect questions, never improvise.",
 };
 
-export function IntelligenceCard({ intelligence }: Props) {
+export function IntelligenceCard({ intelligence, leadId }: Props) {
+  const sendBriefing = useSendBriefing(leadId);
+  const [feedback, setFeedback] = useState<{ kind: "ok" | "error"; message: string } | null>(null);
+
+  async function handleSendBriefing() {
+    if (sendBriefing.isPending) return;
+    setFeedback(null);
+    try {
+      await sendBriefing.mutateAsync();
+      setFeedback({ kind: "ok", message: "Briefing sent to your phone." });
+      setTimeout(() => setFeedback(null), 3000);
+    } catch (err) {
+      const msg = isApiError(err)
+        ? err.code === "REP_PHONE_MISSING"
+          ? "Add your phone in Settings first."
+          : err.message
+        : "Couldn't send. Try again.";
+      setFeedback({ kind: "error", message: msg });
+    }
+  }
+
   if (!intelligence) {
     return (
       <View className="gap-2 rounded-2xl border border-dashed border-surface-border bg-white p-4">
@@ -75,6 +99,26 @@ export function IntelligenceCard({ intelligence }: Props) {
           </Text>
         </View>
       ) : null}
+
+      <View className="gap-2 border-t border-surface-divider pt-3">
+        <Pressable
+          onPress={handleSendBriefing}
+          disabled={sendBriefing.isPending}
+          className={`h-11 flex-row items-center justify-center gap-2 rounded-xl border border-brand-200 bg-brand-50 active:bg-brand-100 ${sendBriefing.isPending ? "opacity-60" : ""}`}
+        >
+          <Ionicons name="paper-plane-outline" size={16} color={colors.brand[700]} />
+          <Text className="text-sm font-semibold text-brand-700">
+            {sendBriefing.isPending ? "Sending…" : "Send briefing to my phone"}
+          </Text>
+        </Pressable>
+        {feedback ? (
+          <Text
+            className={`text-xs ${feedback.kind === "ok" ? "text-emerald-600" : "text-red-600"}`}
+          >
+            {feedback.message}
+          </Text>
+        ) : null}
+      </View>
     </View>
   );
 }

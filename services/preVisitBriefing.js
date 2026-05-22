@@ -50,6 +50,7 @@ const db = require("../lib/db");
 const fetch = require("node-fetch");
 const twilio = require("../lib/twilio");
 const smsService = require("./sms"); // for getTenantPrimaryPhone
+const pushNotifications = require("./pushNotifications");
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = "gpt-4o";
@@ -427,6 +428,10 @@ async function processOneBooking(booking) {
 
     console.log("[PreVisitBriefing] Sent + marked booking=%s tenant=%s recipient=%s discPrimary=%s",
       booking.id, tenant.id, recipientPhone, discRow?.disc_primary || "(none)");
+
+    pushNotifications.notifyBriefingReady(booking).catch((e) =>
+      console.error("[PreVisitBriefing] push notify failed booking=%s: %s", booking.id, e.message)
+    );
 
   } catch (err) {
     console.error("[PreVisitBriefing] processOneBooking failed booking=%s err=%s",

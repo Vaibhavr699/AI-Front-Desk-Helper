@@ -13,6 +13,10 @@ export async function updateCoachingDeliveryPrefs(
   await api.patch("/rep/profile", { coaching_delivery_prefs: prefs });
 }
 
+export async function updateRepPhone(phone: string | null): Promise<void> {
+  await api.patch("/rep/profile", { phone });
+}
+
 export async function revokeTrustedDevice(fingerprint: string): Promise<void> {
   await api.post("/rep/auth/logout", { device_fingerprint: fingerprint });
 }

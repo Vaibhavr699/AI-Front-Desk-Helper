@@ -4226,7 +4226,6 @@ English. If the caller switches to another language for a full sentence, ask: "W
           tools: aiConfig.tools,
         },
       };
-};
  
 console.log("[DEBUG] Sending session.update to OpenAI:", JSON.stringify(sessionUpdate, null, 2));
 sendToOpenAI(sessionUpdate);

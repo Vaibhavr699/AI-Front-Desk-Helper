@@ -4197,28 +4197,35 @@ if (DEPRECATED_REALTIME_MODELS.has(model)) {
       const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 1500;
       const vadThreshold = parseFloat(process.env.REALTIME_VAD_THRESHOLD) || 0.85;
       const sessionUpdate = {
-  type: "session.update",
-  session: {
-    type: "realtime",
-    input_audio_format: "g711_ulaw",
-    output_audio_format: "g711_ulaw",
-    input_audio_transcription: { model: "whisper-1" },
-    voice: aiConfig.voice,
-   instructions: `${aiConfig.instructions}${coachingInjection ? "\n\n" + coachingInjection : ""}
+        type: "session.update",
+        session: {
+          type: "realtime",
+          audio: {
+            input: {
+              format: { type: "audio/pcmu" },
+              transcription: { model: "whisper-1" },
+              turn_detection: {
+                type: "server_vad",
+                threshold: vadThreshold,
+                prefix_padding_ms: 500,
+                silence_duration_ms: silenceMs,
+              },
+            },
+            output: {
+              format: { type: "audio/pcmu" },
+              voice: aiConfig.voice,
+            },
+          },
+          instructions: `${aiConfig.instructions}${coachingInjection ? "\n\n" + coachingInjection : ""}
 
 # Delivery
 Speak at the pace of a relaxed, capable receptionist — slightly faster than measured, never rushed. Natural intonation, not perky. Let small pauses sit; you don't have to fill silence. Match the caller's energy: if they're chatty, be chatty; if they're terse, be terse.
 
 # Language
 English. If the caller switches to another language for a full sentence, ask: "Would you like me to continue in English or [language]?" Never switch on accents, names, addresses, or filler words alone.`,
-    tools: aiConfig.tools,
-    turn_detection: {
-      type: "server_vad",
-      threshold: vadThreshold,
-      prefix_padding_ms: 500,
-      silence_duration_ms: silenceMs,
-    },
-  },
+          tools: aiConfig.tools,
+        },
+      };
 };
  
 console.log("[DEBUG] Sending session.update to OpenAI:", JSON.stringify(sessionUpdate, null, 2));

@@ -5004,33 +5004,7 @@ sendToOpenAI(sessionUpdate);
           await attemptTransfer(callSid, tenant);
         }
         await safeUpdateCallSummary(callId, { transcript, metadata: { leadCapture: currentLeadCapture } });
-
-        if (hasBooked && !hasScheduledHangup) {
-          hasScheduledHangup = true;
-          console.log("[AI-Desk] Booking confirmed, closing call in 15s...");
-          setTimeout(async () => {
-            try {
-              const client = twilioLib.getClientForTenant(tenant);
-              if (client && callSid) {
-                await client.calls(callSid).update({ status: "completed" });
-                console.log("[AI-Desk] Explicitly HUNG UP callSid=%s", callSid);
-              }
-            } catch (e) {
-              console.error("[AI-Desk] Explicit hangup failed:", e.message);
-            }
-            if (twilioSocket.readyState === WebSocket.OPEN) {
-              console.log("[AI-Desk] Closing Twilio socket now.");
-              twilioSocket.close();
-            }
-            // Final summary update inside timeout
-            await safeUpdateCallSummary(callId, {
-              transcript,
-              disposition: 'booked',
-              status: 'completed',
-              markEnded: true
-            });
-          }, 15000);
-        }
+        
         return;
       }
 

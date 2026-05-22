@@ -3946,7 +3946,7 @@ wss.on("connection", async (twilioSocket, req) => {
         sendToOpenAI({
           type: "response.create",
           response: {
-            output_modalities: ["audio", "text"],
+            output_modalities: ["audio"],
             instructions: `Your first utterance on this call must be EXACTLY this, word-for-word, spoken warmly:\n\n"${verbatimGreeting}"\n\nDo not paraphrase, do not add words before or after. After you say this greeting, stop and wait for the caller to respond.`,
           },
         });
@@ -4056,7 +4056,7 @@ wss.on("connection", async (twilioSocket, req) => {
       sendToOpenAI({
         type: "response.create",
         response: {
-          output_modalities: ["audio", "text"],
+          output_modalities: ["audio"],
           instructions: "The caller has gone quiet for about 15 seconds. Gently ask if they're still there, in a single short sentence. Do not recap the prior conversation.",
         },
       });
@@ -4071,7 +4071,7 @@ wss.on("connection", async (twilioSocket, req) => {
       sendToOpenAI({
         type: "response.create",
         response: {
-          output_modalities: ["audio", "text"],
+          output_modalities: ["audio"],
           instructions: `The caller has been silent for 30 seconds and appears to have walked away. In a warm, brief single sentence, thank them for calling ${companyName} and say goodbye. Do not ask any further questions.`,
         },
       });

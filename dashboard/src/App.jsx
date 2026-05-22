@@ -5,7 +5,7 @@ import { DashboardLayout } from "./layouts";
 import SmsTerms from "./pages/SmsTerms";
 import SmsConsent from "./pages/SmsConsent";
 import Contact from "./pages/Contact";
-import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, Outbound, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy, Team, Locations, FranchiseeInvite, Welcome, RollupV5, CallCoach, CallCoachDetail } from "./pages";
+import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, Outbound, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy, Team, SharingRisks, Locations, FranchiseeInvite, Welcome, RollupV5, CallCoach, CallCoachDetail } from "./pages";
 import FranchisePaywall from "./pages/FranchisePaywall";
 import HqLocations from "./pages/HqLocations";
 import { ToastProvider } from "./components/ui/Toast";
@@ -187,6 +187,7 @@ export default function App() {
             <Route path="/admin/admins" element={<AdminWithContext view="admins" />} />
             <Route path="/locations" element={<LocationsWithContext />} />
             <Route path="/team" element={<Team />} />
+            <Route path="/team/sharing-risks" element={<SharingRisks />} />
             <Route path="/reviews" element={<ReviewsWithContext />} />
             {/* Reseller (authenticated) — Phase 2 WL */}
             <Route path="/reseller" element={<Reseller />} />

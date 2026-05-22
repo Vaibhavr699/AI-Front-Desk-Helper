@@ -94,9 +94,10 @@ function getNavItems(activeTenant) {
   }
 
   if (isHQ) {
-    items.push({ to: "/team",      label: "Team",       icon: TeamIcon       });
-    items.push({ to: "/tenants",   label: "Businesses", icon: BusinessesIcon });
-    items.push({ to: "/rollup-v5", label: "Rollup",     icon: RollupIcon     });
+    items.push({ to: "/team",                label: "Team",          icon: TeamIcon       });
+    items.push({ to: "/team/sharing-risks",  label: "Sharing Risks", icon: TeamIcon       });
+    items.push({ to: "/tenants",             label: "Businesses",    icon: BusinessesIcon });
+    items.push({ to: "/rollup-v5",           label: "Rollup",        icon: RollupIcon     });
   }
   if (user?.is_super_admin) {
     items.push({ to: "/admin/tenants", label: "Admin Console", icon: AdminIcon });

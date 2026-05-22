@@ -21,6 +21,7 @@ export { default as PrivacyPolicy } from "./PrivacyPolicy";
 export { default as TermsOfService } from "./TermsOfService";
 export { default as CookiePolicy } from "./CookiePolicy";
 export { default as Team } from "./Team";
+export { default as SharingRisks } from "./SharingRisks";
 export { default as Outbound } from "./Outbound";
 export { default as Locations } from "./Locations";
 export { default as FranchiseeInvite } from "./FranchiseeInvite";

@@ -119,6 +119,18 @@ require("node-cron").schedule("*/15 * * * *", async () => {
 });
 console.log("[startup] smsCoachingScorer cron scheduled (*/15 * * * *)");
 
+// Phase 6C anti-sharing — daily sweep of rep_app_events to flag accounts
+// that look shared. Runs at 02:00 UTC to stay clear of business hours.
+const { runSharingRiskSweep } = require("./services/repSharingScorer");
+require("node-cron").schedule("0 2 * * *", async () => {
+  try {
+    await runSharingRiskSweep();
+  } catch (err) {
+    console.error("[repSharingScorer] cron tick error:", err.message);
+  }
+});
+console.log("[startup] repSharingScorer cron scheduled (0 2 * * *)");
+
 const auditLogsRouter = require("./routes/auditLogs");
 const { resolveHostnameToTenant } = require("./lib/hostnameResolver");
 

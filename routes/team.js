@@ -318,4 +318,42 @@ router.delete("/:id", requireTeamManager, async (req, res) => {
   }
 });
 
+// GET /api/team/sharing-risks — Phase 6C anti-sharing
+// Lists rep accounts in this tenant whose sharing_risk_score is at or above
+// the v0 threshold. Owners review flagged accounts manually — nothing is
+// auto-revoked.
+router.get("/sharing-risks", requireTeamManager, async (req, res) => {
+  try {
+    const threshold = Math.max(parseInt(req.query.threshold, 10) || 4, 1);
+    const r = await db.query(
+      `SELECT id, email, role, rep_seat_tier,
+              sharing_risk_score, sharing_risk_signals, sharing_risk_computed_at,
+              last_app_open_at
+         FROM dashboard_users
+        WHERE tenant_id = $1
+          AND rep_seat_active = true
+          AND sharing_risk_score IS NOT NULL
+          AND sharing_risk_score >= $2
+        ORDER BY sharing_risk_score DESC, sharing_risk_computed_at DESC NULLS LAST`,
+      [req.user.tenant_id, threshold],
+    );
+    res.json({
+      threshold,
+      flagged: r.rows.map((row) => ({
+        id: row.id,
+        email: row.email,
+        role: row.role,
+        seat_tier: row.rep_seat_tier || "standard",
+        score: row.sharing_risk_score,
+        signals: row.sharing_risk_signals || {},
+        computed_at: row.sharing_risk_computed_at,
+        last_app_open_at: row.last_app_open_at,
+      })),
+    });
+  } catch (err) {
+    console.error("GET /api/team/sharing-risks error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 module.exports = router;

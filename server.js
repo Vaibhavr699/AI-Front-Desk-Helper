@@ -4,7 +4,7 @@ const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 
 process.on("uncaughtException", (err) => {
-  console.error("FATAL: Uncaught Exception:", err.stack || err);
+  console.error("FATAL: Uncaught Exception:", err.stack || err);voice:
   // Give logs a moment to flush
   setTimeout(() => process.exit(1), 500);
 });
@@ -4199,6 +4199,7 @@ if (DEPRECATED_REALTIME_MODELS.has(model)) {
       const sessionUpdate = {
   type: "session.update",
   session: {
+    type: "realtime",
     input_audio_format: "g711_ulaw",
     output_audio_format: "g711_ulaw",
     input_audio_transcription: { model: "whisper-1" },

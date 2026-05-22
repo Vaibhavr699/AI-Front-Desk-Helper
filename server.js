@@ -4117,7 +4117,6 @@ if (DEPRECATED_REALTIME_MODELS.has(model)) {
     openaiSocket = new WebSocket(url, {
       headers: {
         "Authorization": `Bearer ${OPENAI_API_KEY}`,
-        "OpenAI-Beta": "realtime=v1"
       },
     });
     console.log("[DEBUG] Connecting to OpenAI Realtime API:", url);

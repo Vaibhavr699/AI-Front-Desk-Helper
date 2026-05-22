@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getFollowups, triggerFollowupSms, triggerFollowupCall, updateFollowupStatus } from "../api";
+import { getFollowups, triggerFollowupSms, triggerFollowupCall, updateFollowupStatus, getRecoverySettings } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import { ConfirmationModal } from "../components";
 import { 
@@ -94,6 +94,10 @@ export default function FollowUps({ tenantId }) {
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(15);
   const [configOpen, setConfigOpen] = useState(false);
+  // Recovery master-toggle state — drives the "follow-ups paused" banner.
+  // Starts true so the banner never flashes on during the initial load;
+  // fails open on any settings API error (see loadData).
+  const [recoveryEnabled, setRecoveryEnabled] = useState(true);
 
   // Modal State
   const [modal, setModal] = useState({
@@ -133,6 +137,20 @@ export default function FollowUps({ tenantId }) {
       setLoading(true);
       const data = await getFollowups(tenantId);
       setFollowups(data.followups || []);
+
+      // Recovery master-toggle state — for the "follow-ups paused" banner.
+      // Fails open: on any error we leave recoveryEnabled=true so we never
+      // show a false "paused" warning during a transient API hiccup.
+      // Response shape (per api.js): { settings, tier_allowed_fields, presets, plan }
+      // — the master toggle is settings.recovery_enabled (see lib/recoverySettings.js
+      // canSendRecovery: `if (!settings.recovery_enabled) ... reason: "master_off"`).
+      try {
+        const rs = await getRecoverySettings();
+        const enabled = rs?.settings?.recovery_enabled;
+        setRecoveryEnabled(enabled !== false);
+      } catch (_) {
+        setRecoveryEnabled(true);
+      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -254,6 +272,32 @@ export default function FollowUps({ tenantId }) {
           Configure Follow-ups
         </button>
       </div>
+
+      {/* ── Recovery master-toggle banner ─────────────────────────────────────
+          When the master "Enable follow-ups" toggle is OFF, every row in the
+          table below is scheduled but WILL NOT SEND — the Phase 10 gate
+          (lib/recoverySettings.js canSendRecovery) blocks them with
+          reason="master_off". Without this banner the dashboard misleads:
+          it shows "next action" times for follow-ups that never fire.
+          Only renders when recovery is disabled — no change to the normal view. */}
+      {!recoveryEnabled && (
+        <div className="p-4 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-sm flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-amber-500" />
+          <div className="flex-1">
+            <p className="font-bold">Follow-ups are paused</p>
+            <p className="text-amber-700 mt-0.5">
+              The master toggle is OFF. None of the scheduled actions below will actually
+              send — no SMS, email, or AI calls will go out until follow-ups are turned back on.
+            </p>
+          </div>
+          <button
+            onClick={() => setConfigOpen(true)}
+            className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-600 text-white hover:bg-amber-700 transition-colors"
+          >
+            Open Settings
+          </button>
+        </div>
+      )}
 
       {/* Enhanced Filter Tabs with Custom Tooltips */}
       <div className="flex gap-2 flex-wrap">
@@ -495,7 +539,12 @@ export default function FollowUps({ tenantId }) {
       />
       <RecoveryConfigDrawer
         open={configOpen}
-        onClose={() => setConfigOpen(false)}
+        onClose={() => {
+          setConfigOpen(false);
+          // Re-pull recovery settings when the drawer closes so the banner
+          // reflects a toggle change the user just made without a full reload.
+          loadData();
+        }}
       />
     </div>
   );

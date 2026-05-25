@@ -2,11 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   endInHomeSession,
+  fetchCuePreferences,
   fetchInHomeSession,
   startInHomeSession,
   submitSessionFeedback,
+  updateCuePreferences,
 } from "./api";
-import type { StartSessionInput } from "./types";
+import type { CuePreferences, StartSessionInput } from "./types";
 
 export const inHomeKeys = {
   all: ["in-home"] as const,
@@ -52,5 +54,23 @@ export function useSessionFeedback() {
   return useMutation({
     mutationFn: (input: { sessionId: string; satisfaction: number }) =>
       submitSessionFeedback(input.sessionId, input.satisfaction),
+  });
+}
+
+export function useCuePreferences() {
+  return useQuery({
+    queryKey: ["cue-preferences"],
+    queryFn: fetchCuePreferences,
+    staleTime: 60_000,
+  });
+}
+
+export function useUpdateCuePreferences() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (updates: Partial<CuePreferences>) => updateCuePreferences(updates),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["cue-preferences"] });
+    },
   });
 }

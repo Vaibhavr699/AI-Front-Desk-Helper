@@ -17,5 +17,6 @@ router.use("/appointments", require("./appointments"));
 router.use("/coaching", require("./coaching"));
 router.use("/roleplay", require("./roleplay"));
 router.use("/in-home", require("./in-home"));
+router.use("/cue-settings", require("./cue-settings"));
 
 module.exports = router;

@@ -2,6 +2,7 @@ import { api } from "@/src/shared/api/client";
 import { API_BASE_URL } from "@/src/config/env";
 
 import type {
+  CuePreferences,
   InHomeSession,
   StartSessionInput,
   StartSessionResponse,
@@ -48,6 +49,20 @@ export async function submitSessionFeedback(
     `/rep/in-home/sessions/${sessionId}/feedback`,
     { rep_satisfaction: satisfaction },
   );
+  return data;
+}
+
+export async function fetchCuePreferences(): Promise<{
+  cue_preferences: CuePreferences;
+}> {
+  const { data } = await api.get("/rep/cue-settings");
+  return data;
+}
+
+export async function updateCuePreferences(
+  updates: Partial<CuePreferences>,
+): Promise<{ cue_preferences: CuePreferences }> {
+  const { data } = await api.patch("/rep/cue-settings", updates);
   return data;
 }
 

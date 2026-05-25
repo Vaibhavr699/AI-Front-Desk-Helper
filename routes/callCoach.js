@@ -680,4 +680,72 @@ router.patch("/rules/:ruleId", async (req, res) => {
   }
 });
 
+router.get("/in-home/sessions", async (req, res) => {
+  try {
+    const tenantId = getTenantId(req);
+    if (!tenantId) return res.status(401).json({ error: "No tenant" });
+
+    const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const offset = parseInt(req.query.offset, 10) || 0;
+    const days = parseInt(req.query.days, 10) || 30;
+
+    const r = await db.query(
+      `SELECT s.id, s.user_id, s.lead_id, s.started_at, s.ended_at,
+              s.outcome, s.estimate_value_cents, s.total_cues_fired,
+              s.consent_state, s.rep_satisfaction,
+              u.email AS rep_email,
+              l.customer_name AS lead_name,
+              (SELECT count(*) FROM in_home_alerts a WHERE a.session_id = s.id) AS alert_count
+         FROM in_home_sessions s
+         LEFT JOIN dashboard_users u ON u.id = s.user_id
+         LEFT JOIN leads l ON l.id = s.lead_id
+        WHERE s.tenant_id = $1
+          AND s.started_at >= now() - ($4 || ' days')::interval
+        ORDER BY s.started_at DESC
+        LIMIT $2 OFFSET $3`,
+      [tenantId, limit, offset, days],
+    );
+
+    res.json({ sessions: r.rows });
+  } catch (err) {
+    console.error("[callCoach] in-home sessions error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/in-home/sessions/:id", async (req, res) => {
+  try {
+    const tenantId = getTenantId(req);
+    if (!tenantId) return res.status(401).json({ error: "No tenant" });
+
+    const [sessionR, alertsR] = await Promise.all([
+      db.query(
+        `SELECT s.*, u.email AS rep_email, l.customer_name AS lead_name
+           FROM in_home_sessions s
+           LEFT JOIN dashboard_users u ON u.id = s.user_id
+           LEFT JOIN leads l ON l.id = s.lead_id
+          WHERE s.id = $1 AND s.tenant_id = $2`,
+        [req.params.id, tenantId],
+      ),
+      db.query(
+        `SELECT id, alert_type, alert_content, alert_urgency, cue_type,
+                watch_label, fired_at, window_start, window_end,
+                transcript_window, dismissed_at, payload
+           FROM in_home_alerts
+          WHERE session_id = $1
+          ORDER BY fired_at ASC`,
+        [req.params.id],
+      ),
+    ]);
+
+    const session = sessionR.rows[0];
+    if (!session) return res.status(404).json({ error: "Session not found" });
+
+    res.json({ session, alerts: alertsR.rows });
+  } catch (err) {
+    console.error("[callCoach] in-home session detail error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { get } from "../api";
+import InHomeCuesTab from "../components/CallCoach/InHomeCuesTab";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AI Coaching — Phase 6 A4 + A6 + 6E (List View)
@@ -84,7 +85,13 @@ function scoreColor(score) {
   return "text-rose-700";
 }
 
+const TABS = [
+  { key: "conversations", label: "Conversations" },
+  { key: "in-home", label: "In-Home Cues" },
+];
+
 export default function CallCoach({ tenantId }) {
+  const [activeTab, setActiveTab]   = useState("conversations");
   const [days, setDays]             = useState(30);
   const [channel, setChannel]       = useState(""); // 6E: "" | "voice" | "sms"
   const [persona, setPersona]       = useState("");
@@ -175,6 +182,25 @@ export default function CallCoach({ tenantId }) {
         </p>
       </div>
 
+      <div className="mb-6 flex gap-0 border-b border-gray-200">
+        {TABS.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-all -mb-px ${
+              activeTab === tab.key
+                ? "border-brand-600 text-brand-600"
+                : "border-transparent text-stone-500 hover:text-stone-700"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "in-home" && <InHomeCuesTab tenantId={tenantId} />}
+
+      {activeTab === "conversations" && <>
       {/* 6E: Voice / SMS / All channel toggle */}
       <div className="mb-4 flex items-center gap-2">
         <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold mr-1">Channel:</span>
@@ -461,6 +487,7 @@ export default function CallCoach({ tenantId }) {
           )}
         </div>
       )}
+      </>}
     </div>
   );
 }

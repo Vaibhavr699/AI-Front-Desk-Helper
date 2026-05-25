@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -9,67 +9,24 @@ import { useResponsive } from "@/src/shared/hooks/use-responsive";
 import { colors } from "@/src/shared/theme/tokens";
 
 import { AlertCard } from "../components/alert-card";
+import { CueOverlayBanner } from "../components/cue-overlay-banner";
 import { DiscLiveBadge } from "../components/disc-live-badge";
 import { WalkthroughStrip } from "../components/walkthrough-strip";
 import { buildWsUrl } from "../api";
+import { useAudioStream } from "../hooks/use-audio-stream";
+import { useWatchCue } from "../hooks/use-watch-cue";
 import { useEndInHomeSession, useInHomeSession } from "../queries";
 import type {
   CoachingAlert,
-  CoachingAlertType,
-  CoachingAlertUrgency,
   DiscReading,
   WalkthroughItem,
+  WsServerMessage,
 } from "../types";
 import { InHomeWsClient, type WsStatus } from "../ws-client";
 
 type Props = {
   sessionId: string;
 };
-
-const MOCK_ALERTS: Omit<CoachingAlert, "id" | "fired_at">[] = [
-  {
-    type: "disc_update",
-    urgency: "yellow",
-    headline: "D-type confirmed",
-    full_text: "Customer is direct and time-conscious. Skip warm-up, lead with bottom line.",
-    vibration: "single_tap",
-  },
-  {
-    type: "decision_maker",
-    urgency: "yellow",
-    headline: "Wife mentioned 3x",
-    full_text: "Address her next time she's in the room — she's the secondary decision-maker.",
-    vibration: "single_tap",
-  },
-  {
-    type: "objection_detected",
-    urgency: "orange",
-    headline: "Price objection coming",
-    full_text: "\"Let me show you the warranty value first…\" Anchor on outcome before price.",
-    vibration: "double_tap",
-  },
-  {
-    type: "buying_signal",
-    urgency: "green",
-    headline: "Buying signal — move to close",
-    full_text: "Customer asked about timeline. Pivot to scheduling.",
-    vibration: "double_tap",
-  },
-  {
-    type: "warning",
-    urgency: "red",
-    headline: "Engagement dropping",
-    full_text: "Slow down. Ask an open question to re-engage.",
-    vibration: "long_buzz",
-  },
-  {
-    type: "suggested_response",
-    urgency: "orange",
-    headline: "Try: \"What concerns you most?\"",
-    full_text: null,
-    vibration: "double_tap",
-  },
-];
 
 const INITIAL_WALKTHROUGH: WalkthroughItem[] = [
   { key: "rooms", label: "Rooms", completed: false },
@@ -85,9 +42,11 @@ export function LiveSessionScreen({ sessionId }: Props) {
   const sessionToken = useAuthStore((s) => s.sessionToken);
   const { data } = useInHomeSession(sessionId);
   const end = useEndInHomeSession();
+  const { sendCueToWatch, clearWatch } = useWatchCue();
 
   const [wsStatus, setWsStatus] = useState<WsStatus>("idle");
   const [alerts, setAlerts] = useState<CoachingAlert[]>([]);
+  const [activeCue, setActiveCue] = useState<CoachingAlert | null>(null);
   const [disc, setDisc] = useState<DiscReading | null>(null);
   const [walkthrough, setWalkthrough] = useState<WalkthroughItem[]>(
     INITIAL_WALKTHROUGH,
@@ -97,11 +56,48 @@ export function LiveSessionScreen({ sessionId }: Props) {
   const wsRef = useRef<InHomeWsClient | null>(null);
   const startedAtRef = useRef<number>(Date.now());
 
+  const { streaming, startStreaming, stopStreaming } = useAudioStream(
+    wsRef.current,
+  );
+
   useEffect(() => {
     if (data?.session?.started_at) {
       startedAtRef.current = new Date(data.session.started_at).getTime();
     }
   }, [data?.session?.started_at]);
+
+  const handleWsMessage = useCallback(
+    (msg: WsServerMessage) => {
+      switch (msg.type) {
+        case "coaching_cue": {
+          const cue = msg.cue;
+          const channels: string[] = (msg as any).channels || [];
+          setAlerts((prev) => [cue, ...prev].slice(0, 50));
+          setActiveCue(cue);
+          if (channels.includes("watch")) {
+            sendCueToWatch(cue);
+          }
+          break;
+        }
+        case "disc_update":
+          setDisc(msg.reading);
+          break;
+        case "checklist_update":
+          setWalkthrough((prev) =>
+            prev.map((item) =>
+              item.key === msg.key ? { ...item, completed: msg.completed } : item,
+            ),
+          );
+          break;
+        case "transcript_update":
+          break;
+        case "transcriber_error":
+          console.warn("[live] transcriber error:", msg.message);
+          break;
+      }
+    },
+    [sendCueToWatch],
+  );
 
   useEffect(() => {
     if (!sessionToken || !data?.session) return;
@@ -109,13 +105,21 @@ export function LiveSessionScreen({ sessionId }: Props) {
     const client = new InHomeWsClient(buildWsUrl(wsPath, sessionToken));
     wsRef.current = client;
     const offStatus = client.onStatus(setWsStatus);
+    const offMessage = client.on(handleWsMessage);
     client.connect();
     return () => {
       offStatus();
+      offMessage();
       client.close();
       wsRef.current = null;
     };
-  }, [sessionId, sessionToken, data?.session]);
+  }, [sessionId, sessionToken, data?.session, handleWsMessage]);
+
+  useEffect(() => {
+    if (wsStatus === "open" && !streaming && wsRef.current) {
+      startStreaming();
+    }
+  }, [wsStatus, streaming, startStreaming]);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -124,44 +128,19 @@ export function LiveSessionScreen({ sessionId }: Props) {
     return () => clearInterval(id);
   }, []);
 
-  useEffect(() => {
-    let alertIndex = 0;
-    let walkthroughIndex = 0;
-    const alertTimer = setInterval(() => {
-      const mock = MOCK_ALERTS[alertIndex % MOCK_ALERTS.length];
-      alertIndex += 1;
-      const alert: CoachingAlert = {
-        ...mock,
-        id: `mock-${Date.now()}-${alertIndex}`,
-        fired_at: new Date().toISOString(),
-      };
-      setAlerts((prev) => [alert, ...prev].slice(0, 12));
-      if (mock.type === "disc_update") {
-        setDisc({ primary: "D", secondary: "C", confidence: 0.78 });
-      }
-    }, 8_000);
-
-    const walkthroughTimer = setInterval(() => {
-      setWalkthrough((prev) => {
-        if (walkthroughIndex >= prev.length) return prev;
-        const next = [...prev];
-        next[walkthroughIndex] = { ...next[walkthroughIndex], completed: true };
-        walkthroughIndex += 1;
-        return next;
-      });
-    }, 18_000);
-
-    return () => {
-      clearInterval(alertTimer);
-      clearInterval(walkthroughTimer);
-    };
-  }, []);
+  const handleDismissCue = useCallback(
+    (cueId: string) => {
+      setActiveCue((prev) => (prev?.id === cueId ? null : prev));
+      wsRef.current?.send({ type: "cue_dismissed", cue_id: cueId });
+    },
+    [],
+  );
 
   function confirmEnd() {
     if (end.isPending) return;
     Alert.alert(
       "End in-home session?",
-      "You'll get an AI-scored review of how the visit went.",
+      "You’ll get an AI-scored review of how the visit went.",
       [
         { text: "Keep going", style: "cancel" },
         {
@@ -169,12 +148,14 @@ export function LiveSessionScreen({ sessionId }: Props) {
           style: "destructive",
           onPress: async () => {
             try {
+              await stopStreaming();
+              clearWatch();
               await end.mutateAsync({ sessionId, outcome: "completed" });
               wsRef.current?.close();
               router.replace("/(tabs)" as never);
             } catch (err) {
               Alert.alert(
-                "Couldn't end session",
+                "Couldn’t end session",
                 err instanceof Error ? err.message : "Try again in a moment.",
               );
             }
@@ -185,16 +166,20 @@ export function LiveSessionScreen({ sessionId }: Props) {
   }
 
   const timer = useMemo(() => {
-    const m = Math.floor(elapsed / 60).toString().padStart(2, "0");
+    const m = Math.floor(elapsed / 60)
+      .toString()
+      .padStart(2, "0");
     const s = (elapsed % 60).toString().padStart(2, "0");
     return `${m}:${s}`;
   }, [elapsed]);
 
   return (
     <SafeAreaView className="flex-1 bg-surface-base" edges={["top"]}>
+      <CueOverlayBanner cue={activeCue} onDismiss={handleDismissCue} />
       <Header
         timer={timer}
         wsStatus={wsStatus}
+        streaming={streaming}
         onEnd={confirmEnd}
         ending={end.isPending}
       />
@@ -222,11 +207,11 @@ export function LiveSessionScreen({ sessionId }: Props) {
               </View>
               <ScrollView contentContainerClassName="gap-3 p-4">
                 <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
-                  Recent alerts
+                  Coaching cues
                 </Text>
                 {alerts.length === 0 ? (
                   <Text className="text-sm text-ink-muted">
-                    Coaching alerts will appear here as the conversation unfolds.
+                    Coaching cues will appear here as the conversation unfolds.
                   </Text>
                 ) : (
                   alerts.map((a) => <AlertCard key={a.id} alert={a} />)
@@ -246,11 +231,13 @@ export function LiveSessionScreen({ sessionId }: Props) {
 function Header({
   timer,
   wsStatus,
+  streaming,
   onEnd,
   ending,
 }: {
   timer: string;
   wsStatus: WsStatus;
+  streaming: boolean;
   onEnd: () => void;
   ending: boolean;
 }) {
@@ -279,6 +266,14 @@ function Header({
           <Text className="text-[10px] font-bold uppercase tracking-wider text-brand-600">
             Session {statusLabel[wsStatus]}
           </Text>
+          {streaming ? (
+            <View className="flex-row items-center gap-1 rounded-full bg-red-100 px-2 py-0.5">
+              <View className="h-1.5 w-1.5 rounded-full bg-red-500" />
+              <Text className="text-[9px] font-bold uppercase text-red-700">
+                Mic
+              </Text>
+            </View>
+          ) : null}
         </View>
         <Text className="font-mono text-2xl font-bold tabular-nums text-ink-primary">
           {timer}
@@ -314,7 +309,7 @@ function PhoneLayout({
             Latest coaching
           </Text>
           <Text className="text-xs text-ink-dim">
-            Newest at the top — older alerts scroll below.
+            Newest at the top — older cues scroll below.
           </Text>
         </View>
         <DiscLiveBadge reading={disc} size="lg" />
@@ -329,7 +324,9 @@ function PhoneLayout({
             size={24}
             color={colors.ink.muted}
           />
-          <Text className="text-sm text-ink-muted">Listening for coaching cues…</Text>
+          <Text className="text-sm text-ink-muted">
+            Listening for coaching cues…
+          </Text>
         </View>
       )}
 

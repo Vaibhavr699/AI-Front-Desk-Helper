@@ -14,17 +14,25 @@ import { colors } from "@/src/shared/theme/tokens";
 import { AudioCard } from "../components/audio-card";
 import { BiometricCard } from "../components/biometric-card";
 import { CoachingDeliveryCard } from "../components/coaching-delivery-card";
+import { CueTypesCard } from "../components/cue-types-card";
 import { NotificationsCard } from "../components/notifications-card";
 import { PhoneCard } from "../components/phone-card";
 import { ProfileCard } from "../components/profile-card";
 import { SignOutCard } from "../components/sign-out-card";
 import { SupportCard } from "../components/support-card";
 import { TrustedDevicesCard } from "../components/trusted-devices-card";
-import { useRepProfile } from "../queries";
+import { useRepProfile, useUpdateCoachingDeliveryPrefs } from "../queries";
+import type { CoachingDeliveryPrefs } from "../types";
 
 export function SettingsScreen() {
   const { data, isLoading, isError, error, refetch, isRefetching } =
     useRepProfile();
+  const updateDelivery = useUpdateCoachingDeliveryPrefs();
+
+  function handleDeliveryToggle(key: keyof CoachingDeliveryPrefs, value: boolean) {
+    if (!data) return;
+    updateDelivery.mutate({ ...data.coaching_delivery_prefs, [key]: value });
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-surface-base" edges={["top"]}>
@@ -50,7 +58,12 @@ export function SettingsScreen() {
             <BiometricCard />
             <NotificationsCard />
             <TrustedDevicesCard devices={data.trusted_devices} />
-            <CoachingDeliveryCard prefs={data.coaching_delivery_prefs} />
+            <CoachingDeliveryCard
+              prefs={data.coaching_delivery_prefs}
+              seatTier={data.seat.tier}
+              onToggle={handleDeliveryToggle}
+            />
+            <CueTypesCard />
             <AudioCard preferredDevice={data.preferred_earbud_device} />
             <SupportCard />
             <SignOutCard />

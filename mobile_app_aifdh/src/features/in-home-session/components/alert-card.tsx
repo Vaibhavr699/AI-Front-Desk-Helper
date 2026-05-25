@@ -18,7 +18,6 @@ const URGENCY_META: Record<
     titleColor: string;
     icon: keyof typeof Ionicons.glyphMap;
     iconColor: string;
-    emoji: string;
   }
 > = {
   green: {
@@ -27,7 +26,6 @@ const URGENCY_META: Record<
     titleColor: "text-emerald-800",
     icon: "trending-up",
     iconColor: "#059669",
-    emoji: "🟢",
   },
   yellow: {
     bg: "bg-amber-50",
@@ -35,7 +33,6 @@ const URGENCY_META: Record<
     titleColor: "text-amber-800",
     icon: "information-circle",
     iconColor: "#d97706",
-    emoji: "🟡",
   },
   orange: {
     bg: "bg-orange-50",
@@ -43,7 +40,6 @@ const URGENCY_META: Record<
     titleColor: "text-orange-800",
     icon: "alert-circle",
     iconColor: "#ea580c",
-    emoji: "🟠",
   },
   red: {
     bg: "bg-red-50",
@@ -51,11 +47,18 @@ const URGENCY_META: Record<
     titleColor: "text-red-800",
     icon: "warning",
     iconColor: "#dc2626",
-    emoji: "🔴",
   },
 };
 
 const TYPE_LABEL: Record<string, string> = {
+  ask_discovery: "Ask discovery",
+  listen: "Listen",
+  disc_reframe: "DISC reframe",
+  missing_close: "Close attempt",
+  address_objection: "Objection",
+  slow_down: "Slow down",
+  build_rapport: "Build rapport",
+  confirm_next_step: "Confirm next step",
   disc_update: "DISC update",
   disc_shift: "DISC shift",
   objection_detected: "Objection",
@@ -80,6 +83,13 @@ export function AlertCard({ alert, compact = false }: Props) {
         >
           {label}
         </Text>
+        {alert.watch_label ? (
+          <View className="rounded bg-gray-200 px-1.5 py-0.5">
+            <Text className="text-[9px] font-bold text-gray-600">
+              {alert.watch_label}
+            </Text>
+          </View>
+        ) : null}
       </View>
       <Text className={`font-bold text-ink-primary ${compact ? "text-sm" : "text-base"}`}>
         {alert.headline}

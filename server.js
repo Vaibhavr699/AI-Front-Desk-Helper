@@ -600,6 +600,7 @@ app.use("/", require("./routes/estimateLink"))
 app.use("/api/tenants", authMiddleware, require("./routes/serviceArea"));
 app.use('/api/reseller', require('./routes/reseller'));
 app.use("/api/public/branding", require("./routes/publicBranding"));
+app.use("/api/public/magic-link", require("./routes/magicLink"));
 app.use("/api", authMiddleware, dashboardRoutes);
 app.use("/auth/google/calendar", require("./routes/google-calendar"));
 app.use("/api/google-calendar", authMiddleware, require("./routes/google-calendar"));

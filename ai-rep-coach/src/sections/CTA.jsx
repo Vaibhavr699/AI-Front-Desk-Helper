@@ -2,16 +2,33 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { CheckCircle2 } from 'lucide-react'
 
-const STRIPE_URL = import.meta.env.VITE_STRIPE_CHECKOUT_URL || '#'
+const API_URL = import.meta.env.VITE_API_URL || ''
 
 export default function CTA() {
   const [email, setEmail] = useState('')
   const [sent, setSent] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault()
-    if (!email) return
-    setSent(true)
+    if (!email || loading) return
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch(`${API_URL}/api/public/magic-link/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Something went wrong')
+      setSent(true)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -72,9 +89,12 @@ export default function CTA() {
                     fontSize: 13, fontWeight: 600, padding: '12px 28px', borderRadius: 9999, border: 'none', cursor: 'pointer',
                   }}
                 >
-                  Schedule Your Demo
+                  {loading ? 'Sending…' : 'Schedule Your Demo'}
                 </button>
               </div>
+              {error && (
+                <p style={{ marginTop: 12, fontSize: 13, color: '#991b1b' }}>{error}</p>
+              )}
             </form>
           )}
         </motion.div>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 
-const STRIPE_URL = import.meta.env.VITE_STRIPE_CHECKOUT_URL || '#pricing'
+const API_URL = import.meta.env.VITE_API_URL || ''
 
 const PHOTOS = [
   'https://images.unsplash.com/photo-1581578731548-c64695cc6952?w=500&h=350&fit=crop',
@@ -16,6 +16,24 @@ const ease = [0.22, 1, 0.36, 1]
 
 export default function Hero({ onIntroComplete }) {
   const [phase, setPhase] = useState(0)
+  const [heroEmail, setHeroEmail] = useState('')
+  const [heroSent, setHeroSent] = useState(false)
+  const [heroLoading, setHeroLoading] = useState(false)
+
+  async function handleHeroSubmit(e) {
+    e.preventDefault()
+    if (!heroEmail || heroLoading) return
+    setHeroLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/api/public/magic-link/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: heroEmail }),
+      })
+      if (res.ok) setHeroSent(true)
+    } catch {}
+    setHeroLoading(false)
+  }
 
   useEffect(() => {
     const timers = [
@@ -102,44 +120,56 @@ export default function Hero({ onIntroComplete }) {
           transition={{ duration: 0.6, ease }}
           style={{ marginTop: 28, width: '100%', maxWidth: 460, padding: '0 24px' }}
         >
-          <div
-            className="flex items-center"
-            style={{
-              backgroundColor: 'rgba(255,255,255,0.08)',
-              border: '1px solid rgba(255,255,255,0.15)',
-              borderRadius: 9999,
-              padding: 6,
-              boxShadow: 'none',
-            }}
-          >
-            <input
-              type="email"
-              placeholder="What's your work email?"
-              className="outline-none"
-              style={{
-                flex: 1,
-                minWidth: 0,
-                backgroundColor: 'transparent',
-                padding: '10px 20px',
-                fontSize: 14,
-                color: '#fff',
-              }}
-            />
-            <a
-              href={STRIPE_URL}
-              style={{
-                flexShrink: 0,
-                backgroundColor: '#facc15',
-                color: '#000',
-                fontSize: 13,
-                fontWeight: 600,
-                padding: '10px 24px',
-                borderRadius: 9999,
-              }}
-            >
-              Schedule Your Demo
-            </a>
-          </div>
+          {heroSent ? (
+            <div style={{ textAlign: 'center', color: '#facc15', fontSize: 15, fontWeight: 600 }}>
+              ✓ Check your email for the magic link!
+            </div>
+          ) : (
+            <form onSubmit={handleHeroSubmit}>
+              <div
+                className="flex items-center"
+                style={{
+                  backgroundColor: 'rgba(255,255,255,0.08)',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  borderRadius: 9999,
+                  padding: 6,
+                }}
+              >
+                <input
+                  type="email"
+                  required
+                  placeholder="What's your work email?"
+                  value={heroEmail}
+                  onChange={(e) => setHeroEmail(e.target.value)}
+                  className="outline-none"
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    backgroundColor: 'transparent',
+                    padding: '10px 20px',
+                    fontSize: 14,
+                    color: '#fff',
+                  }}
+                />
+                <button
+                  type="submit"
+                  style={{
+                    flexShrink: 0,
+                    backgroundColor: '#facc15',
+                    color: '#000',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    padding: '10px 24px',
+                    borderRadius: 9999,
+                    border: 'none',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {heroLoading ? 'Sending…' : 'Schedule Your Demo'}
+                </button>
+              </div>
+            </form>
+          )}
         </motion.div>
 
         <motion.p

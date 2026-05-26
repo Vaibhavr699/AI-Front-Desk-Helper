@@ -32,7 +32,8 @@ const BATTERY_MIN = 0.3;
 
 export function PreSessionScreen({ leadId }: Props) {
   const router = useRouter();
-  const { data: lead } = useLeadDetail(leadId);
+  const isQuickStart = leadId === "quick";
+  const { data: lead } = useLeadDetail(isQuickStart ? null : leadId);
   const { data: profile } = useRepProfile();
   const start = useStartInHomeSession();
 
@@ -138,7 +139,7 @@ export function PreSessionScreen({ leadId }: Props) {
     if (!canStart) return;
     try {
       const result = await start.mutateAsync({
-        lead_id: leadId,
+        lead_id: isQuickStart ? undefined : leadId,
         consent_obtained: true,
         consent_type: isTwoPartyConsentState(stateCode!)
           ? "verbal"

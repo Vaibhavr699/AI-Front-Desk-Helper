@@ -57,6 +57,10 @@ export function TodayScreen() {
     if (appointment.lead) navigateToLead(appointment.lead.id);
   }
 
+  function startQuickSession() {
+    router.push("/in-home/prepare/quick" as never);
+  }
+
   return (
     <SafeAreaView className="flex-1 bg-surface-base" edges={["top"]}>
       <Header />
@@ -123,6 +127,16 @@ export function TodayScreen() {
           )}
         />
       )}
+      <View className="absolute bottom-6 left-0 right-0 items-center">
+        <Pressable
+          onPress={startQuickSession}
+          className="flex-row items-center gap-2.5 rounded-full bg-brand-600 px-7 py-4 shadow-lg active:bg-brand-700"
+          style={{ shadowColor: colors.brand[600], shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 12, elevation: 8 }}
+        >
+          <Ionicons name="radio" size={20} color="#fff" />
+          <Text className="text-[15px] font-semibold text-white">Start Live Session</Text>
+        </Pressable>
+      </View>
     </SafeAreaView>
   );
 }

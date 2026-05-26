@@ -2,7 +2,7 @@
 
 const WebSocket = require("ws");
 
-const REALTIME_URL = "wss://api.openai.com/v1/realtime?model=gpt-realtime";
+const REALTIME_URL = "wss://api.openai.com/v1/realtime?model=gpt-4o-transcribe";
 const MAX_RECONNECT_ATTEMPTS = 3;
 const WAV_HEADER_SIZE = 44;
 
@@ -31,12 +31,13 @@ class RealtimeTranscriber {
     this.ws.on("open", () => {
       this.connected = true;
       this.reconnectAttempts = 0;
+      console.log("[realtimeTranscriber] connected to OpenAI Realtime");
 
       this.ws.send(JSON.stringify({
-        type: "session.update",
+        type: "transcription_session.update",
         session: {
           input_audio_format: "pcm16",
-          input_audio_transcription: { model: "whisper-1" },
+          input_audio_transcription: { model: "gpt-4o-transcribe" },
           turn_detection: {
             type: "server_vad",
             threshold: 0.5,
@@ -100,14 +101,17 @@ class RealtimeTranscriber {
   }
 
   _handleEvent(msg) {
-    if (msg.type === "conversation.item.input_audio_transcription.completed") {
-      const text = (msg.transcript || "").trim();
+    if (
+      msg.type === "conversation.item.input_audio_transcription.completed" ||
+      msg.type === "transcription_session.transcript.done"
+    ) {
+      const text = (msg.transcript || msg.text || "").trim();
       if (text) {
         this.onTranscript({
           speaker: "unknown",
           text,
           at: new Date().toISOString(),
-          item_id: msg.item_id,
+          item_id: msg.item_id || msg.id,
         });
       }
     }

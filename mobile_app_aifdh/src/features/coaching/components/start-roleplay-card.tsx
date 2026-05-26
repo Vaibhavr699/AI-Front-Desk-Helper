@@ -7,31 +7,23 @@ import { colors } from "@/src/shared/theme/tokens";
 export function StartRoleplayCard() {
   const router = useRouter();
 
-  function onPress() {
-    router.push("/(tabs)/coaching/roleplay");
-  }
-
   return (
     <Pressable
-      onPress={onPress}
-      className="gap-3 rounded-2xl border border-brand-200 bg-brand-50 p-5 active:bg-brand-100"
+      onPress={() => router.push("/(tabs)/coaching/roleplay")}
+      className="flex-row items-center gap-4 rounded-2xl bg-brand-600 p-5 active:bg-brand-700"
     >
-      <View className="flex-row items-center gap-2">
-        <Ionicons name="play-circle" size={18} color={colors.brand[700]} />
-        <Text className="text-xs font-semibold uppercase tracking-wider text-brand-700">
-          AI Roleplay
+      <View className="h-12 w-12 items-center justify-center rounded-xl bg-white/20">
+        <Ionicons name="mic-outline" size={22} color="#fff" />
+      </View>
+      <View className="flex-1 gap-1">
+        <Text className="text-base font-semibold text-white">
+          Practice with AI Roleplay
+        </Text>
+        <Text className="text-sm text-white/70">
+          Run scenarios before your next visit
         </Text>
       </View>
-      <Text className="text-lg font-semibold text-ink-primary">
-        Practice before your next visit
-      </Text>
-      <Text className="text-sm leading-relaxed text-ink-secondary">
-        Run through real-world scenarios with an AI customer. Build confidence on the dimensions you struggle with most.
-      </Text>
-      <View className="flex-row items-center gap-2 self-start rounded-full bg-white px-3 py-1.5">
-        <Text className="text-xs font-semibold text-brand-700">Open Roleplay</Text>
-        <Ionicons name="arrow-forward" size={12} color={colors.brand[700]} />
-      </View>
+      <Ionicons name="arrow-forward" size={18} color="rgba(255,255,255,0.6)" />
     </Pressable>
   );
 }

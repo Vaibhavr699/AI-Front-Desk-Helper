@@ -103,6 +103,7 @@ class LiveCueEngine {
     const windowText = window.map((e) => `[${e.speaker}]: ${e.text}`).join("\n");
     if (windowText.length < MIN_WINDOW_CHARS) return;
 
+    console.log("[liveCueEngine] processing window — %d entries, %d chars", window.length, windowText.length);
     this._lastProcessedLength = this.transcript.length;
     this.processing = true;
     try {
@@ -123,6 +124,7 @@ class LiveCueEngine {
       });
 
       const raw = resp.choices?.[0]?.message?.content || "{}";
+      console.log("[liveCueEngine] GPT-4o response:", raw);
       let result;
       try {
         result = JSON.parse(raw);

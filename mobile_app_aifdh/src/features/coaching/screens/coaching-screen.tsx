@@ -28,11 +28,37 @@ export function CoachingScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-surface-base" edges={["top"]}>
-      <Header />
+      <View className="flex-row items-center gap-3 px-6 pb-4 pt-6 md:px-8">
+        <View className="h-10 w-10 items-center justify-center rounded-xl bg-brand-50">
+          <Ionicons name="stats-chart" size={20} color={colors.brand[600]} />
+        </View>
+        <View>
+          <Text className="text-2xl font-bold text-ink-primary">My Coaching</Text>
+          <Text className="text-xs text-ink-muted">Your performance overview</Text>
+        </View>
+      </View>
       {isLoading ? (
-        <LoadingState />
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator color={colors.brand[600]} />
+        </View>
       ) : isError || !data ? (
-        <ErrorState message={extractMessage(error)} onRetry={refetch} />
+        <View className="flex-1 items-center justify-center gap-4 px-8">
+          <View className="h-14 w-14 items-center justify-center rounded-full bg-red-50">
+            <Ionicons name="alert-circle-outline" size={28} color="#dc2626" />
+          </View>
+          <Text className="text-base font-semibold text-ink-primary">
+            Couldn't load coaching
+          </Text>
+          <Text className="text-center text-sm text-ink-muted">
+            {error instanceof Error ? error.message : "Check your connection and try again."}
+          </Text>
+          <Pressable
+            onPress={refetch}
+            className="h-11 items-center justify-center rounded-xl bg-brand-600 px-6 active:bg-brand-700"
+          >
+            <Text className="text-sm font-semibold text-white">Try again</Text>
+          </Pressable>
+        </View>
       ) : (
         <ScrollView
           contentContainerClassName="pb-10 pt-2"
@@ -45,9 +71,19 @@ export function CoachingScreen() {
           }
         >
           <View className="mx-auto w-full max-w-5xl gap-4 px-4 md:px-8">
-            {data.overall.conversations === 0 ? (
-              <EmptyState />
-            ) : null}
+            {data.overall.conversations === 0 && (
+              <View className="flex-row items-center gap-3 rounded-2xl bg-brand-50 p-4">
+                <Ionicons name="sparkles-outline" size={20} color={colors.brand[600]} />
+                <View className="flex-1">
+                  <Text className="text-sm font-medium text-brand-700">
+                    No coaching data yet
+                  </Text>
+                  <Text className="text-xs text-brand-600/70">
+                    Start a roleplay or in-home session to see your scores here
+                  </Text>
+                </View>
+              </View>
+            )}
 
             {isTablet ? (
               <View className="flex-row gap-4">
@@ -60,21 +96,14 @@ export function CoachingScreen() {
                   <TrendChart trend={data.trend} />
                   <View className="flex-row gap-3">
                     <HighlightCard kind="best" dimension={data.best_dimension} />
-                    <HighlightCard
-                      kind="weakest"
-                      dimension={data.weakest_dimension}
-                    />
+                    <HighlightCard kind="weakest" dimension={data.weakest_dimension} />
                   </View>
                   <StartRoleplayCard />
                 </View>
                 <View className="flex-1 gap-4">
                   <DimensionsCard dimensions={data.dimensions} />
-                  <TipsCard
-                    weakestDimension={data.weakest_dimension?.dimension ?? null}
-                  />
-                  <RecentConversationsCard
-                    conversations={data.recent_conversations}
-                  />
+                  <TipsCard weakestDimension={data.weakest_dimension?.dimension ?? null} />
+                  <RecentConversationsCard conversations={data.recent_conversations} />
                 </View>
               </View>
             ) : (
@@ -84,22 +113,15 @@ export function CoachingScreen() {
                   conversations={data.overall.conversations}
                   windowDays={data.window_days}
                 />
-                <TrendChart trend={data.trend} />
                 <View className="flex-row gap-3">
                   <HighlightCard kind="best" dimension={data.best_dimension} />
-                  <HighlightCard
-                    kind="weakest"
-                    dimension={data.weakest_dimension}
-                  />
+                  <HighlightCard kind="weakest" dimension={data.weakest_dimension} />
                 </View>
+                <TrendChart trend={data.trend} />
                 <DimensionsCard dimensions={data.dimensions} />
-                <TipsCard
-                  weakestDimension={data.weakest_dimension?.dimension ?? null}
-                />
-                <RecentConversationsCard
-                  conversations={data.recent_conversations}
-                />
+                <TipsCard weakestDimension={data.weakest_dimension?.dimension ?? null} />
                 <StartRoleplayCard />
+                <RecentConversationsCard conversations={data.recent_conversations} />
               </View>
             )}
           </View>
@@ -107,71 +129,4 @@ export function CoachingScreen() {
       )}
     </SafeAreaView>
   );
-}
-
-function Header() {
-  return (
-    <View className="px-6 pb-3 pt-6 md:px-8">
-      <Text className="text-xs font-semibold uppercase tracking-wider text-brand-600">
-        Your performance
-      </Text>
-      <Text className="mt-1 text-3xl font-bold text-ink-primary">
-        My Coaching
-      </Text>
-    </View>
-  );
-}
-
-function LoadingState() {
-  return (
-    <View className="flex-1 items-center justify-center">
-      <ActivityIndicator color={colors.brand[600]} />
-    </View>
-  );
-}
-
-function EmptyState() {
-  return (
-    <View className="gap-3 rounded-2xl border border-dashed border-surface-border bg-white p-5">
-      <View className="flex-row items-center gap-2">
-        <Ionicons name="information-circle-outline" size={18} color={colors.ink.muted} />
-        <Text className="text-sm font-medium text-ink-secondary">
-          No coaching data yet
-        </Text>
-      </View>
-      <Text className="text-sm leading-relaxed text-ink-muted">
-        Once your calls and in-home conversations start getting scored, your
-        trends, dimension breakdowns, and personalized tips will land here.
-      </Text>
-    </View>
-  );
-}
-
-function ErrorState({
-  message,
-  onRetry,
-}: {
-  message: string;
-  onRetry: () => void;
-}) {
-  return (
-    <View className="flex-1 items-center justify-center gap-4 px-8">
-      <Ionicons name="alert-circle-outline" size={32} color="#dc2626" />
-      <Text className="text-base font-semibold text-ink-primary">
-        Couldn't load coaching
-      </Text>
-      <Text className="text-center text-sm text-ink-muted">{message}</Text>
-      <Pressable
-        onPress={onRetry}
-        className="h-11 items-center justify-center rounded-xl bg-brand-600 px-6 active:bg-brand-700"
-      >
-        <Text className="text-sm font-semibold text-white">Try again</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function extractMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return "Please check your connection and try again.";
 }

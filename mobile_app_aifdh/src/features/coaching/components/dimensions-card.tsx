@@ -13,15 +13,20 @@ type Props = {
 
 export function DimensionsCard({ dimensions }: Props) {
   return (
-    <View className="gap-4 rounded-2xl border border-surface-border bg-white p-5">
-      <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
-        Dimension breakdown
-      </Text>
+    <View className="gap-5 rounded-2xl bg-white p-6">
+      <View className="flex-row items-center gap-2">
+        <Ionicons name="podium-outline" size={16} color={colors.ink.secondary} />
+        <Text className="text-sm font-semibold text-ink-secondary">
+          Dimension breakdown
+        </Text>
+      </View>
       {dimensions.length === 0 ? (
-        <View className="items-center gap-2 py-6">
-          <Ionicons name="podium-outline" size={22} color={colors.ink.muted} />
+        <View className="items-center gap-3 py-8">
+          <View className="h-12 w-12 items-center justify-center rounded-full bg-surface-raised">
+            <Ionicons name="bar-chart-outline" size={22} color={colors.ink.dim} />
+          </View>
           <Text className="text-sm text-ink-muted">
-            No dimension scores in this window yet.
+            No dimension scores yet
           </Text>
         </View>
       ) : (

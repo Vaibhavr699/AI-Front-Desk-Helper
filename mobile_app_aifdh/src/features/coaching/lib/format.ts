@@ -1,3 +1,5 @@
+import type { Ionicons } from "@expo/vector-icons";
+
 export function formatDimensionLabel(raw: string): string {
   return raw
     .split(/[_\s-]+/)
@@ -17,3 +19,14 @@ export function scoreToColor(score: number): { bg: string; bar: string; text: st
   }
   return { bg: "bg-red-50", bar: "bg-red-500", text: "text-red-700" };
 }
+
+export const DIMENSION_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
+  rapport: "heart-outline",
+  property_walkthrough: "walk-outline",
+  discovery: "search-outline",
+  education: "school-outline",
+  value_framing: "diamond-outline",
+  objection_handling: "shield-checkmark-outline",
+  close: "checkmark-done-outline",
+  professionalism: "ribbon-outline",
+};

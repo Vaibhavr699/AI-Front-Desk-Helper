@@ -23,3 +23,5 @@ ALTER TABLE dashboard_users
   ADD COLUMN IF NOT EXISTS phone text;
 
 COMMIT;
+
+

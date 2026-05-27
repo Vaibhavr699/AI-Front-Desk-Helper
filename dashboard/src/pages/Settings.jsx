@@ -4386,6 +4386,173 @@ Thanks!`;
                 <p className="text-sm text-gray-500 mb-6 leading-relaxed max-w-2xl">
                   Two webhooks from your CRM power revenue tracking and AI follow-ups. Click "How to connect" on each card for field-by-field mapping instructions.
                 </p>
+                {/* ═══════════════════════════════════════════════════════════════════
+     CRM LOOP OVERVIEW — "The 3-Step Loop"
+     ───────────────────────────────────────────────────────────────────
+     Drop this block INTO the Integrations tab, inside the
+     "Revenue Tracking & Sales Recovery" <div className="pt-6 border-t...">,
+     immediately AFTER the intro <p> and BEFORE the "CRM Platform Selector".
+
+     It wires NO new endpoints. It reframes the three EXISTING legs as one
+     visible loop so contractors set up all three, not just one:
+
+       Leg 1  AIFDH → CRM      new lead pushed out   (crm_webhook_url field)
+       Leg 2  CRM → AIFDH      estimate-sent recovery (/webhooks/crm/estimate-sent)
+       Leg 3  CRM → AIFDH      job-completed nurture  (/webhooks/crm/job-completed)
+
+     Reuses: import.meta.env.VITE_API_URL, tenant?.api_key, success()
+     The buttons below (setActiveTab / scroll) assume the existing cards
+     stay where they are further down the same tab.
+     ═══════════════════════════════════════════════════════════════════ */}
+<div className="mb-8 p-6 md:p-8 bg-slate-900 rounded-3xl shadow-2xl shadow-slate-900/20 relative overflow-hidden">
+  <div className="absolute top-0 right-0 p-8 text-white/5 pointer-events-none">
+    <RefreshCw className="w-32 h-32" />
+  </div>
+
+  <div className="relative z-10">
+    {/* Header */}
+    <div className="flex items-center gap-2 mb-2">
+      <span className="px-3 py-1 bg-white/10 rounded-full text-[10px] font-black uppercase tracking-[0.2em] border border-white/5 text-white">
+        Setup Guide
+      </span>
+    </div>
+    <h3 className="text-xl font-black text-white mb-2">Connect your CRM — the 3-step loop</h3>
+    <p className="text-sm text-slate-400 font-medium mb-7 max-w-xl leading-relaxed">
+      Your CRM and your AI front desk pass work back and forth in a loop. Set up
+      all three steps in Zapier and a lead is captured, followed up, and nurtured
+      automatically — start to finish. Skip a step and the loop breaks.
+    </p>
+
+    {/* Three legs */}
+    <div className="space-y-3">
+      {/* ── Leg 1 ── */}
+      <div className="p-5 bg-white/5 border border-white/10 rounded-2xl">
+        <div className="flex items-start gap-4">
+          <div className="w-9 h-9 rounded-xl bg-emerald-500 text-white flex items-center justify-center text-sm font-black shrink-0">
+            1
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <h4 className="text-sm font-black text-white">New lead → your CRM</h4>
+              <span className="px-2 py-0.5 bg-white/10 text-slate-300 text-[9px] font-black uppercase tracking-widest rounded-md border border-white/5">
+                AI Front Desk → CRM
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed mb-3">
+              When the AI books a job or captures a lead, we push it to your CRM so a
+              record is created automatically — no manual entry. Paste your CRM's
+              inbound webhook URL in the <strong className="text-slate-200">CRM Webhook URL</strong> field below.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                document.getElementById("crm-webhook-url-field")?.scrollIntoView({
+                  behavior: "smooth",
+                  block: "center",
+                });
+              }}
+              className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1.5"
+            >
+              <ArrowRight className="w-3 h-3" />
+              Go to CRM Webhook URL
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* connector */}
+      <div className="flex justify-center">
+        <ArrowRight className="w-4 h-4 text-slate-600 rotate-90" />
+      </div>
+
+      {/* ── Leg 2 ── */}
+      <div className="p-5 bg-white/5 border border-white/10 rounded-2xl">
+        <div className="flex items-start gap-4">
+          <div className="w-9 h-9 rounded-xl bg-purple-500 text-white flex items-center justify-center text-sm font-black shrink-0">
+            2
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <h4 className="text-sm font-black text-white">Estimate sent → AI follow-up</h4>
+              <span className="px-2 py-0.5 bg-white/10 text-slate-300 text-[9px] font-black uppercase tracking-widest rounded-md border border-white/5">
+                CRM → AI Front Desk
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed mb-3">
+              When you send a proposal in your CRM, it tells us to start a 21-day AI
+              recovery sequence — texts, calls, and voicemails — so cold estimates get
+              chased automatically. Set this up in the <strong className="text-slate-200">AI Sales Recovery</strong> card below.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                document.getElementById("crm-loop-leg-estimate")?.scrollIntoView({
+                  behavior: "smooth",
+                  block: "center",
+                });
+              }}
+              className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1.5"
+            >
+              <ArrowRight className="w-3 h-3" />
+              Go to AI Sales Recovery
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* connector */}
+      <div className="flex justify-center">
+        <ArrowRight className="w-4 h-4 text-slate-600 rotate-90" />
+      </div>
+
+      {/* ── Leg 3 ── */}
+      <div className="p-5 bg-white/5 border border-white/10 rounded-2xl">
+        <div className="flex items-start gap-4">
+          <div className="w-9 h-9 rounded-xl bg-blue-500 text-white flex items-center justify-center text-sm font-black shrink-0">
+            3
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <h4 className="text-sm font-black text-white">Job completed → nurturing</h4>
+              <span className="px-2 py-0.5 bg-white/10 text-slate-300 text-[9px] font-black uppercase tracking-widest rounded-md border border-white/5">
+                CRM → AI Front Desk
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed mb-3">
+              When you mark a job Won or Completed in your CRM, it lands as confirmed
+              revenue on your dashboard AND kicks off post-service nurturing — review
+              requests and seasonal campaigns. Set this up in the{" "}
+              <strong className="text-slate-200">Revenue Pipeline</strong> card below.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                document.getElementById("crm-loop-leg-completed")?.scrollIntoView({
+                  behavior: "smooth",
+                  block: "center",
+                });
+              }}
+              className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-1.5"
+            >
+              <ArrowRight className="w-3 h-3" />
+              Go to Revenue Pipeline
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {/* Loop-closes footer */}
+    <div className="mt-6 p-4 bg-emerald-500/10 border border-emerald-400/20 rounded-xl flex items-start gap-3">
+      <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+      <p className="text-xs text-emerald-100 leading-relaxed">
+        <strong className="font-black">All three connected?</strong> The loop is closed —
+        a lead flows out to your CRM, comes back for AI follow-up when you quote it,
+        and triggers nurturing when the job is done. You won't touch any of it manually.
+      </p>
+    </div>
+  </div>
+</div>
                 <div className="space-y-5">
                   {/* CRM Platform Selector */}
                   <div>
@@ -4419,7 +4586,7 @@ Thanks!`;
                     <p className="text-xs text-gray-500 mt-2 italic">Select your CRM so we can tailor the webhook payload for best results.</p>
                   </div>
 
-                  <div>
+                 <div id="crm-webhook-url-field">
                     <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">CRM Webhook URL</label>
                     <div className="flex gap-2">
                       <input
@@ -4456,7 +4623,7 @@ Thanks!`;
                   </div>
 
                   {/* ──────────── Job Won → Revenue Pipeline (primary) ──────────── */}
-                  <div className="mt-8 p-6 bg-gradient-to-br from-emerald-50 to-emerald-50/30 border-2 border-emerald-200 rounded-2xl">
+                  <div id="crm-loop-leg-completed" className="mt-8 p-6 bg-gradient-to-br from-emerald-50 to-emerald-50/30 border-2 border-emerald-200 rounded-2xl">
                     <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
                       <div className="flex-1 min-w-0">
                         <h3 className="text-sm font-bold text-emerald-900 mb-1 flex items-center gap-2">
@@ -4516,7 +4683,7 @@ Thanks!`;
                   </div>
                   
                 {/* ──────────── Estimate Sent → AI Sales Recovery (optional) ──────────── */}
-                  <div className="mt-4 p-6 bg-gradient-to-br from-purple-50 to-purple-50/30 border-2 border-purple-200 rounded-2xl">
+                  <div id="crm-loop-leg-estimate" className="mt-4 p-6 bg-gradient-to-br from-purple-50 to-purple-50/30 border-2 border-purple-200 rounded-2xl">
                     <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
                       <div className="flex-1 min-w-0">
                         <h3 className="text-sm font-bold text-purple-900 mb-1 flex items-center gap-2">

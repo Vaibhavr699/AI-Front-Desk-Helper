@@ -3666,7 +3666,7 @@ wss.on("connection", async (twilioSocket, req) => {
     }
   } else if (isRecovery && recoveryId) {
      try {
-       const rRes = await db.query("SELECT tenant_id FROM estimate_recovery WHERE id = $1", [recoveryId]);
+       const rRes = await db.query("SELECT tenant_id FROM estimate_recoveries WHERE id = $1", [recoveryId]);
        if (rRes.rows[0]) {
          tenantId = rRes.rows[0].tenant_id;
          tenant = await getTenantById(tenantId);

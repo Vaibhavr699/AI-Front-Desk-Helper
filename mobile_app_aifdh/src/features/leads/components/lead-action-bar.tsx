@@ -16,6 +16,10 @@ export function LeadActionBar({ lead }: Props) {
   const { rep_coach_enabled } = useTenantFlags();
 
   function call() {
+    if (rep_coach_enabled && lead.phone) {
+      router.push(`/voip-call/${lead.id}` as never);
+      return;
+    }
     if (lead.phone) Linking.openURL(`tel:${lead.phone}`);
   }
   function sms() {

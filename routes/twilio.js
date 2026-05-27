@@ -612,4 +612,54 @@ router.all("/outbound", async (req, res) => {
 
 router.processStatusPayload = processStatusPayload;
 
+router.post("/rep-call-connect", (req, res) => {
+  const conf = req.query.conf || req.body.conf || "rep-call-default";
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">This call may be recorded for quality and training purposes.</Say>
+  <Pause length="1"/>
+  <Dial>
+    <Conference startConferenceOnEnter="true" endConferenceOnExit="true" record="record-from-start">${conf}</Conference>
+  </Dial>
+</Response>`;
+  res.type("text/xml").send(twiml);
+});
+
+router.post("/rep-recording-status", async (req, res) => {
+  res.sendStatus(200);
+  const { RecordingUrl, RecordingSid, RecordingStatus, RecordingDuration } = req.body || {};
+  if (RecordingStatus !== "completed" || !RecordingUrl) return;
+  const { repUserId, leadId, tenantId } = req.query;
+  if (!repUserId || !leadId || !tenantId) return;
+  try {
+    const db = require("../lib/db");
+    const { transcribeBuffer } = require("../services/fieldRecording");
+    const { analyzeConversation } = require("../lib/coachingEngine");
+    const twilioLib = require("../lib/twilio");
+    const tenant = await db.query("SELECT * FROM tenants WHERE id = $1", [tenantId]).then(r => r.rows[0]);
+    const authInfo = twilioLib.getAuthForTenant(tenant);
+    const auth = Buffer.from(`${authInfo.accountSid}:${authInfo.authToken}`).toString("base64");
+    const mp3Url = RecordingUrl + ".mp3";
+    const resp = await fetch(mp3Url, { headers: { Authorization: `Basic ${auth}` } });
+    if (!resp.ok) { console.error("[rep-recording-status] fetch failed"); return; }
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    const result = await transcribeBuffer(buffer, "mp3");
+    const convR = await db.query(
+      `INSERT INTO coaching_conversations
+         (tenant_id, source_type, rep_user_id, lead_id, transcript, duration_seconds)
+       VALUES ($1, 'rep_call_outbound', $2, $3, $4::jsonb, $5)
+       RETURNING id`,
+      [tenantId, repUserId, leadId, JSON.stringify(result.segments), result.duration || parseInt(RecordingDuration, 10) || 0],
+    );
+    await analyzeConversation({ conversationId: convR.rows[0].id });
+    console.log("[rep-recording-status] analyzed conversation=%s lead=%s", convR.rows[0].id, leadId);
+  } catch (err) {
+    console.error("[rep-recording-status] processing failed:", err.message);
+  }
+});
+
+router.post("/rep-call-status", (req, res) => {
+  res.sendStatus(200);
+});
+
 module.exports = router;

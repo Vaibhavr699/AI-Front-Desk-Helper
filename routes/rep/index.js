@@ -19,5 +19,6 @@ router.use("/roleplay", require("./roleplay"));
 router.use("/in-home", require("./in-home"));
 router.use("/cue-settings", require("./cue-settings"));
 router.use("/recording", require("./recording"));
+router.use("/call", require("./call"));
 
 module.exports = router;

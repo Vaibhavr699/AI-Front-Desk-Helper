@@ -96,7 +96,7 @@ export function TotpScreen() {
                 placeholder="000000"
                 placeholderTextColor={colors.ink.dim}
                 selectionColor={colors.brand[500]}
-                className="h-20 w-full rounded-2xl border border-surface-border bg-surface-input text-center text-4xl font-semibold tracking-[12px] text-ink-primary"
+                className="h-20 w-full rounded-sm border border-surface-border bg-surface-input text-center text-4xl font-semibold tracking-[12px] text-ink-primary"
               />
 
               <Pressable
@@ -125,7 +125,7 @@ export function TotpScreen() {
               <Pressable
                 onPress={handleSubmit}
                 disabled={!canSubmit}
-                className={`h-14 items-center justify-center rounded-2xl bg-brand-600 active:bg-brand-700 ${canSubmit ? "" : "opacity-50"}`}
+                className={`h-14 items-center justify-center rounded-sm bg-brand-600 active:bg-brand-700 ${canSubmit ? "" : "opacity-50"}`}
               >
                 <Text className="text-base font-semibold text-white">
                   {isBusy ? "Verifying…" : "Verify"}
@@ -135,7 +135,7 @@ export function TotpScreen() {
               <Pressable
                 onPress={cancelTotp}
                 disabled={isBusy}
-                className="h-12 items-center justify-center rounded-2xl active:bg-surface-raised"
+                className="h-12 items-center justify-center rounded-sm active:bg-surface-raised"
               >
                 <Text className="text-sm font-medium text-ink-secondary">
                   Use a different account

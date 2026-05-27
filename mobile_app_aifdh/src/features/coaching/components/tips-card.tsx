@@ -13,7 +13,7 @@ export function TipsCard({ weakestDimension }: Props) {
   const tips = tipsFor(weakestDimension);
 
   return (
-    <View className="gap-4 rounded-2xl bg-white p-6">
+    <View className="gap-4 rounded-sm bg-white p-6">
       <View className="flex-row items-center gap-2">
         <View className="h-7 w-7 items-center justify-center rounded-lg bg-amber-50">
           <Ionicons name="bulb-outline" size={15} color="#d97706" />

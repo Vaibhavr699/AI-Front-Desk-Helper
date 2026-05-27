@@ -72,7 +72,7 @@ export function CoachingScreen() {
         >
           <View className="mx-auto w-full max-w-5xl gap-4 px-4 md:px-8">
             {data.overall.conversations === 0 && (
-              <View className="flex-row items-center gap-3 rounded-2xl bg-brand-50 p-4">
+              <View className="flex-row items-center gap-3 rounded-sm bg-brand-50 p-4">
                 <Ionicons name="sparkles-outline" size={20} color={colors.brand[600]} />
                 <View className="flex-1">
                   <Text className="text-sm font-medium text-brand-700">

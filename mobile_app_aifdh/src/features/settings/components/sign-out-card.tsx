@@ -18,7 +18,7 @@ export function SignOutCard() {
     <Pressable
       onPress={confirm}
       disabled={isBusy}
-      className="h-12 flex-row items-center justify-center gap-2 rounded-2xl border border-red-200 bg-red-50 active:bg-red-100"
+      className="h-12 flex-row items-center justify-center gap-2 rounded-sm border border-red-200 bg-red-50 active:bg-red-100"
     >
       <Ionicons name="log-out-outline" size={18} color="#b91c1c" />
       <Text className="text-sm font-semibold text-red-700">

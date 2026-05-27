@@ -12,7 +12,7 @@ export function SupportCard() {
   }
 
   return (
-    <View className="gap-3 rounded-2xl border border-surface-border bg-white p-5">
+    <View className="gap-3 rounded-sm border border-surface-border bg-white p-5">
       <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
         Support
       </Text>

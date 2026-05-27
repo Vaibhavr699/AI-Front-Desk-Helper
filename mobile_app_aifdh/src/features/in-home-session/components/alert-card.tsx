@@ -74,7 +74,7 @@ export function AlertCard({ alert, compact = false }: Props) {
   const label = TYPE_LABEL[alert.type] || alert.type;
   return (
     <View
-      className={`gap-${compact ? "1.5" : "2"} rounded-2xl border ${meta.bg} ${meta.border} p-${compact ? "3" : "4"}`}
+      className={`gap-${compact ? "1.5" : "2"} rounded-sm border ${meta.bg} ${meta.border} p-${compact ? "3" : "4"}`}
     >
       <View className="flex-row items-center gap-2">
         <Ionicons name={meta.icon} size={14} color={meta.iconColor} />

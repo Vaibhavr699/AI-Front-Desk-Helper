@@ -26,7 +26,7 @@ export function RecentConversationsCard({ conversations }: Props) {
   const router = useRouter();
 
   return (
-    <View className="gap-4 rounded-2xl bg-white p-6">
+    <View className="gap-4 rounded-sm bg-white p-6">
       <View className="flex-row items-center gap-2">
         <Ionicons name="time-outline" size={16} color={colors.ink.secondary} />
         <Text className="text-sm font-semibold text-ink-secondary">

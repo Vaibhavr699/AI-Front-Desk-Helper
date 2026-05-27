@@ -29,7 +29,7 @@ export function VarianceCoachingCard({ coaching }: Props) {
     coaching.direction === "within" ? "text-emerald-700" : "text-amber-800";
 
   return (
-    <View className="gap-4 rounded-2xl border border-surface-border bg-white p-4">
+    <View className="gap-4 rounded-sm border border-surface-border bg-white p-4">
       <View className="flex-row items-center gap-2">
         <Ionicons name="trending-up-outline" size={16} color={colors.brand[700]} />
         <Text className="text-xs font-semibold uppercase tracking-wider text-brand-700">

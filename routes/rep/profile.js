@@ -27,7 +27,8 @@ router.get("/", ...repAuthChain, async (req, res) => {
               u.expo_push_token IS NOT NULL AS push_registered,
               u.last_app_open_at, u.trusted_devices,
               t.name AS tenant_name, t.business_type AS tenant_business_type,
-              t.timezone AS tenant_timezone
+              t.timezone AS tenant_timezone,
+              t.rep_coach_enabled, t.aifdh_enabled
          FROM dashboard_users u
          LEFT JOIN tenants t ON u.tenant_id = t.id
         WHERE u.id = $1`,
@@ -58,6 +59,8 @@ router.get("/", ...repAuthChain, async (req, res) => {
         name: u.tenant_name,
         business_type: u.tenant_business_type,
         timezone: u.tenant_timezone,
+        rep_coach_enabled: u.rep_coach_enabled === true,
+        aifdh_enabled: u.aifdh_enabled !== false,
       },
       seat: {
         tier: u.rep_seat_tier || "standard",

@@ -10,7 +10,7 @@ export function StartRoleplayCard() {
   return (
     <Pressable
       onPress={() => router.push("/(tabs)/coaching/roleplay")}
-      className="flex-row items-center gap-4 rounded-2xl bg-brand-600 p-5 active:bg-brand-700"
+      className="flex-row items-center gap-4 rounded-sm bg-brand-600 p-5 active:bg-brand-700"
     >
       <View className="h-12 w-12 items-center justify-center rounded-xl bg-white/20">
         <Ionicons name="mic-outline" size={22} color="#fff" />

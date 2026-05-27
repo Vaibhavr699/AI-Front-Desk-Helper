@@ -26,7 +26,7 @@ export function WidgetEstimateCard({ estimate }: Props) {
     : null;
 
   return (
-    <View className="gap-3 rounded-2xl border border-brand-200 bg-brand-50 p-4">
+    <View className="gap-3 rounded-sm border border-brand-200 bg-brand-50 p-4">
       <View className="flex-row items-center gap-2">
         <Ionicons name="globe-outline" size={16} color={colors.brand[700]} />
         <Text className="text-xs font-semibold uppercase tracking-wider text-brand-700">

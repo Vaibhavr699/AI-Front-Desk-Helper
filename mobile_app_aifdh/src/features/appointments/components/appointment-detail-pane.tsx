@@ -54,7 +54,7 @@ export function AppointmentDetailPane({ appointment, onViewBriefing }: Props) {
         <Text className="text-base text-ink-muted">{projectType}</Text>
       </View>
 
-      <View className="gap-3 rounded-2xl border border-surface-border bg-white p-4">
+      <View className="gap-3 rounded-sm border border-surface-border bg-white p-4">
         <DetailRow icon="location-outline" label="Address" value={address} />
         {phone ? (
           <DetailRow icon="call-outline" label="Phone" value={phone} />
@@ -65,7 +65,7 @@ export function AppointmentDetailPane({ appointment, onViewBriefing }: Props) {
       </View>
 
       {lead?.disc_primary && lead.disc_primary !== "unknown" ? (
-        <View className="gap-3 rounded-2xl border border-surface-border bg-white p-4">
+        <View className="gap-3 rounded-sm border border-surface-border bg-white p-4">
           <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
             Customer intelligence
           </Text>
@@ -83,7 +83,7 @@ export function AppointmentDetailPane({ appointment, onViewBriefing }: Props) {
       ) : null}
 
       {lead?.has_widget_estimate ? (
-        <View className="gap-3 rounded-2xl border border-surface-border bg-white p-4">
+        <View className="gap-3 rounded-sm border border-surface-border bg-white p-4">
           <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
             Customer used website estimator
           </Text>
@@ -99,7 +99,7 @@ export function AppointmentDetailPane({ appointment, onViewBriefing }: Props) {
       ) : null}
 
       {appointment.notes ? (
-        <View className="gap-2 rounded-2xl border border-surface-border bg-white p-4">
+        <View className="gap-2 rounded-sm border border-surface-border bg-white p-4">
           <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
             Notes
           </Text>
@@ -110,7 +110,7 @@ export function AppointmentDetailPane({ appointment, onViewBriefing }: Props) {
       {lead && onViewBriefing ? (
         <Pressable
           onPress={() => onViewBriefing(lead.id)}
-          className="h-12 flex-row items-center justify-center gap-2 rounded-2xl bg-brand-600 active:bg-brand-700"
+          className="h-12 flex-row items-center justify-center gap-2 rounded-sm bg-brand-600 active:bg-brand-700"
         >
           <Text className="text-base font-semibold text-white">
             View full briefing

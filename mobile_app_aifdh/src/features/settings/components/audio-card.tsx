@@ -9,7 +9,7 @@ type Props = {
 
 export function AudioCard({ preferredDevice }: Props) {
   return (
-    <View className="gap-4 rounded-2xl border border-dashed border-surface-border bg-white p-5">
+    <View className="gap-4 rounded-sm border border-dashed border-surface-border bg-white p-5">
       <View className="flex-row items-center justify-between">
         <View className="flex-row items-center gap-2">
           <Ionicons name="headset-outline" size={16} color={colors.ink.secondary} />

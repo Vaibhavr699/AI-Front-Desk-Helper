@@ -31,7 +31,7 @@ export function WelcomeScreen() {
         <View className="mx-auto w-full max-w-md gap-3">
           <Pressable
             onPress={() => router.push("/(auth)/login")}
-            className="h-14 items-center justify-center rounded-2xl bg-brand-600 active:bg-brand-700"
+            className="h-14 items-center justify-center rounded-sm bg-brand-600 active:bg-brand-700"
           >
             <Text className="text-base font-semibold text-white">Log in</Text>
           </Pressable>

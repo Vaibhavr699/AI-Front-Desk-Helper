@@ -17,7 +17,7 @@ const MAX_SCORE = 10;
 export function TrendChart({ trend }: Props) {
   if (trend.length < 2) {
     return (
-      <View className="gap-3 rounded-2xl bg-white p-6">
+      <View className="gap-3 rounded-sm bg-white p-6">
         <View className="flex-row items-center gap-2">
           <Ionicons name="trending-up-outline" size={16} color={colors.ink.secondary} />
           <Text className="text-sm font-semibold text-ink-secondary">
@@ -50,7 +50,7 @@ export function TrendChart({ trend }: Props) {
   const fillPath = `${path} L ${points[points.length - 1].x.toFixed(2)} ${VIEWBOX_HEIGHT} L 0 ${VIEWBOX_HEIGHT} Z`;
 
   return (
-    <View className="gap-3 rounded-2xl bg-white p-6">
+    <View className="gap-3 rounded-sm bg-white p-6">
       <View className="flex-row items-center gap-2">
         <Ionicons name="trending-up-outline" size={16} color={colors.ink.secondary} />
         <Text className="text-sm font-semibold text-ink-secondary">

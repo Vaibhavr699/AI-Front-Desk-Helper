@@ -106,7 +106,7 @@ export function RoleplayResultsScreen({ sessionId }: Props) {
 
       <ScrollView contentContainerClassName="px-4 pb-10 pt-2 md:px-8">
         <View className="mx-auto w-full max-w-2xl gap-4">
-          <View className="gap-3 rounded-2xl border border-surface-border bg-white p-5">
+          <View className="gap-3 rounded-sm border border-surface-border bg-white p-5">
             <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
               {data.scenario?.title ?? "Custom roleplay"}
             </Text>
@@ -131,7 +131,7 @@ export function RoleplayResultsScreen({ sessionId }: Props) {
           </View>
 
           {dimensionEntries.length > 0 ? (
-            <View className="gap-4 rounded-2xl border border-surface-border bg-white p-5">
+            <View className="gap-4 rounded-sm border border-surface-border bg-white p-5">
               <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
                 Dimension breakdown
               </Text>
@@ -144,7 +144,7 @@ export function RoleplayResultsScreen({ sessionId }: Props) {
           ) : null}
 
           {scoring?.what_worked && scoring.what_worked.length > 0 ? (
-            <View className="gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
+            <View className="gap-3 rounded-sm border border-emerald-200 bg-emerald-50 p-5">
               <View className="flex-row items-center gap-2">
                 <Ionicons
                   name="checkmark-circle"
@@ -169,7 +169,7 @@ export function RoleplayResultsScreen({ sessionId }: Props) {
           ) : null}
 
           {scoring?.what_to_improve && scoring.what_to_improve.length > 0 ? (
-            <View className="gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-5">
+            <View className="gap-3 rounded-sm border border-amber-200 bg-amber-50 p-5">
               <View className="flex-row items-center gap-2">
                 <Ionicons name="bulb" size={16} color="#d97706" />
                 <Text className="text-xs font-semibold uppercase tracking-wider text-amber-700">
@@ -191,7 +191,7 @@ export function RoleplayResultsScreen({ sessionId }: Props) {
 
           <Pressable
             onPress={goToHub}
-            className="h-14 flex-row items-center justify-center gap-2 rounded-2xl bg-brand-600 active:bg-brand-700"
+            className="h-14 flex-row items-center justify-center gap-2 rounded-sm bg-brand-600 active:bg-brand-700"
           >
             <Ionicons name="refresh" size={16} color="#ffffff" />
             <Text className="text-base font-semibold text-white">

@@ -40,7 +40,7 @@ const TIER_LABELS: Record<string, { label: string; price: string; bg: string; te
 export function ProfileCard({ profile }: Props) {
   const tier = TIER_LABELS[profile.seat.tier] ?? TIER_LABELS.standard;
   return (
-    <View className="gap-4 rounded-2xl border border-surface-border bg-white p-5">
+    <View className="gap-4 rounded-sm border border-surface-border bg-white p-5">
       <View className="flex-row items-center gap-4">
         <View className="h-16 w-16 items-center justify-center rounded-full bg-brand-100">
           <Text className="text-xl font-bold text-brand-700">

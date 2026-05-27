@@ -23,7 +23,7 @@ export function ConsentPrompt({
 
   if (!stateCode) {
     return (
-      <View className="rounded-2xl border border-dashed border-surface-border bg-white p-4">
+      <View className="rounded-sm border border-dashed border-surface-border bg-white p-4">
         <Text className="text-sm text-ink-muted">
           Choose your visit state above to see the consent requirement.
         </Text>
@@ -33,7 +33,7 @@ export function ConsentPrompt({
 
   if (!twoParty) {
     return (
-      <View className="gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+      <View className="gap-2 rounded-sm border border-emerald-200 bg-emerald-50 p-4">
         <View className="flex-row items-center gap-2">
           <Ionicons name="shield-checkmark" size={18} color="#059669" />
           <Text className="text-sm font-semibold text-emerald-700">
@@ -49,7 +49,7 @@ export function ConsentPrompt({
   }
 
   return (
-    <View className="gap-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+    <View className="gap-4 rounded-sm border border-amber-200 bg-amber-50 p-4">
       <View className="flex-row items-center gap-2">
         <Ionicons name="megaphone" size={18} color="#d97706" />
         <Text className="text-sm font-semibold text-amber-800">

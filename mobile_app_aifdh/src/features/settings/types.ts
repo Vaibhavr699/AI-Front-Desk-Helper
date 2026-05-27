@@ -24,6 +24,8 @@ export type RepProfile = {
     name: string | null;
     business_type: string | null;
     timezone: string | null;
+    rep_coach_enabled: boolean;
+    aifdh_enabled: boolean;
   };
   seat: {
     tier: SeatTier;

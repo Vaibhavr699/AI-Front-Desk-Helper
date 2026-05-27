@@ -94,6 +94,8 @@ router.post("/login", async (req, res) => {
           event_type: "rep_login_trusted_device",
           metadata: { device_fingerprint, biometric_type: trusted.biometric_type },
         });
+        const tf = await db.query("SELECT rep_coach_enabled, aifdh_enabled FROM tenants WHERE id = $1", [user.tenant_id]);
+        const t = tf.rows[0] || {};
         return res.json({
           status: "ok",
           token: sessionToken,
@@ -103,6 +105,10 @@ router.post("/login", async (req, res) => {
             tenant_id: user.tenant_id,
             role: user.role,
             seat_tier: user.rep_seat_tier || "standard",
+            tenant_flags: {
+              rep_coach_enabled: t.rep_coach_enabled === true,
+              aifdh_enabled: t.aifdh_enabled !== false,
+            },
           },
         });
       }
@@ -207,6 +213,8 @@ router.post("/totp", async (req, res) => {
       metadata: { device_fingerprint: device_fingerprint || null, biometric_type: biometric_type || null },
     });
 
+    const tf2 = await db.query("SELECT rep_coach_enabled, aifdh_enabled FROM tenants WHERE id = $1", [user.tenant_id]);
+    const t2 = tf2.rows[0] || {};
     res.json({
       status: "ok",
       token: sessionToken,
@@ -217,6 +225,10 @@ router.post("/totp", async (req, res) => {
         tenant_id: user.tenant_id,
         role: user.role,
         seat_tier: user.rep_seat_tier || "standard",
+        tenant_flags: {
+          rep_coach_enabled: t2.rep_coach_enabled === true,
+          aifdh_enabled: t2.aifdh_enabled !== false,
+        },
       },
     });
   } catch (e) {

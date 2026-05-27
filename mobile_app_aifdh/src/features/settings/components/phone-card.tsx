@@ -49,7 +49,7 @@ export function PhoneCard({ phone }: Props) {
   }
 
   return (
-    <View className="gap-3 rounded-2xl border border-surface-border bg-white p-5">
+    <View className="gap-3 rounded-sm border border-surface-border bg-white p-5">
       <View className="flex-row items-center gap-3">
         <View className="h-9 w-9 items-center justify-center rounded-full bg-brand-50">
           <Ionicons name="call-outline" size={18} color={colors.brand[600]} />

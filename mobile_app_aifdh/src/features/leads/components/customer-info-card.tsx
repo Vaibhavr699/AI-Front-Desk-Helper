@@ -26,7 +26,7 @@ export function CustomerInfoCard({ lead }: Props) {
   }
 
   return (
-    <View className="gap-3 rounded-2xl border border-surface-border bg-white p-4">
+    <View className="gap-3 rounded-sm border border-surface-border bg-white p-4">
       <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
         Customer
       </Text>

@@ -61,7 +61,7 @@ export function LeadDetailBody({ lead }: { lead: LeadDetail }) {
   return (
     <ScrollView contentContainerClassName="px-4 pb-10 pt-2 gap-4 md:px-6">
       <View className="mx-auto w-full max-w-2xl gap-4">
-        <View className="gap-3 rounded-2xl border border-surface-border bg-white p-4">
+        <View className="gap-3 rounded-sm border border-surface-border bg-white p-4">
           <View className="flex-row items-start justify-between gap-3">
             <View className="flex-1 gap-2">
               <Text className="text-2xl font-bold text-ink-primary">

@@ -8,7 +8,7 @@ type Props = {
 
 export function QrCodeDisplay({ value, size = 200 }: Props) {
   return (
-    <View className="items-center rounded-2xl border border-slate-200 bg-white p-4">
+    <View className="items-center rounded-sm border border-slate-200 bg-white p-4">
       <QRCode value={value} size={size} />
     </View>
   );

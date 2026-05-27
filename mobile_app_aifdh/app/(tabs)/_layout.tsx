@@ -3,7 +3,7 @@ import { Redirect, Tabs } from "expo-router";
 import React from "react";
 
 import { HapticTab } from "@/components/haptic-tab";
-import { useAuthStore } from "@/src/features/auth/store";
+import { useAuthStore, useTenantFlags } from "@/src/features/auth/store";
 import { colors } from "@/src/shared/theme/tokens";
 
 type TabIconProps = {
@@ -15,6 +15,7 @@ export default function TabLayout() {
   const status = useAuthStore((s) => s.status);
   const isUnlocked = useAuthStore((s) => s.isUnlocked);
   const biometricEnrolled = useAuthStore((s) => s.biometricEnrolled);
+  const { rep_coach_enabled } = useTenantFlags();
 
   if (status !== "authenticated") {
     return <Redirect href="/(auth)/welcome" />;
@@ -22,6 +23,10 @@ export default function TabLayout() {
   if (!isUnlocked && biometricEnrolled) {
     return <Redirect href="/(auth)/unlock" />;
   }
+
+  const peopleTabTitle = rep_coach_enabled ? "Customers" : "Leads";
+  const peopleTabIcon = rep_coach_enabled ? "person" : "people";
+  const peopleTabIconOutline = rep_coach_enabled ? "person-outline" : "people-outline";
 
   return (
     <Tabs
@@ -53,10 +58,10 @@ export default function TabLayout() {
       <Tabs.Screen
         name="leads"
         options={{
-          title: "Leads",
+          title: peopleTabTitle,
           tabBarIcon: ({ color, focused }: TabIconProps) => (
             <Ionicons
-              name={focused ? "people" : "people-outline"}
+              name={focused ? peopleTabIcon : peopleTabIconOutline}
               size={24}
               color={color}
             />

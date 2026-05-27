@@ -318,7 +318,7 @@ function PhoneLayout({
       {top ? (
         <AlertCard alert={top} />
       ) : (
-        <View className="items-center gap-2 rounded-2xl border border-dashed border-surface-border bg-white py-8">
+        <View className="items-center gap-2 rounded-sm border border-dashed border-surface-border bg-white py-8">
           <Ionicons
             name="ear-outline"
             size={24}

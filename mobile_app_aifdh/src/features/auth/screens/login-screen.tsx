@@ -118,7 +118,7 @@ export function LoginScreen() {
             <Pressable
               onPress={handleSubmit}
               disabled={!canSubmit}
-              className={`h-14 items-center justify-center rounded-2xl bg-brand-600 active:bg-brand-700 ${canSubmit ? "" : "opacity-50"}`}
+              className={`h-14 items-center justify-center rounded-sm bg-brand-600 active:bg-brand-700 ${canSubmit ? "" : "opacity-50"}`}
             >
               <Text className="text-base font-semibold text-white">
                 {isBusy ? "Signing in…" : "Sign in"}

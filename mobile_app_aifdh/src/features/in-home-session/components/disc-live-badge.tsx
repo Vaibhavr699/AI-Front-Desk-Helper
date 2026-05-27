@@ -18,7 +18,7 @@ export function DiscLiveBadge({ reading, size = "lg" }: Props) {
   if (!reading || reading.primary === "unknown") {
     return (
       <View
-        className={`items-center justify-center rounded-2xl border border-dashed border-surface-border bg-surface-raised ${size === "xl" ? "h-24 w-24" : "h-16 w-16"}`}
+        className={`items-center justify-center rounded-sm border border-dashed border-surface-border bg-surface-raised ${size === "xl" ? "h-24 w-24" : "h-16 w-16"}`}
       >
         <Text className={`font-bold text-ink-muted ${size === "xl" ? "text-3xl" : "text-xl"}`}>
           ?
@@ -31,7 +31,7 @@ export function DiscLiveBadge({ reading, size = "lg" }: Props) {
   return (
     <View className="items-center gap-2">
       <View
-        className={`items-center justify-center rounded-2xl border-2 ${swatch.bg} ${swatch.ring} ${size === "xl" ? "h-24 w-24" : "h-16 w-16"}`}
+        className={`items-center justify-center rounded-sm border-2 ${swatch.bg} ${swatch.ring} ${size === "xl" ? "h-24 w-24" : "h-16 w-16"}`}
       >
         <Text
           className={`font-bold ${swatch.text} ${size === "xl" ? "text-5xl" : "text-3xl"}`}

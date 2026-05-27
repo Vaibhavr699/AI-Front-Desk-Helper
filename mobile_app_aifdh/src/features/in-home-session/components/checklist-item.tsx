@@ -56,7 +56,7 @@ export function ChecklistItem({ status, title, detail }: Props) {
   const meta = STATUS_META[status];
   return (
     <View
-      className={`flex-row items-start gap-3 rounded-2xl border p-4 ${meta.bg} ${meta.border}`}
+      className={`flex-row items-start gap-3 rounded-sm border p-4 ${meta.bg} ${meta.border}`}
     >
       <View className="pt-0.5">
         <Ionicons name={meta.icon} size={22} color={meta.iconColor} />

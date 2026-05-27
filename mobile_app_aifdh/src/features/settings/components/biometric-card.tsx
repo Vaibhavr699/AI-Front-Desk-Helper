@@ -55,7 +55,7 @@ export function BiometricCard() {
   const label = cap?.label ?? "Biometric";
 
   return (
-    <View className="gap-4 rounded-2xl border border-surface-border bg-white p-5">
+    <View className="gap-4 rounded-sm border border-surface-border bg-white p-5">
       <View className="flex-row items-center gap-2">
         <Ionicons name="finger-print-outline" size={16} color={colors.ink.secondary} />
         <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">

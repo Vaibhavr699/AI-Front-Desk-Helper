@@ -44,7 +44,7 @@ export function IntelligenceCard({ intelligence, leadId }: Props) {
 
   if (!intelligence) {
     return (
-      <View className="gap-2 rounded-2xl border border-dashed border-surface-border bg-white p-4">
+      <View className="gap-2 rounded-sm border border-dashed border-surface-border bg-white p-4">
         <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
           Customer intelligence
         </Text>
@@ -63,7 +63,7 @@ export function IntelligenceCard({ intelligence, leadId }: Props) {
     disc && disc !== "unknown" ? DISC_DESCRIPTIONS[disc] : null;
 
   return (
-    <View className="gap-4 rounded-2xl border border-surface-border bg-white p-4">
+    <View className="gap-4 rounded-sm border border-surface-border bg-white p-4">
       <View className="flex-row items-center justify-between">
         <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
           Customer intelligence

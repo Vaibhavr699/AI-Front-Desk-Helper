@@ -40,7 +40,7 @@ export function CueTypesCard() {
   if (isLoading || !prefs) return null;
 
   return (
-    <View className="gap-4 rounded-2xl border border-surface-border bg-white p-5">
+    <View className="gap-4 rounded-sm border border-surface-border bg-white p-5">
       <View className="flex-row items-center gap-2">
         <Ionicons name="bulb-outline" size={16} color={colors.ink.secondary} />
         <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">

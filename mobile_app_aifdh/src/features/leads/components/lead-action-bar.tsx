@@ -33,7 +33,7 @@ export function LeadActionBar({ lead }: Props) {
     <View className="gap-2">
       <Pressable
         onPress={startInHome}
-        className="h-12 flex-row items-center justify-center gap-2 rounded-2xl bg-brand-600 active:bg-brand-700"
+        className="h-12 flex-row items-center justify-center gap-2 rounded-sm bg-brand-600 active:bg-brand-700"
       >
         <Ionicons name="radio" size={18} color="#ffffff" />
         <Text className="text-sm font-semibold text-white">
@@ -72,7 +72,7 @@ function ActionButton({ icon, label, onPress, disabled }: ButtonProps) {
     <Pressable
       onPress={onPress}
       disabled={disabled}
-      className={`flex-1 items-center gap-1 rounded-2xl border border-surface-border bg-white px-3 py-3 active:bg-surface-raised ${disabled ? "opacity-40" : ""}`}
+      className={`flex-1 items-center gap-1 rounded-sm border border-surface-border bg-white px-3 py-3 active:bg-surface-raised ${disabled ? "opacity-40" : ""}`}
     >
       <Ionicons name={icon} size={20} color={colors.brand[600]} />
       <Text className="text-xs font-semibold text-ink-secondary">{label}</Text>

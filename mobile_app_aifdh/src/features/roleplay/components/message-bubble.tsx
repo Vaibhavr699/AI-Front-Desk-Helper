@@ -15,8 +15,8 @@ export function MessageBubble({ turn }: Props) {
       <View
         className={
           isRep
-            ? "max-w-[80%] rounded-2xl rounded-br-md bg-brand-600 px-4 py-3"
-            : "max-w-[80%] rounded-2xl rounded-bl-md border border-surface-border bg-white px-4 py-3"
+            ? "max-w-[80%] rounded-sm rounded-br-md bg-brand-600 px-4 py-3"
+            : "max-w-[80%] rounded-sm rounded-bl-md border border-surface-border bg-white px-4 py-3"
         }
       >
         <Text
@@ -37,7 +37,7 @@ export function MessageBubble({ turn }: Props) {
 export function TypingBubble() {
   return (
     <View className="mb-2 w-full flex-row justify-start">
-      <View className="rounded-2xl rounded-bl-md border border-surface-border bg-white px-5 py-4">
+      <View className="rounded-sm rounded-bl-md border border-surface-border bg-white px-5 py-4">
         <View className="flex-row items-center gap-1">
           <View className="h-2 w-2 rounded-full bg-ink-dim" />
           <View className="h-2 w-2 rounded-full bg-ink-muted" />

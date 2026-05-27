@@ -76,7 +76,7 @@ export function EnrollBiometricScreen() {
           <Pressable
             onPress={handleEnable}
             disabled={busy}
-            className={`h-14 items-center justify-center rounded-2xl bg-brand-600 active:bg-brand-700 ${busy ? "opacity-60" : ""}`}
+            className={`h-14 items-center justify-center rounded-sm bg-brand-600 active:bg-brand-700 ${busy ? "opacity-60" : ""}`}
           >
             <Text className="text-base font-semibold text-white">
               {busy ? "Setting up…" : `Enable ${label}`}
@@ -85,7 +85,7 @@ export function EnrollBiometricScreen() {
           <Pressable
             onPress={handleSkip}
             disabled={busy}
-            className="h-12 items-center justify-center rounded-2xl active:bg-surface-raised"
+            className="h-12 items-center justify-center rounded-sm active:bg-surface-raised"
           >
             <Text className="text-sm font-medium text-ink-secondary">
               Not now

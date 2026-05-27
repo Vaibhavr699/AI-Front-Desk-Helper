@@ -13,7 +13,7 @@ type Props = {
 
 export function DimensionsCard({ dimensions }: Props) {
   return (
-    <View className="gap-5 rounded-2xl bg-white p-6">
+    <View className="gap-5 rounded-sm bg-white p-6">
       <View className="flex-row items-center gap-2">
         <Ionicons name="podium-outline" size={16} color={colors.ink.secondary} />
         <Text className="text-sm font-semibold text-ink-secondary">

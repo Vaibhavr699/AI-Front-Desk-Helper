@@ -47,7 +47,7 @@ export function ForgotPasswordScreen() {
           <View className="gap-3">
             <Pressable
               onPress={emailSupport}
-              className="h-14 items-center justify-center rounded-2xl bg-brand-600 active:bg-brand-700"
+              className="h-14 items-center justify-center rounded-sm bg-brand-600 active:bg-brand-700"
             >
               <Text className="text-base font-semibold text-white">
                 Email support
@@ -60,7 +60,7 @@ export function ForgotPasswordScreen() {
 
           <Pressable
             onPress={goBack}
-            className="h-12 items-center justify-center rounded-2xl active:bg-surface-raised"
+            className="h-12 items-center justify-center rounded-sm active:bg-surface-raised"
           >
             <Text className="text-sm font-medium text-ink-secondary">
               Back to sign in

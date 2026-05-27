@@ -16,7 +16,7 @@ export function ScenarioCard({ scenario, onPress }: Props) {
   return (
     <Pressable
       onPress={onPress}
-      className="flex-1 gap-3 rounded-2xl border border-surface-border bg-white p-4 active:bg-surface-raised"
+      className="flex-1 gap-3 rounded-sm border border-surface-border bg-white p-4 active:bg-surface-raised"
     >
       <View className="flex-row items-start justify-between gap-3">
         <View className="flex-1 gap-1">

@@ -84,7 +84,7 @@ export function ScenarioSelectionScreen({ scenarioId }: Props) {
       ) : (
         <ScrollView contentContainerClassName="px-4 pb-10 pt-2 md:px-8">
           <View className="mx-auto w-full max-w-2xl gap-4">
-            <View className="gap-3 rounded-2xl border border-surface-border bg-white p-5">
+            <View className="gap-3 rounded-sm border border-surface-border bg-white p-5">
               <View className="flex-row items-start justify-between gap-3">
                 <View className="flex-1 gap-2">
                   <Text className="text-2xl font-bold text-ink-primary">
@@ -105,7 +105,7 @@ export function ScenarioSelectionScreen({ scenarioId }: Props) {
             </View>
 
             {scenario.skills_trained.length > 0 ? (
-              <View className="gap-3 rounded-2xl border border-surface-border bg-white p-5">
+              <View className="gap-3 rounded-sm border border-surface-border bg-white p-5">
                 <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
                   Skills trained
                 </Text>
@@ -120,7 +120,7 @@ export function ScenarioSelectionScreen({ scenarioId }: Props) {
             {scenario.disc_type &&
             scenario.disc_type !== "unknown" &&
             DISC_DESCRIPTIONS[scenario.disc_type] ? (
-              <View className="gap-3 rounded-2xl border border-surface-border bg-white p-5">
+              <View className="gap-3 rounded-sm border border-surface-border bg-white p-5">
                 <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
                   How this customer thinks
                 </Text>
@@ -133,7 +133,7 @@ export function ScenarioSelectionScreen({ scenarioId }: Props) {
               </View>
             ) : null}
 
-            <View className="gap-2 rounded-2xl border border-brand-200 bg-brand-50 p-4">
+            <View className="gap-2 rounded-sm border border-brand-200 bg-brand-50 p-4">
               <View className="flex-row items-center gap-2">
                 <Ionicons
                   name="information-circle"
@@ -154,7 +154,7 @@ export function ScenarioSelectionScreen({ scenarioId }: Props) {
             <Pressable
               onPress={handleStart}
               disabled={start.isPending}
-              className={`h-14 flex-row items-center justify-center gap-2 rounded-2xl bg-brand-600 active:bg-brand-700 ${start.isPending ? "opacity-60" : ""}`}
+              className={`h-14 flex-row items-center justify-center gap-2 rounded-sm bg-brand-600 active:bg-brand-700 ${start.isPending ? "opacity-60" : ""}`}
             >
               <Ionicons name="play" size={18} color="#ffffff" />
               <Text className="text-base font-semibold text-white">

@@ -236,7 +236,7 @@ export function LiveRoleplayScreen({ sessionId }: Props) {
                 placeholder="Type your response…"
                 placeholderTextColor={colors.ink.dim}
                 editable={!respond.isPending && !end.isPending}
-                className="max-h-32 flex-1 rounded-2xl border border-surface-border bg-surface-raised px-4 py-3 text-base text-ink-primary"
+                className="max-h-32 flex-1 rounded-sm border border-surface-border bg-surface-raised px-4 py-3 text-base text-ink-primary"
               />
               <Pressable
                 onPress={send}

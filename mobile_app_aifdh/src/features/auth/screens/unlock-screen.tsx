@@ -86,7 +86,7 @@ export function UnlockScreen() {
           <Pressable
             onPress={attempt}
             disabled={busy}
-            className={`h-14 items-center justify-center rounded-2xl bg-brand-600 active:bg-brand-700 ${busy ? "opacity-60" : ""}`}
+            className={`h-14 items-center justify-center rounded-sm bg-brand-600 active:bg-brand-700 ${busy ? "opacity-60" : ""}`}
           >
             <Text className="text-base font-semibold text-white">
               {busy ? "Verifying…" : `Use ${label}`}
@@ -95,7 +95,7 @@ export function UnlockScreen() {
           <Pressable
             onPress={signOut}
             disabled={busy}
-            className="h-12 items-center justify-center rounded-2xl active:bg-surface-raised"
+            className="h-12 items-center justify-center rounded-sm active:bg-surface-raised"
           >
             <Text className="text-sm font-medium text-ink-secondary">
               Sign in with password instead

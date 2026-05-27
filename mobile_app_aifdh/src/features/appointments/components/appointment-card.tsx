@@ -35,7 +35,7 @@ export function AppointmentCard({
   return (
     <Pressable
       onPress={onPress}
-      className={`rounded-2xl border ${borderClass} ${ringClass} bg-white p-4 active:bg-surface-raised`}
+      className={`rounded-sm border ${borderClass} ${ringClass} bg-white p-4 active:bg-surface-raised`}
     >
       <View className="flex-row items-start justify-between gap-3">
         <View className="flex-1 gap-1">

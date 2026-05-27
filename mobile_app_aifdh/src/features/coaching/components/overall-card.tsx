@@ -23,7 +23,7 @@ export function OverallCard({ avgScore, conversations, windowDays }: Props) {
             : "text-red-600";
 
   return (
-    <View className="rounded-2xl bg-white p-6">
+    <View className="rounded-sm bg-white p-6">
       <View className="flex-row items-center gap-2">
         <View className="h-8 w-8 items-center justify-center rounded-full bg-brand-50">
           <Ionicons name="analytics-outline" size={16} color={colors.brand[600]} />

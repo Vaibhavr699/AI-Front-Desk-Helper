@@ -223,7 +223,7 @@ export function PreSessionScreen({ leadId }: Props) {
             detail={micDetail}
           />
 
-          <View className="rounded-2xl border border-surface-border bg-surface-raised p-4">
+          <View className="rounded-sm border border-surface-border bg-surface-raised p-4">
             <View className="flex-row items-center gap-2">
               <Ionicons
                 name="phone-portrait-outline"
@@ -247,7 +247,7 @@ export function PreSessionScreen({ leadId }: Props) {
           <Pressable
             onPress={handleStart}
             disabled={!canStart}
-            className={`h-14 flex-row items-center justify-center gap-2 rounded-2xl ${canStart ? "bg-brand-600 active:bg-brand-700" : "bg-surface-raised"}`}
+            className={`h-14 flex-row items-center justify-center gap-2 rounded-sm ${canStart ? "bg-brand-600 active:bg-brand-700" : "bg-surface-raised"}`}
           >
             <Ionicons
               name="play-circle"

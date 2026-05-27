@@ -154,7 +154,7 @@ function Header() {
 function SearchBar({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
     <View className="px-4 pb-3">
-      <View className="flex-row items-center gap-2 rounded-2xl border border-surface-border bg-white px-3">
+      <View className="flex-row items-center gap-2 rounded-sm border border-surface-border bg-white px-3">
         <Ionicons name="search-outline" size={18} color={colors.ink.muted} />
         <TextInput
           value={value}

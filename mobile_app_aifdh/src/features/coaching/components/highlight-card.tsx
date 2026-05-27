@@ -14,7 +14,7 @@ export function HighlightCard({ kind, dimension }: Props) {
 
   if (!dimension) {
     return (
-      <View className="flex-1 items-center gap-2 rounded-2xl bg-white p-5">
+      <View className="flex-1 items-center gap-2 rounded-sm bg-white p-5">
         <View className="h-10 w-10 items-center justify-center rounded-full bg-surface-raised">
           <Ionicons name={isBest ? "trophy-outline" : "trending-down-outline"} size={18} color="#aaa" />
         </View>
@@ -30,7 +30,7 @@ export function HighlightCard({ kind, dimension }: Props) {
 
   return (
     <View
-      className={`flex-1 items-center gap-2 rounded-2xl p-5 ${
+      className={`flex-1 items-center gap-2 rounded-sm p-5 ${
         isBest ? "bg-emerald-50" : "bg-amber-50"
       }`}
     >

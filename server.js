@@ -119,6 +119,23 @@ require("node-cron").schedule("*/15 * * * *", async () => {
 });
 console.log("[startup] smsCoachingScorer cron scheduled (*/15 * * * *)");
 
+// Phase 9B — Linguistic extraction (every 15 minutes, May 27, 2026)
+// Voice-only in step 1. Reads completed coaching_conversations, runs
+// deterministic extractors (sentence count, length, time/price/brand
+// markers), upserts one row per conversation into
+// conversation_linguistic_signals. The 4 question/specificity columns
+// stay NULL until step 2 wires in the GPT-4o classifier. SMS held until
+// the open SMS-capture diagnostic closes.
+const { runLinguisticExtractionSweep } = require("./services/linguisticExtraction");
+require("node-cron").schedule("*/15 * * * *", async () => {
+  try {
+    await runLinguisticExtractionSweep();
+  } catch (err) {
+    console.error("[linguisticExtraction] cron tick error:", err.message);
+  }
+});
+console.log("[startup] linguisticExtraction cron scheduled (*/15 * * * *)");
+
 // Phase 6C anti-sharing — daily sweep of rep_app_events to flag accounts
 // that look shared. Runs at 02:00 UTC to stay clear of business hours.
 const { runSharingRiskSweep } = require("./services/repSharingScorer");

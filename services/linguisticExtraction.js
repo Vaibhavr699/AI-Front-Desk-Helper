@@ -2,30 +2,29 @@
 
 // ═══════════════════════════════════════════════════════════════════════
 // Phase 9B step 1 — linguistic signal extraction (voice only)
-// May 27, 2026
+// May 27, 2026 — schema-corrected build
 //
 // Reads completed voice coaching_conversations, runs deterministic
 // extractors, upserts one row per conversation into
 // conversation_linguistic_signals. SMS is held until the open SMS-capture
-// diagnostic closes — see the early-return below.
+// diagnostic closes — see the source_type filter below.
 //
 // Step 1 populates 5 of the 9 signal columns (sentence count, avg sentence
 // length, time/price/brand markers). The 4 question/specificity columns
-// stay NULL until step 2 wires in the GPT-4o classifier. That's fine —
-// the columns are nullable per mig 073, and 9C's training will consume
-// whatever's populated.
+// stay NULL until step 2 wires in the GPT-4o classifier.
 //
-// SCHEMA ASSUMPTIONS (flagged for verification):
-//   - coaching_conversations.id           uuid                   ✓ from mig 073 FK
-//   - coaching_conversations.tenant_id    uuid                   ✓ from mig 073 FK
-//   - coaching_conversations.source_type  text   GUESS — voice value uncertain
-//   - coaching_conversations.transcript   text   GUESS — flat "User: …\nAssistant: …\n"
-//   - coaching_conversations.scored_at    ts     GUESS — "complete" marker; could be `status` enum instead
-//   - tenants.vertical_id                 int    ✓ confirmed across mig refs
-//
-// If any GUESS is wrong, the rename is one line per column. The structure
-// — read conversation, parse customer turns, run extractors, upsert —
-// stays identical.
+// SCHEMA (verified May 27 2026):
+//   - coaching_conversations.id           uuid                   ✓
+//   - coaching_conversations.tenant_id    uuid                   ✓
+//   - coaching_conversations.source_type  text                   ✓
+//       Real values seen: ai_call_inbound, ai_sms, rep_recording.
+//       9B step 1 voice family = ai_call_inbound + rep_recording.
+//       Pattern-matched (LIKE 'ai_call_%' OR = 'rep_recording') so future
+//       ai_call_outbound is picked up automatically.
+//   - coaching_conversations.scored_at    tstz                   ✓ "complete" marker
+//   - coaching_conversations.transcript   jsonb                  ✓
+//       Shape: [{ "role": "customer"|"agent", "text": "..." }, ...]
+//   - tenants.vertical_id                 int                    ✓
 // ═══════════════════════════════════════════════════════════════════════
 
 const db = require("../lib/db");
@@ -37,63 +36,50 @@ const { getBrandListForVertical } = require("./linguisticExtractors/brandLists")
 // throughput, far above any realistic conversation volume.
 const BATCH_SIZE = 100;
 
-// Minimum customer turns / inbound messages required to extract. Below
-// this we write the row with skip_reason set, matching the persona_skip_reason
-// pattern called out in mig 073's comment.
+// Minimum customer turns required to extract. Below this we write the row
+// with skip_reason set, matching the persona_skip_reason pattern called
+// out in mig 073's comment.
 const MIN_CUSTOMER_TURNS = 2;
 
 // ─────────────────────────────────────────────────────────────────────
-// Parse a flat voice transcript ("User: hi there\nAssistant: hello\n...")
-// into a list of customer-side utterances. Returns string[] — each element
-// is one customer turn's text, with the "User: " prefix stripped.
+// Parse a jsonb-array transcript into a list of customer-side utterances.
 //
-// We treat any line beginning with "User:" (case-insensitive, optional
-// whitespace) as a customer turn. Multi-line turns are folded — if a
-// User line is followed by more User lines without an Assistant in
-// between, they merge into one utterance (rare but possible from VAD
-// fragmentation in server.js's transcript builder).
+// Shape expected (verified against live data):
+//   [
+//     { "role": "customer", "text": "It's a 2 beds and 1 baths..." },
+//     { "role": "agent",    "text": "Got it, let me check..." },
+//     ...
+//   ]
+//
+// Returns string[] — each element is one customer turn's text, in order.
+// Defensive against:
+//   - transcript being null (returns [])
+//   - transcript not being an array (returns [])
+//   - turns missing a role or text field (skipped, not crashed)
+//   - role being any case ("Customer", "CUSTOMER" — lowercased)
+//   - text being non-string (skipped)
 // ─────────────────────────────────────────────────────────────────────
-function parseCustomerTurnsFromFlatTranscript(transcript) {
-  if (!transcript || typeof transcript !== "string") return [];
+function parseCustomerTurns(transcript) {
+  if (!Array.isArray(transcript)) return [];
 
-  const lines = transcript.split("\n");
   const turns = [];
-  let buffer = null;
-
-  for (const line of lines) {
-    const userMatch = line.match(/^\s*User\s*:\s*(.*)$/i);
-    const assistantMatch = line.match(/^\s*Assistant\s*:/i);
-
-    if (userMatch) {
-      const text = userMatch[1].trim();
-      if (buffer !== null) {
-        // Continuation of a customer turn — fold into the existing buffer.
-        buffer = (buffer + " " + text).trim();
-      } else {
-        buffer = text;
-      }
-    } else if (assistantMatch) {
-      // Assistant turn closes the current customer buffer.
-      if (buffer !== null) {
-        if (buffer.length > 0) turns.push(buffer);
-        buffer = null;
-      }
-    }
-    // Other lines (blank, malformed) are ignored.
+  for (const turn of transcript) {
+    if (!turn || typeof turn !== "object") continue;
+    const role = String(turn.role || "").trim().toLowerCase();
+    if (role !== "customer") continue;
+    const text = typeof turn.text === "string" ? turn.text.trim() : "";
+    if (text.length > 0) turns.push(text);
   }
-
-  // Flush any trailing customer buffer (call ended mid-customer-turn).
-  if (buffer !== null && buffer.length > 0) turns.push(buffer);
-
   return turns;
 }
 
 // ─────────────────────────────────────────────────────────────────────
 // Find conversations that need linguistic signal extraction.
 //
-// Query: voice conversations that are complete (scored_at IS NOT NULL —
-// the coaching scorer already ran, so the conversation is settled) and
-// have no row in conversation_linguistic_signals yet.
+// Voice family = ai_call_inbound + rep_recording. ai_sms is deliberately
+// excluded until the SMS-capture diagnostic closes; once it does, change
+// the WHERE clause to broaden the filter and 9B picks up SMS rows on the
+// next tick.
 //
 // We deliberately key off "no signal row exists" rather than a flag on
 // coaching_conversations — keeps the conversation table read-only from
@@ -101,16 +87,12 @@ function parseCustomerTurnsFromFlatTranscript(transcript) {
 // conversation_linguistic_signals where ..." plus letting the cron catch up.
 // ─────────────────────────────────────────────────────────────────────
 async function findConversationsNeedingExtraction(limit) {
-  // SCHEMA GUESS markers:
-  //   cc.source_type = 'voice'  — replace 'voice' with the actual enum value
-  //   cc.scored_at IS NOT NULL  — replace with whatever "complete" check matches
-  //   cc.transcript             — replace if turns live in a separate table
   const { rows } = await db.query(
     `SELECT cc.id, cc.tenant_id, cc.source_type, cc.transcript,
             t.vertical_id
        FROM coaching_conversations cc
        JOIN tenants t ON t.id = cc.tenant_id
-      WHERE cc.source_type = 'voice'
+      WHERE (cc.source_type LIKE 'ai_call_%' OR cc.source_type = 'rep_recording')
         AND cc.scored_at IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM conversation_linguistic_signals cls
@@ -127,9 +109,8 @@ async function findConversationsNeedingExtraction(limit) {
 // Upsert one signal row. Uses ON CONFLICT (conversation_id) DO UPDATE so
 // re-runs (e.g. after a code bump) overwrite cleanly without duplicating.
 //
-// `signals` is an object with any subset of the column names. Missing
-// columns are stored as NULL. Step 1 leaves the 4 LLM columns out
-// entirely — they stay NULL until step 2 backfills them.
+// Step 1 leaves the 4 LLM columns (open/closed/detail question counts,
+// specificity score) as NULL — step 2 backfills them.
 // ─────────────────────────────────────────────────────────────────────
 async function upsertSignals(conversationId, tenantId, channel, signals, skipReason) {
   await db.query(
@@ -174,29 +155,34 @@ async function upsertSignals(conversationId, tenantId, channel, signals, skipRea
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Extract signals for a single conversation. Voice only in step 1.
+// Map source_type → channel column value.
+// Voice-family conversations all get channel='voice'. When SMS gets
+// turned on later, ai_sms maps to channel='sms'.
+// ─────────────────────────────────────────────────────────────────────
+function channelForSourceType(sourceType) {
+  if (sourceType === "ai_sms") return "sms";
+  // ai_call_inbound, ai_call_outbound, rep_recording — all voice family
+  return "voice";
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Extract signals for a single conversation.
 // Returns { processed: bool, skipped: bool, skip_reason: string|null }.
 // Never throws — errors are caught and logged, returning { processed: false }
 // so one bad conversation doesn't poison the whole sweep.
 // ─────────────────────────────────────────────────────────────────────
 async function extractForConversation(conv) {
   try {
-    // Step 1 is voice-only. If somehow a non-voice row sneaks past the
-    // SELECT filter (e.g. enum value drift), skip it cleanly.
-    if (conv.source_type !== "voice") {
-      return { processed: false, skipped: true, skip_reason: "not_voice_step1" };
-    }
-
-    const customerTurns = parseCustomerTurnsFromFlatTranscript(conv.transcript);
+    const channel = channelForSourceType(conv.source_type);
+    const customerTurns = parseCustomerTurns(conv.transcript);
 
     // Below-threshold: write a skip-marker row so 9C can distinguish
-    // "thin conversation" from "real zero". This mirrors the
-    // persona_skip_reason pattern called out in mig 073's comment.
+    // "thin conversation" from "real zero". Mirrors persona_skip_reason.
     if (customerTurns.length < MIN_CUSTOMER_TURNS) {
       await upsertSignals(
         conv.id,
         conv.tenant_id,
-        "voice",
+        channel,
         {}, // all signal columns null
         `too_few_customer_turns:${customerTurns.length}`
       );
@@ -206,7 +192,7 @@ async function extractForConversation(conv) {
     const brandList = getBrandListForVertical(conv.vertical_id);
     const signals = runDeterministicExtractors(customerTurns, brandList);
 
-    await upsertSignals(conv.id, conv.tenant_id, "voice", signals, null);
+    await upsertSignals(conv.id, conv.tenant_id, channel, signals, null);
 
     return { processed: true, skipped: false, skip_reason: null };
   } catch (err) {
@@ -266,6 +252,7 @@ async function runLinguisticExtractionSweep() {
 module.exports = {
   runLinguisticExtractionSweep,
   // Exported for tests + future tooling.
-  parseCustomerTurnsFromFlatTranscript,
+  parseCustomerTurns,
+  channelForSourceType,
   extractForConversation,
 };

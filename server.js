@@ -136,6 +136,28 @@ require("node-cron").schedule("*/15 * * * *", async () => {
 });
 console.log("[startup] linguisticExtraction cron scheduled (*/15 * * * *)");
 
+// Phase 9B step 2 — Linguistic LLM classifier (every 15 minutes, May 27, 2026)
+// Reads rows where step 1's deterministic signals are present but the 4
+// GPT-judged columns (open/closed/detail question counts, specificity
+// score) are still NULL. Calls GPT-4o with structured outputs to fill
+// them. Voice-only via the source_type filter in step 1 — SMS held until
+// the open SMS-capture diagnostic closes. Bounded retries via
+// llm_attempts column (max 5 attempts per row).
+//
+// Runs concurrently with step 1's */15 cron — they don't conflict;
+// step 2's selection excludes rows whose step 1 row doesn't exist yet
+// (via the LEFT-side join in findPendingConversations) and only picks
+// rows where customer_open_question_count IS NULL AND skip_reason IS NULL.
+const { runLinguisticLlmSweep } = require("./services/linguisticLlmClassifier");
+require("node-cron").schedule("*/15 * * * *", async () => {
+  try {
+    await runLinguisticLlmSweep();
+  } catch (err) {
+    console.error("[linguisticLlmClassifier] cron tick error:", err.message);
+  }
+});
+console.log("[startup] linguisticLlmClassifier cron scheduled (*/15 * * * *)");
+
 // Phase 6C anti-sharing — daily sweep of rep_app_events to flag accounts
 // that look shared. Runs at 02:00 UTC to stay clear of business hours.
 const { runSharingRiskSweep } = require("./services/repSharingScorer");

@@ -13,6 +13,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { useTenantFlags } from "@/src/features/auth/store";
+import { CreateCustomerFab } from "@/src/features/customers/components/create-customer-fab";
 import { useResponsive } from "@/src/shared/hooks/use-responsive";
 import { colors } from "@/src/shared/theme/tokens";
 
@@ -26,6 +28,7 @@ import { LeadDetailBody } from "./lead-detail-screen";
 export function LeadsListScreen() {
   const router = useRouter();
   const { isTablet } = useResponsive();
+  const { rep_coach_enabled } = useTenantFlags();
 
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -136,6 +139,7 @@ export function LeadsListScreen() {
       ) : (
         list
       )}
+      {rep_coach_enabled && <CreateCustomerFab />}
     </SafeAreaView>
   );
 }

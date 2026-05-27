@@ -34,8 +34,96 @@ const { composeBriefingBody } = require("../../services/preVisitBriefing");
 
 const router = express.Router();
 
+const { normalizeE164Phone } = require("../../lib/phone");
+
 const PAGE_SIZE_DEFAULT = 50;
 const PAGE_SIZE_MAX = 200;
+
+router.post("/", ...repAuthChain, async (req, res) => {
+  try {
+    if (!req.rep.tenant_flags?.rep_coach_enabled) {
+      return res.status(403).json({ error: "Rep Coach not enabled for this tenant" });
+    }
+    const { name, phone, email, address, project_type, estimated_value, source, notes } = req.body || {};
+    if (!name || !phone) {
+      return res.status(400).json({ error: "name and phone are required" });
+    }
+    const normalized = normalizeE164Phone(String(phone));
+    if (!normalized) {
+      return res.status(400).json({ error: "Invalid phone number" });
+    }
+    const existing = await db.query(
+      "SELECT id FROM leads WHERE tenant_id = $1 AND phone = $2",
+      [req.rep.tenant_id, normalized],
+    );
+    if (existing.rows[0]) {
+      const updates = [];
+      const vals = [existing.rows[0].id];
+      let p = 2;
+      if (name) { updates.push(`name = COALESCE(name, $${p})`); vals.push(name); p++; }
+      if (email) { updates.push(`email = COALESCE(email, $${p})`); vals.push(email); p++; }
+      if (address) { updates.push(`address = COALESCE(address, $${p})`); vals.push(address); p++; }
+      if (project_type) { updates.push(`project_type = COALESCE(project_type, $${p})`); vals.push(project_type); p++; }
+      if (notes) { updates.push(`notes = COALESCE(notes, $${p})`); vals.push(notes); p++; }
+      if (estimated_value) { updates.push(`estimated_revenue_cents = COALESCE(estimated_revenue_cents, $${p})`); vals.push(Math.round(estimated_value * 100)); p++; }
+      if (updates.length > 0) {
+        await db.query(`UPDATE leads SET ${updates.join(", ")}, updated_at = now() WHERE id = $1`, vals);
+      }
+      const r = await db.query("SELECT * FROM leads WHERE id = $1", [existing.rows[0].id]);
+      return res.json({ lead: r.rows[0], created: false });
+    }
+    const r = await db.query(
+      `INSERT INTO leads (tenant_id, name, phone, email, address, project_type, lead_source, notes, estimated_revenue_cents, contact_method, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'unknown', 'New Lead')
+       RETURNING *`,
+      [
+        req.rep.tenant_id, name, normalized,
+        email || null, address || null, project_type || null,
+        source || "rep_manual", notes || null,
+        estimated_value ? Math.round(estimated_value * 100) : 0,
+      ],
+    );
+    res.status(201).json({ lead: r.rows[0], created: true });
+  } catch (e) {
+    if (e.code === "23505") {
+      const r = await db.query(
+        "SELECT * FROM leads WHERE tenant_id = $1 AND phone = $2",
+        [req.rep.tenant_id, normalizeE164Phone(String(req.body?.phone))],
+      );
+      return res.json({ lead: r.rows[0], created: false });
+    }
+    console.error("[rep/leads POST]", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.patch("/:id", ...repAuthChain, async (req, res) => {
+  try {
+    const { name, email, address, project_type, notes, estimated_value, status } = req.body || {};
+    const updates = [];
+    const vals = [req.params.id, req.rep.tenant_id];
+    let p = 3;
+    if (name !== undefined) { updates.push(`name = $${p}`); vals.push(name); p++; }
+    if (email !== undefined) { updates.push(`email = $${p}`); vals.push(email); p++; }
+    if (address !== undefined) { updates.push(`address = $${p}`); vals.push(address); p++; }
+    if (project_type !== undefined) { updates.push(`project_type = $${p}`); vals.push(project_type); p++; }
+    if (notes !== undefined) { updates.push(`notes = $${p}`); vals.push(notes); p++; }
+    if (status !== undefined) { updates.push(`status = $${p}`); vals.push(status); p++; }
+    if (estimated_value !== undefined) { updates.push(`estimated_revenue_cents = $${p}`); vals.push(Math.round(estimated_value * 100)); p++; }
+    if (updates.length === 0) {
+      return res.status(400).json({ error: "No fields to update" });
+    }
+    const r = await db.query(
+      `UPDATE leads SET ${updates.join(", ")}, updated_at = now() WHERE id = $1 AND tenant_id = $2 RETURNING *`,
+      vals,
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: "Lead not found" });
+    res.json({ lead: r.rows[0] });
+  } catch (e) {
+    console.error("[rep/leads PATCH]", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
 
 const FILTER_TO_WHERE = {
   today: "AND l.updated_at >= CURRENT_DATE",

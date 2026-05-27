@@ -4,6 +4,12 @@ const db = require("../lib/db");
 const twilio = require("../lib/twilio");
 const { getLast10Digits, normalizeE164Phone } = require("../lib/phone");
 const { canSendRecovery, getCadenceDays } = require("../lib/recoverySettings");
+// Phase 10E (May 27, 2026) — DISC-adaptive cadence helper. Scales the
+// static delayHours in each sequence step based on the lead's DISC
+// classification + tenant settings. Falls back to the base delay for
+// any no-op condition (toggle off, no lead, no DISC, low confidence,
+// DB error) so it's a transparent layer on top of the existing engine.
+const { applyDiscMultiplier } = require("../lib/discCadence");
 
 function normalizeRecoveryPhone(raw) {
   const value = String(raw || "").trim();
@@ -26,6 +32,15 @@ function normalizeRecoveryPhone(raw) {
  * Day 14 → SMS: soft close
  * Day 17 → CALL + voicemail: final AI call attempt
  * Day 21 → SMS: hard close → DORMANT → seasonal campaigns
+ *
+ * NOTE (Phase 10E, May 27 2026): the delayHours values below are BASE
+ * delays. When DISC-adaptive cadence is enabled on a tenant, the actual
+ * wall-clock delay is scaled by the lead's DISC bucket multiplier via
+ * lib/discCadence.applyDiscMultiplier. The Phase 10B preset filter
+ * (GHOST_STEP_DAYS in executeStep) still uses these as canonical day
+ * offsets for preset bucketing — DISC scales the timing, not the bucket
+ * identity. So a "day10_call" step always counts as a day-10 preset
+ * candidate even when DISC pulls it forward to day 6 in wall-clock time.
  */
 const GHOST_SEQUENCE = [
   {
@@ -330,7 +345,11 @@ async function startRecovery(tenantId, bookingId, options = {}) {
 
   const now = new Date();
   const firstStep = GHOST_SEQUENCE[0];
-  const nextActionAt = addHours(now, firstStep.delayHours);
+  // Phase 10E: scale first-step delay by DISC bucket if enabled. lead_id
+  // comes from the booking row — may be null for legacy bookings, in
+  // which case applyDiscMultiplier returns the base delay unchanged.
+  const delayHours = await applyDiscMultiplier(firstStep.delayHours, b.lead_id || null, tenantId);
+  const nextActionAt = addHours(now, delayHours);
 
   const res = await db.query(
     `INSERT INTO estimate_recoveries (
@@ -375,7 +394,9 @@ async function startEstimateRecovery(tenantId, lead, options = {}) {
 
   const now = new Date();
   const firstStep = GHOST_SEQUENCE[0];
-  const nextActionAt = addHours(now, firstStep.delayHours);
+  // Phase 10E: scale first-step delay by DISC bucket if enabled.
+  const delayHours = await applyDiscMultiplier(firstStep.delayHours, lead.id || null, tenantId);
+  const nextActionAt = addHours(now, delayHours);
 
   const res = await db.query(
     `INSERT INTO estimate_recoveries (
@@ -431,7 +452,9 @@ async function startInquiryRecovery(tenantId, lead, options = {}) {
 
   const now = new Date();
   const firstStep = INQUIRY_SEQUENCE[0];
-  const nextActionAt = addHours(now, firstStep.delayHours);
+  // Phase 10E: scale first-step delay by DISC bucket if enabled.
+  const delayHours = await applyDiscMultiplier(firstStep.delayHours, lead.id || null, tenantId);
+  const nextActionAt = addHours(now, delayHours);
 
   const res = await db.query(
     `INSERT INTO estimate_recoveries (
@@ -490,7 +513,12 @@ async function startMissedCallRecovery(tenantId, lead, options = {}) {
 
   const now          = new Date();
   const firstStep    = MISSED_CALL_SEQUENCE[0];
-  const nextActionAt = addHours(now, firstStep.delayHours);
+  // Phase 10E: scale first-step delay by DISC bucket if enabled. Note that
+  // most missed-call recoveries fire so soon after the call (30 min base)
+  // that DISC may not be classified yet — applyDiscMultiplier will return
+  // the base delay unchanged in that case.
+  const delayHours = await applyDiscMultiplier(firstStep.delayHours, lead.id || null, tenantId);
+  const nextActionAt = addHours(now, delayHours);
 
   const res = await db.query(
     `INSERT INTO estimate_recoveries (
@@ -818,6 +846,11 @@ const stepDef = ALL_STEPS.get(recovery.current_step);
   // the tenant's cadence preset days (e.g. preset='gentle' → [3,10,21]
   // skips day1/day5/day7/day14/day17 sends), advance the sequence as if
   // the step fired — the sequence progresses, just without that message.
+  //
+  // Phase 10E note: this preset filter uses the CANONICAL day offsets,
+  // independent of any DISC multiplier applied to the wall-clock delay.
+  // A "day10_call" step always counts as day-10 for preset bucketing
+  // even when DISC pulls it forward to day 6 in real time.
   // ─────────────────────────────────────────────────────────────────────
   const GHOST_STEP_DAYS = {
     day1_checkin:    1,
@@ -989,7 +1022,13 @@ async function advanceStep(recovery, currentStepDef) {
     return;
   }
 
-  const nextAt = addHours(new Date(), nextStep.delayHours);
+  // Phase 10E: scale the next step's delay by the lead's DISC bucket if
+  // the tenant has 10E enabled. This is the highest-traffic call site for
+  // applyDiscMultiplier — every advancement through the sequence routes
+  // through here. Returns base unchanged for unclassified leads or when
+  // toggle is off.
+  const delayHours = await applyDiscMultiplier(nextStep.delayHours, recovery.lead_id, recovery.tenant_id);
+  const nextAt = addHours(new Date(), delayHours);
   await db.query(
     "UPDATE estimate_recoveries SET current_step = $1, next_action_at = $2, updated_at = now() WHERE id = $3",
     [nextStepName, nextAt.toISOString(), recovery.id]
@@ -1008,7 +1047,23 @@ async function setObjection(recoveryId, objectionType) {
   }
 
   const firstStep = sequence[0];
-  const nextAt = addHours(new Date(), firstStep.delayHours);
+  // Phase 10E: scale the objection sequence's first-step delay too. Look
+  // up the recovery's tenant + lead so the multiplier helper has what it
+  // needs. Cheap query — recoveries table is small and PK-indexed.
+  let tenantId = null;
+  let leadId = null;
+  try {
+    const r = await db.query(
+      "SELECT tenant_id, lead_id FROM estimate_recoveries WHERE id = $1 LIMIT 1",
+      [recoveryId]
+    );
+    tenantId = r.rows[0]?.tenant_id || null;
+    leadId = r.rows[0]?.lead_id || null;
+  } catch (err) {
+    console.error("[Recovery] setObjection lookup failed: %s", err.message);
+  }
+  const delayHours = await applyDiscMultiplier(firstStep.delayHours, leadId, tenantId);
+  const nextAt = addHours(new Date(), delayHours);
 
   await db.query(
     `UPDATE estimate_recoveries SET
@@ -1142,7 +1197,22 @@ async function markCancelled(recoveryId) {
 
 async function resumeRecovery(recoveryId) {
   const firstStep = GHOST_SEQUENCE[0];
-  const nextAt = addHours(new Date(), firstStep.delayHours);
+  // Phase 10E: scale the resumed first-step delay by DISC. Same pattern
+  // as setObjection — look up tenant + lead for the helper.
+  let tenantId = null;
+  let leadId = null;
+  try {
+    const r = await db.query(
+      "SELECT tenant_id, lead_id FROM estimate_recoveries WHERE id = $1 LIMIT 1",
+      [recoveryId]
+    );
+    tenantId = r.rows[0]?.tenant_id || null;
+    leadId = r.rows[0]?.lead_id || null;
+  } catch (err) {
+    console.error("[Recovery] resumeRecovery lookup failed: %s", err.message);
+  }
+  const delayHours = await applyDiscMultiplier(firstStep.delayHours, leadId, tenantId);
+  const nextAt = addHours(new Date(), delayHours);
   await db.query(
     `UPDATE estimate_recoveries SET
       status = 'active', current_step = $1, next_action_at = $2,

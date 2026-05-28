@@ -3,40 +3,42 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { InHomeWsClient } from "../ws-client";
 
+// .m4a/AAC — a complete compressed file per chunk, which Whisper transcribes
+// directly. (Android expo-av can't emit raw PCM, so we record compressed and
+// transcribe each chunk via Whisper batch on the backend.)
 const RECORDING_OPTIONS: Audio.RecordingOptions = {
   isMeteringEnabled: false,
   android: {
-    extension: ".wav",
-    outputFormat: Audio.AndroidOutputFormat.DEFAULT,
-    audioEncoder: Audio.AndroidAudioEncoder.DEFAULT,
-    sampleRate: 16000,
+    extension: ".m4a",
+    outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+    audioEncoder: Audio.AndroidAudioEncoder.AAC,
+    sampleRate: 44100,
     numberOfChannels: 1,
-    bitRate: 256000,
+    bitRate: 96000,
   },
   ios: {
-    extension: ".wav",
-    outputFormat: Audio.IOSOutputFormat.LINEARPCM,
-    audioQuality: Audio.IOSAudioQuality.LOW,
-    sampleRate: 16000,
+    extension: ".m4a",
+    outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+    audioQuality: Audio.IOSAudioQuality.MEDIUM,
+    sampleRate: 44100,
     numberOfChannels: 1,
-    bitRate: 256000,
-    linearPCMBitDepth: 16,
-    linearPCMIsBigEndian: false,
-    linearPCMIsFloat: false,
+    bitRate: 96000,
   },
   web: {
     mimeType: "audio/webm",
-    bitsPerSecond: 128000,
+    bitsPerSecond: 96000,
   },
 };
 
-const CHUNK_INTERVAL_MS = 1000;
+const CHUNK_INTERVAL_MS = 4000;
 
 export function useAudioStream(wsClient: InHomeWsClient | null) {
   const [streaming, setStreaming] = useState(false);
   const [permissionGranted, setPermissionGranted] = useState(false);
   const recordingRef = useRef<Audio.Recording | null>(null);
   const chunkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const activeRef = useRef(false); // synchronous guard against double-start
+  const busyRef = useRef(false); // synchronous guard against overlapping chunk swaps
 
   useEffect(() => {
     Audio.requestPermissionsAsync().then(({ granted }) => {
@@ -46,27 +48,30 @@ export function useAudioStream(wsClient: InHomeWsClient | null) {
 
   const startStreaming = useCallback(async () => {
     if (!permissionGranted || !wsClient) return;
+    if (activeRef.current) return; // already streaming/starting — bail synchronously
+    activeRef.current = true;
 
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: true,
-      playsInSilentModeIOS: true,
-    });
-
-    const recording = new Audio.Recording();
-    await recording.prepareToRecordAsync(RECORDING_OPTIONS);
-    await recording.startAsync();
-    recordingRef.current = recording;
-    setStreaming(true);
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+      const { recording } = await Audio.Recording.createAsync(RECORDING_OPTIONS);
+      recordingRef.current = recording;
+      setStreaming(true);
+    } catch (err) {
+      console.warn("[useAudioStream] start failed:", err);
+      activeRef.current = false;
+      return;
+    }
 
     chunkTimerRef.current = setInterval(async () => {
-      if (!recordingRef.current || !wsClient) return;
+      if (busyRef.current || !recordingRef.current || !wsClient) return;
+      busyRef.current = true;
+      const current = recordingRef.current;
       try {
-        const status = await recordingRef.current.getStatusAsync();
-        if (!status.isRecording) return;
-
-        await recordingRef.current.stopAndUnloadAsync();
-        const uri = recordingRef.current.getURI();
-
+        await current.stopAndUnloadAsync();
+        const uri = current.getURI();
         if (uri) {
           const response = await fetch(uri);
           const blob = await response.blob();
@@ -78,31 +83,36 @@ export function useAudioStream(wsClient: InHomeWsClient | null) {
           };
           reader.readAsArrayBuffer(blob);
         }
-
-        const next = new Audio.Recording();
-        await next.prepareToRecordAsync(RECORDING_OPTIONS);
-        await next.startAsync();
-        recordingRef.current = next;
+        // Start the next chunk only after the previous fully unloaded.
+        if (activeRef.current) {
+          const { recording } = await Audio.Recording.createAsync(RECORDING_OPTIONS);
+          recordingRef.current = recording;
+        }
       } catch (err) {
         console.warn("[useAudioStream] chunk error:", err);
+      } finally {
+        busyRef.current = false;
       }
     }, CHUNK_INTERVAL_MS);
   }, [permissionGranted, wsClient]);
 
   const stopStreaming = useCallback(async () => {
+    activeRef.current = false;
     if (chunkTimerRef.current) {
       clearInterval(chunkTimerRef.current);
       chunkTimerRef.current = null;
     }
-    if (recordingRef.current) {
+    const current = recordingRef.current;
+    recordingRef.current = null;
+    if (current) {
       try {
-        const status = await recordingRef.current.getStatusAsync();
-        if (status.isRecording) {
-          await recordingRef.current.stopAndUnloadAsync();
+        const status = await current.getStatusAsync();
+        if (status.canRecord || status.isRecording) {
+          await current.stopAndUnloadAsync();
         }
       } catch {}
-      recordingRef.current = null;
     }
+    busyRef.current = false;
     setStreaming(false);
   }, []);
 

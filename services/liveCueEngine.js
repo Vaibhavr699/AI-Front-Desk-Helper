@@ -11,7 +11,7 @@ function getOpenAI() {
   return _openai;
 }
 
-const CUE_MODEL = "gpt-4o-2024-08-06";
+const CUE_MODEL = "gpt-4o";
 
 const WINDOW_SECONDS = 12;
 const MIN_WINDOW_CHARS = 40;
@@ -48,16 +48,24 @@ RULES:
 - Keep headline under 50 chars, full_text under 120 chars.
 - full_text should be actionable coaching advice, not a description of the problem.
 
-Return ONLY valid JSON:
-{ "cue": "ask_discovery" | "listen" | ... | null, "headline": "...", "full_text": "...", "disc_type": "D" | "I" | "S" | "C" | null, "confidence": 0.0-1.0 }
+WALKTHROUGH COVERAGE — also report which of these sales-visit stages were discussed in this window (by EITHER speaker), as a list of any that apply:
+- "rooms" — the space/rooms/areas were surveyed or described
+- "scope" — the actual work/project scope was discussed
+- "timeline" — when the work would happen / scheduling
+- "budget" — price, cost, or budget came up
+- "close" — asking for the sale, next step, signing, or booking
 
-If no cue is warranted, return: { "cue": null }`;
+Return ONLY valid JSON:
+{ "cue": "ask_discovery" | "listen" | ... | null, "headline": "...", "full_text": "...", "disc_type": "D" | "I" | "S" | "C" | null, "confidence": 0.0-1.0, "covered_topics": ["budget", "timeline"] }
+
+If no cue is warranted, set "cue" to null but still report covered_topics.`;
 
 class LiveCueEngine {
-  constructor({ sessionId, tenantId, onCue, disabledCues }) {
+  constructor({ sessionId, tenantId, onCue, onChecklistUpdate, disabledCues }) {
     this.sessionId = sessionId;
     this.tenantId = tenantId;
     this.onCue = onCue;
+    this.onChecklistUpdate = onChecklistUpdate || (() => {});
     this.disabledCues = new Set(disabledCues || []);
     this.transcript = [];
     this.lastCueFiredAt = {};
@@ -68,6 +76,7 @@ class LiveCueEngine {
     this.cuesFired = 0;
     this.closed = false;
     this._lastProcessedLength = 0;
+    this.coveredTopics = new Set();
   }
 
   start() {
@@ -130,6 +139,18 @@ class LiveCueEngine {
         result = JSON.parse(raw);
       } catch {
         return;
+      }
+
+      // Walkthrough coverage — runs regardless of whether a cue fires.
+      if (Array.isArray(result.covered_topics)) {
+        const valid = ["rooms", "scope", "timeline", "budget", "close"];
+        for (const topic of result.covered_topics) {
+          if (valid.includes(topic) && !this.coveredTopics.has(topic)) {
+            this.coveredTopics.add(topic);
+            console.log("[liveCueEngine] walkthrough covered:", topic);
+            this.onChecklistUpdate(topic);
+          }
+        }
       }
 
       if (!result.cue) return;

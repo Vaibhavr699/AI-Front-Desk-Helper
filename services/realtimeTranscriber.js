@@ -2,7 +2,7 @@
 
 const WebSocket = require("ws");
 
-const REALTIME_URL = "wss://api.openai.com/v1/realtime?model=gpt-4o-transcribe";
+const REALTIME_URL = "wss://api.openai.com/v1/realtime?intent=transcription";
 const MAX_RECONNECT_ATTEMPTS = 3;
 const WAV_HEADER_SIZE = 44;
 
@@ -34,15 +34,20 @@ class RealtimeTranscriber {
       console.log("[realtimeTranscriber] connected to OpenAI Realtime");
 
       this.ws.send(JSON.stringify({
-        type: "transcription_session.update",
+        type: "session.update",
         session: {
-          input_audio_format: "pcm16",
-          input_audio_transcription: { model: "gpt-4o-transcribe" },
-          turn_detection: {
-            type: "server_vad",
-            threshold: 0.5,
-            prefix_padding_ms: 300,
-            silence_duration_ms: 500,
+          type: "transcription",
+          audio: {
+            input: {
+              format: { type: "audio/pcm", rate: 24000 },
+              transcription: { model: "gpt-4o-transcribe" },
+              turn_detection: {
+                type: "server_vad",
+                threshold: 0.5,
+                prefix_padding_ms: 300,
+                silence_duration_ms: 500,
+              },
+            },
           },
         },
       }));
@@ -85,6 +90,10 @@ class RealtimeTranscriber {
     if (pcm.length > WAV_HEADER_SIZE && pcm.slice(0, 4).toString() === "RIFF") {
       pcm = pcm.slice(WAV_HEADER_SIZE);
     }
+    this._frames = (this._frames || 0) + 1;
+    if (this._frames % 10 === 0) {
+      console.log("[realtimeTranscriber] audio frames received: %d (last chunk %d bytes, connected=%s)", this._frames, pcm.length, this.connected);
+    }
     if (!this.connected) {
       this.buffer.push(pcm);
       return;
@@ -101,12 +110,17 @@ class RealtimeTranscriber {
   }
 
   _handleEvent(msg) {
+    if (msg.type && msg.type !== "error") {
+      console.log("[realtimeTranscriber] event:", msg.type);
+    }
     if (
       msg.type === "conversation.item.input_audio_transcription.completed" ||
+      msg.type === "conversation.item.input_audio_transcription.delta" ||
       msg.type === "transcription_session.transcript.done"
     ) {
-      const text = (msg.transcript || msg.text || "").trim();
+      const text = (msg.transcript || msg.delta || msg.text || "").trim();
       if (text) {
+        console.log("[realtimeTranscriber] TRANSCRIPT:", text);
         this.onTranscript({
           speaker: "unknown",
           text,

@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Menu, X } from 'lucide-react'
 
-const STRIPE_URL = import.meta.env.VITE_STRIPE_CHECKOUT_URL || '#pricing'
+const DEMO_URL = import.meta.env.VITE_DEMO_URL || '#demo'
+const TRIAL_URL = import.meta.env.VITE_TRIAL_URL || '#trial'
 
 const NAV_LINKS = [
   { label: 'Features', href: '#features' },
@@ -42,12 +43,15 @@ export default function Nav({ visible }) {
           ))}
         </div>
 
-        <div className="hidden md:flex items-center" style={{ gap: 28 }}>
+        <div className="hidden md:flex items-center" style={{ gap: 24 }}>
           <a href="#" style={{ fontSize: 15, color: '#aaa' }} className="hover:text-brand-700 transition-colors">
             Login
           </a>
+          <a href={TRIAL_URL} style={{ fontSize: 15, color: '#aaa' }} className="hover:text-brand-700 transition-colors">
+            Free trial
+          </a>
           <a
-            href={STRIPE_URL}
+            href={DEMO_URL}
             className="hover:opacity-90 transition-opacity"
             style={{
               backgroundColor: '#facc15',
@@ -78,8 +82,9 @@ export default function Nav({ visible }) {
             </a>
           ))}
           <a href="#" className="block" style={{ padding: '14px 0', fontSize: 15, color: '#aaa' }}>Login</a>
+          <a href={TRIAL_URL} className="block" style={{ padding: '14px 0', fontSize: 15, color: '#aaa' }}>Free trial</a>
           <a
-            href={STRIPE_URL}
+            href={DEMO_URL}
             className="block text-center"
             style={{
               marginTop: 12,

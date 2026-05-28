@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 
-const API_URL = import.meta.env.VITE_API_URL || ''
+const DEMO_URL = import.meta.env.VITE_DEMO_URL || '#demo'
+const TRIAL_URL = import.meta.env.VITE_TRIAL_URL || '#trial'
 
 const PHOTOS = [
   'https://images.unsplash.com/photo-1581578731548-c64695cc6952?w=500&h=350&fit=crop',
@@ -16,24 +17,6 @@ const ease = [0.22, 1, 0.36, 1]
 
 export default function Hero({ onIntroComplete }) {
   const [phase, setPhase] = useState(0)
-  const [heroEmail, setHeroEmail] = useState('')
-  const [heroSent, setHeroSent] = useState(false)
-  const [heroLoading, setHeroLoading] = useState(false)
-
-  async function handleHeroSubmit(e) {
-    e.preventDefault()
-    if (!heroEmail || heroLoading) return
-    setHeroLoading(true)
-    try {
-      const res = await fetch(`${API_URL}/api/public/magic-link/request`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: heroEmail }),
-      })
-      if (res.ok) setHeroSent(true)
-    } catch {}
-    setHeroLoading(false)
-  }
 
   useEffect(() => {
     const timers = [
@@ -118,58 +101,38 @@ export default function Hero({ onIntroComplete }) {
           initial={{ opacity: 0, y: 20 }}
           animate={phase >= 5 ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.6, ease }}
-          style={{ marginTop: 28, width: '100%', maxWidth: 460, padding: '0 24px' }}
+          className="flex flex-col items-center"
+          style={{ marginTop: 32, width: '100%', maxWidth: 460, padding: '0 24px', gap: 16 }}
         >
-          {heroSent ? (
-            <div style={{ textAlign: 'center', color: '#facc15', fontSize: 15, fontWeight: 600 }}>
-              ✓ Check your email for the magic link!
-            </div>
-          ) : (
-            <form onSubmit={handleHeroSubmit}>
-              <div
-                className="flex items-center"
-                style={{
-                  backgroundColor: 'rgba(255,255,255,0.08)',
-                  border: '1px solid rgba(255,255,255,0.15)',
-                  borderRadius: 9999,
-                  padding: 6,
-                }}
-              >
-                <input
-                  type="email"
-                  required
-                  placeholder="What's your work email?"
-                  value={heroEmail}
-                  onChange={(e) => setHeroEmail(e.target.value)}
-                  className="outline-none"
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    backgroundColor: 'transparent',
-                    padding: '10px 20px',
-                    fontSize: 14,
-                    color: '#fff',
-                  }}
-                />
-                <button
-                  type="submit"
-                  style={{
-                    flexShrink: 0,
-                    backgroundColor: '#facc15',
-                    color: '#000',
-                    fontSize: 13,
-                    fontWeight: 600,
-                    padding: '10px 24px',
-                    borderRadius: 9999,
-                    border: 'none',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {heroLoading ? 'Sending…' : 'Schedule Your Demo'}
-                </button>
-              </div>
-            </form>
-          )}
+          <a
+            href={DEMO_URL}
+            className="flex items-center justify-center"
+            style={{
+              width: '100%',
+              backgroundColor: '#facc15',
+              color: '#000',
+              fontSize: 16,
+              fontWeight: 700,
+              padding: '16px 24px',
+              borderRadius: 9999,
+              textDecoration: 'none',
+              gap: 8,
+            }}
+          >
+            Schedule Your Demo
+            <span style={{ fontSize: 18 }}>→</span>
+          </a>
+          <a
+            href={TRIAL_URL}
+            style={{
+              color: 'rgba(255,255,255,0.55)',
+              fontSize: 14,
+              fontWeight: 500,
+              textDecoration: 'none',
+            }}
+          >
+            or start a 14-day free trial
+          </a>
         </motion.div>
 
         <motion.p

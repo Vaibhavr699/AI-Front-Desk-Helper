@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { CheckCircle2 } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
+const DEMO_URL = import.meta.env.VITE_DEMO_URL || '#demo'
 
 export default function CTA() {
   const [email, setEmail] = useState('')
@@ -47,56 +48,72 @@ export default function CTA() {
             READY TO<br />CLOSE MORE?
           </h2>
           <p style={{ marginTop: 24, fontSize: 17, fontWeight: 500, color: '#333', maxWidth: 480, marginLeft: 'auto', marginRight: 'auto', lineHeight: 1.6 }}>
-            Enter your email and we'll send you a magic link to get started.
-            14-day free trial, no credit card required.
+            See it on a real visit. Book a 15-minute demo and we'll show you how
+            AI Rep Coach scores your team's conversations.
           </p>
 
-          {sent ? (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 10, marginTop: 40,
-                backgroundColor: '#000', color: '#facc15', fontSize: 15, fontWeight: 600,
-                padding: '16px 32px', borderRadius: 9999,
-              }}
-            >
-              <CheckCircle2 size={20} />
-              Check your email for the magic link!
-            </motion.div>
-          ) : (
-            <form onSubmit={handleSubmit} style={{ marginTop: 40, maxWidth: 460, marginLeft: 'auto', marginRight: 'auto' }}>
+          <a
+            href={DEMO_URL}
+            className="inline-flex items-center justify-center hover:opacity-90 transition-opacity"
+            style={{
+              marginTop: 36, backgroundColor: '#000', color: '#facc15',
+              fontSize: 16, fontWeight: 700, padding: '16px 40px',
+              borderRadius: 9999, textDecoration: 'none', gap: 8,
+            }}
+          >
+            Schedule Your Demo
+            <span style={{ fontSize: 18 }}>→</span>
+          </a>
+
+          <div style={{ marginTop: 40, paddingTop: 32, borderTop: '1px solid rgba(0,0,0,0.12)', maxWidth: 460, marginLeft: 'auto', marginRight: 'auto' }}>
+            <p style={{ fontSize: 14, fontWeight: 600, color: '#333', marginBottom: 16 }}>
+              Or start a 14-day free trial — no credit card required
+            </p>
+            {sent ? (
               <div
                 style={{
-                  display: 'flex', alignItems: 'center',
-                  backgroundColor: '#fff', borderRadius: 9999, padding: 6,
-                  boxShadow: '0 8px 30px rgba(0,0,0,0.1)',
+                  display: 'inline-flex', alignItems: 'center', gap: 10,
+                  backgroundColor: '#000', color: '#facc15', fontSize: 14, fontWeight: 600,
+                  padding: '14px 28px', borderRadius: 9999,
                 }}
               >
-                <input
-                  type="email"
-                  required
-                  placeholder="you@company.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="outline-none"
-                  style={{ flex: 1, minWidth: 0, backgroundColor: 'transparent', padding: '12px 20px', fontSize: 14, color: '#000' }}
-                />
-                <button
-                  type="submit"
+                <CheckCircle2 size={18} />
+                Check your email to get started!
+              </div>
+            ) : (
+              <form onSubmit={handleSubmit}>
+                <div
                   style={{
-                    flexShrink: 0, backgroundColor: '#000', color: '#facc15',
-                    fontSize: 13, fontWeight: 600, padding: '12px 28px', borderRadius: 9999, border: 'none', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center',
+                    backgroundColor: '#fff', borderRadius: 9999, padding: 5,
+                    border: '1px solid rgba(0,0,0,0.1)',
                   }}
                 >
-                  {loading ? 'Sending…' : 'Schedule Your Demo'}
-                </button>
-              </div>
-              {error && (
-                <p style={{ marginTop: 12, fontSize: 13, color: '#991b1b' }}>{error}</p>
-              )}
-            </form>
-          )}
+                  <input
+                    type="email"
+                    required
+                    placeholder="you@company.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="outline-none"
+                    style={{ flex: 1, minWidth: 0, backgroundColor: 'transparent', padding: '11px 18px', fontSize: 14, color: '#000' }}
+                  />
+                  <button
+                    type="submit"
+                    style={{
+                      flexShrink: 0, backgroundColor: 'rgba(0,0,0,0.08)', color: '#000',
+                      fontSize: 13, fontWeight: 600, padding: '11px 22px', borderRadius: 9999, border: 'none', cursor: 'pointer',
+                    }}
+                  >
+                    {loading ? 'Sending…' : 'Start trial'}
+                  </button>
+                </div>
+                {error && (
+                  <p style={{ marginTop: 12, fontSize: 13, color: '#991b1b' }}>{error}</p>
+                )}
+              </form>
+            )}
+          </div>
         </motion.div>
       </div>
     </section>

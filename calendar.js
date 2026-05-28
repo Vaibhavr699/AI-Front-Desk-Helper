@@ -119,8 +119,17 @@ async function checkAvailability(date, time, tenant = null) {
     const cal = tenant ? getCalendarForTenant(tenant) : calendar;
     if (!cal) return { available: true, suggestedTimes: [] };
 
-    // Calculate end time correctly (1 hour duration)
+    // Calculate start + end time correctly (1 hour duration)
+    // HOTFIX (May 28, 2026): startStr was referenced in the freebusy call
+    // below but never defined — the call threw ReferenceError on every
+    // invocation, was swallowed by the catch, and returned a fail-open
+    // { available: true }. Result: this function never actually checked
+    // Google Calendar (only the local DB above), silently double-booking
+    // against events that existed on the owner's Google Calendar but not
+    // in our local bookings table. Defining startStr restores the Google
+    // half of the check.
     const [h, m, s] = normalizedTime.split(":").map(Number);
+    const startStr = `${date}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
     const endH = (h + 1) % 24;
     const endStr = `${date}T${String(endH).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 

@@ -3899,6 +3899,11 @@ wss.on("connection", async (twilioSocket, req) => {
   }
   let hasBooked = false;
   let hasScheduledHangup = false;
+  // One-shot guard: set true the moment a booking succeeds, consumed by the
+  // next hang_up so Alex is forced to deliver the thank-you / "anything else?"
+  // turn and WAIT for the caller, instead of hanging up immediately on the
+  // same turn it booked. Cleared after it blocks one hang_up.
+  let pendingPostBookingClose = false;
   let shouldIgnoreSpeech = false;
   let currentLeadCapture = {};
   let leadId = null;
@@ -4819,6 +4824,7 @@ sendToOpenAI(sessionUpdate);
                 const bookingId = bookResult.bookingId;
                 console.log("[AI-Desk] Realtime booking done id=%s crmSynced=%s eventId=%s", bookingId, bookResult.crmSynced, bookResult.eventId || "none");
                 hasBooked = true;
+                pendingPostBookingClose = true;
  
                 // ── Voice-specific side effects the engine does NOT do ─────
  
@@ -5009,6 +5015,25 @@ sendToOpenAI(sessionUpdate);
                 }, 5000);
               }
             } else if (name === "hang_up" && callSid) {
+              // Post-booking guard: if Alex just booked and is trying to hang up
+              // on the same turn (before thanking the caller / asking if there's
+              // anything else), refuse THIS hang_up once and force the wrap-up
+              // turn. The silence timer (15s/30s) remains the backstop if the
+              // caller then goes quiet, so the line can never be stranded.
+              if (pendingPostBookingClose) {
+                pendingPostBookingClose = false;
+                console.log("[AI-Desk] hang_up suppressed once post-booking — forcing thank-you turn callSid=%s", callSid);
+                output = JSON.stringify({
+                  success: false,
+                  message: "Before ending the call, you MUST first thank the caller warmly by name, confirm the appointment is all set, and ask: 'Is there anything else I can help you with today?' Then STOP and WAIT for their reply. Do NOT call hang_up now. Only call hang_up after they clearly indicate they have no further questions.",
+                });
+                sendToOpenAI({
+                  type: "conversation.item.create",
+                  item: { type: "function_call_output", call_id: data.call_id, output },
+                });
+                sendToOpenAI({ type: "response.create" });
+                return;
+              }
               console.log("[AI-Desk] Realtime hang_up trigger callSid=%s", callSid);
               clearSilenceTimers();
               output = JSON.stringify({ success: true, message: "Call ending." });

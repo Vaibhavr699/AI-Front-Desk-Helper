@@ -4478,17 +4478,52 @@ sendToOpenAI(sessionUpdate);
             }
           }
           try {
-            if (name === "check_availability" && tenant) {
+             if (name === "check_availability" && tenant) {
               const { appointment_date, appointment_time } = args;
-              const av = await calendar.checkAvailability(appointment_date, appointment_time, tenant);
-              output = JSON.stringify({ 
-                success: true, 
-                available: av.available, 
-                suggested_alternatives: av.suggestedTimes,
-                message: av.available 
-                  ? "That time is available. You can proceed with book_appointment." 
-                  : `That time is unfortunately taken. I found these available slots on ${appointment_date}: ${av.suggestedTimes.join(", ")}. Please suggest these to the caller or ask for another time.` 
+
+              const slot = await bookingEngine.checkSlot({
+                tenantId: tenant.id,
+                date: appointment_date,
+                time: appointment_time,
+                durationMinutes: 60,
               });
+ 
+              if (!slot.ok && slot.reason === "invalid_datetime") {
+                output = JSON.stringify({
+                  success: false,
+                  available: false,
+                  message: "I didn't catch a valid date and time. Ask the caller to restate the day and time, then call check_availability again.",
+                });
+              } else if (slot.available === false) {
+                // Taken — fetch alternative slots for that day to offer.
+                let alts = [];
+                try {
+                  const avail = await bookingEngine.getAvailability({
+                    tenantId: tenant.id,
+                    date: appointment_date,
+                    durationMinutes: 60,
+                  });
+                  if (avail.ok && Array.isArray(avail.slots)) {
+                    alts = avail.slots.map((s) => s.time);
+                  }
+                } catch (e) {
+                  console.error("[AI-Desk] check_availability alt-slots failed:", e.message);
+                }
+                output = JSON.stringify({
+                  success: true,
+                  available: false,
+                  suggested_alternatives: alts,
+                  message: alts.length
+                    ? `That time is unfortunately taken. I found these available slots on ${appointment_date}: ${alts.join(", ")}. Suggest these to the caller or ask for another time.`
+                    : `That time is unfortunately taken, and I don't see other open slots on ${appointment_date}. Ask the caller for a different day.`,
+                });
+              } else {
+                output = JSON.stringify({
+                  success: true,
+                  available: true,
+                  message: "That time is available. You can proceed with book_appointment.",
+                });
+              }
                } else if (name === "send_estimate_link" && tenant && callId) {
               // ─────────────────────────────────────────────────────────
               // Phase E1 (May 4, 2026) — outbound estimate link SMS.
@@ -4723,62 +4758,110 @@ sendToOpenAI(sessionUpdate);
             } else if (name === "book_appointment" && tenant && callId) {
               console.log("[AI-Desk] Realtime book_appointment callSid=%s tenantId=%s callId=%s recovery=%s", callSid, tenant.id, callId, isRecovery);
               currentLeadCapture = { ...currentLeadCapture, ...args };
-              
-              // 1. Create local booking
-              const { booking, crmSynced } = await bookingsService.createBooking(tenant.id, callId, args, leadId, leadSource);
-              console.log("[AI-Desk] Realtime booking done id=%s crmSynced=%s", booking.id, crmSynced);
-              
-              // Notification for new booking
-              notificationsService.createNotification(tenant.id, {
-                type: 'booking_created',
-                title: 'New Booking Created',
-                body: `${args.contact_name || 'A customer'} booked an appointment for ${args.preferred_date || 'a future date'}.`,
-                data: { bookingId: booking.id, callId }
-              }).catch(e => console.error("Notification error:", e));
-              
-              // 2. Sync to Google Calendar
-              calendar.syncToGoogleCalendar(booking, tenant).catch(e => console.error("[Calendar] Auto-sync failed:", e.message));
-
-              // 3. Update lead status to 'Booked'
-              if (leadId) {
-                leadsService.updateLeadStatus(leadId, 'Booked').catch(e => console.error("Lead status update error:", e));
-              }
-
-              // 5. Mark any active estimate recovery as CONVERTED (Sales Win)
-              const bookingPhone = args.contact_phone || args.phone;
-              if (bookingPhone) {
-                try {
-                  const activeRecovery = await db.query(
-                    `SELECT id FROM estimate_recoveries
-                     WHERE tenant_id = $1
-                       AND status IN ('active', 'paused', 'dormant')
-                       AND (
-                         contact_phone = $2
-                         OR right(regexp_replace(COALESCE(contact_phone, ''), '[^0-9]', '', 'g'), 10) = $3
-                       )
-                     LIMIT 1`,
-                    [tenant.id, normalizePhone(bookingPhone), getLast10Digits(bookingPhone)]
-                  );
-                  if (activeRecovery.rows.length > 0) {
-                    await estimateRecoveryService.markConverted(activeRecovery.rows[0].id);
-                    console.log("[AI-Desk] Recovery CONVERTED (via booking) id=%s 🎉", activeRecovery.rows[0].id);
-                  }
-                } catch (e) {
-                  console.error("[AI-Desk] Recovery conversion error:", e.message);
+ 
+              const apptDate = args.preferred_date || args.appointment_date || "";
+              const apptTime = args.appointment_time || "";
+ 
+              // ── Phase 12: book via the canonical engine ────────────────
+              // The engine does: slot check → createBooking (DB row + lead
+              // link + CRM sync + confirmation SMS/email + booking notif +
+              // recovery conversion via createBooking's own chain is NOT
+              // included — see the recovery block below) → Google event.
+              //
+              // We pass callId so the booking row + outbound attribution link
+              // to this call, and leadId so the lead links even if the WS
+              // `from` handshake was late. leadSource carries the call's
+              // attribution.
+              const bookResult = await bookingEngine.book({
+                tenantId:        tenant.id,
+                date:            apptDate,
+                time:            apptTime,
+                durationMinutes: 60,
+                contact: {
+                  name:    args.contact_name || args.full_name || currentLeadCapture.contact_name || "New Lead",
+                  phone:   args.contact_phone || args.phone,
+                  email:   args.contact_email || "",
+                  address: args.address || "",
+                  city:    args.city || "",
+                  state:   args.state || "",
+                },
+                projectType:    args.project_type || args.job_type || args.scope || "",
+                projectDetails: args.notes || args.details || args.scope || "",
+                leadId:          leadId || null,
+                source:          leadSource || "voice",
+                callId:          callId,
+              });
+ 
+              if (!bookResult.ok) {
+                if (bookResult.reason === "slot_taken") {
+                  output = JSON.stringify({
+                    success: false,
+                    message: "That time was just taken. Tell the caller it's no longer available and call check_availability for another time.",
+                  });
+                } else if (bookResult.reason === "invalid_datetime") {
+                  output = JSON.stringify({
+                    success: false,
+                    message: "The date or time wasn't valid. Ask the caller to restate the day and time, then try book_appointment again.",
+                  });
+                } else if (bookResult.reason === "missing_contact") {
+                  output = JSON.stringify({
+                    success: false,
+                    message: "I need the caller's phone number before I can book. Ask for it, then call book_appointment again.",
+                  });
+                } else {
+                  console.warn("[AI-Desk] book_appointment engine fail reason=%s msg=%s", bookResult.reason, bookResult.message || "");
+                  output = JSON.stringify({
+                    success: false,
+                    message: "Something went wrong saving that booking. Apologize briefly and offer to have someone follow up, or try another time.",
+                  });
                 }
+              } else {
+                const bookingId = bookResult.bookingId;
+                console.log("[AI-Desk] Realtime booking done id=%s crmSynced=%s eventId=%s", bookingId, bookResult.crmSynced, bookResult.eventId || "none");
+                hasBooked = true;
+ 
+                // ── Voice-specific side effects the engine does NOT do ─────
+ 
+                // 1. booking_created notification (with callId context)
+                notificationsService.createNotification(tenant.id, {
+                  type: 'booking_created',
+                  title: 'New Booking Created',
+                  body: `${args.contact_name || 'A customer'} booked an appointment for ${apptDate || 'a future date'}.`,
+                  data: { bookingId, callId }
+                }).catch(e => console.error("Notification error:", e));
+ 
+                // 2. Estimate-recovery CONVERSION (sales-win attribution).
+                //    The engine does not touch recoveries; this must stay here
+                //    or voice bookings stop converting active recoveries.
+                const bookingPhone = args.contact_phone || args.phone;
+                if (bookingPhone) {
+                  try {
+                    const activeRecovery = await db.query(
+                      `SELECT id FROM estimate_recoveries
+                       WHERE tenant_id = $1
+                         AND status IN ('active', 'paused', 'dormant')
+                         AND (
+                           contact_phone = $2
+                           OR right(regexp_replace(COALESCE(contact_phone, ''), '[^0-9]', '', 'g'), 10) = $3
+                         )
+                       LIMIT 1`,
+                      [tenant.id, normalizePhone(bookingPhone), getLast10Digits(bookingPhone)]
+                    );
+                    if (activeRecovery.rows.length > 0) {
+                      await estimateRecoveryService.markConverted(activeRecovery.rows[0].id);
+                      console.log("[AI-Desk] Recovery CONVERTED (via booking) id=%s 🎉", activeRecovery.rows[0].id);
+                    }
+                  } catch (e) {
+                    console.error("[AI-Desk] Recovery conversion error:", e.message);
+                  }
+                }
+ 
+                const message = bookResult.crmSynced
+                  ? `Estimate scheduled for ${apptDate} at ${apptTime}. Details synced. Say to the caller: "I have scheduled that for ${apptDate} at ${apptTime}. You will receive a confirmation text shortly. Is there anything else I can help you with today?". Wait for their response. ONLY call the 'hang_up' tool if they say no or if the conversation is clearly finished.`
+                  : `Estimate scheduled for ${apptDate} at ${apptTime}. Saved locally. Say to the caller: "I have scheduled that for ${apptDate} at ${apptTime}. You will receive a confirmation text shortly. Is there anything else I can help you with today?". Wait for their response. ONLY call the 'hang_up' tool if they say no or if the conversation is clearly finished.`;
+ 
+                output = JSON.stringify({ success: true, message });
               }
-
-              const confirmedDate = args.preferred_date || args.appointment_date || "";
-              const confirmedTime = args.appointment_time || "";
-              const message = crmSynced
-                ? `Estimate scheduled for ${confirmedDate} at ${confirmedTime}. Details synced. Say to the caller: "I have scheduled that for ${confirmedDate} at ${confirmedTime}. You will receive a confirmation text shortly. Is there anything else I can help you with today?". Wait for their response. ONLY call the 'hang_up' tool if they say no or if the conversation is clearly finished.`
-                : `Estimate scheduled for ${confirmedDate} at ${confirmedTime}. Saved locally. Say to the caller: "I have scheduled that for ${confirmedDate} at ${confirmedTime}. You will receive a confirmation text shortly. Is there anything else I can help you with today?". Wait for their response. ONLY call the 'hang_up' tool if they say no or if the conversation is clearly finished.`;
-              
-              output = JSON.stringify({ success: true, message });
-              hasBooked = true;
-              // we don't session.update to "STOP SPEAKING" here anymore, 
-              // we letting AI say the message and then it calls hang_up tool.
-              // shouldIgnoreSpeech = true; // Still useful to prevent user from interrupting the final goodbye
             } else if (name === "detect_objection" && isRecovery && recoveryRecord) {
               const objType = args.objection_type;
               console.log("[AI-Desk] Recovery objection detected id=%s type=%s details=%s", recoveryRecord.id, objType, args.details || "(none)");

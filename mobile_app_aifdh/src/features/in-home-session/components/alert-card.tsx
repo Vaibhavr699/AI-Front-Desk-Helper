@@ -1,104 +1,82 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Text, View } from "react-native";
 
-import { colors } from "@/src/shared/theme/tokens";
-
-import type { CoachingAlert, CoachingAlertUrgency } from "../types";
+import type { CoachingAlert } from "../types";
 
 type Props = {
   alert: CoachingAlert;
   compact?: boolean;
 };
 
-const URGENCY_META: Record<
-  CoachingAlertUrgency,
-  {
-    bg: string;
-    border: string;
-    titleColor: string;
-    icon: keyof typeof Ionicons.glyphMap;
-    iconColor: string;
-  }
-> = {
-  green: {
-    bg: "bg-emerald-50",
-    border: "border-emerald-300",
-    titleColor: "text-emerald-800",
-    icon: "trending-up",
-    iconColor: "#059669",
-  },
-  yellow: {
-    bg: "bg-amber-50",
-    border: "border-amber-300",
-    titleColor: "text-amber-800",
-    icon: "information-circle",
-    iconColor: "#d97706",
-  },
-  orange: {
-    bg: "bg-orange-50",
-    border: "border-orange-300",
-    titleColor: "text-orange-800",
-    icon: "alert-circle",
-    iconColor: "#ea580c",
-  },
-  red: {
-    bg: "bg-red-50",
-    border: "border-red-300",
-    titleColor: "text-red-800",
-    icon: "warning",
-    iconColor: "#dc2626",
-  },
+type CueMeta = {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  accent: string; // left bar + icon color
+  tint: string; // soft background
 };
 
-const TYPE_LABEL: Record<string, string> = {
-  ask_discovery: "Ask discovery",
-  listen: "Listen",
-  disc_reframe: "DISC reframe",
-  missing_close: "Close attempt",
-  address_objection: "Objection",
-  slow_down: "Slow down",
-  build_rapport: "Build rapport",
-  confirm_next_step: "Confirm next step",
-  disc_update: "DISC update",
-  disc_shift: "DISC shift",
-  objection_detected: "Objection",
-  buying_signal: "Buying signal",
-  decision_maker: "Decision maker",
-  warning: "Warning",
-  suggested_response: "Try saying",
-  walkthrough_reminder: "Walkthrough",
+// Per-cue-type styling. DISC cues get their own violet identity.
+const CUE_META: Record<string, CueMeta> = {
+  ask_discovery: { label: "Ask Discovery", icon: "help-circle", accent: "#2563eb", tint: "#eff6ff" },
+  listen: { label: "Listen", icon: "ear", accent: "#d97706", tint: "#fffbeb" },
+  disc_reframe: { label: "DISC Reframe", icon: "people", accent: "#7c3aed", tint: "#f5f3ff" },
+  disc_update: { label: "DISC Read", icon: "people", accent: "#7c3aed", tint: "#f5f3ff" },
+  disc_shift: { label: "DISC Shift", icon: "swap-horizontal", accent: "#7c3aed", tint: "#f5f3ff" },
+  missing_close: { label: "Close", icon: "flag", accent: "#ea580c", tint: "#fff7ed" },
+  address_objection: { label: "Objection", icon: "shield-checkmark", accent: "#dc2626", tint: "#fef2f2" },
+  objection_detected: { label: "Objection", icon: "shield-checkmark", accent: "#dc2626", tint: "#fef2f2" },
+  slow_down: { label: "Slow Down", icon: "speedometer", accent: "#dc2626", tint: "#fef2f2" },
+  build_rapport: { label: "Build Rapport", icon: "heart", accent: "#db2777", tint: "#fdf2f8" },
+  confirm_next_step: { label: "Confirm Next Step", icon: "checkmark-done-circle", accent: "#059669", tint: "#ecfdf5" },
+  buying_signal: { label: "Buying Signal", icon: "trending-up", accent: "#059669", tint: "#ecfdf5" },
+  decision_maker: { label: "Decision Maker", icon: "person-circle", accent: "#7c3aed", tint: "#f5f3ff" },
+  warning: { label: "Warning", icon: "warning", accent: "#dc2626", tint: "#fef2f2" },
+  suggested_response: { label: "Try Saying", icon: "chatbubble-ellipses", accent: "#ea580c", tint: "#fff7ed" },
+  walkthrough_reminder: { label: "Walkthrough", icon: "list", accent: "#d97706", tint: "#fffbeb" },
 };
+
+const FALLBACK: CueMeta = { label: "Coaching", icon: "bulb", accent: "#6b7280", tint: "#f9fafb" };
 
 export function AlertCard({ alert, compact = false }: Props) {
-  const meta = URGENCY_META[alert.urgency];
-  const label = TYPE_LABEL[alert.type] || alert.type;
+  const key = alert.cue_type || alert.type;
+  const meta = CUE_META[key] || FALLBACK;
+
   return (
     <View
-      className={`gap-${compact ? "1.5" : "2"} rounded-sm border ${meta.bg} ${meta.border} p-${compact ? "3" : "4"}`}
+      className="flex-row overflow-hidden rounded-sm bg-white"
+      style={{
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 3,
+        elevation: 1,
+      }}
     >
-      <View className="flex-row items-center gap-2">
-        <Ionicons name={meta.icon} size={14} color={meta.iconColor} />
-        <Text
-          className={`text-[10px] font-bold uppercase tracking-wider ${meta.titleColor}`}
-        >
-          {label}
-        </Text>
-        {alert.watch_label ? (
-          <View className="rounded bg-gray-200 px-1.5 py-0.5">
-            <Text className="text-[9px] font-bold text-gray-600">
-              {alert.watch_label}
-            </Text>
+      <View style={{ width: 4, backgroundColor: meta.accent }} />
+      <View className={`flex-1 ${compact ? "gap-1 p-3" : "gap-1.5 p-4"}`}>
+        <View className="flex-row items-center gap-2">
+          <View
+            className="items-center justify-center rounded-full"
+            style={{ width: 22, height: 22, backgroundColor: meta.tint }}
+          >
+            <Ionicons name={meta.icon} size={13} color={meta.accent} />
           </View>
+          <Text
+            className="text-[11px] font-bold uppercase tracking-wide"
+            style={{ color: meta.accent }}
+          >
+            {meta.label}
+          </Text>
+        </View>
+        <Text className={`font-semibold text-ink-primary ${compact ? "text-sm" : "text-[15px]"}`}>
+          {alert.headline}
+        </Text>
+        {!compact && alert.full_text ? (
+          <Text className="text-sm leading-relaxed text-ink-muted">
+            {alert.full_text}
+          </Text>
         ) : null}
       </View>
-      <Text className={`font-bold text-ink-primary ${compact ? "text-sm" : "text-base"}`}>
-        {alert.headline}
-      </Text>
-      {!compact && alert.full_text ? (
-        <Text className="text-sm leading-relaxed text-ink-secondary">
-          {alert.full_text}
-        </Text>
-      ) : null}
     </View>
   );
 }

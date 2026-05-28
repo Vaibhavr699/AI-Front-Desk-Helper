@@ -17,12 +17,15 @@ const PALETTE: Record<string, { bg: string; text: string; ring: string }> = {
 export function DiscLiveBadge({ reading, size = "lg" }: Props) {
   if (!reading || reading.primary === "unknown") {
     return (
-      <View
-        className={`items-center justify-center rounded-sm border border-dashed border-surface-border bg-surface-raised ${size === "xl" ? "h-24 w-24" : "h-16 w-16"}`}
-      >
-        <Text className={`font-bold text-ink-muted ${size === "xl" ? "text-3xl" : "text-xl"}`}>
-          ?
-        </Text>
+      <View className="items-center gap-1">
+        <View
+          className={`items-center justify-center rounded-sm border border-dashed border-surface-border bg-surface-raised ${size === "xl" ? "h-24 w-24" : "h-16 w-16"}`}
+        >
+          <Text className={`font-bold text-ink-dim ${size === "xl" ? "text-2xl" : "text-base"}`}>
+            DISC
+          </Text>
+        </View>
+        <Text className="text-[10px] text-ink-dim">reading…</Text>
       </View>
     );
   }

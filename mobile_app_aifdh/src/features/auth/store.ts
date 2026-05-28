@@ -310,8 +310,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   clearError: () => set({ lastError: null }),
 }));
 
+const DEFAULT_TENANT_FLAGS = { rep_coach_enabled: false, aifdh_enabled: true };
+
 export function useTenantFlags() {
-  return useAuthStore(
-    (s) => s.user?.tenant_flags ?? { rep_coach_enabled: false, aifdh_enabled: true },
-  );
+  return useAuthStore((s) => s.user?.tenant_flags ?? DEFAULT_TENANT_FLAGS);
 }

@@ -53,7 +53,7 @@ export function CoachingScreen() {
             {error instanceof Error ? error.message : "Check your connection and try again."}
           </Text>
           <Pressable
-            onPress={refetch}
+            onPress={() => refetch()}
             className="h-11 items-center justify-center rounded-xl bg-brand-600 px-6 active:bg-brand-700"
           >
             <Text className="text-sm font-semibold text-white">Try again</Text>

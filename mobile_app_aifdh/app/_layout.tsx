@@ -2,6 +2,7 @@ import '../global.css';
 
 import { DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { QueryClientProvider } from '@tanstack/react-query';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -29,7 +30,12 @@ const navTheme = {
   },
 };
 
-ensureNotificationHandler();
+const isExpoGo =
+  Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
+
+if (!isExpoGo) {
+  ensureNotificationHandler();
+}
 
 export default function RootLayout() {
   const router = useRouter();
@@ -48,17 +54,22 @@ export default function RootLayout() {
   }, [status, isUnlocked, userId]);
 
   useEffect(() => {
-    const sub = Notifications.addNotificationResponseReceivedListener(
-      (response) => {
-        const data = response.notification.request.content.data as
-          | { deep_link?: unknown }
-          | undefined;
-        if (typeof data?.deep_link === 'string' && data.deep_link.length > 0) {
-          router.push(data.deep_link as never);
-        }
-      },
-    );
-    return () => sub.remove();
+    if (isExpoGo) return;
+    try {
+      const sub = Notifications.addNotificationResponseReceivedListener(
+        (response) => {
+          const data = response.notification.request.content.data as
+            | { deep_link?: unknown }
+            | undefined;
+          if (typeof data?.deep_link === 'string' && data.deep_link.length > 0) {
+            router.push(data.deep_link as never);
+          }
+        },
+      );
+      return () => sub.remove();
+    } catch {
+      // expo-notifications remote APIs are unavailable in Expo Go (SDK 53+)
+    }
   }, [router]);
 
   return (

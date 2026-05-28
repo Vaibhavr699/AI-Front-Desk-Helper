@@ -303,37 +303,26 @@ function PhoneLayout({
   const top = alerts[0] ?? null;
   return (
     <ScrollView contentContainerClassName="flex-grow gap-3 px-4 py-4">
-      <View className="flex-row items-start justify-between">
-        <View className="flex-1 gap-1">
-          <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
-            Latest coaching
-          </Text>
-          <Text className="text-xs text-ink-dim">
-            Newest at the top — older cues scroll below.
-          </Text>
-        </View>
+      <View className="flex-row items-center justify-between">
+        <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
+          Live coaching
+        </Text>
         <DiscLiveBadge reading={disc} size="lg" />
       </View>
 
       {top ? (
         <AlertCard alert={top} />
       ) : (
-        <View className="items-center gap-2 rounded-sm border border-dashed border-surface-border bg-white py-8">
-          <Ionicons
-            name="ear-outline"
-            size={24}
-            color={colors.ink.muted}
-          />
-          <Text className="text-sm text-ink-muted">
-            Listening for coaching cues…
-          </Text>
+        <View className="items-center gap-2 rounded-sm bg-white py-10">
+          <Ionicons name="ear-outline" size={26} color={colors.ink.dim} />
+          <Text className="text-sm text-ink-muted">Listening for coaching cues…</Text>
         </View>
       )}
 
       {alerts.length > 1 ? (
-        <View className="gap-2">
-          <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
-            History
+        <View className="mt-2 gap-2">
+          <Text className="text-[11px] font-semibold uppercase tracking-wider text-ink-dim">
+            Earlier
           </Text>
           {alerts.slice(1).map((a) => (
             <AlertCard key={a.id} alert={a} compact />

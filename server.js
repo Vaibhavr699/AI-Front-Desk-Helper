@@ -44,6 +44,7 @@ const nurturingService = require("./services/nurturing");
 const estimateRecoveryService = require("./services/estimateRecovery");
 const twilioLib = require("./lib/twilio");
 const leadsService = require("./services/leads");
+const bookingEngine = require("./lib/bookingEngine");
 const messagesService = require("./services/messages");
 const emailService = require("./services/email");
 const { getAIConfig, REALTIME_TOOLS, RECOVERY_TOOLS } = require("./lib/orchestrator");
@@ -1733,26 +1734,26 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
     console.warn("[Booking] No tenant resolved. thread.phone=%s", thread.phone);
     return null;
   }
-
-  // ── Cancellation flow (Phase 4C state machine) ─────────────────────
+ 
+  // ── Cancellation flow (Phase 4C state machine) — UNCHANGED ─────────
   if (ai.should_cancel) {
     const smsService = require("./services/sms");
     const init = await smsService.initiateSmsCancellation(thread, tenant);
     return init.reply;
   }
-
-  // ── Reschedule flow ──────────────────────────────────────────────
+ 
+  // ── Reschedule flow — UNCHANGED ──────────────────────────────────
   if (ai.should_reschedule && ai.appointment_date && ai.appointment_time) {
     const dateValidation = validateProposedDate(ai.appointment_date);
     if (!dateValidation.ok) return dateValidation.message;
     ai.appointment_date = dateValidation.normalized;
-
+ 
     const booking = await bookingsService.findLatestBookingByPhone(
       tenant.id,
       thread.leadCapture?.phone || thread.phone
     );
     if (!booking) return "I couldn't find an existing appointment to reschedule. Would you like to schedule a new one instead?";
-
+ 
     await bookingsService.updateBooking(booking.id, {
       preferred_date: ai.appointment_date,
       appointment_time: ai.appointment_time,
@@ -1760,9 +1761,10 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
     });
     return `✅ Your appointment has been rescheduled for ${ai.appointment_date} at ${ai.appointment_time}.`;
   }
-
+ 
+  // ── Booking flow ─────────────────────────────────────────────────
   if (!ai.should_book || !ai.appointment_date || !ai.appointment_time) return null;
-
+ 
   const fullName = ai.lead_capture?.full_name || thread.leadCapture?.full_name;
   const phone    = ai.lead_capture?.phone     || thread.leadCapture?.phone || thread.phone;
   const email    = ai.lead_capture?.email     || thread.leadCapture?.email;
@@ -1773,17 +1775,19 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
     if (!email)    missing.push("email address");
     return `To finalize your booking, I just need your ${missing.join(" and ")}. Please share that and I'll get you scheduled!`;
   }
-
-  // Date validation
+ 
+  // Date validation — produces the user-facing "that date passed" / ">90 days"
+  // messages. Stays in the adapter; the engine assumes a valid date.
   const dateValidation = validateProposedDate(ai.appointment_date);
   if (!dateValidation.ok) return dateValidation.message;
   ai.appointment_date = dateValidation.normalized;
-
+ 
   if (ai.appointment_time === "morning")   ai.appointment_time = "9:00 AM";
   if (ai.appointment_time === "afternoon") ai.appointment_time = "1:00 PM";
   if (ai.appointment_time === "evening")   ai.appointment_time = "6:00 PM";
-
-  // Idempotency check — defends against orchestrator running twice
+ 
+  // Idempotency check — defends against the orchestrator running twice.
+  // SMS-channel concern → stays in the adapter, runs BEFORE the engine call.
   try {
     const dup = await db.query(
       `SELECT id FROM bookings
@@ -1806,77 +1810,50 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
   } catch (idempErr) {
     console.error("[Booking] Idempotency check failed (non-fatal):", idempErr.message);
   }
-
-  const availability = await checkAvailability({
-    appointment_date: ai.appointment_date,
-    appointment_time: ai.appointment_time,
-    duration_minutes: 60,
-  }, tenant);
-
-  const calendarNotConfigured = availability.reason === "calendar_not_configured";
-  const isAvailable = (availability.ok && availability.available) || calendarNotConfigured;
-  if (availability.reason === "calendar_error") {
-    console.warn("[Booking] Calendar error — falling back to local booking:", availability.message || "unknown");
-  }
-
-  if (!isAvailable) {
-    thread.needsFollowUpAt = Date.now() + 30 * 60 * 1000;
-    return "That time is no longer available. Please share another preferred time.";
-  }
-
-  let booked = { ok: true, fallback: true };
-  const shouldTryGoogle = availability.reason !== "calendar_not_configured" && availability.reason !== "calendar_error";
-  if (shouldTryGoogle) {
-    try {
-      const syncResult = await bookAppointment({
-        appointment_date: ai.appointment_date,
-        appointment_time: ai.appointment_time,
-        duration_minutes: 60,
-        full_name: thread.leadCapture.full_name || "New Lead",
-        phone: thread.leadCapture?.phone || thread.phone,
-        email: thread.leadCapture.email || "",
-        address: thread.leadCapture.address || "",
-        project_details: thread.leadCapture.project_details || "",
-      }, tenant);
-
-      if (syncResult && syncResult.ok) booked = syncResult;
-      else console.warn("[Booking] Google Calendar sync failed:", syncResult?.reason || "unknown");
-    } catch (err) {
-      console.error("[Booking] Google Calendar exception:", err.message);
+ 
+  // ── THE KEYSTONE CALL ────────────────────────────────────────────
+  // One call replaces the old checkAvailability → bookAppointment →
+  // createBooking sequence. The engine handles slot check, DB persistence,
+  // lead linking, CRM sync, confirmation SMS/email, notifications, recovery
+  // conversion, and the Google Calendar event.
+  const result = await bookingEngine.book({
+    tenantId:        tenant.id,
+    date:            ai.appointment_date,
+    time:            ai.appointment_time,
+    durationMinutes: 60,
+    contact: {
+      name:    thread.leadCapture.full_name || fullName || "New Lead",
+      phone:   thread.leadCapture?.phone || thread.phone,
+      email:   thread.leadCapture.email || email || "",
+      address: thread.leadCapture.address || "",
+    },
+    projectType:    thread.leadCapture.project_type || "",
+    projectDetails: thread.leadCapture.project_details || "",
+    leadId:         thread.leadId || null,
+    source:         thread.channel || "sms",
+  });
+ 
+  if (!result.ok) {
+    if (result.reason === "slot_taken") {
+      thread.needsFollowUpAt = Date.now() + 30 * 60 * 1000;
+      return "That time is no longer available. Please share another preferred time.";
     }
-  }
-
-  if (!booked.ok) return "I couldn't complete booking yet. Can I offer another time?";
-
-  thread.bookedEventId    = booked.eventId || (booked.fallback ? "LOCAL_ONLY" : "");
-  thread.needsFollowUpAt  = null;
-  thread.followUpCount    = 0;
-
-  try {
-    const t = tenantOverride || (thread.tenantId ? TENANTS[thread.tenantId] : null);
-    if (t) {
-      await bookingsService.createBooking(t.id, null, {
-        contact_name: thread.leadCapture.full_name || "New Lead",
-        contact_phone: thread.leadCapture?.phone || thread.phone,
-        contact_email: thread.leadCapture.email || "",
-        address:       thread.leadCapture.address || "",
-        city:          "",
-        scope:         thread.leadCapture.project_type || "",
-        job_type:      (thread.leadCapture.project_type && String(thread.leadCapture.project_type).trim()) || "Residential",
-        preferred_date:   ai.appointment_date,
-        appointment_time: ai.appointment_time,
-        notes:            thread.leadCapture.project_details || "",
-        estimated_value:  thread.leadCapture.estimated_value,
-      }, thread.leadId);
-
-      if (thread.leadId) {
-        leadsService.updateLeadStatus(thread.leadId, "Booked").catch(e => console.error("Lead status update error:", e));
-      }
+    if (result.reason === "invalid_datetime") {
+      return "I didn't quite catch that date and time. Could you share it again — for example, 'Tuesday at 2pm'?";
     }
-  } catch (dbErr) {
-    console.error("[Booking] Local DB persistence failed:", dbErr.message);
+    // missing_contact / create_failed / tenant_not_found — generic retry ask.
+    console.warn("[Booking] engine.book failed reason=%s msg=%s", result.reason, result.message || "");
+    return "I couldn't complete booking yet. Can I offer another time?";
   }
-
+ 
+  // Success — mirror the bookkeeping the old code did on the thread.
+  thread.bookedEventId   = result.eventId || "LOCAL_ONLY";
+  thread.needsFollowUpAt = null;
+  thread.followUpCount   = 0;
+ 
+  // Lead status flip is handled inside the engine (and createBooking), so we
+  // no longer duplicate updateLeadStatus here.
+ 
   return `✅ You are booked for ${ai.appointment_date} at ${ai.appointment_time}.`;
 }
 

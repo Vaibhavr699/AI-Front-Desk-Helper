@@ -736,6 +736,10 @@ async function processDueRecoveries() {
 // ─────────────────────────────────────────────────────────
 
 async function executeStep(recovery) {
+   console.log(
+    "[Recovery] CHECKPOINT-A enter id=%s tenant=%s step=%s lead_source=%s contact=%s",
+    recovery.id, recovery.tenant_id, recovery.current_step, recovery.lead_source, recovery.contact_phone
+  );
   // Defense in depth (Migration 059): the SQL filter in processDueRecoveries
   // should prevent DNC'd recoveries from getting here, but a flag could be
   // flipped between the SELECT and now (window of ~ms-to-seconds). If we
@@ -809,6 +813,11 @@ const stepDef = ALL_STEPS.get(recovery.current_step);
       leadId:   recovery.lead_id,
     });
 
+    console.log(
+      "[Recovery] CHECKPOINT-B gate id=%s allowed=%s reason=%s channel=%s trigger=%s",
+      recovery.id, gate.allowed, gate.reason || "ok", channel, trigger
+    );
+
     if (!gate.allowed) {
       console.log(
         "[Recovery] Phase 10 gate blocked id=%s step=%s channel=%s trigger=%s reason=%s",
@@ -832,9 +841,19 @@ const stepDef = ALL_STEPS.get(recovery.current_step);
     phase10Settings = gate.settings;
   } catch (err) {
     console.error(
-      "[Recovery] Phase 10 gate check failed id=%s err=%s — proceeding to send",
+      "[Recovery] Phase 10 gate check failed id=%s err=%s — FAILING CLOSED, rescheduling 1h",
       recovery.id, err.message
     );
+    try {
+      const next = addHours(new Date(), 1);
+      await db.query(
+        "UPDATE estimate_recoveries SET next_action_at = $1, updated_at = now() WHERE id = $2",
+        [next.toISOString(), recovery.id]
+      );
+    } catch (rescheduleErr) {
+      console.error("[Recovery] reschedule on gate error failed: %s", rescheduleErr.message);
+    }
+    return;
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -898,6 +917,11 @@ const stepDef = ALL_STEPS.get(recovery.current_step);
     first_name:   getFirstName(recovery.contact_name),
     company_name: tenant.company_name || tenant.name,
   };
+
+  console.log(
+    "[Recovery] CHECKPOINT-C about-to-send id=%s step=%s channel=%s to=%s",
+    recovery.id, recovery.current_step, stepDef.channel, recovery.contact_phone
+  );
 
   if (stepDef.channel === "sms") {
     await sendRecoverySms(recovery, tenant, stepDef, vars);

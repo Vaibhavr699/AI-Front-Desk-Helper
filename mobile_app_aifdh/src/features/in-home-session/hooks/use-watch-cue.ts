@@ -1,49 +1,34 @@
-import { useCallback, useEffect, useRef } from "react";
-import { NativeEventEmitter, NativeModules, Platform } from "react-native";
+import { useCallback, useRef } from "react";
+import { Platform } from "react-native";
+
+import { WearBridge } from "@/modules/wear-bridge";
 
 import type { CoachingAlert } from "../types";
 
-const { WatchBridge, WearOSBridge } = NativeModules;
+type WatchUrgency = "green" | "yellow" | "orange" | "red";
+type WatchVibration = "single_tap" | "double_tap" | "long_buzz";
 
 export function useWatchCue() {
   const lastSentRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (Platform.OS === "ios" && WatchBridge?.activateSession) {
-      WatchBridge.activateSession();
-    }
-    if (Platform.OS === "android" && WearOSBridge?.connect) {
-      WearOSBridge.connect();
-    }
-  }, []);
 
   const sendCueToWatch = useCallback((cue: CoachingAlert) => {
     if (lastSentRef.current === cue.id) return;
     lastSentRef.current = cue.id;
 
-    const payload = {
-      label: cue.watch_label || cue.headline.slice(0, 8).toUpperCase(),
-      urgency: cue.urgency,
-      vibration: cue.vibration || "single_tap",
-      headline: cue.headline,
-      timestamp: cue.fired_at,
-    };
-
-    if (Platform.OS === "ios" && WatchBridge?.sendMessage) {
-      WatchBridge.sendMessage(payload, () => {}, () => {});
+    if (Platform.OS === "android") {
+      WearBridge.sendCue({
+        label: cue.watch_label || cue.headline.slice(0, 8).toUpperCase(),
+        urgency: (cue.urgency as WatchUrgency) || "yellow",
+        vibration: (cue.vibration as WatchVibration) || "single_tap",
+        headline: cue.headline,
+      });
     }
-
-    if (Platform.OS === "android" && WearOSBridge?.sendCue) {
-      WearOSBridge.sendCue(JSON.stringify(payload));
-    }
+    // iOS (Apple Watch) bridge wired in a later phase.
   }, []);
 
   const clearWatch = useCallback(() => {
-    if (Platform.OS === "ios" && WatchBridge?.sendMessage) {
-      WatchBridge.sendMessage({ label: "", urgency: "clear" }, () => {}, () => {});
-    }
-    if (Platform.OS === "android" && WearOSBridge?.clearCue) {
-      WearOSBridge.clearCue();
+    if (Platform.OS === "android") {
+      WearBridge.clearCue();
     }
   }, []);
 

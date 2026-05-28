@@ -20,7 +20,11 @@
 // row to sms_consents at book time, mirroring /api/widget/start-sms exactly
 // (IP, user-agent, page URL, session id) for 10DLC dispute defense. No prior
 // opt-in required — the checkbox on the booking form IS the consent moment.
-// A booking without consent is refused with 400 consent_required.
+// CONSENT (Option B, with reuse): /book records a fresh sms_consents row when
+// the request carries `consent: true`. If consent isn't passed but this phone
+// already has a prior consent row (e.g. the SMS opt-in popup earlier in the
+// session), that consent is REUSED and the booking proceeds. With neither, the
+// booking is refused with 400 consent_required so the widget shows the box.
 //
 // Public (no authMiddleware) because the widget is unauthenticated; every
 // request is scoped by tenantId in the body, same pattern as start-sms and
@@ -115,50 +119,96 @@ router.post("/book", async (req, res) => {
     return res.status(400).json({ ok: false, error: "contact.phone is required" });
   }
 
-  // ── Option B consent gate ──────────────────────────────────────────────
-  // The form checkbox is the consent moment. No checkbox, no booking — we do
-  // not silently book without a recorded consent, since the confirmation
-  // SMS/email the engine sends would then be unconsented.
-  if (consent !== true) {
-    return res.status(400).json({
-      ok: false,
-      error: "consent_required",
-      message: "SMS consent is required to book. Check the consent box and resubmit.",
-    });
-  }
+  // ── Option B consent gate (with reuse) ─────────────────────────────────
+  // The booking-form checkbox is the consent moment, BUT if this phone already
+  // consented (SMS opt-in popup earlier, or any prior consent), we reuse that
+  // rather than forcing the box again. No verifiable consent anywhere → refuse,
+  // so the engine never sends an unconsented confirmation SMS/email. The gate
+  // is evaluated INSIDE the try below (after tenant resolves).
 
   try {
     const tenant = await resolveTenant(tenantId);
     if (!tenant) return res.status(404).json({ ok: false, error: "tenant_not_found" });
 
-    // 1. Record consent FIRST — mirrors /api/widget/start-sms's row exactly so
-    //    the dashboard/compliance export treats widget-booking consent and
-    //    SMS-popup consent identically. trust proxy (set in server.js) makes
-    //    req.ip the real visitor IP for 10DLC dispute defense.
+    // 1. Consent gate with reuse. Three cases:
+    //    (a) consent === true  → record a fresh sms_consents row now.
+    //    (b) consent not given, but a prior consent row exists for this
+    //        phone+tenant (e.g. the SMS opt-in popup earlier this session, or
+    //        any past consent) → proceed, reusing that consent. No new row.
+    //    (c) consent not given AND no prior row → refuse with consent_required
+    //        so the widget knows to show the checkbox.
+    //
+    //    Phone matching uses last-10-digit canonicalization so "+14025551234",
+    //    "4025551234", and "(402) 555-1234" all match the same prior consent,
+    //    consistent with how leads/recoveries match phones elsewhere.
     let consentId = null;
-    try {
-      const consentRes = await db.query(
-        `INSERT INTO sms_consents
-           (tenant_id, phone, consent_text, source, ip_address, user_agent, page_url, session_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING id`,
-        [
-          tenant.id,
-          phone,
-          consentText || "Consent given via booking form",
-          source || "widget_booking",
-          req.ip,
-          req.headers["user-agent"],
-          pageUrl,
-          sessionId,
-        ]
-      );
-      consentId = consentRes.rows[0]?.id || null;
-    } catch (consentErr) {
-      // A consent-write failure must block the booking — the whole point of
-      // the gate is that we never send unconsented messages.
-      console.error("[Booking API] consent insert failed tenant=%s phone=%s: %s", tenant.id, phone, consentErr.message);
-      return res.status(500).json({ ok: false, error: "consent_record_failed" });
+
+    if (consent === true) {
+      // (a) Record fresh consent — mirrors /api/widget/start-sms's row exactly
+      //     so the dashboard/compliance export treats widget-booking consent
+      //     and SMS-popup consent identically. trust proxy (set in server.js)
+      //     makes req.ip the real visitor IP for 10DLC dispute defense.
+      try {
+        const consentRes = await db.query(
+          `INSERT INTO sms_consents
+             (tenant_id, phone, consent_text, source, ip_address, user_agent, page_url, session_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           RETURNING id`,
+          [
+            tenant.id,
+            phone,
+            consentText || "Consent given via booking form",
+            source || "widget_booking",
+            req.ip,
+            req.headers["user-agent"],
+            pageUrl,
+            sessionId,
+          ]
+        );
+        consentId = consentRes.rows[0]?.id || null;
+      } catch (consentErr) {
+        // A consent-write failure must block the booking — the whole point of
+        // the gate is that we never send unconsented messages.
+        console.error("[Booking API] consent insert failed tenant=%s phone=%s: %s", tenant.id, phone, consentErr.message);
+        return res.status(500).json({ ok: false, error: "consent_record_failed" });
+      }
+    } else {
+      // (b)/(c) No consent in this request — look for a prior one to reuse.
+      let priorConsent = null;
+      try {
+        const last10 = String(phone).replace(/\D/g, "").slice(-10);
+        const priorRes = await db.query(
+          `SELECT id FROM sms_consents
+            WHERE tenant_id = $1
+              AND (
+                phone = $2
+                OR right(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) = $3
+              )
+            ORDER BY consent_given_at DESC NULLS LAST
+            LIMIT 1`,
+          [tenant.id, phone, last10]
+        );
+        priorConsent = priorRes.rows[0] || null;
+      } catch (lookupErr) {
+        // If the lookup itself fails, fail closed — refuse rather than risk
+        // booking without verifiable consent.
+        console.error("[Booking API] prior-consent lookup failed tenant=%s phone=%s: %s", tenant.id, phone, lookupErr.message);
+        return res.status(500).json({ ok: false, error: "consent_lookup_failed" });
+      }
+
+      if (!priorConsent) {
+        // (c) No checkbox, no prior consent → the widget must show the box.
+        return res.status(400).json({
+          ok: false,
+          error: "consent_required",
+          message: "SMS consent is required to book. Check the consent box and resubmit.",
+        });
+      }
+
+      // (b) Reuse the existing consent. consentId points at the prior row so
+      //     the lead's last_consent_id still references a real consent record.
+      consentId = priorConsent.id;
+      console.log("[Booking API] reusing prior consent id=%s tenant=%s phone=%s", consentId, tenant.id, phone);
     }
 
     // 2. Resolve/create the lead via the normalized-phone path (the bug #30
@@ -210,10 +260,11 @@ router.post("/book", async (req, res) => {
     });
 
     if (!result.ok) {
-      // slot_taken / invalid_datetime / missing_contact are caller-correctable
-      // → 409 for slot_taken (conflict), 400 for the rest. create_failed and
-      // anything unexpected → 500.
-      if (result.reason === "slot_taken") {
+      // slot_taken / day_closed / outside_business_hours are caller-correctable
+      // conflicts → 409 with the engine's reason+message so the widget can
+      // re-prompt for a different time. invalid_datetime / missing_contact →
+      // 400. create_failed and anything unexpected → 500.
+      if (result.reason === "slot_taken" || result.reason === "day_closed" || result.reason === "outside_business_hours") {
         return res.status(409).json(result);
       }
       if (result.reason === "invalid_datetime" || result.reason === "missing_contact") {

@@ -611,6 +611,7 @@ app.post("/api/public/contact", async (req, res) => {
 });
 app.use("/api/public", require("./routes/public"));
 app.use("/api/estimator", require("./routes/estimator"));
+app.use("/api/booking", require("./routes/booking"));
 app.use("/twilio", twilioRoutes);
 app.use("/api/webhooks", require("./routes/webhooks"));
 app.use("/api/auth", authRoutes);

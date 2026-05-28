@@ -4,7 +4,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,8 +48,7 @@ fun CueScreen() {
   Box(
     modifier = Modifier
       .fillMaxSize()
-      .background(backgroundFor(cue))
-      .clickable { CueStore.set(nextDemoCue()) },
+      .background(backgroundFor(cue)),
     contentAlignment = Alignment.Center,
   ) {
     if (cue != null) {
@@ -59,22 +57,6 @@ fun CueScreen() {
       IdleState()
     }
   }
-}
-
-// Tap the watch face to cycle demo cues — for standalone testing without a
-// paired phone. Real cues arrive via CueListenerService from the phone bridge.
-private var demoIndex = 0
-private val DEMO_CUES = listOf(
-  Cue("ASK", "yellow", "single_tap", "Ask a discovery question"),
-  Cue("LISTEN", "yellow", "single_tap", "They're talking — don't interrupt"),
-  Cue("CLOSE", "orange", "double_tap", "Time to ask for the sale"),
-  Cue("SLOW", "red", "long_buzz", "You're talking too fast"),
-  Cue("CONFIRM", "green", "single_tap", "Lock in the next step"),
-)
-private fun nextDemoCue(): Cue {
-  val cue = DEMO_CUES[demoIndex % DEMO_CUES.size]
-  demoIndex++
-  return cue
 }
 
 @Composable
@@ -115,12 +97,6 @@ private fun IdleState() {
       color = Color.Gray,
       fontSize = 15.sp,
       fontWeight = FontWeight.Medium,
-    )
-    Text(
-      text = "tap to test",
-      color = Color.Gray.copy(alpha = 0.5f),
-      fontSize = 11.sp,
-      modifier = Modifier.padding(top = 4.dp),
     )
   }
 }

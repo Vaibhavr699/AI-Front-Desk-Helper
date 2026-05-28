@@ -1842,6 +1842,12 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
     if (result.reason === "invalid_datetime") {
       return "I didn't quite catch that date and time. Could you share it again — for example, 'Tuesday at 2pm'?";
     }
+    if (result.reason === "day_closed") {
+      return "We're closed that day. What other day works for you?";
+    }
+    if (result.reason === "outside_business_hours") {
+      return `That time's outside our hours — we're open ${result.open} to ${result.close}. Want to pick a time in that window?`;
+    }
     // missing_contact / create_failed / tenant_not_found — generic retry ask.
     console.warn("[Booking] engine.book failed reason=%s msg=%s", result.reason, result.message || "");
     return "I couldn't complete booking yet. Can I offer another time?";
@@ -4797,7 +4803,16 @@ sendToOpenAI(sessionUpdate);
                 source:          leadSource || "voice",
                 callId:          callId,
               });
- 
+                } else if (bookResult.reason === "day_closed") {
+                  output = JSON.stringify({
+                    success: false,
+                    message: "We're closed that day. Tell the caller we're closed then and ask what other day works, then call check_availability.",
+                  });
+                } else if (bookResult.reason === "outside_business_hours") {
+                  output = JSON.stringify({
+                    success: false,
+                    message: `That time is outside our hours (we're open ${bookResult.open} to ${bookResult.close}). Tell the caller our hours and ask for a time within them, then call check_availability.`,
+                  });
               if (!bookResult.ok) {
                 if (bookResult.reason === "slot_taken") {
                   output = JSON.stringify({

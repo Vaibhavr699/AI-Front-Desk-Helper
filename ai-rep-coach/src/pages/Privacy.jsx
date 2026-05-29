@@ -33,8 +33,11 @@ export default function Privacy() {
             justifyContent: 'space-between',
           }}
         >
-          <Link to="/" className="font-display" style={{ fontSize: 18, letterSpacing: 2, color: '#fff', textDecoration: 'none' }}>
-            AI REP COACH
+          <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <img src="/AI_Rep_coach_nobg.png" alt="AI Rep Coach" style={{ height: 30, width: 'auto', display: 'block', filter: 'brightness(0) invert(1)' }} />
+            <span className="font-display" style={{ fontSize: 18, letterSpacing: 2, color: '#fff' }}>
+              AI REP COACH
+            </span>
           </Link>
           <Link to="/" style={{ fontSize: 13, color: ACCENT, textDecoration: 'none' }}>
             ← Back to home

@@ -22,9 +22,10 @@ export default function Nav({ visible }) {
     >
       <div
         className="mx-auto flex items-center"
-        style={{ maxWidth: 1400, height: 72, paddingLeft: 48, paddingRight: 48 }}
+        style={{ maxWidth: '100%', height: 72, paddingLeft: 48, paddingRight: 48 }}
       >
-        <a href="/" style={{ marginRight: 80 }}>
+        <a href="/" style={{ marginRight: 80, display: 'flex', alignItems: 'center', gap: 12 }}>
+          <img src="/AI_Rep_coach_nobg.png" alt="AI Rep Coach" style={{ height: 40, width: 'auto', display: 'block', filter: 'brightness(0) invert(1)' }} />
           <span className="font-display" style={{ fontSize: 22, letterSpacing: 2, color: '#fff' }}>
             AI REP COACH
           </span>

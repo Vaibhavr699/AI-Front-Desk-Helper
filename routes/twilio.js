@@ -243,20 +243,33 @@ function processStatusPayload(payload = {}) {
         if (!lead) return;
 
         // 1️⃣  IMMEDIATE "sorry we missed you" SMS
-        const client = twilioLib.getClientForTenant(tenantRow);
-        if (client && tenantRow.matched_phone) {
-          const companyName = tenantRow.company_name || tenantRow.name || "us";
-          const immediateMsg = `Hi! This is ${companyName}. Sorry we missed your call — we'll text or call you back shortly. If you have a specific question, just reply here and we'll help right away.`;
-          try {
-            await client.messages.create({
-              to:   From,
-              from: tenantRow.matched_phone,
-              body: immediateMsg,
-            });
-            console.log("[Missed-call] Immediate SMS sent to %s tenant=%s", From, call.tenant_id);
-          } catch (smsErr) {
-            console.error("[Missed-call] Immediate SMS failed:", smsErr.message);
-          }
+        //
+        // Phase 8B visibility refactor (May 28, 2026): routes through
+        // lib/outboundSms so this message appears on the lead timeline +
+        // messages thread. Before this change, missed-call immediate SMS
+        // were invisible to tenant admins.
+        const companyName = tenantRow.company_name || tenantRow.name || "us";
+        const immediateMsg = `Hi! This is ${companyName}. Sorry we missed your call — we'll text or call you back shortly. If you have a specific question, just reply here and we'll help right away.`;
+        const outboundSms = require("../lib/outboundSms");
+        const smsResult = await outboundSms.send({
+          tenant:   tenantRow,
+          to:       From,
+          body:     immediateMsg,
+          source:   "missed_call",
+          leadId:   lead.id,
+          sourceId: call.id,
+          meta: {
+            call_id:     call.id,
+            twilio_call_sid: CallSid,
+            from_number: From,
+          },
+        });
+        if (smsResult.ok) {
+          console.log("[Missed-call] Immediate SMS sent to %s tenant=%s sid=%s",
+            From, call.tenant_id, smsResult.sid);
+        } else {
+          console.error("[Missed-call] Immediate SMS failed reason=%s err=%s",
+            smsResult.reason || "unknown", smsResult.error || "(none)");
         }
 
         // 2️⃣  Fire the Option B missed-call recovery sequence
@@ -337,7 +350,29 @@ router.get("/recovery-call", async (req, res) => {
       const contactPhone = r.rows[0].contact_phone;
       const callSid = req.query.CallSid || "";
       if (callSid) {
-        await callsService.createCall(tenantId, callSid, "RECOVERY", contactPhone, "outbound");
+        // Look up the tenant's actual primary phone for from_number —
+        // previously this passed the literal string "RECOVERY" which
+        // mis-attributed every outbound recovery call in the calls list.
+        // Phase 8B visibility refactor (May 28, 2026).
+        //
+        // Note: lib/outboundCall.create may have already inserted the
+        // calls row when makeRecoveryCall dialed. The createCall ON
+        // CONFLICT handler will UPDATE rather than duplicate, so we just
+        // make sure from_number reflects the actual phone.
+        let fromPhone = "";
+        try {
+          const phoneRes = await db.query(
+            `SELECT phone FROM phone_numbers
+              WHERE tenant_id = $1
+              ORDER BY is_primary DESC NULLS LAST, created_at ASC
+              LIMIT 1`,
+            [tenantId]
+          );
+          fromPhone = phoneRes.rows[0]?.phone || "";
+        } catch (phoneErr) {
+          console.error("[Twilio] recovery-call primary phone lookup failed:", phoneErr.message);
+        }
+        await callsService.createCall(tenantId, callSid, fromPhone, contactPhone, "outbound");
       }
     }
   } catch (e) {
@@ -361,14 +396,16 @@ router.get("/recovery-call", async (req, res) => {
   res.type("text/xml").send(twiml);
 });
 
-// Status callback for recovery outbound calls
 router.post("/recovery-call-status", (req, res) => {
   res.writeHead(200, { "Content-Length": "0" });
   res.end();
 
-  const CallSid    = req.body && req.body.CallSid;
-  const CallStatus = req.body && req.body.CallStatus;
-  const recoveryId = req.query && req.query.recoveryId;
+  const CallSid       = req.body && req.body.CallSid;
+  const CallStatus    = req.body && req.body.CallStatus;
+  const CallDuration  = req.body && req.body.CallDuration;
+  const AnsweredBy    = req.body && req.body.AnsweredBy;
+  const RecordingSid  = req.body && req.body.RecordingSid;
+  const recoveryId    = req.query && req.query.recoveryId;
 
   if (recoveryId && CallSid) {
     const statusMap = {
@@ -379,12 +416,58 @@ router.post("/recovery-call-status", (req, res) => {
       canceled:    "failed",
     };
     const touchStatus = statusMap[CallStatus] || CallStatus;
+
+    // Update recovery_touches (existing behavior)
     setImmediate(() => {
       const db = require("../lib/db");
       db.query(
         "UPDATE recovery_touches SET status = $1 WHERE call_sid = $2 AND recovery_id = $3",
         [touchStatus, CallSid, recoveryId]
       ).catch((e) => console.error("[Recovery] Call status update error:", e.message));
+    });
+
+    // Phase 8B visibility refactor (May 28, 2026): also update the calls
+    // row with final status, duration, voicemail flag, and recording SID.
+    // Before this change, outbound recovery calls had a calls row that
+    // never closed out — status stayed 'in_progress' forever and
+    // recording/voicemail info was lost.
+    setImmediate(async () => {
+      try {
+        const db = require("../lib/db");
+        const isVoicemail = AnsweredBy && AnsweredBy.startsWith("machine");
+        const finalDisposition = isVoicemail
+          ? "voicemail_left"
+          : (CallStatus === "completed" ? "answered" : (statusMap[CallStatus] || CallStatus));
+        const durationMinutes = CallDuration ? parseFloat(CallDuration) / 60 : null;
+
+        // Merge metadata — preserve existing source/source_id from outboundCall
+        await db.query(
+          `UPDATE calls
+              SET status = $1,
+                  disposition = $2,
+                  ended_at = COALESCE(ended_at, now()),
+                  duration_minutes = COALESCE(duration_minutes, $3),
+                  recording_sid = COALESCE(recording_sid, $4),
+                  metadata = COALESCE(metadata, '{}'::jsonb) || $5::jsonb,
+                  updated_at = now()
+            WHERE twilio_call_sid = $6`,
+          [
+            CallStatus || "completed",
+            finalDisposition,
+            durationMinutes,
+            RecordingSid || null,
+            JSON.stringify({
+              answered_by: AnsweredBy || null,
+              voicemail_detected: !!isVoicemail,
+            }),
+            CallSid,
+          ]
+        );
+        console.log("[Recovery] Calls row updated callSid=%s status=%s disposition=%s answered_by=%s",
+          CallSid, CallStatus, finalDisposition, AnsweredBy || "(none)");
+      } catch (err) {
+        console.error("[Recovery] Calls row update failed callSid=%s err=%s", CallSid, err.message);
+      }
     });
   }
 });

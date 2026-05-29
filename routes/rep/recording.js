@@ -5,7 +5,7 @@ const multer = require("multer");
 const db = require("../../lib/db");
 const { repAuthChain } = require("../../lib/requireRep");
 const { isTwoPartyConsentState } = require("../../lib/consentStates");
-const { uploadToS3, transcribeBuffer } = require("../../services/fieldRecording");
+const { uploadToS3, transcribeBuffer, diarizeTranscript } = require("../../services/fieldRecording");
 const { analyzeConversation } = require("../../lib/coachingEngine");
 
 const router = express.Router();
@@ -65,6 +65,18 @@ router.post("/upload", ...repAuthChain, upload.single("audio"), async (req, res)
       try {
         const s3Key = await uploadToS3(req.rep.tenant_id, conversationId, buffer, ext);
         const result = await transcribeBuffer(buffer, ext);
+
+        // Single-mic recordings have no speaker labels — diarize into
+        // rep/customer turns so the scoring engine sees a two-sided
+        // conversation. Fall back to raw segments if diarization fails.
+        let transcript = result.segments;
+        try {
+          const diarized = await diarizeTranscript(result.text);
+          if (diarized && diarized.length >= 2) transcript = diarized;
+        } catch (err) {
+          console.error("[fieldRecording] diarization failed:", err.message);
+        }
+
         await db.query(
           `UPDATE coaching_conversations
               SET transcript = $1::jsonb,
@@ -72,7 +84,7 @@ router.post("/upload", ...repAuthChain, upload.single("audio"), async (req, res)
                   metadata = jsonb_build_object('s3_key', $3),
                   updated_at = now()
             WHERE id = $4`,
-          [JSON.stringify(result.segments), result.duration, s3Key, conversationId],
+          [JSON.stringify(transcript), result.duration, s3Key, conversationId],
         );
         await analyzeConversation({ conversationId });
         console.log("[fieldRecording] analyzed conversation=%s lead=%s", conversationId, lead_id);

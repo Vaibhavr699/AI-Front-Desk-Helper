@@ -65,4 +65,44 @@ async function transcribeBuffer(buffer, extension) {
   }
 }
 
-module.exports = { uploadToS3, transcribeBuffer };
+const DIARIZE_PROMPT = `You are processing a single-microphone audio transcript of an in-home sales conversation between a home-services sales REP and a HOMEOWNER (the customer). The raw transcript has no speaker labels.
+
+Split the transcript into sequential speaker turns. Label each turn "rep" or "customer":
+- rep — the salesperson: pitches, asks discovery questions, explains pricing/process/warranty, proposes next steps.
+- customer — the homeowner: describes their project/space, raises concerns or objections, asks about cost/timeline, makes decisions.
+
+Preserve the original wording. Do not invent content. Merge consecutive sentences from the same speaker into one turn. If a stretch is genuinely ambiguous, make your best judgment from context.
+
+Return ONLY valid JSON:
+{ "turns": [ { "speaker": "rep" | "customer", "text": "..." }, ... ] }`;
+
+async function diarizeTranscript(fullText) {
+  if (!fullText || fullText.trim().length < 20) return null;
+  const openai = getOpenAI();
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      { role: "system", content: DIARIZE_PROMPT },
+      { role: "user", content: fullText },
+    ],
+    response_format: { type: "json_object" },
+    temperature: 0.1,
+  });
+  const raw = completion.choices?.[0]?.message?.content;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const turns = Array.isArray(parsed?.turns) ? parsed.turns : null;
+  if (!turns || turns.length === 0) return null;
+  return turns
+    .filter((t) => t && typeof t.text === "string" && t.text.trim())
+    .map((t) => ({
+      role: t.speaker === "customer" || t.role === "customer" ? "customer" : "rep",
+      text: t.text.trim(),
+    }));
+}
+
+module.exports = { uploadToS3, transcribeBuffer, diarizeTranscript };

@@ -5,6 +5,7 @@ export type CoachingDeliveryPrefs = {
   watch?: boolean;
   popup?: boolean;
   sidebar?: boolean;
+  audio_min_gap_seconds?: number;
 };
 
 export type TrustedDeviceEntry = {

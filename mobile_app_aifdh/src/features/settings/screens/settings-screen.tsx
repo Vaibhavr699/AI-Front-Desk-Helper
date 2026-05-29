@@ -64,7 +64,16 @@ export function SettingsScreen() {
               onToggle={handleDeliveryToggle}
             />
             <CueTypesCard />
-            <AudioCard preferredDevice={data.preferred_earbud_device} />
+            <AudioCard
+              preferredDevice={data.preferred_earbud_device}
+              minGapSeconds={data.coaching_delivery_prefs.audio_min_gap_seconds ?? 60}
+              onChangeMinGap={(s) =>
+                updateDelivery.mutate({
+                  ...data.coaching_delivery_prefs,
+                  audio_min_gap_seconds: s,
+                })
+              }
+            />
             <SupportCard />
             <SignOutCard />
           </View>

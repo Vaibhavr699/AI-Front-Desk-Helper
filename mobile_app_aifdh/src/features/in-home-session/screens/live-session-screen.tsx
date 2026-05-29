@@ -15,6 +15,7 @@ import { WalkthroughStrip } from "../components/walkthrough-strip";
 import { buildWsUrl } from "../api";
 import { useAudioStream } from "../hooks/use-audio-stream";
 import { useWatchCue } from "../hooks/use-watch-cue";
+import { useCueAudio } from "../hooks/use-cue-audio";
 import { useEndInHomeSession, useInHomeSession } from "../queries";
 import type {
   CoachingAlert,
@@ -43,6 +44,7 @@ export function LiveSessionScreen({ sessionId }: Props) {
   const { data } = useInHomeSession(sessionId);
   const end = useEndInHomeSession();
   const { sendCueToWatch, clearWatch } = useWatchCue();
+  const cueAudio = useCueAudio();
 
   const [wsStatus, setWsStatus] = useState<WsStatus>("idle");
   const [alerts, setAlerts] = useState<CoachingAlert[]>([]);
@@ -79,6 +81,10 @@ export function LiveSessionScreen({ sessionId }: Props) {
           }
           break;
         }
+        case "cue_audio": {
+          cueAudio.play(msg.data);
+          break;
+        }
         case "disc_update":
           setDisc(msg.reading);
           break;
@@ -96,7 +102,7 @@ export function LiveSessionScreen({ sessionId }: Props) {
           break;
       }
     },
-    [sendCueToWatch],
+    [sendCueToWatch, cueAudio],
   );
 
   useEffect(() => {
@@ -135,6 +141,14 @@ export function LiveSessionScreen({ sessionId }: Props) {
     },
     [],
   );
+
+  const toggleAudioMute = useCallback(() => {
+    cueAudio.setMuted((m) => {
+      const next = !m;
+      wsRef.current?.send({ type: "set_audio_mute", muted: next });
+      return next;
+    });
+  }, [cueAudio]);
 
   function confirmEnd() {
     if (end.isPending) return;
@@ -182,6 +196,9 @@ export function LiveSessionScreen({ sessionId }: Props) {
         streaming={streaming}
         onEnd={confirmEnd}
         ending={end.isPending}
+        audioReady={cueAudio.ready}
+        audioMuted={cueAudio.muted}
+        onToggleMute={toggleAudioMute}
       />
       <View className="flex-1">
         {isTablet ? (
@@ -234,12 +251,18 @@ function Header({
   streaming,
   onEnd,
   ending,
+  audioReady,
+  audioMuted,
+  onToggleMute,
 }: {
   timer: string;
   wsStatus: WsStatus;
   streaming: boolean;
   onEnd: () => void;
   ending: boolean;
+  audioReady: boolean;
+  audioMuted: boolean;
+  onToggleMute: () => void;
 }) {
   const statusColor: Record<WsStatus, string> = {
     idle: colors.ink.muted,
@@ -279,6 +302,21 @@ function Header({
           {timer}
         </Text>
       </View>
+      {audioReady ? (
+        <Pressable
+          onPress={onToggleMute}
+          hitSlop={8}
+          className={`h-9 w-9 items-center justify-center rounded-full border active:opacity-70 ${
+            audioMuted ? "border-red-200 bg-red-50" : "border-surface-border bg-surface-raised"
+          }`}
+        >
+          <Ionicons
+            name={audioMuted ? "volume-mute" : "volume-high"}
+            size={16}
+            color={audioMuted ? "#b91c1c" : colors.ink.secondary}
+          />
+        </Pressable>
+      ) : null}
       <Pressable
         onPress={onEnd}
         disabled={ending}

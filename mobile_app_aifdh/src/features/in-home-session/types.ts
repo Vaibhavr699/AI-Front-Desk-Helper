@@ -104,7 +104,8 @@ export type WsServerMessage =
   | { type: "transcript_update"; entry: TranscriptEntry }
   | { type: "disc_update"; reading: DiscReading }
   | { type: "alert"; alert: CoachingAlert }
-  | { type: "coaching_cue"; cue: CoachingAlert }
+  | { type: "coaching_cue"; cue: CoachingAlert; channels?: string[] }
+  | { type: "cue_audio"; cue_id: string; format: string; data: string }
   | { type: "checklist_update"; key: string; completed: boolean }
   | { type: "transcriber_error"; message: string }
   | { type: "echo"; received?: unknown; binary?: boolean; bytes?: number };
@@ -113,4 +114,5 @@ export type WsClientMessage =
   | { type: "client_heartbeat"; t: number }
   | { type: "transcript_manual"; speaker: string; text: string; at?: string }
   | { type: "cue_dismissed"; cue_id: string }
+  | { type: "set_audio_mute"; muted: boolean }
   | { type: "request_mock_alerts" };

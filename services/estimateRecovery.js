@@ -945,28 +945,41 @@ const stepDef = ALL_STEPS.get(recovery.current_step);
 // ─────────────────────────────────────────────────────────
 
 async function sendRecoverySms(recovery, tenant, stepDef, vars) {
-  const client = twilio.getClientForTenant(tenant);
-  if (!client) {
-    console.warn("[Recovery] No Twilio client for tenant=%s", recovery.tenant_id);
-    return;
-  }
-  const from = tenant.matched_phone || process.env.TWILIO_PHONE_NUMBER;
-  if (!from) return;
-
   const body = typeof stepDef.message === "function"
     ? stepDef.message(vars)
     : stepDef.message || "";
 
-  try {
-    await client.messages.create({ to: recovery.contact_phone, from, body });
+  // Phase 8B visibility refactor (May 28, 2026): route through lib/outboundSms
+  // so the recovery SMS writes to the messages table — appears on the lead
+  // timeline + messages thread + activity feed. Before this change, AI-
+  // initiated recovery SMS were invisible to tenant admins. The Paragon
+  // incident (21 invisible touches 5/22-5/28) was this exact path.
+  const outboundSms = require("../lib/outboundSms");
+  const result = await outboundSms.send({
+    tenant,
+    to:       recovery.contact_phone,
+    body,
+    source:   "recovery",
+    leadId:   recovery.lead_id || null,
+    sourceId: recovery.id,
+    meta: {
+      recovery_id: recovery.id,
+      step:        stepDef.step,
+      lead_source: recovery.lead_source || null,
+    },
+  });
+
+  if (result.ok) {
     await db.query(
       "UPDATE estimate_recoveries SET sms_attempts = sms_attempts + 1, updated_at = now() WHERE id = $1",
       [recovery.id]
     );
     await logTouch(recovery.id, recovery.tenant_id, "sms", stepDef.step, body, "sent");
-    console.log("[Recovery] SMS sent id=%s step=%s to=%s", recovery.id, stepDef.step, recovery.contact_phone);
-  } catch (e) {
-    console.error("[Recovery] SMS failed id=%s error=%s", recovery.id, e.message);
+    console.log("[Recovery] SMS sent id=%s step=%s to=%s sid=%s",
+      recovery.id, stepDef.step, recovery.contact_phone, result.sid);
+  } else {
+    console.error("[Recovery] SMS failed id=%s reason=%s error=%s",
+      recovery.id, result.reason || "unknown", result.error || "(none)");
     await logTouch(recovery.id, recovery.tenant_id, "sms", stepDef.step, body, "failed");
   }
 }
@@ -976,11 +989,6 @@ async function sendRecoverySms(recovery, tenant, stepDef, vars) {
 // ─────────────────────────────────────────────────────────
 
 async function makeRecoveryCall(recovery, tenant, stepDef, vars) {
-  const client = twilio.getClientForTenant(tenant);
-  if (!client) return;
-  const from = tenant.matched_phone || process.env.TWILIO_PHONE_NUMBER;
-  if (!from) return;
-
   const baseUrl = process.env.BASE_URL;
   if (!baseUrl) {
     console.warn("[Recovery] BASE_URL not set, cannot make outbound call");
@@ -1001,28 +1009,47 @@ async function makeRecoveryCall(recovery, tenant, stepDef, vars) {
     + `&script=${encodeURIComponent(script)}`
     + `&voicemail=${encodeURIComponent(voicemail)}`;
 
-  try {
-    const call = await client.calls.create({
-      to:    recovery.contact_phone,
-      from,
-      url:   twimlUrl,
-      method: "GET",
-      timeout: 30,
-      // ✅ Voicemail detection — waits for beep then fires TwiML with AnsweredBy param
-      machineDetection:      "Enable",
-      machineDetectionTimeout: 8,
-      statusCallback: `${baseUrl.replace(/\/$/, "")}/twilio/recovery-call-status?recoveryId=${encodeURIComponent(recovery.id)}`,
-      statusCallbackMethod: "POST",
-      statusCallbackEvent:  ["completed"],
-    });
+  const statusCallback = `${baseUrl.replace(/\/$/, "")}/twilio/recovery-call-status`
+    + `?recoveryId=${encodeURIComponent(recovery.id)}`;
+
+  // Phase 8B visibility refactor (May 28, 2026): route through lib/outboundCall
+  // so the recovery call writes to the calls table on dial — appears in the
+  // call list immediately with correct from_number, lead_id, and metadata.
+  // Before this change, makeRecoveryCall called Twilio directly and the
+  // calls row only got created later by routes/twilio.js#/recovery-call when
+  // (and only if) the call connected and ran the WS stream. Voicemail-only
+  // calls never wrote a row at all.
+  const outboundCall = require("../lib/outboundCall");
+  const result = await outboundCall.create({
+    tenant,
+    to:                       recovery.contact_phone,
+    twimlUrl,
+    source:                   "recovery",
+    leadId:                   recovery.lead_id || null,
+    sourceId:                 recovery.id,
+    leadSource:               recovery.lead_source || null,
+    statusCallback,
+    machineDetection:         "Enable",
+    machineDetectionTimeout:  8,
+    timeout:                  30,
+    meta: {
+      recovery_id: recovery.id,
+      step:        stepDef.step,
+      script_preview: script.slice(0, 200),
+    },
+  });
+
+  if (result.ok) {
     await db.query(
       "UPDATE estimate_recoveries SET call_attempts = call_attempts + 1, updated_at = now() WHERE id = $1",
       [recovery.id]
     );
-    await logTouch(recovery.id, recovery.tenant_id, "call", stepDef.step, script, "initiated", call.sid);
-    console.log("[Recovery] Call initiated id=%s step=%s callSid=%s", recovery.id, stepDef.step, call.sid);
-  } catch (e) {
-    console.error("[Recovery] Call failed id=%s error=%s", recovery.id, e.message);
+    await logTouch(recovery.id, recovery.tenant_id, "call", stepDef.step, script, "initiated", result.callSid);
+    console.log("[Recovery] Call initiated id=%s step=%s callSid=%s callId=%s",
+      recovery.id, stepDef.step, result.callSid, result.callId || "(none)");
+  } else {
+    console.error("[Recovery] Call failed id=%s reason=%s error=%s",
+      recovery.id, result.reason || "unknown", result.error || "(none)");
     await logTouch(recovery.id, recovery.tenant_id, "call", stepDef.step, script, "failed");
   }
 }

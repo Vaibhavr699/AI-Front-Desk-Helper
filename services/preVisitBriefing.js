@@ -294,33 +294,25 @@ function buildFallbackBody({ booking, lead, tenant, discRow }) {
  * Send the briefing SMS to the recipient using the tenant's primary
  * Twilio number as the From. Returns { ok, sid? }. Never throws.
  */
-async function sendBriefingSms({ tenant, recipientPhone, body }) {
-  const client = twilio.getClientForTenant(tenant);
-  if (!client) {
-    console.warn("[PreVisitBriefing] No Twilio client for tenant=%s", tenant.id);
-    return { ok: false, reason: "no_twilio_client" };
-  }
-
-  const fromPhone = await smsService.getTenantPrimaryPhone(tenant.id);
-  if (!fromPhone) {
-    console.warn("[PreVisitBriefing] No primary phone for tenant=%s", tenant.id);
-    return { ok: false, reason: "no_from_phone" };
-  }
-
-  try {
-    const message = await client.messages.create({
-      to: recipientPhone,
-      from: fromPhone,
-      body,
-    });
-    console.log("[PreVisitBriefing] Sent to=%s from=%s tenant=%s sid=%s",
-      recipientPhone, fromPhone, tenant.id, message.sid);
-    return { ok: true, sid: message.sid };
-  } catch (err) {
-    console.error("[PreVisitBriefing] Twilio send failed tenant=%s code=%s err=%s",
-      tenant.id, err.code || "unknown", err.message);
-    return { ok: false, reason: "twilio_error", error: err.message };
-  }
+async function sendBriefingSms({ tenant, recipientPhone, body, booking, recipientKind }) {
+  // Phase 8B visibility fix (May 28, 2026): route through lib/outboundSms
+  // so the briefing SMS writes to the messages table and appears in the
+  // dashboard's lead timeline + messages thread. Before this change, AI-
+  // initiated briefing SMS were invisible to tenant admins — Adam Smith's
+  // 5/27 briefing was the canary case.
+  const outboundSms = require("../lib/outboundSms");
+  return await outboundSms.send({
+    tenant,
+    to:       recipientPhone,
+    body,
+    source:   "briefing",
+    leadId:   booking?.lead_id || null,
+    sourceId: booking?.id || null,
+    meta: {
+      booking_id:     booking?.id || null,
+      recipient_kind: recipientKind || "unknown", // "technician" | "tenant_setting" | "owner_fallback"
+    },
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -407,7 +399,16 @@ async function processOneBooking(booking) {
     const body = await composeBriefingBody({ booking, lead, tenant, discRow });
 
     // Send
-    const sendResult = await sendBriefingSms({ tenant, recipientPhone, body });
+    const sendResult = await sendBriefingSms({
+      tenant,
+      recipientPhone,
+      body,
+      booking,
+      recipientKind:
+        booking.technician_id
+          ? "technician"
+          : (tenant.pre_visit_sms_recipient_phone ? "tenant_setting" : "owner_fallback"),
+    });
     if (!sendResult.ok) {
       // Leave timestamp NULL — next tick retries (unless the appointment
       // window has passed by then)

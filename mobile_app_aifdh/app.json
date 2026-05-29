@@ -12,7 +12,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.airepcoach.app",
       "infoPlist": {
-        "NSFaceIDUsageDescription": "AI Rep Coach uses Face ID to unlock the app on this device."
+        "NSFaceIDUsageDescription": "AI Rep Coach uses Face ID to unlock the app on this device.",
+        "NSMicrophoneUsageDescription": "AI Rep Coach records in-home sales conversations so they can be transcribed and coached."
       }
     },
     "android": {
@@ -27,7 +28,8 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.USE_BIOMETRIC",
-        "android.permission.USE_FINGERPRINT"
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -61,7 +63,9 @@
         {
           "color": "#2563EB"
         }
-      ]
+      ],
+      "expo-sqlite",
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true,

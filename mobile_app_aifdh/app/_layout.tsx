@@ -11,6 +11,7 @@ import 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useAuthStore } from '@/src/features/auth/store';
+import { initSyncManager } from '@/src/features/field-recording/offline/sync-manager';
 import {
   ensureNotificationHandler,
   registerForPushNotifications,
@@ -47,6 +48,10 @@ export default function RootLayout() {
   useEffect(() => {
     hydrate();
   }, [hydrate]);
+
+  useEffect(() => {
+    initSyncManager();
+  }, []);
 
   useEffect(() => {
     if (status !== 'authenticated' || !isUnlocked || !userId) return;

@@ -13,7 +13,9 @@ import {
 } from "@/src/features/in-home-session/consent-states";
 import { StatePicker } from "@/src/features/in-home-session/components/state-picker";
 
-import { uploadFieldRecording } from "../api";
+import { PendingUploadsBanner } from "../offline/components/pending-uploads-banner";
+import { enqueueRecording } from "../offline/recording-queue";
+import { triggerSync } from "../offline/sync-manager";
 import { useFieldRecorder } from "../hooks/use-field-recorder";
 
 export function FieldRecordingScreen() {
@@ -41,16 +43,26 @@ export function FieldRecordingScreen() {
     if (!fileUri || !leadId) return;
     setUploading(true);
     try {
-      await uploadFieldRecording(fileUri, {
-        lead_id: leadId,
-        consent_status: isTwoParty ? "obtained" : "not_required",
-        consent_method: isTwoParty ? "verbal_in_person" : "one_party_state",
-        consent_state: stateCode,
-        duration_seconds: duration,
+      const result = await enqueueRecording({
+        leadId,
+        leadName: lead?.name ?? null,
+        fileUri,
+        consentStatus: isTwoParty ? "obtained" : "not_required",
+        consentMethod: isTwoParty ? "verbal_in_person" : "one_party_state",
+        consentState: stateCode,
+        durationSeconds: duration,
       });
+      if (!result.ok) {
+        Alert.alert(
+          "Offline buffer full",
+          "You've reached the 60-minute offline limit. Reconnect to upload your queued recordings before recording more.",
+        );
+        return;
+      }
+      triggerSync();
       setDone(true);
     } catch (err) {
-      Alert.alert("Upload failed", err instanceof Error ? err.message : "Try again.");
+      Alert.alert("Couldn't save recording", err instanceof Error ? err.message : "Try again.");
     } finally {
       setUploading(false);
     }
@@ -58,20 +70,25 @@ export function FieldRecordingScreen() {
 
   if (done) {
     return (
-      <SafeAreaView className="flex-1 items-center justify-center bg-surface-base px-8" edges={["top"]}>
-        <View className="h-16 w-16 items-center justify-center rounded-full bg-emerald-50">
-          <Ionicons name="checkmark-circle" size={36} color="#059669" />
+      <SafeAreaView className="flex-1 bg-surface-base px-8" edges={["top"]}>
+        <View className="flex-1 items-center justify-center">
+          <View className="h-16 w-16 items-center justify-center rounded-full bg-emerald-50">
+            <Ionicons name="checkmark-circle" size={36} color="#059669" />
+          </View>
+          <Text className="mt-4 text-xl font-semibold text-ink-primary">Recording saved</Text>
+          <Text className="mt-2 text-center text-sm text-ink-muted">
+            It uploads and gets analyzed automatically. DISC profile and coaching scores appear on the customer's profile shortly. Safe to leave this screen — uploads finish in the background, even offline.
+          </Text>
+          <View className="mt-6 w-full max-w-sm">
+            <PendingUploadsBanner />
+          </View>
+          <Pressable
+            onPress={() => router.back()}
+            className="mt-8 rounded-sm bg-brand-600 px-8 py-3 active:bg-brand-700"
+          >
+            <Text className="text-sm font-semibold text-white">Done</Text>
+          </Pressable>
         </View>
-        <Text className="mt-4 text-xl font-semibold text-ink-primary">Recording uploaded</Text>
-        <Text className="mt-2 text-center text-sm text-ink-muted">
-          AI is analyzing the conversation. DISC profile and coaching scores will appear on the customer's profile shortly.
-        </Text>
-        <Pressable
-          onPress={() => router.back()}
-          className="mt-8 rounded-sm bg-brand-600 px-8 py-3 active:bg-brand-700"
-        >
-          <Text className="text-sm font-semibold text-white">Done</Text>
-        </Pressable>
       </SafeAreaView>
     );
   }

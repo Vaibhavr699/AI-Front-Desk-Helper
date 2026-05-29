@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { PendingUploadsBanner } from "@/src/features/field-recording/offline/components/pending-uploads-banner";
 import { useResponsive } from "@/src/shared/hooks/use-responsive";
 import { colors } from "@/src/shared/theme/tokens";
 
@@ -71,6 +72,7 @@ export function CoachingScreen() {
           }
         >
           <View className="mx-auto w-full max-w-5xl gap-4 px-4 md:px-8">
+            <PendingUploadsBanner />
             {data.overall.conversations === 0 && (
               <View className="flex-row items-center gap-3 rounded-sm bg-brand-50 p-4">
                 <Ionicons name="sparkles-outline" size={20} color={colors.brand[600]} />

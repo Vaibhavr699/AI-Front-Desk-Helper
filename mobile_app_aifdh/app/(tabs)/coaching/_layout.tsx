@@ -12,6 +12,8 @@ export default function CoachingLayout() {
     >
       <Stack.Screen name="index" />
       <Stack.Screen name="roleplay" />
+      <Stack.Screen name="history" />
+      <Stack.Screen name="conversation/[id]" />
     </Stack>
   );
 }

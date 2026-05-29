@@ -146,4 +146,119 @@ router.get("/leads/:id", ...repAuthChain, async (req, res) => {
   }
 });
 
+// GET /me/history — paginated list of this rep's scored conversations.
+//   ?days=30 (window), ?limit=20, ?offset=0
+//   Returns { window_days, conversations, next_offset }.
+router.get("/me/history", ...repAuthChain, async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.query.days, 10) || 30, 180);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 50);
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+    const r = await db.query(
+      `SELECT c.id, c.lead_id, l.name AS lead_name,
+              c.overall_score, c.buyer_persona, c.disc_primary,
+              c.scored_at, c.created_at, c.outcome, c.duration_seconds,
+              c.source_type, c.scoring_skip_reason
+         FROM coaching_conversations c
+         LEFT JOIN leads l ON l.id = c.lead_id
+        WHERE c.rep_user_id = $1 AND c.tenant_id = $2
+          AND COALESCE(c.scored_at, c.created_at) >= now() - ($3 || ' days')::interval
+        ORDER BY COALESCE(c.scored_at, c.created_at) DESC
+        LIMIT $4 OFFSET $5`,
+      [req.rep.id, req.rep.tenant_id, days, limit, offset]
+    );
+
+    res.json({
+      window_days: days,
+      conversations: r.rows.map((c) => ({
+        id: c.id,
+        lead_id: c.lead_id,
+        lead_name: c.lead_name,
+        overall_score: c.overall_score != null ? Number(c.overall_score) : null,
+        buyer_persona: c.buyer_persona,
+        disc_primary: c.disc_primary,
+        scored_at: c.scored_at,
+        created_at: c.created_at,
+        outcome: c.outcome,
+        duration_seconds: c.duration_seconds,
+        source_type: c.source_type,
+        scoring_skip_reason: c.scoring_skip_reason,
+      })),
+      next_offset: r.rows.length === limit ? offset + limit : null,
+    });
+  } catch (e) {
+    console.error("[rep/coaching/me/history]", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// GET /conversations/:id — single-conversation post-call review.
+//   8-dimension scores with rationale + derived top-3 strengths and
+//   top-3 improvement areas. Tenant-scoped.
+router.get("/conversations/:id", ...repAuthChain, async (req, res) => {
+  try {
+    const convId = req.params.id;
+
+    const cR = await db.query(
+      `SELECT c.id, c.lead_id, l.name AS lead_name,
+              c.overall_score, c.buyer_persona, c.persona_confidence,
+              c.disc_primary, c.disc_secondary, c.scored_at, c.created_at,
+              c.outcome, c.duration_seconds, c.source_type, c.scoring_skip_reason
+         FROM coaching_conversations c
+         LEFT JOIN leads l ON l.id = c.lead_id
+        WHERE c.id = $1 AND c.tenant_id = $2`,
+      [convId, req.rep.tenant_id]
+    );
+    const conv = cR.rows[0];
+    if (!conv) return res.status(404).json({ error: "Conversation not found" });
+
+    const sR = await db.query(
+      `SELECT dimension, score, rationale, evidence
+         FROM coaching_scores
+        WHERE conversation_id = $1
+        ORDER BY score DESC`,
+      [convId]
+    );
+
+    const dimensions = sR.rows.map((s) => ({
+      dimension: s.dimension,
+      score: Number(s.score),
+      rationale: s.rationale || null,
+      evidence: s.evidence || [],
+    }));
+
+    const byScore = [...dimensions].sort((a, b) => b.score - a.score);
+    const strengths = byScore.slice(0, 3);
+    const improvements = [...dimensions]
+      .sort((a, b) => a.score - b.score)
+      .slice(0, 3);
+
+    res.json({
+      conversation: {
+        id: conv.id,
+        lead_id: conv.lead_id,
+        lead_name: conv.lead_name,
+        overall_score: conv.overall_score != null ? Number(conv.overall_score) : null,
+        buyer_persona: conv.buyer_persona,
+        persona_confidence: conv.persona_confidence != null ? Number(conv.persona_confidence) : null,
+        disc_primary: conv.disc_primary,
+        disc_secondary: conv.disc_secondary,
+        scored_at: conv.scored_at,
+        created_at: conv.created_at,
+        outcome: conv.outcome,
+        duration_seconds: conv.duration_seconds,
+        source_type: conv.source_type,
+        scoring_skip_reason: conv.scoring_skip_reason,
+      },
+      dimensions,
+      strengths,
+      improvements,
+    });
+  } catch (e) {
+    console.error("[rep/coaching/conversations/:id]", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 module.exports = router;

@@ -27,11 +27,23 @@ export function RecentConversationsCard({ conversations }: Props) {
 
   return (
     <View className="gap-4 rounded-sm bg-white p-6">
-      <View className="flex-row items-center gap-2">
-        <Ionicons name="time-outline" size={16} color={colors.ink.secondary} />
-        <Text className="text-sm font-semibold text-ink-secondary">
-          Recent conversations
-        </Text>
+      <View className="flex-row items-center justify-between">
+        <View className="flex-row items-center gap-2">
+          <Ionicons name="time-outline" size={16} color={colors.ink.secondary} />
+          <Text className="text-sm font-semibold text-ink-secondary">
+            Recent conversations
+          </Text>
+        </View>
+        {conversations.length > 0 && (
+          <Pressable
+            onPress={() => router.push("/(tabs)/coaching/history")}
+            hitSlop={8}
+            className="flex-row items-center gap-1 active:opacity-60"
+          >
+            <Text className="text-xs font-semibold text-brand-600">See all</Text>
+            <Ionicons name="chevron-forward" size={12} color={colors.brand[600]} />
+          </Pressable>
+        )}
       </View>
       {conversations.length === 0 ? (
         <View className="items-center gap-3 py-8">
@@ -44,16 +56,14 @@ export function RecentConversationsCard({ conversations }: Props) {
         </View>
       ) : (
         <View className="gap-1">
-          {conversations.slice(0, 10).map((c) => {
+          {conversations.slice(0, 5).map((c) => {
             const score = c.overall_score;
             const swatch = score != null ? scoreToColor(score) : null;
             return (
               <Pressable
                 key={c.id}
-                onPress={() => {
-                  if (c.lead_id) router.push(`/(tabs)/leads/${c.lead_id}`);
-                }}
-                className="flex-row items-center gap-3 rounded-xl p-2.5 active:bg-surface-raised"
+                onPress={() => router.push(`/(tabs)/coaching/conversation/${c.id}`)}
+                className="flex-row items-center gap-3 rounded-sm p-2.5 active:bg-surface-raised"
               >
                 <View
                   className={`h-10 w-10 items-center justify-center rounded-xl ${swatch?.bg ?? "bg-surface-raised"}`}

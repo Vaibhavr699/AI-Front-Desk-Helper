@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom'
+
 export default function Footer() {
   return (
     <footer style={{ backgroundColor: '#000', borderTop: '1px solid #222', padding: '48px 0' }}>
@@ -9,7 +11,7 @@ export default function Footer() {
           <a href="mailto:support@airepcoach.com" style={{ fontSize: 13, color: '#666', textDecoration: 'none' }}>
             support@airepcoach.com
           </a>
-          <a href="#" style={{ fontSize: 13, color: '#666', textDecoration: 'none' }}>Privacy Policy</a>
+          <Link to="/privacy" style={{ fontSize: 13, color: '#666', textDecoration: 'none' }}>Privacy Policy</Link>
           <a href="#" style={{ fontSize: 13, color: '#666', textDecoration: 'none' }}>Terms of Service</a>
         </div>
         <span style={{ fontSize: 12, color: '#444' }}>&copy; {new Date().getFullYear()} AI Rep Coach</span>

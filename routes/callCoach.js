@@ -81,9 +81,17 @@ router.get("/conversations", async (req, res) => {
   const params = [tenantId];
 
   if (hideOneSided) {
-    // Show only analyzable calls — those without skip reasons
-    filters.push("cc.persona_skip_reason IS NULL");
-    filters.push("cc.scoring_skip_reason IS NULL");
+    // Show only analyzable calls — those without skip reasons.
+    // PR 4.1 (May 29, 2026): bypass the skip filter for conversations
+    // explicitly flagged as exceptions by smsCoachingScorer's
+    // HIGH_SIGNAL_PATTERNS detector. These are 1-message exchanges that
+    // contain high-signal customer language (conversion / frustration /
+    // soft cancellation) and need to surface for coaching regardless
+    // of persona/scoring skip status.
+    filters.push(`(
+      (cc.persona_skip_reason IS NULL AND cc.scoring_skip_reason IS NULL)
+      OR cc.metadata->>'exception_flag' = 'true'
+    )`);
   }
 
   if (req.query.persona)     { params.push(req.query.persona);        filters.push(`cc.buyer_persona = $${params.length}`); }
@@ -130,12 +138,17 @@ router.get("/conversations", async (req, res) => {
 
   // A6: Also return the count of one-sided calls so the dashboard can show
   // "X calls hidden — show all" affordance when hideOneSided is active.
+  // PR 4.1 (May 29, 2026): exception-flagged conversations are visible
+  // even with skip reasons set, so they should NOT count toward the
+  // "hidden" total — otherwise the banner says "1 hidden" while the
+  // exception conversation is right there in the list.
   const hiddenCountSql = `
     SELECT COUNT(*)::int AS hidden_count
     FROM coaching_conversations cc
     WHERE cc.tenant_id = $1
       AND cc.scored_at IS NOT NULL
       AND (cc.persona_skip_reason IS NOT NULL OR cc.scoring_skip_reason IS NOT NULL)
+      AND COALESCE(cc.metadata->>'exception_flag', 'false') != 'true'
   `;
 
   try {

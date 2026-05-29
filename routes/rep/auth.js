@@ -42,6 +42,12 @@ const repAuth = require("../../lib/repAuth");
 const { logAction } = require("../../lib/auditLogger");
 const db = require("../../lib/db");
 const { repAuthChain } = require("../../lib/requireRep");
+const repSeats = require("../../lib/repSeats");
+
+const SEAT_LIMIT_ERROR = {
+  error: "Your team has exceeded its seat limit. Contact your admin.",
+  code: "REP_SEAT_LIMIT_EXCEEDED",
+};
 
 const router = express.Router();
 
@@ -75,6 +81,9 @@ router.post("/login", async (req, res) => {
         error: "No active rep seat on this account. Contact your admin.",
         code: "REP_SEAT_INACTIVE",
       });
+    }
+    if (!(await repSeats.isWithinSeatLimit(user.tenant_id, user.id))) {
+      return res.status(403).json(SEAT_LIMIT_ERROR);
     }
 
     // Trusted-device fast path — skip TOTP if the device presents a valid token.
@@ -171,6 +180,9 @@ router.post("/totp", async (req, res) => {
     if (!user) return res.status(401).json({ error: "User not found" });
     if (!user.rep_seat_active) {
       return res.status(403).json({ error: "Rep seat inactive", code: "REP_SEAT_INACTIVE" });
+    }
+    if (!(await repSeats.isWithinSeatLimit(user.tenant_id, user.id))) {
+      return res.status(403).json(SEAT_LIMIT_ERROR);
     }
     if (!user.totp_secret) {
       return res.status(400).json({ error: "TOTP not enrolled. Re-run /login first.", code: "TOTP_NOT_ENROLLED" });

@@ -6,6 +6,7 @@ const db = require("../lib/db");
 const emailService = require("../services/email");
 const auth = require("../lib/auth");
 const { logAction } = require("../lib/auditLogger");
+const repSeats = require("../lib/repSeats");
 
 const router = express.Router();
 
@@ -293,6 +294,19 @@ router.patch("/:id/rep-seat", requireTeamManager, async (req, res) => {
       return res.status(404).json({ error: "User not found in your scope" });
     }
     const before = rCheck.rows[0];
+
+    // Enforce the per-tenant rep seat cap when newly activating a seat.
+    if (active && !before.rep_seat_active) {
+      const seatCheck = await repSeats.canActivateRepSeat(before.tenant_id, targetUserId);
+      if (!seatCheck.ok) {
+        return res.status(403).json({
+          error: `Rep seat limit reached (${seatCheck.active}/${seatCheck.limit}). Deactivate another seat or raise the limit.`,
+          code: "REP_SEAT_LIMIT_EXCEEDED",
+          limit: seatCheck.limit,
+          active: seatCheck.active,
+        });
+      }
+    }
 
     const finalTier = active ? (tier || before.rep_seat_tier || "standard") : before.rep_seat_tier;
     const result = await db.query(

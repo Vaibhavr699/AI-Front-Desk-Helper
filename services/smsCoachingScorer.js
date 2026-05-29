@@ -78,6 +78,47 @@ const DEFAULT_BATCH_LIMIT = 20;
 // Retry conversations that exist but never got scored (transient failures).
 const RETRY_BATCH_LIMIT = 10;
 
+// ── High-signal exception patterns (PR 4, May 29, 2026) ────────────────
+//
+// When a customer message matches one of these regexes, the conversation
+// gets scored even with only 1 customer message — bypassing the
+// MIN_CUSTOMER_MSGS threshold. The point is to surface high-stakes short
+// exchanges in AI Coaching so tenants can leave feedback that becomes a
+// coaching rule.
+//
+// Patterns are deterministic (no GPT detection) because false negatives
+// here just mean the conversation gets filtered like before — no harm
+// done. False positives just mean a slightly-wider net for AI Coaching,
+// which is acceptable.
+//
+// Categories:
+//   1. Conversion / commitment signals — "just signed", "I'm in", "let's do it"
+//   2. Frustration / repeat-info-ask — "you already have my info"
+//   3. Soft cancellation / disengagement — "going with someone else"
+//
+// Each conversation that matches gets metadata.exception_flag=true so the
+// AI Coaching UI can later badge them distinctly if desired.
+const HIGH_SIGNAL_PATTERNS = [
+  // Conversion / commitment signals
+  /\b(just\s+signed|i\s+signed|we\s+signed|signed\s+(it|up|on)|signing\s+now|sign\s+me\s+up|where\s+do\s+i\s+sign|let'?s\s+do\s+(it|this)|i'?m\s+in|count\s+me\s+in|all\s+set|i'?ll\s+take\s+it|sounds\s+good\s+let'?s|let'?s\s+go\s+with\s+(it|you|that))\b/i,
+  // Frustration / repeat-info-ask
+  /\b(you\s+(already\s+)?(have|know)\s+(my|that|this)|i\s+(already\s+)?(told|gave|sent)\s+you|why\s+are\s+you\s+asking|i\s+just\s+told\s+you|you\s+should\s+know\s+(this|that)|stop\s+asking)\b/i,
+  // Soft cancellation / disengagement
+  /\b(not\s+interested|changed\s+my\s+mind|gonna\s+pass|going\s+with\s+(someone|another)|chose\s+(someone|another)|nevermind|never\s+mind|no\s+longer\s+(need|interested))\b/i,
+];
+
+// Helper: does any customer message in this window trip a signal pattern?
+function hasHighSignal(windowMsgs) {
+  for (const m of windowMsgs) {
+    if (m.direction !== "inbound") continue;
+    const body = String(m.body || "");
+    for (const rx of HIGH_SIGNAL_PATTERNS) {
+      if (rx.test(body)) return true;
+    }
+  }
+  return false;
+}
+
 // In-process lock — prevents overlapping cron ticks on a single instance.
 let sweepInProgress = false;
 
@@ -203,9 +244,14 @@ async function runSmsCoachingSweep({
         }
         windowsComplete++;
 
-        // Skip windows without enough customer back-and-forth to coach.
+        // Skip windows without enough customer back-and-forth to coach,
+        // UNLESS the conversation contains a high-signal pattern (PR 4,
+        // May 29, 2026). High-signal short exchanges get through the
+        // gate so tenants can coach the AI on critical missed moments
+        // like "Just signed!" or "you already have my info".
         const customerMsgs = countCustomerMsgs(win);
-        if (customerMsgs < MIN_CUSTOMER_MSGS) {
+        const isHighSignal = hasHighSignal(win);
+        if (customerMsgs < MIN_CUSTOMER_MSGS && !isHighSignal) {
           skippedTooShort++;
           continue;
         }
@@ -273,13 +319,14 @@ async function runSmsCoachingSweep({
               JSON.stringify(transcript),
               durationSeconds,
               leadId,
-              JSON.stringify({
+             JSON.stringify({
                 source: "smsCoachingScorer.runSmsCoachingSweep",
                 channel: "sms",
                 window_first_message_at: new Date(firstMsg.created_at).toISOString(),
                 window_last_message_at: new Date(lastMsg.created_at).toISOString(),
                 message_count: win.length,
                 customer_message_count: customerMsgs,
+                exception_flag: isHighSignal,
               }),
             ]
           );

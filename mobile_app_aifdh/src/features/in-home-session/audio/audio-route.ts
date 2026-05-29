@@ -1,13 +1,17 @@
 import { requireOptionalNativeModule } from "expo";
 import { useSyncExternalStore } from "react";
 
+type EventSubscription = { remove: () => void };
+
 type NativeAudioRoute = {
   isExternalAudioConnected: () => boolean;
+  addListener: (event: string, listener: () => void) => EventSubscription;
 };
 
 const native = requireOptionalNativeModule<NativeAudioRoute>("AudioRoute");
 
 let testOverride = false;
+let nativeSubscription: EventSubscription | null = null;
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -37,8 +41,17 @@ export function setAudioTestOverride(value: boolean): void {
 
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
+  if (!nativeSubscription) {
+    try {
+      nativeSubscription = native?.addListener("onChange", emit) ?? null;
+    } catch {}
+  }
   return () => {
     listeners.delete(listener);
+    if (listeners.size === 0 && nativeSubscription) {
+      nativeSubscription.remove();
+      nativeSubscription = null;
+    }
   };
 }
 

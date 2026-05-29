@@ -1,5 +1,4 @@
 import { useCallback, useRef } from "react";
-import { Platform } from "react-native";
 
 import { WearBridge } from "@/modules/wear-bridge";
 
@@ -15,21 +14,18 @@ export function useWatchCue() {
     if (lastSentRef.current === cue.id) return;
     lastSentRef.current = cue.id;
 
-    if (Platform.OS === "android") {
-      WearBridge.sendCue({
-        label: cue.watch_label || cue.headline.slice(0, 8).toUpperCase(),
-        urgency: (cue.urgency as WatchUrgency) || "yellow",
-        vibration: (cue.vibration as WatchVibration) || "single_tap",
-        headline: cue.headline,
-      });
-    }
-    // iOS (Apple Watch) bridge wired in a later phase.
+    // Routes to Wear OS (Android) or Apple Watch (iOS) via the same bridge.
+    // No-op in Expo Go where the native module is absent.
+    WearBridge.sendCue({
+      label: cue.watch_label || cue.headline.slice(0, 8).toUpperCase(),
+      urgency: (cue.urgency as WatchUrgency) || "yellow",
+      vibration: (cue.vibration as WatchVibration) || "single_tap",
+      headline: cue.headline,
+    });
   }, []);
 
   const clearWatch = useCallback(() => {
-    if (Platform.OS === "android") {
-      WearBridge.clearCue();
-    }
+    WearBridge.clearCue();
   }, []);
 
   return { sendCueToWatch, clearWatch };

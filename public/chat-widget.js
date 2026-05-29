@@ -67,6 +67,12 @@
   let hasWelcomed        = false;
   let isOpen             = false;
    let hasShownHandoffNotice = false;  // Phase 8.2a — show "team member will follow up" only once per session
+  // Phase 12 (May 28, 2026) — true once this session has recorded SMS consent
+  // (via the SMS opt-in popup). When true, the booking form skips the consent
+  // checkbox and /api/booking/book reuses the existing consent row. The backend
+  // is authoritative — if this is wrong, /book returns consent_required and the
+  // booking form re-renders WITH the checkbox.
+  let hasSmsConsent = false;
 
   // ── Phase 8.3 (May 12, 2026) — polling state for owner-sent website messages
   // pollInterval is set when chat opens and cleared when it closes.
@@ -1429,10 +1435,41 @@ if (includes) {
         bubble.appendChild(disclaimer);
       });
 
-      // Follow-up CTA message
+      // Follow-up CTA — offer a REAL bookable slot (Phase 12), with the
+      // callback-request form as the secondary option.
       setTimeout(() => {
-        addMsg("Want me to schedule a free in-person walkthrough? Usually within 24 hours.", false);
-        setTimeout(() => renderContactForm(false), 500);
+        addMsg("Want to lock in a free in-person walkthrough? You can pick a real time right now.", false);
+        setTimeout(() => {
+          addInteractiveBubble((bubble) => {
+            const bookBtn = document.createElement("button");
+            bookBtn.type = "button";
+            bookBtn.innerText = "📅 Pick a time now";
+            Object.assign(bookBtn.style, {
+              width: "100%", padding: "10px", background: brandColor, color: "#fff",
+              border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px",
+              fontWeight: "700", fontFamily: "inherit", marginBottom: "8px",
+            });
+            bookBtn.onclick = () => {
+              bubble.querySelectorAll("button").forEach(b => b.disabled = true);
+              startBookingFlow({ projectType: estimatorState.service_slug });
+            };
+            bubble.appendChild(bookBtn);
+
+            const callbackBtn = document.createElement("button");
+            callbackBtn.type = "button";
+            callbackBtn.innerText = "Or have someone call me";
+            Object.assign(callbackBtn.style, {
+              width: "100%", padding: "9px", background: "#fff", color: "#555",
+              border: "1.5px solid #e0e0e0", borderRadius: "8px", cursor: "pointer",
+              fontSize: "12px", fontWeight: "600", fontFamily: "inherit",
+            });
+            callbackBtn.onclick = () => {
+              bubble.querySelectorAll("button").forEach(b => b.disabled = true);
+              renderContactForm(false);
+            };
+            bubble.appendChild(callbackBtn);
+          });
+        }, 500);
       }, 800);
     }
 
@@ -1606,6 +1643,301 @@ if (includes) {
         }
       }
     }
+    // ════════════════════════════════════════════════════════════════════════
+    // BOOKING FLOW (Phase 12 A1 — May 28, 2026)
+    //
+    // Real-slot booking via the channel-agnostic booking engine. Unlike the
+    // estimator's contact form (which is a callback REQUEST → /api/estimator/lead),
+    // this books an actual appointment against real open calendar slots:
+    //   /api/booking/availability → tappable slot buttons
+    //   /api/booking/book         → confirmed booking + SMS/email + calendar event
+    //
+    // Reuses SMS consent if already given this session (hasSmsConsent). The
+    // backend /book reuses any prior consent row regardless, so the checkbox
+    // here is belt-and-suspenders UX, not the source of truth.
+    // ════════════════════════════════════════════════════════════════════════
+
+    // Booking-flow state. Separate from estimatorState so a customer can get a
+    // quote, then book, without the two stomping each other. contact prefills
+    // from the estimator if they already entered it there.
+    const bookingState = {
+      date: null,
+      slotValue: null,      // "14:00:00" — sent to /book
+      slotLabel: null,      // "2:00 PM"  — shown to the customer
+      contact: { name: "", phone: "", email: "", address: "" },
+      projectType: null,
+    };
+
+    // Entry point. Optional opts.projectType prefills the project from the
+    // estimator selection. Called by the "Book a real time" button on quote
+    // results, the always-visible book button, and the AI booking-intent hook.
+    function startBookingFlow(opts = {}) {
+      bookingState.date = null;
+      bookingState.slotValue = null;
+      bookingState.slotLabel = null;
+      bookingState.projectType = opts.projectType || estimatorState.service_slug || null;
+      // Prefill contact from the estimator if the customer entered it there.
+      bookingState.contact = {
+        name: estimatorState.contact.name || "",
+        phone: estimatorState.contact.phone || "",
+        email: estimatorState.contact.email || "",
+        address: estimatorState.contact.address || "",
+      };
+      trackVisitor("booking_started");
+      addMsg("Let's get you on the calendar. Which day works best?", false);
+      setTimeout(() => renderDatePicker(), 500);
+    }
+
+    // Simple next-7-days picker (skips nothing client-side — the availability
+    // endpoint returns [] for closed days, which we handle by re-prompting).
+    function renderDatePicker() {
+      addInteractiveBubble((bubble) => {
+        const label = document.createElement("div");
+        label.innerText = "Pick a day:";
+        Object.assign(label.style, { fontWeight: "600", marginBottom: "8px", fontSize: "13px" });
+        bubble.appendChild(label);
+
+        const today = new Date();
+        for (let i = 0; i < 7; i++) {
+          const d = new Date(today);
+          d.setDate(today.getDate() + i);
+          const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+          const display = i === 0
+            ? "Today"
+            : i === 1
+              ? "Tomorrow"
+              : d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "ai-est-card-btn";
+          btn.innerText = display;
+          btn.onclick = () => {
+            bubble.querySelectorAll("button").forEach(b => b.disabled = true);
+            btn.classList.add("selected");
+            bookingState.date = iso;
+            addMsg(display, true);
+            setTimeout(() => fetchAndRenderSlots(iso), 400);
+          };
+          bubble.appendChild(btn);
+        }
+      });
+    }
+
+    async function fetchAndRenderSlots(date) {
+      showTyping();
+      try {
+        const res = await fetch(`${apiBase}/api/booking/availability`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tenantId, date }),
+        });
+        const data = await res.json();
+        hideTyping();
+
+        if (!res.ok || !data.ok) {
+          addMsg("Hmm, I couldn't load times for that day. Want to try another day?", false);
+          setTimeout(() => renderDatePicker(), 500);
+          return;
+        }
+        if (data.closed) {
+          addMsg("We're closed that day. Pick another?", false);
+          setTimeout(() => renderDatePicker(), 500);
+          return;
+        }
+        if (!Array.isArray(data.slots) || data.slots.length === 0) {
+          addMsg("Looks like that day's fully booked. Want to try a different day?", false);
+          setTimeout(() => renderDatePicker(), 500);
+          return;
+        }
+        renderSlotPicker(data.slots);
+      } catch (err) {
+        hideTyping();
+        console.error("[AI-Widget] availability fetch error:", err);
+        addMsg("Something went wrong loading times. Mind trying again, or give us a call?", false);
+        setTimeout(() => renderDatePicker(), 500);
+      }
+    }
+
+    // slots: [{ time: "2:00 PM", value: "14:00:00" }]
+    function renderSlotPicker(slots) {
+      addInteractiveBubble((bubble) => {
+        const label = document.createElement("div");
+        label.innerText = "Open times:";
+        Object.assign(label.style, { fontWeight: "600", marginBottom: "8px", fontSize: "13px" });
+        bubble.appendChild(label);
+
+        const grid = document.createElement("div");
+        Object.assign(grid.style, { display: "flex", flexWrap: "wrap", gap: "6px" });
+        slots.forEach(slot => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "ai-est-card-btn";
+          btn.innerText = slot.time;
+          Object.assign(btn.style, { flex: "0 0 auto", width: "auto", margin: "0", padding: "8px 14px", textAlign: "center" });
+          btn.onclick = () => {
+            bubble.querySelectorAll("button").forEach(b => b.disabled = true);
+            btn.classList.add("selected");
+            bookingState.slotValue = slot.value;
+            bookingState.slotLabel = slot.time;
+            addMsg(slot.time, true);
+            setTimeout(() => renderBookingContactForm(), 400);
+          };
+          grid.appendChild(btn);
+        });
+        bubble.appendChild(grid);
+      });
+    }
+
+    function renderBookingContactForm() {
+      addInteractiveBubble((bubble) => {
+        const intro = document.createElement("div");
+        intro.innerText = "Last step — your details:";
+        Object.assign(intro.style, { fontWeight: "600", marginBottom: "8px", fontSize: "13px" });
+        bubble.appendChild(intro);
+
+        const fields = [
+          { key: "name",    label: "Name *",            type: "text",  placeholder: "First and last" },
+          { key: "phone",   label: "Phone *",           type: "tel",   placeholder: "(555) 555-5555" },
+          { key: "email",   label: "Email *",           type: "email", placeholder: "you@example.com" },
+          { key: "address", label: "Address (optional)", type: "text", placeholder: "Street, city, ZIP" },
+        ];
+        fields.forEach(f => {
+          const w = document.createElement("div");
+          w.style.marginBottom = "8px";
+          const lbl = document.createElement("div");
+          lbl.innerText = f.label;
+          Object.assign(lbl.style, { fontSize: "11px", fontWeight: "600", color: "#444", marginBottom: "3px" });
+          w.appendChild(lbl);
+          const inp = document.createElement("input");
+          inp.type = f.type;
+          inp.className = "ai-est-input";
+          inp.placeholder = f.placeholder;
+          inp.value = bookingState.contact[f.key] || "";
+          inp.oninput = () => { bookingState.contact[f.key] = inp.value; };
+          w.appendChild(inp);
+          bubble.appendChild(w);
+        });
+
+        // Consent checkbox — ONLY if this session hasn't already consented.
+        // When hasSmsConsent is true, the backend reuses the prior consent row.
+        let consentCheck = null;
+        const disclosureText = `By booking, you agree to receive text messages from ${companyName} about your appointment and service updates. Msg/data rates may apply. Reply STOP to opt out.`;
+        if (!hasSmsConsent) {
+          const consentWrap = document.createElement("div");
+          Object.assign(consentWrap.style, { display: "flex", alignItems: "flex-start", gap: "8px", margin: "6px 0 4px 0" });
+          consentCheck = document.createElement("input");
+          consentCheck.type = "checkbox";
+          Object.assign(consentCheck.style, { marginTop: "2px", accentColor: brandColor, width: "16px", height: "16px", flexShrink: "0" });
+          const consentLabel = document.createElement("label");
+          consentLabel.innerText = disclosureText;
+          Object.assign(consentLabel.style, { fontSize: "11px", color: "#888", lineHeight: "1.5" });
+          consentWrap.appendChild(consentCheck);
+          consentWrap.appendChild(consentLabel);
+          bubble.appendChild(consentWrap);
+        }
+
+        const errBox = document.createElement("div");
+        Object.assign(errBox.style, { display: "none", color: "#c00", fontSize: "11px", margin: "4px 0" });
+        bubble.appendChild(errBox);
+
+        const submit = document.createElement("button");
+        submit.type = "button";
+        submit.innerText = `Confirm ${bookingState.slotLabel}`;
+        Object.assign(submit.style, {
+          width: "100%", padding: "10px", background: brandColor, color: "#fff",
+          border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px",
+          fontWeight: "700", fontFamily: "inherit", marginTop: "4px",
+        });
+        submit.onclick = async () => {
+          const c = bookingState.contact;
+          const errs = [];
+          if (!c.name || c.name.trim().length < 2) errs.push("Please enter your name.");
+          if (!c.phone || c.phone.replace(/\D/g, "").length < 10) errs.push("Please enter a valid phone.");
+          if (!c.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email)) errs.push("Please enter a valid email.");
+          if (consentCheck && !consentCheck.checked) errs.push("Please agree to receive text messages to book.");
+          if (errs.length) {
+            errBox.innerText = errs.join(" ");
+            errBox.style.display = "block";
+            return;
+          }
+          errBox.style.display = "none";
+          bubble.querySelectorAll("input, button").forEach(el => el.disabled = true);
+          submit.innerText = "Booking...";
+
+          // consent: true only when the checkbox was shown AND checked. When
+          // hasSmsConsent (no checkbox), omit it — backend reuses prior consent.
+          const consentValue = consentCheck ? consentCheck.checked === true : undefined;
+
+          try {
+            const res = await fetch(`${apiBase}/api/booking/book`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                tenantId,
+                date: bookingState.date,
+                time: bookingState.slotValue,
+                contact: {
+                  name: c.name,
+                  phone: c.phone,
+                  email: c.email,
+                  address: c.address || "",
+                },
+                projectType: bookingState.projectType || "",
+                ...(consentValue === true ? { consent: true } : {}),
+                consentText: disclosureText,
+                sessionId,
+                pageUrl: window.location.href,
+                source: "widget_booking",
+              }),
+            });
+            const data = await res.json();
+
+            if (res.ok && data.ok) {
+              addMsg(`${c.name} • ${bookingState.slotLabel}`, true);
+              if (consentValue === true) hasSmsConsent = true;
+              setTimeout(() => {
+                addMsg(`✅ You're booked for ${bookingState.slotLabel}! You'll get a confirmation text and email shortly. See you then.`, false);
+                trackVisitor("booking_confirmed", { date: bookingState.date, time: bookingState.slotValue });
+              }, 400);
+              return;
+            }
+
+            // Slot got taken between availability fetch and confirm — re-offer.
+            if (res.status === 409 || data.reason === "slot_taken") {
+              addMsg("Ah — someone just grabbed that time. Let me pull fresh openings.", false);
+              setTimeout(() => fetchAndRenderSlots(bookingState.date), 600);
+              return;
+            }
+
+            // Backend says consent is required (client flag was stale / wrong).
+            // Re-render the form WITH the checkbox by forcing hasSmsConsent off.
+            if (res.status === 400 && data.error === "consent_required") {
+              hasSmsConsent = false;
+              addMsg("Just need your okay to text you about the appointment.", false);
+              setTimeout(() => renderBookingContactForm(), 400);
+              return;
+            }
+
+            // invalid_datetime / create_failed / anything else.
+            errBox.innerText = "Couldn't complete the booking. Mind trying again, or give us a call?";
+            errBox.style.display = "block";
+            bubble.querySelectorAll("input, button").forEach(el => el.disabled = false);
+            submit.innerText = `Confirm ${bookingState.slotLabel}`;
+          } catch (err) {
+            console.error("[AI-Widget] booking error:", err);
+            errBox.innerText = "Connection error. Please try again.";
+            errBox.style.display = "block";
+            bubble.querySelectorAll("input, button").forEach(el => el.disabled = false);
+            submit.innerText = `Confirm ${bookingState.slotLabel}`;
+          }
+        };
+        bubble.appendChild(submit);
+      });
+    }
+
+    // Expose so the AI booking-intent hook (in handleSend) can trigger it.
+    window.__aiWidgetStartBooking = startBookingFlow;
     applyResponsiveLayout();
     window.addEventListener("resize", applyResponsiveLayout);
     window.addEventListener("orientationchange", applyResponsiveLayout);
@@ -1731,6 +2063,7 @@ if (includes) {
           body: JSON.stringify({ tenantId, phone, consent: true, consentText: disclosureText, source: "widget_sms_popup", pageUrl: window.location.href, sessionId })
         });
         if (res.ok) {
+          hasSmsConsent = true;  // Phase 12 — booking form can now skip the consent box
           smsModal.innerHTML = `<div style="margin-top:50px"><div style="font-size:40px;margin-bottom:16px">✅</div><h3 style="margin-bottom:10px;color:${brandColor}">Message Sent!</h3><p style="color:#666;font-size:14px">Check your phone — we've started the conversation.</p><button onclick="this.closest('#ai-sms-modal').style.display='none'" style="margin-top:24px;background:${brandColor};color:#fff;padding:10px 30px;border-radius:8px;border:none;cursor:pointer;font-weight:bold">Done</button></div>`;
           trackVisitor("sms_optin_success", { phone });
         } else {
@@ -1791,6 +2124,13 @@ if (includes) {
           }
         } else if (data.reply) {
           addMsg(data.reply, false);
+          // Phase 12 — if the backend flags booking intent, offer the real
+          // slot-picker right after the AI's reply. Backend sets this when the
+          // conversation reaches a "ready to schedule" point. Safe no-op if the
+          // field is absent (older backend) — booking just stays button-driven.
+          if (data.book_intent === true && typeof window.__aiWidgetStartBooking === "function") {
+            setTimeout(() => window.__aiWidgetStartBooking(), 600);
+          }
         } else {
           // No reply and no handoff — unexpected empty response, show fallback
           addMsg("I'm sorry, I encountered an issue.", false);

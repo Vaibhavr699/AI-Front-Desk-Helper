@@ -3,6 +3,7 @@
 const db = require("../lib/db");
 const notificationService = require("./notifications");
 const { logAction } = require("../lib/auditLogger");
+const { normalizeE164Phone, getLast10Digits } = require("../lib/phone");
 
 /**
  * Derive contact_method from available signals when not explicitly passed.
@@ -16,36 +17,124 @@ function deriveContactMethod(explicit, input, leadSource) {
   return "unknown";
 }
 
-/** Get or create a lead by phone number or external ID for a tenant */
+/**
+ * Get or create a lead by phone number or external ID for a tenant.
+ *
+ * ───────────────────────────────────────────────────────────────────────
+ * PHONE NORMALIZATION FIX (May 28, 2026)
+ *
+ * ROOT CAUSE of the call→lead linking bug + duplicate leads:
+ * This function previously did an EXACT-STRING phone match on both the
+ * SELECT and the INSERT. But the same human's number arrives in different
+ * formats from different code paths:
+ *   - voice WS handler → "+14022907925" (E.164, straight from Twilio)
+ *   - SMS/CRM/booking  → normalized elsewhere via normalizeE164Phone
+ *   - legacy rows      → "402-290-7925", "4022907925", etc.
+ *
+ * Because leads has a UNIQUE (tenant_id, phone) constraint on the raw
+ * STRING, three different format strings for one number all inserted
+ * successfully as three distinct rows (e.g. +14022907925 had 3 rows).
+ * And a voice call looking for exact "+14022907925" missed an existing
+ * lead stored as "402-290-7925", so it either created a dupe or — on a
+ * short call where the fire-and-forget promise raced the call end — left
+ * the call with lead_id=null. Result: 34% link rate, duplicate leads.
+ *
+ * FIX:
+ *   1. Normalize real phone numbers to canonical E.164 ONCE at the top.
+ *      Store and compare the canonical form everywhere.
+ *   2. On lookup, match BOTH the canonical phone AND the last-10-digits,
+ *      so we link to legacy rows stored in mixed formats instead of
+ *      creating yet another dupe during the transition window.
+ *   3. fb-/web- synthetic keys are NOT phone numbers — leave them as-is
+ *      (they were never the source of the dupe problem).
+ *
+ * Once migration 085 backfills all existing leads.phone to E.164 and
+ * merges the existing dupes, the UNIQUE (tenant_id, phone) constraint
+ * finally does what it was always meant to: one row per real number.
+ * ───────────────────────────────────────────────────────────────────────
+ */
 async function getOrCreateLead(tenantId, phoneOrId, name = null, leadSource = null, contactMethod = null) {
   if (!tenantId || !phoneOrId) return null;
-  const input = String(phoneOrId).trim();
+  const raw = String(phoneOrId).trim();
+
+  const isFb  = raw.startsWith("fb-");
+  const isWeb = raw.startsWith("web-");
+  const isSynthetic = isFb || isWeb;
+
+  // For real phone numbers, normalize to E.164. For synthetic keys
+  // (fb-/web-), keep the raw string — they're identifiers, not phones.
+  // normalizeE164Phone returns null on unparseable input; fall back to
+  // the raw trimmed string so we never lose a lead over a format quirk.
+  const canonical = isSynthetic ? raw : (normalizeE164Phone(raw) || raw);
 
   let res;
 
-  // 1. Try to find by specialized external ID columns first if it's an ID
-  if (input.startsWith("fb-")) {
-    const fbId = input.replace("fb-", "");
-    res = await db.query("SELECT * FROM leads WHERE tenant_id = $1 AND (facebook_id = $2 OR phone = $3)", [tenantId, fbId, input]);
-  } else if (input.startsWith("web-")) {
-    const webId = input.replace("web-", "");
-    res = await db.query("SELECT * FROM leads WHERE tenant_id = $1 AND (web_id = $2 OR phone = $3)", [tenantId, webId, input]);
+  // ── 1. Lookup ──────────────────────────────────────────────────────
+  if (isFb) {
+    const fbId = raw.replace("fb-", "");
+    res = await db.query(
+      "SELECT * FROM leads WHERE tenant_id = $1 AND (facebook_id = $2 OR phone = $3)",
+      [tenantId, fbId, raw]
+    );
+  } else if (isWeb) {
+    const webId = raw.replace("web-", "");
+    res = await db.query(
+      "SELECT * FROM leads WHERE tenant_id = $1 AND (web_id = $2 OR phone = $3)",
+      [tenantId, webId, raw]
+    );
   } else {
-    // Standard phone lookup
-    res = await db.query("SELECT * FROM leads WHERE tenant_id = $1 AND phone = $2", [tenantId, input]);
+    // Standard phone lookup — match canonical E.164 OR last-10-digits.
+    // The last-10 match is what links a voice call (+14022907925) to a
+    // legacy lead stored as "402-290-7925" or "4022907925", preventing a
+    // duplicate during the transition before migration 085's backfill.
+    const last10 = getLast10Digits(canonical);
+    res = await db.query(
+      `SELECT * FROM leads
+        WHERE tenant_id = $1
+          AND (
+            phone = $2
+            OR right(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) = $3
+          )
+        ORDER BY created_at ASC
+        LIMIT 1`,
+      [tenantId, canonical, last10]
+    );
   }
 
   if (res.rows.length > 0) {
     const lead = res.rows[0];
 
-    // Sync external ID if missing but present in query
-    if (input.startsWith("fb-") && !lead.facebook_id) {
-       await db.query("UPDATE leads SET facebook_id = $1 WHERE id = $2", [input.replace("fb-", ""), lead.id]);
-    } else if (input.startsWith("web-") && !lead.web_id) {
-       await db.query("UPDATE leads SET web_id = $1 WHERE id = $2", [input.replace("web-", ""), lead.id]);
+    // Sync external ID if missing but present in query.
+    if (isFb && !lead.facebook_id) {
+      await db.query("UPDATE leads SET facebook_id = $1 WHERE id = $2", [raw.replace("fb-", ""), lead.id]);
+    } else if (isWeb && !lead.web_id) {
+      await db.query("UPDATE leads SET web_id = $1 WHERE id = $2", [raw.replace("web-", ""), lead.id]);
     }
 
-    // If we have a name now but didn't before, update it
+    // Opportunistically upgrade a legacy-format phone to canonical E.164
+    // on read, so the table self-heals over time even outside migration 085.
+    // Only do this for real phones, only when the stored value differs from
+    // canonical, and guard against the unique constraint (another row might
+    // already hold the canonical form — if so, leave this one alone rather
+    // than throw).
+    if (!isSynthetic && lead.phone && lead.phone !== canonical) {
+      try {
+        await db.query(
+          "UPDATE leads SET phone = $1, updated_at = now() WHERE id = $2",
+          [canonical, lead.id]
+        );
+        lead.phone = canonical;
+      } catch (e) {
+        // 23505 = another row already has canonical phone for this tenant.
+        // Harmless here — we still return the lead we found. Migration 085
+        // handles the full merge; this is just opportunistic self-healing.
+        if (e.code !== "23505") {
+          console.error("[Leads] phone self-heal failed leadId=%s err=%s", lead.id, e.message);
+        }
+      }
+    }
+
+    // If we have a name now but didn't before, update it.
     if (name && !lead.name) {
       const updated = await db.query(
         "UPDATE leads SET name = $1, updated_at = now() WHERE id = $2 RETURNING *",
@@ -58,17 +147,19 @@ async function getOrCreateLead(tenantId, phoneOrId, name = null, leadSource = nu
     return lead;
   }
 
-  // 2. Create new
-  const facebook_id = input.startsWith("fb-") ? input.replace("fb-", "") : null;
-  const web_id      = input.startsWith("web-") ? input.replace("web-", "") : null;
-  const resolvedContactMethod = deriveContactMethod(contactMethod, input, leadSource);
+  // ── 2. Create new ──────────────────────────────────────────────────
+  const facebook_id = isFb ? raw.replace("fb-", "") : null;
+  const web_id      = isWeb ? raw.replace("web-", "") : null;
+  const resolvedContactMethod = deriveContactMethod(contactMethod, raw, leadSource);
 
   try {
     res = await db.query(
       `INSERT INTO leads (tenant_id, phone, name, status, lead_source, facebook_id, web_id, contact_method)
        VALUES ($1, $2, $3, 'New Lead', $4, $5, $6, $7)
        RETURNING *`,
-      [tenantId, input, name, leadSource, facebook_id, web_id, resolvedContactMethod]
+      // Store the CANONICAL phone, not the raw input. This is what makes
+      // the UNIQUE (tenant_id, phone) constraint actually dedupe.
+      [tenantId, canonical, name, leadSource, facebook_id, web_id, resolvedContactMethod]
     );
     const newLead = res.rows[0];
 
@@ -83,8 +174,12 @@ async function getOrCreateLead(tenantId, phoneOrId, name = null, leadSource = nu
 
     return newLead;
   } catch (err) {
-    // Handle race condition: retry lookup
-    if (err.code === '23505') {
+    // Race condition: a concurrent call inserted the same canonical phone
+    // between our SELECT and INSERT. Now that we store canonical form, the
+    // retry SELECT will actually FIND that row (previously it missed because
+    // the two requests may have used different raw formats). This makes the
+    // retry path correct instead of an infinite-miss loop.
+    if (err.code === "23505") {
       return getOrCreateLead(tenantId, phoneOrId, name, leadSource, contactMethod);
     }
     throw err;
@@ -114,8 +209,18 @@ async function updateLeadInfo(id, data) {
   ];
   for (const key of allowed) {
     if (data[key] !== undefined) {
-      fields.push(`${key} = $${i++}`);
-      values.push(data[key]);
+      // Normalize phone on update too, so the dashboard editing a lead's
+      // phone can't reintroduce a non-canonical format.
+      if (key === "phone" && typeof data[key] === "string") {
+        const v = data[key].trim();
+        const normalized =
+          v.startsWith("fb-") || v.startsWith("web-") ? v : (normalizeE164Phone(v) || v);
+        fields.push(`${key} = $${i++}`);
+        values.push(normalized);
+      } else {
+        fields.push(`${key} = $${i++}`);
+        values.push(data[key]);
+      }
     }
   }
 

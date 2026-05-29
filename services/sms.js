@@ -163,21 +163,19 @@ async function sendBookingCancellationSms(tenant, booking) {
     return { ok: false, skipped: "do_not_contact" };
   }
 
-  const client = twilio.getClientForTenant(tenant);
-  if (!client) {
-    console.warn("[SMS Cancel] No Twilio client for tenant=%s", tenant.id);
-    return { ok: false, skipped: "no_twilio_client" };
-  }
+const firstName    = getFirstName(booking.contact_name);
+  const companyName  = tenant.company_name || tenant.name || "your contractor";
+  const friendlyDate = formatFriendlyDate(booking.preferred_date);
 
+  // For the body's "call us back at" line we need the tenant's from phone.
+  // outboundSms.send looks this up again internally, but we need it here
+  // for body composition. If lookup fails the helper will also fail and
+  // we return cleanly.
   const fromPhone = await getTenantPrimaryPhone(tenant.id);
   if (!fromPhone) {
     console.warn("[SMS Cancel] No primary phone for tenant=%s", tenant.id);
     return { ok: false, skipped: "no_from_phone" };
   }
-
-  const firstName    = getFirstName(booking.contact_name);
-  const companyName  = tenant.company_name || tenant.name || "your contractor";
-  const friendlyDate = formatFriendlyDate(booking.preferred_date);
 
   const body =
     `Hi ${firstName}, this is ${companyName}. ` +
@@ -185,13 +183,24 @@ async function sendBookingCancellationSms(tenant, booking) {
     `If this was a mistake or you'd like to reschedule, reply to this ` +
     `message or call ${fromPhone}. — ${companyName}`;
 
-  try {
-    const message = await client.messages.create({
-      to:   booking.contact_phone,
-      from: fromPhone,
-      body,
-    });
+  // Phase 8B visibility refactor (May 28, 2026): route through lib/outboundSms
+  // so the cancellation SMS writes to the messages table.
+  const outboundSms = require("../lib/outboundSms");
+  const result = await outboundSms.send({
+    tenant,
+    to:       booking.contact_phone,
+    body,
+    source:   "cancellation_confirm",
+    leadId:   booking.lead_id || null,
+    sourceId: booking.id,
+    meta: {
+      booking_id:        booking.id,
+      preferred_date:    booking.preferred_date,
+      cancelled_via:     booking.cancelled_via || null,
+    },
+  });
 
+  if (result.ok) {
     await db.query(
       "UPDATE bookings SET cancellation_sms_sent_at = now() WHERE id = $1",
       [booking.id]
@@ -199,16 +208,13 @@ async function sendBookingCancellationSms(tenant, booking) {
       console.error("[SMS Cancel] cancellation_sms_sent_at update failed bookingId=%s err=%s",
         booking.id, e.message)
     );
-
-    console.log(
-      "[SMS Cancel] Sent bookingId=%s to=%s from=%s sid=%s",
-      booking.id, booking.contact_phone, fromPhone, message.sid
-    );
-    return { ok: true, sid: message.sid };
-  } catch (e) {
-    console.error("[SMS Cancel] Twilio send failed bookingId=%s code=%s error=%s",
-      booking.id, e.code || "unknown", e.message);
-    return { ok: false, error: e.message };
+    console.log("[SMS Cancel] Sent bookingId=%s to=%s sid=%s",
+      booking.id, booking.contact_phone, result.sid);
+    return { ok: true, sid: result.sid };
+  } else {
+    console.error("[SMS Cancel] send failed bookingId=%s reason=%s error=%s",
+      booking.id, result.reason || "unknown", result.error || "(none)");
+    return { ok: false, error: result.error || result.reason };
   }
 }
 
@@ -259,19 +265,7 @@ async function sendEstimateLinkSms(tenant, toPhone, link, sourceCallId = null) {
     return { ok: false, error: "do_not_contact", skipped: "do_not_contact" };
   }
 
-  const client = twilio.getClientForTenant(tenant);
-  if (!client) {
-    console.warn("[Estimate Link] No Twilio client for tenant=%s", tenant.id);
-    return { ok: false, error: "no_twilio_client" };
-  }
-
-  const fromPhone = await getTenantPrimaryPhone(tenant.id);
-  if (!fromPhone) {
-    console.warn("[Estimate Link] No primary phone for tenant=%s", tenant.id);
-    return { ok: false, error: "no_from_phone" };
-  }
-
-  const companyName = tenant.company_name || tenant.name || "us";
+ const companyName = tenant.company_name || tenant.name || "us";
 
   // Body locked May 4, 2026 (Drew, Phase E1):
   //   Vertical-agnostic — works for painting, roofing, fencing, etc.
@@ -282,25 +276,46 @@ async function sendEstimateLinkSms(tenant, toPhone, link, sourceCallId = null) {
     `Hi from ${companyName}! Tap to get your free instant estimate: ` +
     `${link} — fill it out and you can book right from there.`;
 
-  try {
-    const message = await client.messages.create({
-      to:   toPhone,
-      from: fromPhone,
-      body,
-    });
+  // Phase 8B visibility refactor (May 28, 2026): route through lib/outboundSms.
+  // leadId resolution: we have the source call ID — look up the lead linked
+  // to that call so the SMS lands on the right lead timeline. Best-effort —
+  // if lookup fails we still send, just without leadId.
+  let leadId = null;
+  if (sourceCallId) {
+    try {
+      const r = await db.query(
+        "SELECT lead_id FROM calls WHERE id = $1 LIMIT 1",
+        [sourceCallId]
+      );
+      leadId = r.rows[0]?.lead_id || null;
+    } catch (err) {
+      console.warn("[Estimate Link] lead lookup failed call_id=%s err=%s",
+        sourceCallId, err.message);
+    }
+  }
 
-    console.log(
-      "[Estimate Link] Sent tenant=%s to=%s from=%s call_id=%s sid=%s",
-      tenant.id, toPhone, fromPhone, sourceCallId || "(none)", message.sid
-    );
-    return { ok: true, sid: message.sid };
-  } catch (e) {
-    // Common Twilio failures: 21211 invalid number, 21610 unsubscribed,
-    // 21408 not enabled for region. All non-fatal — log and let caller
-    // decide what to tell the AI.
-    console.error("[Estimate Link] Twilio send failed tenant=%s to=%s code=%s err=%s",
-      tenant.id, toPhone, e.code || "unknown", e.message);
-    return { ok: false, error: e.message };
+  const outboundSms = require("../lib/outboundSms");
+  const result = await outboundSms.send({
+    tenant,
+    to:       toPhone,
+    body,
+    source:   "estimate_link",
+    leadId,
+    sourceId: sourceCallId || null,
+    meta: {
+      source_call_id: sourceCallId || null,
+      link,
+    },
+  });
+
+  if (result.ok) {
+    console.log("[Estimate Link] Sent tenant=%s to=%s call_id=%s sid=%s leadId=%s",
+      tenant.id, toPhone, sourceCallId || "(none)", result.sid, leadId || "(none)");
+    return { ok: true, sid: result.sid };
+  } else {
+    console.error("[Estimate Link] send failed tenant=%s to=%s reason=%s err=%s",
+      tenant.id, toPhone, result.reason || "unknown", result.error || "(none)");
+    return { ok: false, error: result.error || result.reason };
   }
 }
 

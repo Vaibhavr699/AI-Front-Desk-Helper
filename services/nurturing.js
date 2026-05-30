@@ -2,6 +2,8 @@
 
 const db = require("../lib/db");
 const twilio = require("../lib/twilio");
+const outboundSms = require("../lib/outboundSms");
+const outboundCall = require("../lib/outboundCall");
 const { hasNurturingReferralAccess } = require("../lib/plans");
 const emailService = require("./email");
 const { DateTime } = require("luxon");
@@ -144,7 +146,18 @@ async function processDueNurturing() {
 }
 
 async function processOneNurturing(row) {
-  const { id: scheduleId, tenant_id, lead_id, booking_id, campaign_type, company_name, lead_phone, lead_email, lead_name, tenant_phone } = row;
+  const {
+    id: scheduleId,
+    tenant_id,
+    lead_id,
+    booking_id,
+    campaign_type,
+    company_name,
+    lead_phone,
+    lead_email,
+    lead_name,
+    tenant_phone,
+  } = row;
 
   // Defense in depth (Migration 059): the SQL filter in processDueNurturing
   // should prevent DNC'd schedules from getting here, but a flag could be
@@ -178,10 +191,19 @@ async function processOneNurturing(row) {
     console.error("[Nurturing] Failed to resolve owner email for tenant %s:", tenant_id, err.message);
   }
 
-  let logId    = null;
+  let logId     = null;
   let emailSent = false;
   let smsSent   = false;
   let body      = "";
+
+  // PR 5 (May 29, 2026): opts bundle for sendNurturingSms so each touch
+  // writes to messages with proper lead linkage + campaign metadata.
+  const smsOpts = {
+    leadId:       lead_id,
+    scheduleId,
+    campaignType: campaign_type,
+    bookingId:    booking_id,
+  };
 
   if (campaign_type === "post_service_followup") {
     if (toEmail) {
@@ -191,7 +213,7 @@ async function processOneNurturing(row) {
     }
     if (toPhone) {
       const smsBody = `${company_name} here — hope you're happy with the work we did. If you have any questions or need a follow-up, just reply or give us a call.`;
-      smsSent = await sendNurturingSms(tenant_id, toPhone, smsBody);
+      smsSent = await sendNurturingSms(tenant_id, toPhone, smsBody, smsOpts);
       if (smsSent && !body) body = smsBody;
     }
   } else if (campaign_type === "referral_request") {
@@ -202,7 +224,7 @@ async function processOneNurturing(row) {
     }
     if (toPhone) {
       const smsBody = `Hi${lead_name ? " " + lead_name : ""}! This is ${company_name}. We'd love a quick favor — know anyone who could use our help? Reply with their name and number and we'll reach out. Thanks!`;
-      smsSent = await sendNurturingSms(tenant_id, toPhone, smsBody);
+      smsSent = await sendNurturingSms(tenant_id, toPhone, smsBody, smsOpts);
       if (smsSent && !body) body = smsBody;
     }
   } else if (campaign_type === "maintenance_reminder") {
@@ -216,7 +238,7 @@ async function processOneNurturing(row) {
       const smsBody = touchpointHeader
         ? `${company_name} here — time for your ${touchpointHeader}! We're here when you're ready. Reply or give us a call.`
         : `${company_name} here — it's been a while. We're here when you're ready for your next project. Reply or give us a call.`;
-      smsSent = await sendNurturingSms(tenant_id, toPhone, smsBody);
+      smsSent = await sendNurturingSms(tenant_id, toPhone, smsBody, smsOpts);
       if (smsSent && !body) body = smsBody;
     }
   } else if (campaign_type === "reengagement") {
@@ -230,7 +252,7 @@ async function processOneNurturing(row) {
       const smsBody = touchpointHeader
         ? `Hi${lead_name ? " " + lead_name : ""}! ${company_name} here — ${touchpointHeader}. We'd love to hear how things are going. Reply or call anytime.`
         : `Hi${lead_name ? " " + lead_name : ""}! Quick check-in from ${company_name} — we'd love to hear how things are going. Reply or call anytime.`;
-      smsSent = await sendNurturingSms(tenant_id, toPhone, smsBody);
+      smsSent = await sendNurturingSms(tenant_id, toPhone, smsBody, smsOpts);
       if (smsSent && !body) body = smsBody;
     }
   } else if (campaign_type === "no_response_phone") {
@@ -286,7 +308,17 @@ async function processOneNurturing(row) {
 }
 
 /**
- * Place an outbound AI call for nurturing with voicemail detection.
+ * Place an outbound AI nurturing call with voicemail detection.
+ *
+ * PR 5 (May 29, 2026): Routes through lib/outboundCall.create so the call:
+ *   1. Writes a `calls` row immediately on dial (was previously invisible)
+ *   2. Stamps metadata.source='nurturing' for filtering
+ *   3. Stamps metadata.script_preview so CallDetail UI shows what the AI
+ *      was going to say even if voicemail wasn't recorded
+ *   4. Records audio (record:true is set by the helper) so voicemail-left
+ *      calls eventually surface audio via PR 3's recording pipeline
+ *
+ * Returns boolean (matches the existing contract).
  */
 async function triggerNurturingCall(scheduleId, tenantId, leadId, toPhone, script) {
   if (!toPhone || !script) return false;
@@ -300,70 +332,116 @@ async function triggerNurturingCall(scheduleId, tenantId, leadId, toPhone, scrip
     return false;
   }
 
+  // Pull the full tenant row plus matched_phone — outboundCall.create
+  // reads tenant.matched_phone for the from-number.
   const tenant = await db.query(
     `SELECT t.*, (SELECT pn.phone FROM phone_numbers pn WHERE pn.tenant_id = t.id ORDER BY pn.is_primary DESC NULLS LAST LIMIT 1) as matched_phone
      FROM tenants t WHERE t.id = $1`,
     [tenantId]
   ).then((r) => r.rows[0]);
   if (!tenant) return false;
-  const client = twilio.getClientForTenant(tenant);
-  if (!client) return false;
-  const from = tenant.matched_phone || process.env.TWILIO_PHONE_NUMBER;
-  if (!from) return false;
+
   const baseUrl = process.env.BASE_URL;
   if (!baseUrl) {
     console.warn("[Nurturing] BASE_URL not set, cannot place nurturing call");
     return false;
   }
-  const twimlUrl = `${baseUrl.replace(/\/$/, "")}/twilio/nurturing-call`
+
+  const trimmedBase = baseUrl.replace(/\/$/, "");
+  const twimlUrl = `${trimmedBase}/twilio/nurturing-call`
     + `?scheduleId=${encodeURIComponent(scheduleId)}`
     + `&script=${encodeURIComponent(script)}`;
-  try {
-    await client.calls.create({
-      to:     toPhone,
-      from,
-      url:    twimlUrl,
-      method: "GET",
-      timeout: 30,
-      // ✅ Voicemail detection
-      machineDetection:        "Enable",
-      machineDetectionTimeout: 8,
-      statusCallback: `${baseUrl.replace(/\/$/, "")}/twilio/nurturing-call-status?scheduleId=${encodeURIComponent(scheduleId)}`,
-      statusCallbackMethod: "POST",
-      statusCallbackEvent:  ["completed"],
-    });
-    return true;
-  } catch (e) {
-    console.error("[Nurturing] Call failed:", e.message);
+  const statusCallback = `${trimmedBase}/twilio/nurturing-call-status?scheduleId=${encodeURIComponent(scheduleId)}`;
+
+  const result = await outboundCall.create({
+    tenant,
+    to:                      toPhone,
+    twimlUrl,
+    source:                  "nurturing",
+    leadId,
+    sourceId:                String(scheduleId),
+    leadSource:              "nurturing",
+    statusCallback,
+    machineDetection:        "Enable",
+    machineDetectionTimeout: 8,
+    timeout:                 30,
+    meta: {
+      // Stamped into calls.metadata so CallDetail.jsx (PR 3) shows what
+      // the AI was going to say — critical for voicemail-left calls and
+      // for the tenant trust foundation more broadly.
+      script_preview: script,
+      schedule_id:    scheduleId,
+      campaign_type:  "no_response_phone",
+    },
+  });
+
+  if (!result.ok) {
+    console.error(
+      "[Nurturing] outboundCall.create failed scheduleId=%s reason=%s err=%s",
+      scheduleId, result.reason || "unknown", result.error || "(none)"
+    );
     return false;
   }
+
+  return true;
 }
 
-async function sendNurturingSms(tenantId, toPhone, body) {
+/**
+ * Send an outbound nurturing SMS.
+ *
+ * PR 5 (May 29, 2026): Routes through lib/outboundSms.send so the message:
+ *   1. Writes a `messages` row keyed to the lead (appears on lead timeline,
+ *      messages thread, activity feed)
+ *   2. Stamps metadata.source='nurturing' + campaign_type for filtering
+ *   3. Stamps schedule_id for traceability back to nurturing_schedule
+ *
+ * Signature change: now accepts an `opts` object with leadId/scheduleId/
+ * campaignType/bookingId. Every callsite was updated. Returns boolean
+ * (matches the existing contract).
+ */
+async function sendNurturingSms(tenantId, toPhone, body, opts = {}) {
   // Defense in depth (Migration 059) — last line of defense before sending.
   // Catches DNC flips that happened between the schedule SELECT and now.
-  if (await isLeadDoNotContact({ tenantId, phone: toPhone })) {
+  if (await isLeadDoNotContact({ tenantId, phone: toPhone, leadId: opts.leadId })) {
     console.log("[Nurturing] DNC blocked at sendNurturingSms tenant=%s to=%s — suppressing", tenantId, toPhone);
     return false;
   }
 
+  // Pull the full tenant row plus matched_phone — outboundSms.send needs
+  // it for Twilio credentials + from-phone resolution.
   const tenant = await db.query(
     `SELECT t.*, (SELECT pn.phone FROM phone_numbers pn WHERE pn.tenant_id = t.id ORDER BY pn.is_primary DESC NULLS LAST LIMIT 1) as matched_phone
      FROM tenants t WHERE t.id = $1`,
     [tenantId]
   ).then((r) => r.rows[0]);
   if (!tenant) return false;
-  const client = twilio.getClientForTenant(tenant);
-  if (!client) return false;
-  const from = tenant.matched_phone || process.env.TWILIO_PHONE_NUMBER;
-  if (!from) return false;
-  try {
-    await client.messages.create({ to: toPhone, from, body });
-    return true;
-  } catch (e) {
-    console.error("[Nurturing] SMS failed:", e.message);
+
+  const result = await outboundSms.send({
+    tenant,
+    to:       toPhone,
+    body,
+    source:   "nurturing",
+    leadId:   opts.leadId || null,
+    sourceId: opts.scheduleId ? String(opts.scheduleId) : null,
+    meta: {
+      campaign_type: opts.campaignType || "unknown",
+      booking_id:    opts.bookingId || null,
+      schedule_id:   opts.scheduleId || null,
+    },
+  });
+
+  if (!result.ok) {
+    console.error(
+      "[Nurturing] outboundSms.send failed campaign=%s tenant=%s reason=%s err=%s",
+      opts.campaignType || "unknown",
+      tenantId,
+      result.reason || "unknown",
+      result.error || "(none)"
+    );
     return false;
   }
+
+  return true;
 }
 
 async function tryParseReferralReply(tenantId, leadId, messageBody) {
@@ -449,7 +527,14 @@ async function createReferralAndOutreach(tenantId, referringLeadId, referringBoo
 
   const customerName = referringLead?.name || "A customer";
   const smsBody = `Hi${referralName && referralName !== "Referred" ? " " + referralName : ""}! This is ${tenant.company_name}. ${customerName} mentioned you might need our help. Would you like to schedule a quick estimate? Just reply here or give us a call.`;
-  await sendNurturingSms(tenantId, referralPhone, smsBody);
+
+  // PR 5: pass the **referral target's** leadId (the friend being reached),
+  // not the referring lead's id. The SMS goes to the friend's phone, so
+  // the message row should attach to the friend's lead timeline.
+  await sendNurturingSms(tenantId, referralPhone, smsBody, {
+    leadId,
+    campaignType: "referral_outreach",
+  });
 
   await db.query(
     `INSERT INTO campaign_log (tenant_id, lead_id, campaign_type, channel, direction, message_body, sent_at, metadata)
@@ -670,7 +755,11 @@ async function processSeasonalCampaigns() {
         ).catch(() => {});
       }
       if (row.phone) {
-        await sendNurturingSms(t.id, row.phone, smsBody).catch(() => {});
+        // PR 5: pass the lead's id so seasonal touches show on their timeline
+        await sendNurturingSms(t.id, row.phone, smsBody, {
+          leadId:       row.id,
+          campaignType: campaignKey,
+        }).catch(() => {});
       }
       await db.query(
         `INSERT INTO campaign_log (tenant_id, lead_id, campaign_type, channel, direction, message_body, sent_at)

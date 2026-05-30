@@ -405,7 +405,50 @@ router.post("/recovery-call-status", (req, res) => {
   const CallDuration  = req.body && req.body.CallDuration;
   const AnsweredBy    = req.body && req.body.AnsweredBy;
   const RecordingSid  = req.body && req.body.RecordingSid;
+  const RecordingUrl       = req.body && req.body.RecordingUrl;
+  const RecordingStatus    = req.body && req.body.RecordingStatus;
+  const RecordingDuration  = req.body && req.body.RecordingDuration;
   const recoveryId    = req.query && req.query.recoveryId;
+
+  // ── PR 3 (May 29, 2026): Recording-completed branch ──────────────────
+  //
+  // The recoveryCall TwiML sets recordingStatusCallback to this same URL.
+  // Twilio fires this endpoint TWICE for a recorded call:
+  //   1. Call-completed event — has CallStatus, AnsweredBy, etc.
+  //   2. Recording-completed event — has RecordingStatus='completed',
+  //      RecordingUrl, RecordingSid, RecordingDuration.
+  //
+  // For voicemail-only recovery calls (machine answered, no WS opened),
+  // the existing recordingService.startRecording path NEVER fires — the
+  // call never reached our WebSocket. So WITHOUT this branch, Twilio
+  // captures the audio (because PR 2 set record:true on calls.create) but
+  // we never write a recordings row, leaving CallDetail.jsx showing
+  // "No recording yet" for every voicemail-left recovery touch.
+  //
+  // The branch below detects recording-completed events specifically and
+  // hands them off to the existing recordingService.handleRecordingStatus
+  // pipeline — same code path inbound calls already use. That pipeline:
+  //   - Inserts a recordings row keyed to the call by CallSid
+  //   - Downloads + S3-uploads the audio
+  //   - Queues for Whisper transcription
+  //
+  // Calls that ANSWERED (human) and went through the WS already created
+  // their recordings row via the existing path during server.js streaming.
+  // This branch is purely additive for the voicemail-only case.
+  //
+  if (RecordingStatus === "completed" && RecordingUrl && CallSid) {
+    recordingService.handleRecordingStatus({
+      CallSid,
+      RecordingSid,
+      RecordingUrl,
+      RecordingStatus,
+      RecordingDuration,
+    }).catch((e) =>
+      console.error("[Recovery] Recording handoff failed callSid=%s err=%s", CallSid, e.message)
+    );
+    // Fall through to the existing call-status update logic below in case
+    // both events arrive in the same payload (Twilio sometimes batches).
+  }
 
   if (recoveryId && CallSid) {
     const statusMap = {

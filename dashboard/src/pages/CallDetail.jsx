@@ -35,6 +35,16 @@ export default function CallDetail() {
   const recordings = call.recordings || [];
   const primaryRec = recordings.find((r) => r.transcript) || recordings[0];
 
+  // PR 3 (May 29, 2026) — Read the AI's planned script for outbound recovery
+  // calls. metadata.script_preview is written by lib/outboundCall.create at
+  // dial time, so it exists regardless of whether the call answered, went
+  // to voicemail, or failed entirely. Shows the tenant what the AI was
+  // planning to say even when there's no audio (voicemail-left, no-answer,
+  // failed, busy).
+  const aiScript = call.metadata?.script_preview || null;
+  const isOutbound = call.direction === "outbound";
+  const voicemailLeft = call.disposition === "voicemail_left" || call.metadata?.voicemail_detected === true;
+
   return (
     <div className="px-0 max-w-full">
       <p className="mb-4">
@@ -42,26 +52,71 @@ export default function CallDetail() {
       </p>
       <div className="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
         <div className="px-4 py-4 sm:px-6 sm:py-5 border-b border-stone-200">
-          <h1 className="text-lg sm:text-xl font-semibold text-stone-900">Call from {call.from_number || "Unknown"}</h1>
+          <h1 className="text-lg sm:text-xl font-semibold text-stone-900">
+            {isOutbound ? `AI call to ${call.to_number || "Unknown"}` : `Call from ${call.from_number || "Unknown"}`}
+          </h1>
           <dl className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 text-sm">
             <div><dt className="text-stone-500">Time</dt><dd className="text-stone-900">{new Date(call.started_at).toLocaleString()}</dd></div>
             <div><dt className="text-stone-500">Status</dt><dd className="text-stone-900">{call.status}</dd></div>
-            <div><dt className="text-stone-500">Disposition</dt><dd className="text-stone-900">{call.transferred ? "Transferred" : call.disposition || "—"}</dd></div>
+            <div>
+              <dt className="text-stone-500">Disposition</dt>
+              <dd className="text-stone-900">
+                {call.transferred ? "Transferred"
+                  : voicemailLeft ? "Voicemail left"
+                  : call.disposition || "—"}
+              </dd>
+            </div>
+            {isOutbound && call.metadata?.source && (
+              <div>
+                <dt className="text-stone-500">Source</dt>
+                <dd className="text-stone-900 capitalize">{String(call.metadata.source).replace(/_/g, " ")}</dd>
+              </div>
+            )}
           </dl>
         </div>
+
+        {/* PR 3: AI's planned script — shows what the AI was going to say
+            even when there's no audio (voicemail-only, no-answer, etc.) */}
+        {aiScript && (
+          <div className="px-4 py-4 sm:px-6 sm:py-5 border-b border-stone-200 bg-blue-50/40">
+            <h2 className="text-sm font-medium text-stone-700 mb-2">
+              {voicemailLeft ? "What the AI said on voicemail" : "What the AI was going to say"}
+            </h2>
+            <div className="text-sm text-stone-700 whitespace-pre-wrap bg-white rounded-lg p-4 border border-blue-100">
+              {aiScript}
+            </div>
+          </div>
+        )}
+
         {primaryRec && (
           <div className="px-4 py-4 sm:px-6 sm:py-5 border-b border-stone-200">
             <h2 className="text-sm font-medium text-stone-700 mb-2">Recording</h2>
             <AudioPlayer recordingId={primaryRec.id} />
           </div>
         )}
+
         {primaryRec?.transcript && (
           <div className="px-4 py-4 sm:px-6 sm:py-5">
             <h2 className="text-sm font-medium text-stone-700 mb-2">Transcript</h2>
             <div className="text-sm text-stone-600 whitespace-pre-wrap bg-stone-50 rounded-lg p-4">{primaryRec.transcript}</div>
           </div>
         )}
-        {recordings.length === 0 && <div className="px-4 py-4 sm:px-6 sm:py-5"><p className="text-sm text-stone-500">No recording yet.</p></div>}
+
+        {recordings.length === 0 && !aiScript && (
+          <div className="px-4 py-4 sm:px-6 sm:py-5">
+            <p className="text-sm text-stone-500">No recording yet.</p>
+          </div>
+        )}
+
+        {recordings.length === 0 && aiScript && (
+          <div className="px-4 py-4 sm:px-6 sm:py-5">
+            <p className="text-sm text-stone-500">
+              {voicemailLeft
+                ? "Voicemail recording processing — will appear here when ready."
+                : "No recording captured for this call."}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

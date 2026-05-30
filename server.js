@@ -1832,6 +1832,7 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
     projectDetails: thread.leadCapture.project_details || "",
     leadId:         thread.leadId || null,
     source:         thread.channel || "sms",
+    estimatedValue: ai.lead_capture?.estimated_value ?? thread.leadCapture?.estimated_value ?? null,
   });
  
   if (!result.ok) {
@@ -4802,6 +4803,7 @@ sendToOpenAI(sessionUpdate);
                 leadId:          leadId || null,
                 source:          leadSource || "voice",
                 callId:          callId,
+                  estimatedValue:  args.estimated_value ?? currentLeadCapture.estimated_value ?? null,
               });
                 } else if (bookResult.reason === "day_closed") {
                   output = JSON.stringify({

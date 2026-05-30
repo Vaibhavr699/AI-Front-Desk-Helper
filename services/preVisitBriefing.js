@@ -44,6 +44,15 @@
  *   - Tech-specific routing (we use the tenant-level recipient — when
  *     technicians actually use the platform we layer on technician_id
  *     lookup as a higher priority than the tenant-level setting)
+ *
+ * PR 6 (May 29, 2026) — schema fix:
+ *   The lead lookup SQL referenced `estimated_value`, a column that was
+ *   dropped during Rahul's revenue-column consolidation. Every briefing
+ *   cron tick has been silently crashing inside processOneBooking with
+ *   "column estimated_value does not exist" for at least the past 3 days
+ *   (likely weeks). Renamed both the SELECT and the read in
+ *   composeBriefingBody to `estimated_revenue_cents`, the canonical
+ *   integer cents column that matches the bookings table.
  */
 
 const db = require("../lib/db");
@@ -160,7 +169,10 @@ async function composeBriefingBody({ booking, lead, tenant, discRow }) {
   const address = booking.address || lead?.address || "(no address on file)";
   const apptDate = booking.preferred_date;
   const apptTime = booking.appointment_time || "(no time set)";
-  const leadValueCents = booking.estimated_revenue_cents || lead?.estimated_value || null;
+  // PR 6 (May 29, 2026): `lead.estimated_value` was renamed to
+  // `lead.estimated_revenue_cents` during Rahul's revenue-column
+  // consolidation. Reads from the canonical cents column now.
+  const leadValueCents = booking.estimated_revenue_cents || lead?.estimated_revenue_cents || null;
   const leadValueDollars = leadValueCents ? Math.round(leadValueCents / 100) : null;
 
   // DISC context (may be null/empty)
@@ -369,10 +381,15 @@ async function processOneBooking(booking) {
     }
 
     // Lead lookup (DISC + project info)
+    // PR 6 (May 29, 2026): replaced legacy `estimated_value` column with
+    // `estimated_revenue_cents`. The old column was dropped during Rahul's
+    // revenue consolidation and was the silent cause of every briefing
+    // cron tick crashing for ~3 weeks. Adam Smith's missing 5/27 briefing
+    // was the canary that surfaced it.
     let lead = null;
     if (booking.lead_id) {
       const leadRes = await db.query(
-        "SELECT id, name, phone, project_type, address, estimated_value FROM leads WHERE id = $1 LIMIT 1",
+        "SELECT id, name, phone, project_type, address, estimated_revenue_cents FROM leads WHERE id = $1 LIMIT 1",
         [booking.lead_id]
       );
       lead = leadRes.rows[0] || null;

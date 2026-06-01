@@ -12,18 +12,22 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { useTenantFlags } from "@/src/features/auth/store";
 import { useResponsive } from "@/src/shared/hooks/use-responsive";
 import { colors } from "@/src/shared/theme/tokens";
 
 import { AppointmentCard } from "../components/appointment-card";
 import { AppointmentDetailPane } from "../components/appointment-detail-pane";
 import { EmptyState } from "../components/empty-state";
+import { RepCoachHomeState } from "../components/rep-coach-home-state";
 import { useTodayAppointments } from "../queries";
 import type { Appointment } from "../types";
 
 export function TodayScreen() {
   const router = useRouter();
   const { isTablet } = useResponsive();
+  const { rep_coach_enabled, aifdh_enabled } = useTenantFlags();
+  const repCoachOnly = rep_coach_enabled && !aifdh_enabled;
   const { data, isLoading, isError, error, refetch, isRefetching } =
     useTodayAppointments();
 
@@ -69,7 +73,7 @@ export function TodayScreen() {
       ) : isError ? (
         <ErrorState message={extractErrorMessage(error)} onRetry={refetch} />
       ) : appointments.length === 0 ? (
-        <EmptyState />
+        repCoachOnly ? <RepCoachHomeState /> : <EmptyState />
       ) : isTablet ? (
         <View className="flex-1 flex-row">
           <View

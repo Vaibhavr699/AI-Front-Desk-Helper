@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import {
-  getTeam, inviteTeamMember, removeTeamMember, updateRepSeat, getTenants, getUser, get,
+  getTeam, inviteTeamMember, removeTeamMember, updateRepSeat, updateRepCoachEnabled, getTenants, getUser, get,
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import {
@@ -300,6 +300,8 @@ export default function Team() {
 
   const [activeTab, setActiveTab] = useState("members");
   const [team, setTeam] = useState([]);
+  const [repCoachEnabled, setRepCoachEnabled] = useState(false);
+  const [repCoachBusy, setRepCoachBusy] = useState(false);
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -324,6 +326,7 @@ export default function Team() {
         getTenants(),
       ]);
       setTeam(teamRes.team || []);
+      setRepCoachEnabled(teamRes.rep_coach_enabled === true);
       setLocations(tenantsRes.tenants || []);
       if (activeTenantId && activeTenantId !== "all") {
         setInviteLocation(activeTenantId);
@@ -362,6 +365,22 @@ export default function Team() {
     }
   };
 
+  const toggleRepCoach = async () => {
+    if (repCoachBusy) return;
+    const next = !repCoachEnabled;
+    setRepCoachBusy(true);
+    setError("");
+    try {
+      const scopeTenant = activeTenantId && activeTenantId !== "all" ? activeTenantId : null;
+      const res = await updateRepCoachEnabled(next, scopeTenant);
+      setRepCoachEnabled(res.rep_coach_enabled === true);
+    } catch (err) {
+      setError(err.message || "Failed to update AI Rep Coach");
+    } finally {
+      setRepCoachBusy(false);
+    }
+  };
+
   if (loading && team.length === 0) {
     return <div className="flex items-center justify-center py-20"><LumaSpin /></div>;
   }
@@ -387,6 +406,38 @@ export default function Team() {
           </button>
         )}
       </div>
+
+      {activeTab === "members" && (
+        <div className="mb-6 flex items-center justify-between gap-4 rounded-2xl border border-stone-200 bg-white px-5 py-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <Smartphone className="mt-0.5 text-stone-500" size={20} />
+            <div>
+              <p className="text-sm font-bold text-stone-900">AI Rep Coach</p>
+              <p className="text-xs text-stone-500 mt-0.5">
+                {repCoachEnabled
+                  ? "Enabled — reps with an active seat can use the mobile coaching app."
+                  : "Disabled — turn on to let reps use the mobile coaching app."}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={repCoachEnabled}
+            disabled={repCoachBusy}
+            onClick={toggleRepCoach}
+            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+              repCoachEnabled ? "bg-stone-900" : "bg-stone-300"
+            } ${repCoachBusy ? "opacity-50" : ""}`}
+          >
+            <span
+              className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                repCoachEnabled ? "translate-x-5" : "translate-x-0.5"
+              }`}
+            />
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="mb-6 bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl flex items-center gap-3 text-sm">

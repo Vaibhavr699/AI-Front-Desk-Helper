@@ -7,6 +7,7 @@ const emailService = require("../services/email");
 const auth = require("../lib/auth");
 const { logAction } = require("../lib/auditLogger");
 const repSeats = require("../lib/repSeats");
+const repCoachBilling = require("../lib/repCoachBilling");
 
 const router = express.Router();
 
@@ -132,7 +133,17 @@ router.get("/", requireTeamManager, async (req, res) => {
       user_agent: req.get("user-agent") || null,
     });
 
-    res.json({ team: r.rows });
+    const flagTenantId =
+      targetTenantId && targetTenantId !== "all" ? targetTenantId : req.user.tenant_id;
+    const flagRes = await db.query(
+      "SELECT rep_coach_enabled FROM tenants WHERE id = $1",
+      [flagTenantId],
+    );
+
+    res.json({
+      team: r.rows,
+      rep_coach_enabled: flagRes.rows[0]?.rep_coach_enabled === true,
+    });
   } catch (err) {
     console.error("GET /api/team error:", err);
     res.status(500).json({ error: "Server error" });
@@ -332,9 +343,75 @@ router.patch("/:id/rep-seat", requireTeamManager, async (req, res) => {
       user_agent: req.get("user-agent") || null,
     });
 
-    res.json({ user: result.rows[0] });
+    let billing = { ok: false, reason: "not_attempted" };
+    try {
+      billing = await repCoachBilling.syncRepCoachSubscription(before.tenant_id);
+    } catch (e) {
+      console.error("[rep-seat] billing sync failed for tenant=%s:", before.tenant_id, e.message);
+      billing = { ok: false, error: e.message };
+    }
+
+    res.json({ user: result.rows[0], billing });
   } catch (err) {
     console.error("PATCH /api/team/:id/rep-seat error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// PATCH /api/team/rep-coach — enable/disable the AI Rep Coach product for a tenant.
+// Body: { enabled: boolean, tenant_id?: string }. Manager/owner only, own tenant
+// (or a child location for parent admins). Reps can't use the coaching app until on.
+router.patch("/rep-coach", requireTeamManager, async (req, res) => {
+  try {
+    const { enabled, tenant_id } = req.body || {};
+    if (typeof enabled !== "boolean") {
+      return res.status(400).json({ error: "enabled (boolean) required" });
+    }
+
+    const parentId = req.user.tenant_id;
+    const isParentAdmin = req.user?.tenant_business_type === "parent";
+    const targetTenantId = tenant_id || parentId;
+
+    const scope = isParentAdmin ? "(id = $2 OR parent_id = $2)" : "id = $2";
+    const check = await db.query(
+      `SELECT id, rep_coach_enabled FROM tenants WHERE id = $1 AND ${scope}`,
+      [targetTenantId, parentId],
+    );
+    if (check.rows.length === 0) {
+      return res.status(404).json({ error: "Tenant not found in your scope" });
+    }
+    const before = check.rows[0].rep_coach_enabled === true;
+
+    const result = await db.query(
+      `UPDATE tenants SET rep_coach_enabled = $1, updated_at = now()
+        WHERE id = $2
+        RETURNING rep_coach_enabled`,
+      [enabled, targetTenantId],
+    );
+
+    await safeLogAction({
+      tenant_id: String(req.user.tenant_id),
+      user_id: String(req.user.sub),
+      action: "rep_coach_toggled",
+      entity_type: "tenant",
+      entity_id: String(targetTenantId),
+      old_value: { rep_coach_enabled: before },
+      new_value: { rep_coach_enabled: enabled },
+      ip_address: getRequestIp(req),
+      user_agent: req.get("user-agent") || null,
+    });
+
+    let billing = { ok: false, reason: "not_attempted" };
+    try {
+      billing = await repCoachBilling.syncRepCoachSubscription(targetTenantId);
+    } catch (e) {
+      console.error("[rep-coach] billing sync failed for tenant=%s:", targetTenantId, e.message);
+      billing = { ok: false, error: e.message };
+    }
+
+    res.json({ rep_coach_enabled: result.rows[0].rep_coach_enabled === true, billing });
+  } catch (err) {
+    console.error("PATCH /api/team/rep-coach error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });

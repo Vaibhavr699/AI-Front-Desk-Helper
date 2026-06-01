@@ -324,6 +324,10 @@ export function updateRepSeat(id, { active, tier }) {
   return patch(`/api/team/${id}/rep-seat`, { active, tier });
 }
 
+export function updateRepCoachEnabled(enabled, tenantId = null) {
+  return patch(`/api/team/rep-coach`, { enabled, tenant_id: tenantId });
+}
+
 export function getTechnicians(tenantId = null) {
   const url = tenantId ? `/api/technicians?tenant_id=${tenantId}` : "/api/technicians";
   return api(url);

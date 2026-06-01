@@ -2,7 +2,11 @@ import { useRef } from 'react'
 import { motion, useScroll, useTransform } from 'framer-motion'
 import { Check } from 'lucide-react'
 
-const STRIPE_URL = import.meta.env.VITE_STRIPE_CHECKOUT_URL || '#'
+const CHECKOUT_URLS = {
+  Standard: import.meta.env.VITE_STRIPE_CHECKOUT_URL_STANDARD || import.meta.env.VITE_STRIPE_CHECKOUT_URL || '#',
+  Pro: import.meta.env.VITE_STRIPE_CHECKOUT_URL_PRO || '#',
+  Elite: import.meta.env.VITE_STRIPE_CHECKOUT_URL_ELITE || '#',
+}
 
 const TIERS = [
   {
@@ -93,7 +97,7 @@ export default function Pricing() {
                 ))}
               </div>
               <a
-                href={STRIPE_URL}
+                href={/^https?:\/\//.test(CHECKOUT_URLS[tier.name]) ? CHECKOUT_URLS[tier.name] : '#'}
                 style={{
                   display: 'block', textAlign: 'center', marginTop: 32, borderRadius: 9999,
                   padding: '14px 0', fontSize: 14, fontWeight: 600,

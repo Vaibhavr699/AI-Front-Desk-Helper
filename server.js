@@ -261,6 +261,33 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
   }
 });
 
+// --- AI Rep Coach Stripe Webhook ---
+// Separate Stripe context (own key + signing secret) so it can run in TEST mode
+// while AIFDH stays on the live key above. Verified with REP_COACH_STRIPE_WEBHOOK_SECRET.
+const repCoachStripe = require("./lib/repCoachStripe");
+app.post("/api/public/stripe/rep-coach/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  if (!repCoachStripe.isConfigured()) {
+    console.error("[RepCoachStripe] Webhook not configured — set REP_COACH_STRIPE_SECRET_KEY + REP_COACH_STRIPE_WEBHOOK_SECRET.");
+    return res.status(400).send("Webhook configuration error");
+  }
+
+  let event;
+  try {
+    event = repCoachStripe.constructEvent(req.body, req.headers["stripe-signature"]);
+  } catch (err) {
+    console.error(`[RepCoachStripe] Webhook signature verification failed: ${err.message}`);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  try {
+    await repCoachStripe.handleEvent(event);
+    res.json({ received: true });
+  } catch (err) {
+    console.error("[RepCoachStripe] Webhook handler failed:", err);
+    res.status(500).json({ error: "Webhook handler failed" });
+  }
+});
+
 // Resend inbound webhook: must receive raw body for signature verification (Svix)
 app.post("/webhooks/resend/inbound", express.raw({ type: "application/json", limit: "1mb" }), async (req, res) => {
   const secret = process.env.RESEND_WEBHOOK_SECRET;

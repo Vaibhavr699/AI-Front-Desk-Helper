@@ -8,7 +8,8 @@ const APP_STORE_URL = process.env.REP_COACH_APP_STORE_URL || "https://apps.apple
 const PLAY_STORE_URL = process.env.REP_COACH_PLAY_STORE_URL || "https://play.google.com";
 const DASHBOARD_URL = process.env.DASHBOARD_URL || process.env.BASE_URL || "";
 
-async function provisionFromCheckout(session) {
+async function provisionFromCheckout(session, opts = {}) {
+  const seatTier = ["standard", "pro", "elite"].includes(opts.tier) ? opts.tier : "standard";
   const customerEmail = session.customer_details?.email || session.customer_email;
   const magicLinkToken = session.client_reference_id;
 
@@ -46,7 +47,16 @@ async function provisionFromCheckout(session) {
         WHERE id = $2`,
       [session.subscription || null, tenantId],
     );
-    console.log("[repCoachProvisioning] enabled rep coach for existing tenant=%s user=%s", tenantId, email);
+    await db.query(
+      `UPDATE dashboard_users
+          SET rep_seat_active = true,
+              rep_seat_tier = $1,
+              rep_seat_activated_at = COALESCE(rep_seat_activated_at, now()),
+              updated_at = now()
+        WHERE id = $2`,
+      [seatTier, existingUser.rows[0].id],
+    );
+    console.log("[repCoachProvisioning] enabled rep coach (tier=%s) for existing tenant=%s user=%s", seatTier, tenantId, email);
     return;
   }
 
@@ -54,13 +64,18 @@ async function provisionFromCheckout(session) {
   const bcrypt = require("bcrypt");
   const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
+  const companyName = email.split("@")[1]?.split(".")[0] || "My Company";
+  const slugBase =
+    companyName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "company";
+  const slug = `${slugBase}-${crypto.randomBytes(3).toString("hex")}`;
+
   const tenantResult = await db.query(
-    `INSERT INTO tenants (name, plan, subscription_status, stripe_subscription_id, stripe_customer_id, rep_coach_enabled)
-     VALUES ($1, $2, 'active', $3, $4, true)
+    `INSERT INTO tenants (name, company_name, slug, plan, subscription_status, stripe_subscription_id, stripe_customer_id, rep_coach_enabled, aifdh_enabled)
+     VALUES ($1, $1, $2, 'basic', 'active', $3, $4, true, false)
      RETURNING id`,
     [
-      email.split("@")[1]?.split(".")[0] || "My Company",
-      "basic",
+      companyName,
+      slug,
       session.subscription || null,
       session.customer || null,
     ],
@@ -68,9 +83,9 @@ async function provisionFromCheckout(session) {
   const tenantId = tenantResult.rows[0].id;
 
   await db.query(
-    `INSERT INTO dashboard_users (tenant_id, email, password, role, rep_seat_active, rep_seat_tier)
-     VALUES ($1, $2, $3, 'admin', true, 'standard')`,
-    [tenantId, email, hashedPassword],
+    `INSERT INTO dashboard_users (tenant_id, email, password_hash, role, rep_seat_active, rep_seat_tier)
+     VALUES ($1, $2, $3, 'admin', true, $4)`,
+    [tenantId, email, hashedPassword, seatTier],
   );
 
   console.log("[repCoachProvisioning] created tenant=%s user=%s", tenantId, email);

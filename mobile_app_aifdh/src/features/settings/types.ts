@@ -89,10 +89,10 @@ export const NOTIFICATION_LABELS: Record<NotificationKey, { title: string; subti
   },
   live_coach_alert: {
     title: "Live coaching alerts",
-    subtitle: "Real-time coaching during in-home sessions (Phase 6 D)",
+    subtitle: "Real-time coaching during in-home sessions",
   },
   roleplay_invite: {
     title: "Roleplay invites",
-    subtitle: "When a roleplay scenario is shared with you (Phase 6 C2)",
+    subtitle: "When a roleplay scenario is shared with you",
   },
 };

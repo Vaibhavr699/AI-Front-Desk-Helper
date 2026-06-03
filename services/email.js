@@ -21,17 +21,21 @@ const CONTACT_EMAIL = process.env.CONTACT_EMAIL || "drew@aifrontdeskhelper.com";
 // tenant doesn't have a tenant.support_email configured.
 const SUPPORT_EMAIL_DEFAULT = "support@aifrontdeskhelper.com";
 
-async function sendEmail({ to, subject, html, text, bcc, replyTo }) {
+// AI Rep Coach is a separate product on its own verified domain (airepcoach.com).
+// Its emails send from this address; AIFDH emails keep the default EMAIL_FROM.
+const REP_COACH_FROM = process.env.REP_COACH_EMAIL_FROM || "AI Rep Coach <noreply@airepcoach.com>";
+
+async function sendEmail({ to, subject, html, text, bcc, replyTo, from }) {
   if (!resend) {
     console.warn("[Email] Not sending – Resend not configured (check RESEND_API_KEY and EMAIL_FROM).");
     return { ok: false, error: "Email not configured" };
   }
   const toList = Array.isArray(to) ? to : [to];
   const bccList = bcc ? (Array.isArray(bcc) ? bcc : [bcc]) : undefined;
-  
+
   console.log("[Email] Calling Resend API: to=", toList.join(", "), "subject=", subject, "bcc=", bccList?.join(", "));
   const { data, error } = await resend.emails.send({
-    from: fromEmail,
+    from: from || fromEmail,
     to: toList,
     bcc: bccList,
     reply_to: replyTo,
@@ -1006,6 +1010,7 @@ function escapeHtml(s) {
 
 module.exports = {
   sendEmail,
+  REP_COACH_FROM,
   sendBookingConfirmationEmail,
   sendBookingCancellationEmail,
   sendTransferNotificationEmail,

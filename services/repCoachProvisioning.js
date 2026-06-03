@@ -2,7 +2,7 @@
 
 const crypto = require("crypto");
 const db = require("../lib/db");
-const { sendEmail } = require("./email");
+const { sendEmail, REP_COACH_FROM } = require("./email");
 
 const APP_STORE_URL = process.env.REP_COACH_APP_STORE_URL || "https://apps.apple.com";
 const PLAY_STORE_URL = process.env.REP_COACH_PLAY_STORE_URL || "https://play.google.com";
@@ -93,6 +93,7 @@ async function provisionFromCheckout(session, opts = {}) {
   const loginUrl = DASHBOARD_URL ? `${DASHBOARD_URL}/login` : "";
 
   await sendEmail({
+    from: REP_COACH_FROM,
     to: email,
     subject: "Welcome to AI Rep Coach — Your account is ready",
     html: `

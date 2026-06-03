@@ -28,6 +28,7 @@
     "production": {
       "channel": "production",
       "autoIncrement": true,
+      "credentialsSource": "local",
       "env": {
         "EXPO_PUBLIC_API_URL": "https://ai-front-desk-backend.onrender.com"
       },

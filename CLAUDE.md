@@ -48,12 +48,12 @@ Legend: ✅ done · 🟡 partial · ❌ missing
 | 2 | Cue engine: GPT-4o, 10–15s windows | ✅ | `services/liveCueEngine.js` (`gpt-4o`, `WINDOW_SECONDS=12`, 20s per-type cooldown) |
 | 3 | 8 cue types | ✅ | `liveCueEngine.js:22-31` (ask_discovery, listen, disc_reframe, missing_close, address_objection, slow_down, build_rapport, confirm_next_step) |
 | 4 | Phone overlay banner, auto-dismiss 8s | ✅ | `src/features/in-home-session/components/cue-overlay-banner.tsx` (`AUTO_DISMISS_MS=8_000`, urgency colors, haptics) |
-| 5 | Apple Watch companion app | 🟡 | `native/watchos/RepCoach WatchKit Extension`, `native/ios/WatchBridge.swift`+`.m` exist with WCSession delegation, but RN **never calls** WatchBridge — iOS gets phone banner only. |
-| 6 | Android Wear OS variant | ✅ | `wear/` (MainActivity.kt, CueListenerService.kt), `modules/wear-bridge/` (MessageClient `/coaching-cue`), `src/features/in-home-session/hooks/use-watch-cue.ts` (Android). Proven E2E. |
+| 5 | Apple Watch companion app | 🟡 | **Built, pending iOS build to verify.** watchOS app in `targets/watch/` (RepCoachApp/CueManager/CueGlanceView + `expo-target.config.js`, for `@bacons/apple-targets`). Phone→watch bridge added to the `wear-bridge` Expo module iOS side (`modules/wear-bridge/ios/WearBridgeModule.swift` via WCSession) — same `WearBridge` JS API as Android. `use-watch-cue.ts` now sends on iOS too. **To enable:** add `"@bacons/apple-targets"` to `app.json` plugins + set `APPLE_TEAM_ID` (needs Apple Developer acct), then iOS EAS build. Not added to plugins yet to avoid breaking the Android-first build. |
+| 6 | Android Wear OS variant | ✅ | `wear/` (MainActivity.kt, CueListenerService.kt), `modules/wear-bridge/` (MessageClient `/coaching-cue`), `src/features/in-home-session/hooks/use-watch-cue.ts`. Proven E2E. |
 | 7 | Cue history per session | ✅ | `in_home_alerts` table (`migrations/076_phase6_d_v0_live_coaching.sql`), `liveCueEngine.js:_persistAlert` |
 | 8 | Per-cue-type disable setting | ✅ | `routes/rep/cue-settings.js` (`cue_preferences` JSONB), `repInHomeWs.js:43-52`, `settings/components/cue-types-card.tsx` |
 
-**M2 gaps:** wire Apple Watch (RN → WatchBridge → WCSession; ~2–3h). Realtime API is an intentional trade-off, not a defect — chunked Whisper is the working live path. Live WS: `ws/rep/in-home/:sessionId`.
+**M2 gaps:** Apple Watch app is fully authored (`targets/watch/` + iOS `wear-bridge`) but unverified — it needs the Apple Developer account, the `@bacons/apple-targets` plugin enabled in `app.json`, `APPLE_TEAM_ID` set, and an iOS EAS build (can't build/test in this env or Expo Go). Realtime API is an intentional trade-off, not a defect — chunked Whisper is the working live path. Live WS: `ws/rep/in-home/:sessionId`.
 
 ## Milestone 3 — Whispered audio coaching via bone-conduction earbud (software layer ✅; on-device audio pending EAS build)
 Decisions: **software-first** (build now, verify audio on EAS dev build later — Expo Go can't route audio) + **earbud-only playback** (suppress audio when no earbud; fall back to visual so the homeowner never hears it).

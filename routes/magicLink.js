@@ -3,7 +3,7 @@
 const express = require("express");
 const crypto = require("crypto");
 const db = require("../lib/db");
-const { sendEmail } = require("../services/email");
+const { sendEmail, REP_COACH_FROM } = require("../services/email");
 
 const router = express.Router();
 
@@ -33,6 +33,7 @@ router.post("/request", async (req, res) => {
       : `${REP_COACH_URL}/setup?token=${token}`;
 
     const result = await sendEmail({
+      from: REP_COACH_FROM,
       to: normalized,
       subject: "Your AI Rep Coach Demo — Get Started",
       html: `

@@ -274,6 +274,45 @@ router.post("/book", async (req, res) => {
       return res.status(500).json(result);
     }
 
+    // ── Surface the booking as a website conversation ──────────────────────
+    // The Conversations tab is built from the `messages` table — a lead only
+    // appears there once it has a messages row. A widget BOOKING (slot picker →
+    // confirm) never goes through the chat path, so without this insert the
+    // lead + booking exist (notifications fire) but no thread shows up. We write
+    // one AI-authored outbound website message summarizing the booking so the
+    // thread surfaces, consistent with how voice/SMS threads come to exist.
+    // Non-fatal: a failure here must never fail a booking that's already saved.
+    const bookedLeadId = result.leadId || leadId || null;
+    if (bookedLeadId) {
+      const summaryParts = [
+        `Appointment booked for ${date} at ${time}`,
+        projectType ? `(${projectType})` : null,
+      ].filter(Boolean);
+      const summaryBody = `${summaryParts.join(" ")}.${
+        contact.name && contact.name !== "New Lead" ? ` Booked under ${contact.name}.` : ""
+      }`;
+
+      db.query(
+        `INSERT INTO messages (tenant_id, lead_id, channel, direction, body, metadata)
+         VALUES ($1, $2, 'website', 'outbound', $3, $4::jsonb)`,
+        [
+          tenant.id,
+          bookedLeadId,
+          summaryBody,
+          JSON.stringify({
+            system_generated: true,
+            booking_id: result.bookingId,
+            source: source || "widget_booking",
+            session_id: sessionId || null,
+          }),
+        ]
+      ).catch((msgErr) =>
+        console.error(
+          "[Booking API] booking-summary message insert failed (non-fatal) tenant=%s lead=%s: %s",
+          tenant.id, bookedLeadId, msgErr.message
+        )
+      );
+    }
     console.log("[Booking API] booked tenant=%s bookingId=%s leadId=%s eventId=%s consentId=%s",
       tenant.id, result.bookingId, result.leadId, result.eventId || "none", consentId);
 

@@ -260,10 +260,14 @@ async function sendFacebookGraphMessage(senderId, text, pageAccessToken) {
 // ─────────────────────────────────────────────────────────────────────
 async function detectLeadChannel(leadId) {
   try {
+    // Prefer the latest INBOUND message's channel (what the customer is using).
+    // Fall back to the latest message of ANY direction so leads whose only
+    // activity is a system-generated booking summary (website) still resolve
+    // correctly instead of defaulting to sms.
     const res = await db.query(
       `SELECT channel FROM messages
-        WHERE lead_id = $1 AND direction = 'inbound'
-        ORDER BY created_at DESC
+        WHERE lead_id = $1
+        ORDER BY (direction = 'inbound') DESC, created_at DESC
         LIMIT 1`,
       [leadId]
     );

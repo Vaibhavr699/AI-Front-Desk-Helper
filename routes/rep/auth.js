@@ -9,6 +9,7 @@
 //      • If valid trusted_device_token matches this fingerprint → returns a
 //        full rep session immediately (skip the email code)
 //      • Otherwise emails a 6-digit one-time code and returns a challenge token
+//        (carrying a rotating otp session nonce)
 //
 //   2. POST /verify-otp
 //      Body: { challenge_token, code, device_fingerprint, biometric_type?,
@@ -22,13 +23,14 @@
 //      • Re-emails a fresh code (throttled per OTP_RESEND_COOLDOWN_MS)
 //
 //   4. POST /biometric-verify
-//      Lightweight ping — the device says "Face ID / Touch ID succeeded".
-//      We bump last_app_open_at and log the event. Token verification has
-//      already happened in requireRep, so this is observability + the spec's
-//      audit hook, not a security gate by itself.
+//      Audit-only ping; requireRep has already validated the session JWT.
 //
 //   5. POST /logout
 //      Optionally revokes the trusted_device_token for this fingerprint.
+//
+// Brute force is bounded three ways: a per-IP rate limiter on each public
+// endpoint, a per-code attempt cap, and a persistent per-account failed-count
+// that triggers a lockout and is NOT reset when a new code is issued.
 // ────────────────────────────────────────────────────────────────────────────
 
 const express = require("express");
@@ -39,6 +41,7 @@ const { sendRepLoginOtp } = require("../../services/email");
 const db = require("../../lib/db");
 const { repAuthChain } = require("../../lib/requireRep");
 const repSeats = require("../../lib/repSeats");
+const { rateLimit } = require("../../lib/rateLimit");
 
 const SEAT_LIMIT_ERROR = {
   error: "Your team has exceeded its seat limit. Contact your admin.",
@@ -46,6 +49,22 @@ const SEAT_LIMIT_ERROR = {
 };
 
 const router = express.Router();
+
+const loginLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 10,
+  message: "Too many sign-in attempts. Please wait a minute and try again.",
+});
+const verifyLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 10,
+  message: "Too many attempts. Please wait a minute and try again.",
+});
+const resendLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 5,
+  message: "Too many code requests. Please wait a minute and try again.",
+});
 
 function clientIp(req) {
   return req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null;
@@ -59,7 +78,7 @@ function tenantFlags(row) {
 }
 
 // ── POST /api/rep/auth/login ────────────────────────────────────────────────
-router.post("/login", async (req, res) => {
+router.post("/login", loginLimiter, async (req, res) => {
   try {
     const { email, password, device_fingerprint, trusted_device_token } = req.body || {};
     if (!email || !password) {
@@ -122,8 +141,20 @@ router.post("/login", async (req, res) => {
       }
     }
 
-    // No trusted device — email a one-time code and issue a challenge.
-    const code = await repAuth.issueLoginOtp(user.id);
+    // Refuse to issue a code while the account is in OTP lockout.
+    const lock = await repAuth.isLoginLocked(user.id);
+    if (lock.locked) {
+      return res.status(429).json({
+        error: "Too many attempts. Please try again later.",
+        code: "OTP_LOCKED",
+        retry_after_ms: lock.retryAfterMs,
+      });
+    }
+
+    // Generate + EMAIL the code first; only persist it once the email is sent,
+    // so a send failure never destroys a still-valid code or arms the cooldown.
+    const sessionId = repAuth.newOtpSessionId();
+    const code = repAuth.generateOtpCode();
     const sent = await sendRepLoginOtp(user.email, code);
     if (!sent || sent.ok === false) {
       console.error("[rep/auth/login] OTP email failed:", sent && sent.error);
@@ -132,8 +163,9 @@ router.post("/login", async (req, res) => {
         code: "OTP_SEND_FAILED",
       });
     }
+    await repAuth.storeLoginOtp(user.id, code, sessionId);
 
-    const challenge = repAuth.signChallenge(user);
+    const challenge = repAuth.signChallenge(user, sessionId);
     await repAuth.logRepEvent(req, {
       user_id: user.id,
       tenant_id: user.tenant_id,
@@ -148,7 +180,7 @@ router.post("/login", async (req, res) => {
 });
 
 // ── POST /api/rep/auth/verify-otp ───────────────────────────────────────────
-router.post("/verify-otp", async (req, res) => {
+router.post("/verify-otp", verifyLimiter, async (req, res) => {
   try {
     const {
       challenge_token,
@@ -179,22 +211,25 @@ router.post("/verify-otp", async (req, res) => {
       return res.status(403).json(SEAT_LIMIT_ERROR);
     }
 
-    const result = await repAuth.verifyLoginOtp(user.id, code);
+    const result = await repAuth.verifyLoginOtp(user.id, code, decoded.otp_sid);
     if (!result.ok) {
       const map = {
         no_code: { s: 400, e: "No active code. Request a new one.", c: "OTP_NOT_FOUND" },
         expired: { s: 401, e: "That code expired. Request a new one.", c: "OTP_EXPIRED" },
-        too_many: { s: 429, e: "Too many attempts. Request a new code.", c: "OTP_TOO_MANY" },
+        too_many: { s: 429, e: "Too many attempts on this code. Request a new one.", c: "OTP_TOO_MANY" },
+        locked: { s: 429, e: "Too many attempts. Please try again later.", c: "OTP_LOCKED" },
         invalid: { s: 401, e: "Invalid code", c: "OTP_INVALID" },
       };
       const m = map[result.reason] || map.invalid;
+      const body = { error: m.e, code: m.c };
+      if (result.retryAfterMs) body.retry_after_ms = result.retryAfterMs;
       await repAuth.logRepEvent(req, {
         user_id: user.id,
         tenant_id: user.tenant_id,
         event_type: "rep_otp_bad_code",
         metadata: { reason: result.reason, device_fingerprint: device_fingerprint || null },
       });
-      return res.status(m.s).json({ error: m.e, code: m.c });
+      return res.status(m.s).json(body);
     }
 
     let trustedDevice = null;
@@ -246,7 +281,7 @@ router.post("/verify-otp", async (req, res) => {
 });
 
 // ── POST /api/rep/auth/resend-otp ───────────────────────────────────────────
-router.post("/resend-otp", async (req, res) => {
+router.post("/resend-otp", resendLimiter, async (req, res) => {
   try {
     const { challenge_token } = req.body || {};
     if (!challenge_token) {
@@ -268,6 +303,15 @@ router.post("/resend-otp", async (req, res) => {
       return res.status(403).json({ error: "Rep seat inactive", code: "REP_SEAT_INACTIVE" });
     }
 
+    const lock = await repAuth.isLoginLocked(user.id);
+    if (lock.locked) {
+      return res.status(429).json({
+        error: "Too many attempts. Please try again later.",
+        code: "OTP_LOCKED",
+        retry_after_ms: lock.retryAfterMs,
+      });
+    }
+
     const gate = await repAuth.canResendLoginOtp(user.id);
     if (!gate.ok) {
       return res.status(429).json({
@@ -277,7 +321,9 @@ router.post("/resend-otp", async (req, res) => {
       });
     }
 
-    const code = await repAuth.issueLoginOtp(user.id);
+    // Reuse the challenge's session nonce so the client's existing challenge
+    // token still verifies the new code.
+    const code = repAuth.generateOtpCode();
     const sent = await sendRepLoginOtp(user.email, code);
     if (!sent || sent.ok === false) {
       console.error("[rep/auth/resend-otp] OTP email failed:", sent && sent.error);
@@ -286,6 +332,7 @@ router.post("/resend-otp", async (req, res) => {
         code: "OTP_SEND_FAILED",
       });
     }
+    await repAuth.storeLoginOtp(user.id, code, decoded.otp_sid);
     await repAuth.logRepEvent(req, {
       user_id: user.id,
       tenant_id: user.tenant_id,

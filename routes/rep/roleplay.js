@@ -152,7 +152,7 @@ router.post("/respond", ...repAuthChain, async (req, res) => {
     }
 
     const r = await db.query(
-      `SELECT s.*, sc.* AS scenario_row,
+      `SELECT s.*,
               sc.title, sc.industry, sc.scenario_type, sc.disc_type,
               sc.skills_trained, sc.caller_persona_prompt
          FROM roleplay_sessions s
@@ -313,10 +313,12 @@ router.get("/sessions", ...repAuthChain, async (req, res) => {
 router.get("/sessions/:id", ...repAuthChain, async (req, res) => {
   try {
     const r = await db.query(
-      `SELECT s.*, sc.* AS scenario_row,
+      `SELECT s.*,
               sc.id AS scenario_table_id,
               sc.tenant_id AS scenario_tenant_id,
-              sc.title AS scenario_title
+              sc.title AS scenario_title,
+              sc.description, sc.industry, sc.scenario_type, sc.difficulty,
+              sc.skills_trained, sc.disc_type, sc.is_template
          FROM roleplay_sessions s
          LEFT JOIN roleplay_scenarios sc ON sc.id = s.scenario_id
         WHERE s.id = $1 AND s.user_id = $2 AND s.tenant_id = $3`,

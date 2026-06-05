@@ -85,18 +85,26 @@ router.patch("/", ...repAuthChain, async (req, res) => {
     let p = 1;
 
     if (req.body?.coaching_delivery_prefs && typeof req.body.coaching_delivery_prefs === "object") {
-      // Merge over current prefs so the client can send partial updates
-      // without clobbering the unspecified channels.
-      const current = await db.query(
-        "SELECT coaching_delivery_prefs FROM dashboard_users WHERE id = $1",
-        [req.rep.id]
-      );
-      const merged = {
-        ...(current.rows[0]?.coaching_delivery_prefs || {}),
-        ...req.body.coaching_delivery_prefs,
-      };
-      updates.push(`coaching_delivery_prefs = $${p++}::jsonb`);
-      values.push(JSON.stringify(merged));
+      // Accept only known channel keys/types so the client can't store arbitrary JSON.
+      const incoming = req.body.coaching_delivery_prefs;
+      const clean = {};
+      for (const ch of ["popup", "sidebar", "watch", "audio"]) {
+        if (typeof incoming[ch] === "boolean") clean[ch] = incoming[ch];
+      }
+      const gap = Number(incoming.audio_min_gap_seconds);
+      if (Number.isFinite(gap) && gap >= 0 && gap <= 3600) {
+        clean.audio_min_gap_seconds = Math.round(gap);
+      }
+      if (Object.keys(clean).length > 0) {
+        // Merge over current prefs so partial updates don't clobber other channels.
+        const current = await db.query(
+          "SELECT coaching_delivery_prefs FROM dashboard_users WHERE id = $1",
+          [req.rep.id]
+        );
+        const merged = { ...(current.rows[0]?.coaching_delivery_prefs || {}), ...clean };
+        updates.push(`coaching_delivery_prefs = $${p++}::jsonb`);
+        values.push(JSON.stringify(merged));
+      }
     }
     if (typeof req.body?.preferred_earbud_device === "string" || req.body?.preferred_earbud_device === null) {
       updates.push(`preferred_earbud_device = $${p++}`);

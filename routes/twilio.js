@@ -752,17 +752,22 @@ router.post("/rep-call-connect", (req, res) => {
 });
 
 router.post("/rep-recording-status", async (req, res) => {
+  const db = require("../lib/db");
+  const twilioLib = require("../lib/twilio");
+  const { repUserId, leadId, tenantId } = req.query;
+  const tenant = tenantId
+    ? await db.query("SELECT * FROM tenants WHERE id = $1", [tenantId]).then((r) => r.rows[0]).catch(() => null)
+    : null;
+  if (!twilioLib.validateTwilioRequest(req, tenant)) {
+    return res.status(403).json({ error: "Invalid signature" });
+  }
   res.sendStatus(200);
   const { RecordingUrl, RecordingSid, RecordingStatus, RecordingDuration } = req.body || {};
   if (RecordingStatus !== "completed" || !RecordingUrl) return;
-  const { repUserId, leadId, tenantId } = req.query;
-  if (!repUserId || !leadId || !tenantId) return;
+  if (!repUserId || !leadId || !tenantId || !tenant) return;
   try {
-    const db = require("../lib/db");
     const { transcribeBuffer } = require("../services/fieldRecording");
     const { analyzeConversation } = require("../lib/coachingEngine");
-    const twilioLib = require("../lib/twilio");
-    const tenant = await db.query("SELECT * FROM tenants WHERE id = $1", [tenantId]).then(r => r.rows[0]);
     const authInfo = twilioLib.getAuthForTenant(tenant);
     const auth = Buffer.from(`${authInfo.accountSid}:${authInfo.authToken}`).toString("base64");
     const mp3Url = RecordingUrl + ".mp3";

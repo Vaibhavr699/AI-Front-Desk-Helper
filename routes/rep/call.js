@@ -10,6 +10,29 @@ const router = express.Router();
 
 const BASE_URL = (process.env.BASE_URL || "").replace(/\/$/, "");
 
+// Full tenant row (incl. BYO Twilio credentials) so getClientForTenant can route
+// to the tenant's own subaccount instead of always falling back to the platform.
+async function tenantTwilioRow(tenantId) {
+  const r = await db.query(
+    "SELECT id, twilio_account_sid, twilio_auth_token FROM tenants WHERE id = $1",
+    [tenantId]
+  );
+  return r.rows[0] || { id: tenantId };
+}
+
+// Confirm the call SID was initiated by THIS rep (we stamp it into
+// recording_consents.metadata on initiate). Prevents acting on arbitrary SIDs.
+async function repOwnsCall(tenantId, repUserId, callSid) {
+  if (!callSid) return false;
+  const r = await db.query(
+    `SELECT 1 FROM recording_consents
+      WHERE tenant_id = $1 AND rep_user_id = $2 AND metadata->>'call_sid' = $3
+      LIMIT 1`,
+    [tenantId, repUserId, callSid]
+  );
+  return !!r.rows[0];
+}
+
 router.post("/initiate", ...repAuthChain, async (req, res) => {
   try {
     if (!req.rep.tenant_flags?.rep_coach_enabled) {
@@ -38,7 +61,7 @@ router.post("/initiate", ...repAuthChain, async (req, res) => {
       return res.status(400).json({ error: "No caller ID available. Configure a phone number first." });
     }
 
-    const client = twilioLib.getClientForTenant({ id: req.rep.tenant_id });
+    const client = twilioLib.getClientForTenant(await tenantTwilioRow(req.rep.tenant_id));
     const confName = `rep-call-${req.rep.id}-${Date.now()}`;
 
     const customerCall = await client.calls.create({
@@ -52,9 +75,9 @@ router.post("/initiate", ...repAuthChain, async (req, res) => {
 
     await db.query(
       `INSERT INTO recording_consents
-         (tenant_id, lead_id, rep_user_id, consent_status, consent_method)
-       VALUES ($1, $2, $3, 'obtained', 'tts_voip')`,
-      [req.rep.tenant_id, lead_id, req.rep.id],
+         (tenant_id, lead_id, rep_user_id, consent_status, consent_method, metadata)
+       VALUES ($1, $2, $3, 'obtained', 'tts_voip', $4::jsonb)`,
+      [req.rep.tenant_id, lead_id, req.rep.id, JSON.stringify({ call_sid: customerCall.sid })],
     );
 
     res.json({
@@ -71,7 +94,10 @@ router.post("/initiate", ...repAuthChain, async (req, res) => {
 
 router.get("/:callSid/status", ...repAuthChain, async (req, res) => {
   try {
-    const client = twilioLib.getClientForTenant({ id: req.rep.tenant_id });
+    if (!(await repOwnsCall(req.rep.tenant_id, req.rep.id, req.params.callSid))) {
+      return res.status(404).json({ error: "Call not found" });
+    }
+    const client = twilioLib.getClientForTenant(await tenantTwilioRow(req.rep.tenant_id));
     const call = await client.calls(req.params.callSid).fetch();
     res.json({ status: call.status, duration: call.duration });
   } catch (e) {
@@ -81,7 +107,10 @@ router.get("/:callSid/status", ...repAuthChain, async (req, res) => {
 
 router.post("/:callSid/end", ...repAuthChain, async (req, res) => {
   try {
-    const client = twilioLib.getClientForTenant({ id: req.rep.tenant_id });
+    if (!(await repOwnsCall(req.rep.tenant_id, req.rep.id, req.params.callSid))) {
+      return res.status(404).json({ error: "Call not found" });
+    }
+    const client = twilioLib.getClientForTenant(await tenantTwilioRow(req.rep.tenant_id));
     await client.calls(req.params.callSid).update({ status: "completed" });
     res.json({ status: "completed" });
   } catch (e) {

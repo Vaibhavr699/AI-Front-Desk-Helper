@@ -198,8 +198,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         challenge_token: challenge,
         code: code.trim(),
         device_fingerprint: fingerprint,
+        biometric_type: get().biometricType ?? undefined,
         trust_this_device: trustDevice,
       });
+      // The user may have cancelled or restarted login while this was in flight;
+      // if the challenge changed, drop the result instead of force-logging-in.
+      if (get().challengeToken !== challenge) {
+        set({ isBusy: false });
+        return;
+      }
       await persistSession(response.token, response.user);
       await persistTrustedDevice(response.trusted_device);
       set({
@@ -213,6 +220,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         enrollPromptDismissed: false,
       });
     } catch (err) {
+      if (get().challengeToken !== challenge) {
+        set({ isBusy: false });
+        return;
+      }
       set({ isBusy: false, lastError: toMessage(err) });
     }
   },
@@ -240,6 +251,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       challengeToken: null,
       pendingEmail: null,
       lastError: null,
+      isBusy: false,
     });
   },
 

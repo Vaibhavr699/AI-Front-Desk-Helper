@@ -38,6 +38,19 @@ const { normalizeE164Phone } = require("../../lib/phone");
 
 const PAGE_SIZE_DEFAULT = 50;
 const PAGE_SIZE_MAX = 200;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function badEmail(v) {
+  return v !== undefined && v !== null && v !== "" && !EMAIL_RE.test(String(v));
+}
+function badAmount(v) {
+  return (
+    v !== undefined &&
+    v !== null &&
+    v !== "" &&
+    !(Number.isFinite(Number(v)) && Number(v) >= 0)
+  );
+}
 
 router.post("/", ...repAuthChain, async (req, res) => {
   try {
@@ -47,6 +60,12 @@ router.post("/", ...repAuthChain, async (req, res) => {
     const { name, phone, email, address, project_type, estimated_value, source, notes } = req.body || {};
     if (!name || !phone) {
       return res.status(400).json({ error: "name and phone are required" });
+    }
+    if (badEmail(email)) {
+      return res.status(400).json({ error: "Invalid email address" });
+    }
+    if (badAmount(estimated_value)) {
+      return res.status(400).json({ error: "estimated_value must be a non-negative number" });
     }
     const normalized = normalizeE164Phone(String(phone));
     if (!normalized) {
@@ -100,6 +119,19 @@ router.post("/", ...repAuthChain, async (req, res) => {
 router.patch("/:id", ...repAuthChain, async (req, res) => {
   try {
     const { name, email, address, project_type, notes, estimated_value, status } = req.body || {};
+    if (badEmail(email)) {
+      return res.status(400).json({ error: "Invalid email address" });
+    }
+    if (badAmount(estimated_value)) {
+      return res.status(400).json({ error: "estimated_value must be a non-negative number" });
+    }
+    if (
+      status !== undefined &&
+      status !== null &&
+      (typeof status !== "string" || status.trim().length === 0 || status.length > 50)
+    ) {
+      return res.status(400).json({ error: "Invalid status" });
+    }
     const updates = [];
     const vals = [req.params.id, req.rep.tenant_id];
     let p = 3;

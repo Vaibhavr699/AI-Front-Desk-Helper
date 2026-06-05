@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -21,6 +21,7 @@ export function OtpScreen() {
   const verifyOtp = useAuthStore((s) => s.verifyOtp);
   const resendOtp = useAuthStore((s) => s.resendOtp);
   const cancelOtp = useAuthStore((s) => s.cancelOtp);
+  const clearError = useAuthStore((s) => s.clearError);
   const isBusy = useAuthStore((s) => s.isBusy);
   const lastError = useAuthStore((s) => s.lastError);
   const pendingEmail = useAuthStore((s) => s.pendingEmail);
@@ -28,16 +29,12 @@ export function OtpScreen() {
   const [code, setCode] = useState("");
   const [trustDevice, setTrustDevice] = useState(true);
   const [cooldown, setCooldown] = useState(RESEND_COOLDOWN_SECONDS);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    intervalRef.current = setInterval(() => {
-      setCooldown((c) => (c <= 1 ? 0 : c - 1));
-    }, 1000);
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, []);
+    if (cooldown <= 0) return;
+    const id = setInterval(() => setCooldown((c) => (c <= 1 ? 0 : c - 1)), 1000);
+    return () => clearInterval(id);
+  }, [cooldown]);
 
   const canSubmit = code.length === OTP_CODE_LENGTH && !isBusy;
   const canResend = cooldown === 0 && !isBusy;
@@ -57,6 +54,7 @@ export function OtpScreen() {
   }
 
   function handleCodeChange(text: string) {
+    if (lastError) clearError();
     setCode(text.replace(/\D/g, "").slice(0, OTP_CODE_LENGTH));
   }
 
@@ -85,7 +83,10 @@ export function OtpScreen() {
             </View>
 
             {lastError ? (
-              <View className="w-full rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+              <View
+                accessibilityRole="alert"
+                className="w-full rounded-xl border border-red-200 bg-red-50 px-4 py-3"
+              >
                 <Text className="text-sm text-red-700">{lastError}</Text>
               </View>
             ) : null}
@@ -104,12 +105,16 @@ export function OtpScreen() {
                 selectionColor={colors.brand[500]}
                 textContentType="oneTimeCode"
                 autoComplete="one-time-code"
+                accessibilityLabel="6-digit verification code"
                 className="h-20 w-full rounded-sm border border-surface-border bg-surface-input text-center text-4xl font-semibold tracking-[12px] text-ink-primary"
               />
 
               <Pressable
                 onPress={() => setTrustDevice((v) => !v)}
                 disabled={isBusy}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: trustDevice, disabled: isBusy }}
+                accessibilityLabel="Trust this device for 30 days"
                 className="flex-row items-center gap-3"
               >
                 <View
@@ -133,6 +138,8 @@ export function OtpScreen() {
               <Pressable
                 onPress={handleSubmit}
                 disabled={!canSubmit}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !canSubmit, busy: isBusy }}
                 className={`h-14 items-center justify-center rounded-sm bg-brand-600 active:bg-brand-700 ${canSubmit ? "" : "opacity-50"}`}
               >
                 <Text className="text-base font-semibold text-white">
@@ -143,6 +150,8 @@ export function OtpScreen() {
               <Pressable
                 onPress={handleResend}
                 disabled={!canResend}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !canResend }}
                 className="h-12 items-center justify-center rounded-sm active:bg-surface-raised"
               >
                 <Text
@@ -155,6 +164,8 @@ export function OtpScreen() {
               <Pressable
                 onPress={cancelOtp}
                 disabled={isBusy}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: isBusy }}
                 className="h-12 items-center justify-center rounded-sm active:bg-surface-raised"
               >
                 <Text className="text-sm font-medium text-ink-secondary">

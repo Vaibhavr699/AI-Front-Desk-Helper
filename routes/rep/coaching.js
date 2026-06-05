@@ -207,8 +207,8 @@ router.get("/conversations/:id", ...repAuthChain, async (req, res) => {
               c.outcome, c.duration_seconds, c.source_type, c.scoring_skip_reason
          FROM coaching_conversations c
          LEFT JOIN leads l ON l.id = c.lead_id
-        WHERE c.id = $1 AND c.tenant_id = $2`,
-      [convId, req.rep.tenant_id]
+        WHERE c.id = $1 AND c.tenant_id = $2 AND c.rep_user_id = $3`,
+      [convId, req.rep.tenant_id, req.rep.id]
     );
     const conv = cR.rows[0];
     if (!conv) return res.status(404).json({ error: "Conversation not found" });

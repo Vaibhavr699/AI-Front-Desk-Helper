@@ -7,39 +7,35 @@
 //      Body: { email, password, device_fingerprint, trusted_device_token? }
 //      • Verifies password
 //      • If valid trusted_device_token matches this fingerprint → returns a
-//        full rep session immediately (skip TOTP)
-//      • Otherwise:
-//          - if totp_secret missing → returns enroll payload (otpauth URI +
-//            secret) so the app can render a QR code and have the rep scan it
-//          - if totp_secret present → returns a challenge token only
+//        full rep session immediately (skip the email code)
+//      • Otherwise emails a 6-digit one-time code and returns a challenge token
 //
-//   2. POST /totp
+//   2. POST /verify-otp
 //      Body: { challenge_token, code, device_fingerprint, biometric_type?,
 //              trust_this_device? }
-//      • Verifies code against stored secret (enrolling on first success if
-//        we just generated one above)
+//      • Verifies the emailed code against the stored hash
 //      • If trust_this_device → issues a 30-day trusted_device_token
 //      • Returns the rep session JWT + user payload
 //
-//   3. POST /biometric-verify
+//   3. POST /resend-otp
+//      Body: { challenge_token }
+//      • Re-emails a fresh code (throttled per OTP_RESEND_COOLDOWN_MS)
+//
+//   4. POST /biometric-verify
 //      Lightweight ping — the device says "Face ID / Touch ID succeeded".
 //      We bump last_app_open_at and log the event. Token verification has
 //      already happened in requireRep, so this is observability + the spec's
 //      audit hook, not a security gate by itself.
 //
-//   4. POST /logout
+//   5. POST /logout
 //      Optionally revokes the trusted_device_token for this fingerprint.
-//      Session JWT is stateless so the client just drops it; revocation is
-//      only meaningful for the device-trust path.
-//
-//   5. POST /push-token
-//      Stores the Expo push token. Idempotent.
 // ────────────────────────────────────────────────────────────────────────────
 
 const express = require("express");
 const auth = require("../../lib/auth");
 const repAuth = require("../../lib/repAuth");
 const { logAction } = require("../../lib/auditLogger");
+const { sendRepLoginOtp } = require("../../services/email");
 const db = require("../../lib/db");
 const { repAuthChain } = require("../../lib/requireRep");
 const repSeats = require("../../lib/repSeats");
@@ -53,6 +49,13 @@ const router = express.Router();
 
 function clientIp(req) {
   return req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null;
+}
+
+function tenantFlags(row) {
+  return {
+    rep_coach_enabled: row?.rep_coach_enabled === true,
+    aifdh_enabled: row?.aifdh_enabled !== false,
+  };
 }
 
 // ── POST /api/rep/auth/login ────────────────────────────────────────────────
@@ -86,7 +89,7 @@ router.post("/login", async (req, res) => {
       return res.status(403).json(SEAT_LIMIT_ERROR);
     }
 
-    // Trusted-device fast path — skip TOTP if the device presents a valid token.
+    // Trusted-device fast path — skip the email code if the device presents a valid token.
     if (trusted_device_token && device_fingerprint) {
       const trusted = await repAuth.findTrustedDevice(user.id, {
         fingerprint: device_fingerprint,
@@ -104,7 +107,6 @@ router.post("/login", async (req, res) => {
           metadata: { device_fingerprint, biometric_type: trusted.biometric_type },
         });
         const tf = await db.query("SELECT rep_coach_enabled, aifdh_enabled FROM tenants WHERE id = $1", [user.tenant_id]);
-        const t = tf.rows[0] || {};
         return res.json({
           status: "ok",
           token: sessionToken,
@@ -114,47 +116,39 @@ router.post("/login", async (req, res) => {
             tenant_id: user.tenant_id,
             role: user.role,
             seat_tier: user.rep_seat_tier || "standard",
-            tenant_flags: {
-              rep_coach_enabled: t.rep_coach_enabled === true,
-              aifdh_enabled: t.aifdh_enabled !== false,
-            },
+            tenant_flags: tenantFlags(tf.rows[0]),
           },
         });
       }
     }
 
-    // No trusted device — issue a TOTP challenge.
-    let enroll = null;
-    if (!user.totp_secret) {
-      // First-time enrollment: generate a fresh secret and stash it. It only
-      // becomes "active" once the rep completes /totp with a valid code.
-      const secret = repAuth.newTotpSecret();
-      await db.query("UPDATE dashboard_users SET totp_secret = $1 WHERE id = $2", [
-        secret,
-        user.id,
-      ]);
-      enroll = {
-        otpauth_uri: repAuth.totpUri(secret, user.email),
-        secret, // shown to rep once so they can paste into an authenticator manually
-      };
+    // No trusted device — email a one-time code and issue a challenge.
+    const code = await repAuth.issueLoginOtp(user.id);
+    const sent = await sendRepLoginOtp(user.email, code);
+    if (!sent || sent.ok === false) {
+      console.error("[rep/auth/login] OTP email failed:", sent && sent.error);
+      return res.status(502).json({
+        error: "Could not send your verification code. Please try again.",
+        code: "OTP_SEND_FAILED",
+      });
     }
 
     const challenge = repAuth.signChallenge(user);
     await repAuth.logRepEvent(req, {
       user_id: user.id,
       tenant_id: user.tenant_id,
-      event_type: enroll ? "rep_totp_enroll_started" : "rep_totp_challenge_issued",
+      event_type: "rep_otp_challenge_issued",
       metadata: { device_fingerprint: device_fingerprint || null },
     });
-    res.json({ status: "totp_required", challenge_token: challenge, enroll });
+    res.json({ status: "otp_required", challenge_token: challenge });
   } catch (e) {
     console.error("[rep/auth/login]", e);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// ── POST /api/rep/auth/totp ─────────────────────────────────────────────────
-router.post("/totp", async (req, res) => {
+// ── POST /api/rep/auth/verify-otp ───────────────────────────────────────────
+router.post("/verify-otp", async (req, res) => {
   try {
     const {
       challenge_token,
@@ -173,7 +167,7 @@ router.post("/totp", async (req, res) => {
       return res.status(401).json({ error: "Challenge expired or invalid", code: "CHALLENGE_INVALID" });
     }
     const r = await db.query(
-      "SELECT id, email, tenant_id, role, totp_secret, rep_seat_active, rep_seat_tier FROM dashboard_users WHERE id = $1",
+      "SELECT id, email, tenant_id, role, rep_seat_active, rep_seat_tier FROM dashboard_users WHERE id = $1",
       [decoded.sub]
     );
     const user = r.rows[0];
@@ -184,17 +178,23 @@ router.post("/totp", async (req, res) => {
     if (!(await repSeats.isWithinSeatLimit(user.tenant_id, user.id))) {
       return res.status(403).json(SEAT_LIMIT_ERROR);
     }
-    if (!user.totp_secret) {
-      return res.status(400).json({ error: "TOTP not enrolled. Re-run /login first.", code: "TOTP_NOT_ENROLLED" });
-    }
-    if (!repAuth.verifyTotp(user.totp_secret, code)) {
+
+    const result = await repAuth.verifyLoginOtp(user.id, code);
+    if (!result.ok) {
+      const map = {
+        no_code: { s: 400, e: "No active code. Request a new one.", c: "OTP_NOT_FOUND" },
+        expired: { s: 401, e: "That code expired. Request a new one.", c: "OTP_EXPIRED" },
+        too_many: { s: 429, e: "Too many attempts. Request a new code.", c: "OTP_TOO_MANY" },
+        invalid: { s: 401, e: "Invalid code", c: "OTP_INVALID" },
+      };
+      const m = map[result.reason] || map.invalid;
       await repAuth.logRepEvent(req, {
         user_id: user.id,
         tenant_id: user.tenant_id,
-        event_type: "rep_totp_bad_code",
-        metadata: { device_fingerprint: device_fingerprint || null },
+        event_type: "rep_otp_bad_code",
+        metadata: { reason: result.reason, device_fingerprint: device_fingerprint || null },
       });
-      return res.status(401).json({ error: "Invalid code", code: "TOTP_INVALID" });
+      return res.status(m.s).json({ error: m.e, code: m.c });
     }
 
     let trustedDevice = null;
@@ -221,12 +221,11 @@ router.post("/totp", async (req, res) => {
     await repAuth.logRepEvent(req, {
       user_id: user.id,
       tenant_id: user.tenant_id,
-      event_type: "rep_login_totp_ok",
+      event_type: "rep_login_otp_ok",
       metadata: { device_fingerprint: device_fingerprint || null, biometric_type: biometric_type || null },
     });
 
     const tf2 = await db.query("SELECT rep_coach_enabled, aifdh_enabled FROM tenants WHERE id = $1", [user.tenant_id]);
-    const t2 = tf2.rows[0] || {};
     res.json({
       status: "ok",
       token: sessionToken,
@@ -237,14 +236,64 @@ router.post("/totp", async (req, res) => {
         tenant_id: user.tenant_id,
         role: user.role,
         seat_tier: user.rep_seat_tier || "standard",
-        tenant_flags: {
-          rep_coach_enabled: t2.rep_coach_enabled === true,
-          aifdh_enabled: t2.aifdh_enabled !== false,
-        },
+        tenant_flags: tenantFlags(tf2.rows[0]),
       },
     });
   } catch (e) {
-    console.error("[rep/auth/totp]", e);
+    console.error("[rep/auth/verify-otp]", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ── POST /api/rep/auth/resend-otp ───────────────────────────────────────────
+router.post("/resend-otp", async (req, res) => {
+  try {
+    const { challenge_token } = req.body || {};
+    if (!challenge_token) {
+      return res.status(400).json({ error: "challenge_token required" });
+    }
+    let decoded;
+    try {
+      decoded = repAuth.verifyChallenge(challenge_token);
+    } catch (err) {
+      return res.status(401).json({ error: "Challenge expired or invalid", code: "CHALLENGE_INVALID" });
+    }
+    const r = await db.query(
+      "SELECT id, email, tenant_id, rep_seat_active FROM dashboard_users WHERE id = $1",
+      [decoded.sub]
+    );
+    const user = r.rows[0];
+    if (!user) return res.status(401).json({ error: "User not found" });
+    if (!user.rep_seat_active) {
+      return res.status(403).json({ error: "Rep seat inactive", code: "REP_SEAT_INACTIVE" });
+    }
+
+    const gate = await repAuth.canResendLoginOtp(user.id);
+    if (!gate.ok) {
+      return res.status(429).json({
+        error: "Please wait a moment before requesting another code.",
+        code: "OTP_RESEND_COOLDOWN",
+        retry_after_ms: gate.retryAfterMs,
+      });
+    }
+
+    const code = await repAuth.issueLoginOtp(user.id);
+    const sent = await sendRepLoginOtp(user.email, code);
+    if (!sent || sent.ok === false) {
+      console.error("[rep/auth/resend-otp] OTP email failed:", sent && sent.error);
+      return res.status(502).json({
+        error: "Could not send your verification code. Please try again.",
+        code: "OTP_SEND_FAILED",
+      });
+    }
+    await repAuth.logRepEvent(req, {
+      user_id: user.id,
+      tenant_id: user.tenant_id,
+      event_type: "rep_otp_resent",
+    });
+    res.json({ status: "otp_required" });
+  } catch (e) {
+    console.error("[rep/auth/resend-otp]", e);
     res.status(500).json({ error: "Server error" });
   }
 });

@@ -11,9 +11,11 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.airepcoach.app",
+      "appleTeamId": "886Y3Y9RHX",
       "infoPlist": {
         "NSFaceIDUsageDescription": "AI Rep Coach uses Face ID to unlock the app on this device.",
-        "NSMicrophoneUsageDescription": "AI Rep Coach records in-home sales conversations so they can be transcribed and coached."
+        "NSMicrophoneUsageDescription": "AI Rep Coach records in-home sales conversations so they can be transcribed and coached.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -29,7 +31,12 @@
       "permissions": [
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
       ]
     },
     "web": {
@@ -65,7 +72,8 @@
         }
       ],
       "expo-sqlite",
-      "expo-audio"
+      "expo-audio",
+      "@bacons/apple-targets"
     ],
     "experiments": {
       "typedRoutes": true,
@@ -74,9 +82,27 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "49a9c8e4-c6ea-4f05-94f0-f16396a88480"
+        "projectId": "49a9c8e4-c6ea-4f05-94f0-f16396a88480",
+        "build": {
+          "experimental": {
+            "ios": {
+              "appExtensions": [
+                {
+                  "bundleIdentifier": "com.airepcoach.app.watch",
+                  "targetName": "RepCoach"
+                }
+              ]
+            }
+          }
+        }
       }
     },
-    "owner": "rahull"
+    "owner": "rahull",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/49a9c8e4-c6ea-4f05-94f0-f16396a88480"
+    }
   }
 }

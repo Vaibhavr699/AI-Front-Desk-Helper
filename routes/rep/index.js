@@ -1,8 +1,8 @@
 "use strict";
 
 // ── /api/rep — Rep mobile app router ────────────────────────────────────────
-// One mount point so server.js stays tidy. /auth/login + /auth/totp are
-// public; every other rep route gates itself via repAuthChain.
+// One mount point so server.js stays tidy. /auth/login + /auth/verify-otp +
+// /auth/resend-otp are public; every other rep route gates itself via repAuthChain.
 // ────────────────────────────────────────────────────────────────────────────
 
 const express = require("express");

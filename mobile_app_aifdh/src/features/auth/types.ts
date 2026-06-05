@@ -7,20 +7,11 @@ export type LoginRequest = {
   trusted_device_token?: string;
 };
 
-export type EnrollmentPayload = {
-  otpauth_uri: string;
-  secret: string;
-};
-
 export type LoginResponse =
   | { status: "ok"; token: string; user: RepUser }
-  | {
-      status: "totp_required";
-      challenge_token: string;
-      enroll: EnrollmentPayload | null;
-    };
+  | { status: "otp_required"; challenge_token: string };
 
-export type TotpRequest = {
+export type OtpVerifyRequest = {
   challenge_token: string;
   code: string;
   device_fingerprint: string;
@@ -28,12 +19,16 @@ export type TotpRequest = {
   trust_this_device?: boolean;
 };
 
+export type ResendOtpRequest = {
+  challenge_token: string;
+};
+
 export type TrustedDevicePayload = {
   token: string;
   expires_at: string;
 };
 
-export type TotpResponse = {
+export type OtpVerifyResponse = {
   status: "ok";
   token: string;
   trusted_device: TrustedDevicePayload | null;

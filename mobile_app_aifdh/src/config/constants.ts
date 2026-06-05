@@ -8,4 +8,4 @@ export const STORAGE_KEYS = {
 export const TABLET_BREAKPOINT_PX = 768;
 export const LARGE_TABLET_BREAKPOINT_PX = 1024;
 
-export const TOTP_CODE_LENGTH = 6;
+export const OTP_CODE_LENGTH = 6;

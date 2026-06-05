@@ -3,8 +3,9 @@ import { api } from "@/src/shared/api/client";
 import type {
   LoginRequest,
   LoginResponse,
-  TotpRequest,
-  TotpResponse,
+  OtpVerifyRequest,
+  OtpVerifyResponse,
+  ResendOtpRequest,
 } from "./types";
 
 export async function login(body: LoginRequest): Promise<LoginResponse> {
@@ -12,9 +13,13 @@ export async function login(body: LoginRequest): Promise<LoginResponse> {
   return data;
 }
 
-export async function verifyTotp(body: TotpRequest): Promise<TotpResponse> {
-  const { data } = await api.post<TotpResponse>("/rep/auth/totp", body);
+export async function verifyOtp(body: OtpVerifyRequest): Promise<OtpVerifyResponse> {
+  const { data } = await api.post<OtpVerifyResponse>("/rep/auth/verify-otp", body);
   return data;
+}
+
+export async function resendOtp(body: ResendOtpRequest): Promise<void> {
+  await api.post("/rep/auth/resend-otp", body);
 }
 
 export async function logout(deviceFingerprint: string): Promise<void> {

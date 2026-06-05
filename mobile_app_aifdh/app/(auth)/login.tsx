@@ -7,7 +7,7 @@ export default function LoginRoute() {
   const status = useAuthStore((s) => s.status);
 
   if (status === "authenticated") return <Redirect href="/" />;
-  if (status === "awaiting_totp") return <Redirect href="/(auth)/totp" />;
+  if (status === "awaiting_otp") return <Redirect href="/(auth)/otp" />;
 
   return <LoginScreen />;
 }

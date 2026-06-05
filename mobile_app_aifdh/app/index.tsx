@@ -24,6 +24,6 @@ export default function IndexRoute() {
     }
     return <Redirect href="/(tabs)" />;
   }
-  if (status === "awaiting_totp") return <Redirect href="/(auth)/totp" />;
+  if (status === "awaiting_otp") return <Redirect href="/(auth)/otp" />;
   return <Redirect href="/(auth)/welcome" />;
 }

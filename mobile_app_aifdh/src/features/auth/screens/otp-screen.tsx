@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -10,33 +10,54 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { TOTP_CODE_LENGTH } from "@/src/config/constants";
+import { OTP_CODE_LENGTH } from "@/src/config/constants";
 import { colors } from "@/src/shared/theme/tokens";
 
-import { QrCodeDisplay } from "../components/qr-code-display";
 import { useAuthStore } from "../store";
 
-export function TotpScreen() {
-  const verifyTotp = useAuthStore((s) => s.verifyTotp);
-  const cancelTotp = useAuthStore((s) => s.cancelTotp);
-  const enrollment = useAuthStore((s) => s.enrollment);
+const RESEND_COOLDOWN_SECONDS = 30;
+
+export function OtpScreen() {
+  const verifyOtp = useAuthStore((s) => s.verifyOtp);
+  const resendOtp = useAuthStore((s) => s.resendOtp);
+  const cancelOtp = useAuthStore((s) => s.cancelOtp);
   const isBusy = useAuthStore((s) => s.isBusy);
   const lastError = useAuthStore((s) => s.lastError);
   const pendingEmail = useAuthStore((s) => s.pendingEmail);
 
   const [code, setCode] = useState("");
   const [trustDevice, setTrustDevice] = useState(true);
+  const [cooldown, setCooldown] = useState(RESEND_COOLDOWN_SECONDS);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const isEnrolling = enrollment != null;
-  const canSubmit = code.length === TOTP_CODE_LENGTH && !isBusy;
+  useEffect(() => {
+    intervalRef.current = setInterval(() => {
+      setCooldown((c) => (c <= 1 ? 0 : c - 1));
+    }, 1000);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, []);
+
+  const canSubmit = code.length === OTP_CODE_LENGTH && !isBusy;
+  const canResend = cooldown === 0 && !isBusy;
 
   async function handleSubmit() {
     if (!canSubmit) return;
-    await verifyTotp(code, trustDevice);
+    await verifyOtp(code, trustDevice);
+  }
+
+  async function handleResend() {
+    if (!canResend) return;
+    const ok = await resendOtp();
+    if (ok) {
+      setCode("");
+      setCooldown(RESEND_COOLDOWN_SECONDS);
+    }
   }
 
   function handleCodeChange(text: string) {
-    setCode(text.replace(/\D/g, "").slice(0, TOTP_CODE_LENGTH));
+    setCode(text.replace(/\D/g, "").slice(0, OTP_CODE_LENGTH));
   }
 
   return (
@@ -52,31 +73,16 @@ export function TotpScreen() {
           <View className="mx-auto w-full max-w-md flex-1 gap-6 pt-4 md:pt-8">
             <View className="gap-2">
               <Text className="text-3xl font-bold text-ink-primary md:text-4xl">
-                {isEnrolling ? "Set up two-factor" : "Two-factor authentication"}
+                Check your email
               </Text>
               <Text className="text-base text-ink-muted">
-                {isEnrolling
-                  ? "Scan this QR code with Google Authenticator or 1Password, then enter the 6-digit code below."
-                  : `Enter the 6-digit code for ${pendingEmail ?? "your account"}.`}
+                We sent a 6-digit code to{" "}
+                <Text className="font-semibold text-ink-secondary">
+                  {pendingEmail ?? "your email"}
+                </Text>
+                . Enter it below to finish signing in.
               </Text>
             </View>
-
-            {isEnrolling && enrollment ? (
-              <View className="gap-3">
-                <QrCodeDisplay value={enrollment.otpauth_uri} />
-                <View className="rounded-xl border border-surface-border bg-surface-raised px-4 py-3">
-                  <Text className="text-xs font-medium uppercase tracking-wide text-ink-muted">
-                    Manual entry secret
-                  </Text>
-                  <Text
-                    className="mt-1 font-mono text-sm text-ink-primary"
-                    selectable
-                  >
-                    {enrollment.secret}
-                  </Text>
-                </View>
-              </View>
-            ) : null}
 
             {lastError ? (
               <View className="w-full rounded-xl border border-red-200 bg-red-50 px-4 py-3">
@@ -91,11 +97,13 @@ export function TotpScreen() {
                 keyboardType="number-pad"
                 autoFocus
                 editable={!isBusy}
-                maxLength={TOTP_CODE_LENGTH}
+                maxLength={OTP_CODE_LENGTH}
                 textAlign="center"
                 placeholder="000000"
                 placeholderTextColor={colors.ink.dim}
                 selectionColor={colors.brand[500]}
+                textContentType="oneTimeCode"
+                autoComplete="one-time-code"
                 className="h-20 w-full rounded-sm border border-surface-border bg-surface-input text-center text-4xl font-semibold tracking-[12px] text-ink-primary"
               />
 
@@ -133,7 +141,19 @@ export function TotpScreen() {
               </Pressable>
 
               <Pressable
-                onPress={cancelTotp}
+                onPress={handleResend}
+                disabled={!canResend}
+                className="h-12 items-center justify-center rounded-sm active:bg-surface-raised"
+              >
+                <Text
+                  className={`text-sm font-medium ${canResend ? "text-brand-600" : "text-ink-dim"}`}
+                >
+                  {cooldown > 0 ? `Resend code in ${cooldown}s` : "Resend code"}
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={cancelOtp}
                 disabled={isBusy}
                 className="h-12 items-center justify-center rounded-sm active:bg-surface-raised"
               >

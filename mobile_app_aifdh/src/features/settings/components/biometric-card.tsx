@@ -32,7 +32,7 @@ export function BiometricCard() {
     } else {
       Alert.alert(
         "Turn off biometric unlock?",
-        "You'll be asked for your password and TOTP code every time you re-open the app.",
+        "You'll be asked for your password and email code every time you re-open the app.",
         [
           { text: "Cancel", style: "cancel", onPress: () => setBusy(false) },
           {
@@ -70,7 +70,7 @@ export function BiometricCard() {
           </Text>
           <Text className="text-xs text-ink-muted">
             {supported && enrolledInOs
-              ? `Skip password + TOTP when re-opening on this device.`
+              ? `Skip password + email code when re-opening on this device.`
               : !supported
                 ? `This device doesn't support biometric authentication.`
                 : `Set up ${label} in your device settings first.`}

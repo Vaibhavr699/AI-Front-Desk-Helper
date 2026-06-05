@@ -1,5 +1,7 @@
 "use strict";
 
+const fs = require("fs");
+const path = require("path");
 const { Resend } = require("resend");
 const db = require("../lib/db");
 
@@ -25,7 +27,7 @@ const SUPPORT_EMAIL_DEFAULT = "support@aifrontdeskhelper.com";
 // Its emails send from this address; AIFDH emails keep the default EMAIL_FROM.
 const REP_COACH_FROM = process.env.REP_COACH_EMAIL_FROM || "AI Rep Coach <noreply@airepcoach.com>";
 
-async function sendEmail({ to, subject, html, text, bcc, replyTo, from }) {
+async function sendEmail({ to, subject, html, text, bcc, replyTo, from, attachments }) {
   if (!resend) {
     console.warn("[Email] Not sending – Resend not configured (check RESEND_API_KEY and EMAIL_FROM).");
     return { ok: false, error: "Email not configured" };
@@ -42,6 +44,7 @@ async function sendEmail({ to, subject, html, text, bcc, replyTo, from }) {
     subject,
     html: html || undefined,
     text: text !== undefined ? text : undefined,
+    attachments: attachments && attachments.length ? attachments : undefined,
   });
   if (error) {
     console.error("[Email] Resend API error:", error.message, error);
@@ -1008,9 +1011,99 @@ function escapeHtml(s) {
     .replace(/'/g, "&#039;");
 }
 
+let _repCoachLogoBase64 = null;
+function getRepCoachLogoBase64() {
+  if (_repCoachLogoBase64 === null) {
+    try {
+      _repCoachLogoBase64 = fs
+        .readFileSync(path.join(__dirname, "..", "public", "airepcoach-logo.png"))
+        .toString("base64");
+    } catch (e) {
+      console.error("[Email] Failed to load AI Rep Coach logo:", e.message);
+      _repCoachLogoBase64 = "";
+    }
+  }
+  return _repCoachLogoBase64;
+}
+
+async function sendRepLoginOtp(email, code) {
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Your AI Rep Coach sign-in code</title>
+</head>
+<body style="margin:0; padding:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #eff6ff; color: #1f2937;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #eff6ff;">
+    <tr>
+      <td align="center" style="padding: 40px 20px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 520px; background-color: #ffffff; border-radius: 16px; box-shadow: 0 4px 14px rgba(37, 99, 235, 0.10); overflow: hidden; border: 1px solid #e0e7ff;">
+          <tr>
+            <td style="padding: 36px 40px 16px; text-align: center;">
+              <img src="cid:airepcoach-logo" alt="AI Rep Coach" width="160" style="display:inline-block; width: 160px; max-width: 160px; height: auto;">
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 0 40px; text-align: center;">
+              <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #111827;">Your sign-in code</h1>
+              <p style="margin: 12px 0 0; font-size: 15px; line-height: 1.6; color: #6b7280;">Enter this code in the AI Rep Coach app to finish signing in.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 24px 40px 4px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td align="center" style="background-color: #eff6ff; border: 1px solid #bfdbfe; border-radius: 12px; padding: 22px 16px;">
+                    <span style="font-size: 40px; font-weight: 700; letter-spacing: 12px; color: #2563eb; font-family: 'SF Mono', Menlo, Consolas, monospace;">${code}</span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 16px 40px 0; text-align: center;">
+              <p style="margin: 0; font-size: 14px; line-height: 1.6; color: #6b7280;">This code expires in <strong style="color:#374151;">10 minutes</strong>.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 28px 40px 32px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr><td style="border-top: 1px solid #e5e7eb; padding-top: 20px;">
+                  <p style="margin: 0 0 6px; font-size: 13px; line-height: 1.6; color: #9ca3af;">If you didn't try to sign in, you can safely ignore this email — your account is still secure.</p>
+                  <p style="margin: 0; font-size: 13px; line-height: 1.6; color: #6b7280;">— The AI Rep Coach Team</p>
+                </td></tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+        <p style="margin: 20px 0 0; font-size: 12px; color: #9ca3af;">AI Rep Coach · Real-time coaching for in-home sales</p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+  return sendEmail({
+    from: REP_COACH_FROM,
+    to: email,
+    subject: `${code} is your AI Rep Coach sign-in code`,
+    text: `Your AI Rep Coach verification code is ${code}. It expires in 10 minutes. If you didn't try to sign in, you can ignore this email.`,
+    html,
+    attachments: [
+      {
+        filename: "airepcoach-logo.png",
+        content: getRepCoachLogoBase64(),
+        inlineContentId: "airepcoach-logo",
+      },
+    ],
+  });
+}
+
 module.exports = {
   sendEmail,
   REP_COACH_FROM,
+  sendRepLoginOtp,
   sendBookingConfirmationEmail,
   sendBookingCancellationEmail,
   sendTransferNotificationEmail,

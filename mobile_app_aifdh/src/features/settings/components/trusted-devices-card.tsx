@@ -39,8 +39,8 @@ export function TrustedDevicesCard({ devices }: Props) {
     Alert.alert(
       "Revoke trusted device?",
       isCurrent
-        ? "You'll be asked for your TOTP code next time you sign in on this device."
-        : "That device will need to re-enter its TOTP code on next sign-in.",
+        ? "You'll be asked for your email code next time you sign in on this device."
+        : "That device will need to re-enter its email code on next sign-in.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -61,7 +61,7 @@ export function TrustedDevicesCard({ devices }: Props) {
         </Text>
       </View>
       <Text className="text-xs text-ink-muted">
-        Devices that can skip TOTP for 30 days. Revoke any device you don't
+        Devices that can skip the email code for 30 days. Revoke any device you don't
         recognize.
       </Text>
 

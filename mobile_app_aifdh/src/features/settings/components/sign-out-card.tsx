@@ -8,7 +8,7 @@ export function SignOutCard() {
   const isBusy = useAuthStore((s) => s.isBusy);
 
   function confirm() {
-    Alert.alert("Sign out?", "You'll need to re-enter your password and TOTP code on next sign-in.", [
+    Alert.alert("Sign out?", "You'll need to re-enter your password and email code on next sign-in.", [
       { text: "Cancel", style: "cancel" },
       { text: "Sign out", style: "destructive", onPress: () => signOut() },
     ]);

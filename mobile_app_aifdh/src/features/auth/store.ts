@@ -23,12 +23,12 @@ type BiometricCapabilitySnapshot = {
   label: string;
 };
 import { getOrCreateDeviceFingerprint } from "./device";
-import type { EnrollmentPayload, TrustedDevicePayload } from "./types";
+import type { TrustedDevicePayload } from "./types";
 
 export type AuthStatus =
   | "booting"
   | "unauthenticated"
-  | "awaiting_totp"
+  | "awaiting_otp"
   | "authenticated";
 
 type AuthState = {
@@ -36,7 +36,6 @@ type AuthState = {
   user: RepUser | null;
   sessionToken: string | null;
   challengeToken: string | null;
-  enrollment: EnrollmentPayload | null;
   pendingEmail: string | null;
   lastError: string | null;
   isBusy: boolean;
@@ -49,8 +48,9 @@ type AuthState = {
   refreshBiometricCapability: () => Promise<BiometricCapabilitySnapshot>;
   dismissEnrollPrompt: () => void;
   signIn: (email: string, password: string) => Promise<void>;
-  verifyTotp: (code: string, trustDevice: boolean) => Promise<void>;
-  cancelTotp: () => void;
+  verifyOtp: (code: string, trustDevice: boolean) => Promise<void>;
+  resendOtp: () => Promise<boolean>;
+  cancelOtp: () => void;
   signOut: () => Promise<void>;
   unlock: () => Promise<{ success: boolean; cancelled: boolean }>;
   enrollBiometric: () => Promise<{ success: boolean; reason?: string }>;
@@ -100,7 +100,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   sessionToken: null,
   challengeToken: null,
-  enrollment: null,
   pendingEmail: null,
   lastError: null,
   isBusy: false,
@@ -168,7 +167,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           user: response.user,
           sessionToken: response.token,
           challengeToken: null,
-          enrollment: null,
           pendingEmail: null,
           isBusy: false,
           isUnlocked: true,
@@ -177,9 +175,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         return;
       }
       set({
-        status: "awaiting_totp",
+        status: "awaiting_otp",
         challengeToken: response.challenge_token,
-        enrollment: response.enroll,
         pendingEmail: email.trim().toLowerCase(),
         isBusy: false,
       });
@@ -188,7 +185,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  verifyTotp: async (code, trustDevice) => {
+  verifyOtp: async (code, trustDevice) => {
     const challenge = get().challengeToken;
     if (!challenge) {
       set({ lastError: "Session expired. Please sign in again." });
@@ -197,7 +194,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ isBusy: true, lastError: null });
     try {
       const fingerprint = await getOrCreateDeviceFingerprint();
-      const response = await authApi.verifyTotp({
+      const response = await authApi.verifyOtp({
         challenge_token: challenge,
         code: code.trim(),
         device_fingerprint: fingerprint,
@@ -210,7 +207,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         user: response.user,
         sessionToken: response.token,
         challengeToken: null,
-        enrollment: null,
         pendingEmail: null,
         isBusy: false,
         isUnlocked: true,
@@ -221,11 +217,27 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  cancelTotp: () => {
+  resendOtp: async () => {
+    const challenge = get().challengeToken;
+    if (!challenge) {
+      set({ lastError: "Session expired. Please sign in again." });
+      return false;
+    }
+    set({ isBusy: true, lastError: null });
+    try {
+      await authApi.resendOtp({ challenge_token: challenge });
+      set({ isBusy: false });
+      return true;
+    } catch (err) {
+      set({ isBusy: false, lastError: toMessage(err) });
+      return false;
+    }
+  },
+
+  cancelOtp: () => {
     set({
       status: "unauthenticated",
       challengeToken: null,
-      enrollment: null,
       pendingEmail: null,
       lastError: null,
     });
@@ -244,7 +256,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         user: null,
         sessionToken: null,
         challengeToken: null,
-        enrollment: null,
         pendingEmail: null,
         lastError: null,
         isBusy: false,

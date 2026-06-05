@@ -28,16 +28,23 @@
     "production": {
       "channel": "production",
       "autoIncrement": true,
-      "credentialsSource": "local",
       "env": {
         "EXPO_PUBLIC_API_URL": "https://ai-front-desk-backend.onrender.com"
       },
       "android": {
-        "buildType": "app-bundle"
+        "buildType": "app-bundle",
+        "credentialsSource": "local"
+      },
+      "ios": {
+        "credentialsSource": "remote"
       }
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "appleTeamId": "886Y3Y9RHX"
+      }
+    }
   }
 }

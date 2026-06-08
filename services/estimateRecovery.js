@@ -3,7 +3,7 @@
 const db = require("../lib/db");
 const twilio = require("../lib/twilio");
 const { getLast10Digits, normalizeE164Phone } = require("../lib/phone");
-const { canSendRecovery, getCadenceDays } = require("../lib/recoverySettings");
+const { canSendRecovery, getCadenceDays, getCustomCadenceSteps } = require("../lib/recoverySettings");
 // Phase 10E (May 27, 2026) — DISC-adaptive cadence helper. Scales the
 // static delayHours in each sequence step based on the lead's DISC
 // classification + tenant settings. Falls back to the base delay for
@@ -326,6 +326,85 @@ function getFirstName(fullName) {
 }
 
 // ─────────────────────────────────────────────────────────
+// CUSTOM CADENCE SUPPORT (Phase A — June 8, 2026)
+//
+// Custom cadences don't use the fixed GHOST_SEQUENCE linked list. Instead
+// they're driven by the tenant's custom_cadence_days array (normalized to
+// {day, channel}[] by recoverySettings.getCustomCadenceSteps). Progress is
+// tracked by encoding the current day in recovery.current_step as
+// "custom_day_<N>" — no schema migration, and it survives mid-recovery edits
+// to the array because we advance by "next day greater than current", not by
+// array index.
+//
+// Model decision (June 8): the custom array is FULLY AUTHORITATIVE. There is
+// no implicit day-0 confirmation — if the tenant doesn't list day 0, the
+// customer's first contact is whatever the lowest listed day is.
+// ─────────────────────────────────────────────────────────
+
+function encodeCustomStep(day) {
+  return `custom_day_${day}`;
+}
+function decodeCustomStep(step) {
+  const m = /^custom_day_(\d+)$/.exec(step || "");
+  return m ? parseInt(m[1], 10) : null;
+}
+function isCustomStep(step) {
+  return /^custom_day_\d+$/.test(step || "");
+}
+
+// Canonical day → GHOST step, used to source DEFAULT copy for a custom day.
+// Phase A: a custom day reuses the copy of the nearest canonical step at or
+// below it (day 30 borrows day-21 copy; day 2 borrows day-1 copy). Phase B
+// will replace this with user-authored text when the cadence entry carries it.
+const CANONICAL_DAY_TO_STEP = [
+  [21, "day21_hardclose"],
+  [17, "day17_call"],
+  [14, "day14_softclose"],
+  [10, "day10_call"],
+  [7,  "day7_urgency"],
+  [5,  "day5_call"],
+  [3,  "day3_value"],
+  [1,  "day1_checkin"],
+  [0,  "estimate_sent"],
+];
+
+function nearestCanonicalStepForDay(day, channel) {
+  // Prefer a canonical step whose channel matches AND whose day is <= the
+  // custom day. Fall back to nearest-by-day, then a hard default.
+  let dayMatch = null;
+  for (const [d, stepName] of CANONICAL_DAY_TO_STEP) {
+    if (d <= day) {
+      const stepDef = ALL_STEPS.get(stepName);
+      if (!stepDef) continue;
+      if (!dayMatch) dayMatch = stepDef;                 // nearest-by-day fallback
+      if (stepDef.channel === channel) return stepDef;   // best: channel + day match
+    }
+  }
+  return dayMatch || ALL_STEPS.get("estimate_sent");
+}
+
+// Build the touch payload for a custom cadence entry {day, channel}.
+// Phase A: copy comes from the nearest canonical step. Phase B will prefer
+// entry.message / entry.script / entry.voicemail when present.
+function buildCustomTouch(entry, vars) {
+  const channel = entry.channel === "call" ? "call" : "sms";
+  const src = nearestCanonicalStepForDay(entry.day, channel);
+
+  if (channel === "sms") {
+    // Phase B: if (typeof entry.message === "string" && entry.message.trim()) use it.
+    const body = typeof src.message === "function" ? src.message(vars) : (src.message || "");
+    return { channel: "sms", message: body };
+  }
+  // call
+  return {
+    channel:   "call",
+    // Phase B: prefer entry.script / entry.voicemail when present.
+    script:    src.script    || "",
+    voicemail: src.voicemail || src.script || "",
+  };
+}
+
+// ─────────────────────────────────────────────────────────
 // CORE: Start a recovery sequence
 // ─────────────────────────────────────────────────────────
 
@@ -407,6 +486,7 @@ async function startEstimateRecovery(tenantId, lead, options = {}) {
   // defense-in-depth: executeStep's canSendRecovery still catches a tenant
   // who flips the toggle off AFTER a recovery is created.
   // ───────────────────────────────────────────────────────────────────
+ let creationSettings = null;
   try {
     const masterGate = await canSendRecovery({
       tenantId,
@@ -414,18 +494,24 @@ async function startEstimateRecovery(tenantId, lead, options = {}) {
       trigger: "estimate_recovery",
       leadId:  lead.id || null,
     });
-    if (!masterGate.allowed && masterGate.reason !== "quiet_hours") {
-      // quiet_hours is a timing block, not a config-off block — let those
-      // through to creation so they defer rather than drop. Any other
-      // not-allowed reason at this stage means recovery isn't on for this
-      // tenant/trigger, so don't create the row at all.
-      if (["master_off", "trigger_off", "recovery_disabled", "estimate_recovery_off"].includes(masterGate.reason)) {
-        console.log(
-          "[Recovery] Creation gated id-skip tenant=%s reason=%s — not creating recovery",
-          tenantId, masterGate.reason
-        );
-        return null;
-      }
+    // gate.settings is populated whenever the gate didn't short-circuit on a
+    // pre-settings condition; capture it so we can detect custom cadence
+    // without a second query. May be null if blocked early — handled below.
+    creationSettings = masterGate.settings || null;
+    // Block creation only on reasons that mean recovery is FUNDAMENTALLY off
+    // for this tenant. canSendRecovery returns these exact strings:
+    //   master_off                 → recovery_enabled = false
+    //   estimate_recovery_disabled → trigger_estimate_recovery = false
+    // Everything else (sms_disabled, voice_disabled, quiet_hours, lead_*) is
+    // a per-channel or timing decision handled at send time — let those
+    // through so the recovery is created and simply defers/skips later.
+    const CREATION_BLOCK_REASONS = ["master_off", "estimate_recovery_disabled"];
+    if (!masterGate.allowed && CREATION_BLOCK_REASONS.includes(masterGate.reason)) {
+      console.log(
+        "[Recovery] Creation gated tenant=%s reason=%s — not creating recovery",
+        tenantId, masterGate.reason
+      );
+      return null;
     }
   } catch (gateErr) {
     // Fail-open on gate error: better to create the recovery (which is then
@@ -434,9 +520,47 @@ async function startEstimateRecovery(tenantId, lead, options = {}) {
   }
 
   const now = new Date();
-  const firstStep = GHOST_SEQUENCE[0];
+
+  // ───────────────────────────────────────────────────────────────────
+  // First-step selection (Phase A — June 8, 2026).
+  //
+  // If the tenant is on the CUSTOM preset, enter the custom path: the first
+  // step is "custom_day_<lowestDay>" and the first action fires after that
+  // many days. The custom array is fully authoritative — there is no implicit
+  // day-0 confirmation unless the tenant listed day 0.
+  //
+  // Otherwise use the standard GHOST_SEQUENCE day-0 entry as before.
+  //
+  // If settings couldn't be read (creationSettings null) we fall back to the
+  // standard ghost path — safe default, send-time gating still applies.
+  // ───────────────────────────────────────────────────────────────────
+  let firstStepName;
+  let baseDelayHours;
+
+  let customSteps = [];
+  try {
+    if (creationSettings && creationSettings.cadence_preset === "custom") {
+      customSteps = getCustomCadenceSteps(creationSettings, null);
+    }
+  } catch (e) {
+    console.error("[Recovery] getCustomCadenceSteps failed at creation tenant=%s err=%s", tenantId, e.message);
+  }
+
+  if (customSteps.length > 0) {
+    const firstDay = customSteps[0].day;
+    firstStepName  = encodeCustomStep(firstDay);
+    baseDelayHours = firstDay * 24;
+    console.log(
+      "[Recovery] Custom cadence creation tenant=%s firstDay=%d channel=%s steps=%j",
+      tenantId, firstDay, customSteps[0].channel, customSteps.map((s) => `${s.day}:${s.channel}`)
+    );
+  } else {
+    firstStepName  = GHOST_SEQUENCE[0].step;
+    baseDelayHours = GHOST_SEQUENCE[0].delayHours;
+  }
+
   // Phase 10E: scale first-step delay by DISC bucket if enabled.
-  const delayHours = await applyDiscMultiplier(firstStep.delayHours, lead.id || null, tenantId);
+  const delayHours = await applyDiscMultiplier(baseDelayHours, lead.id || null, tenantId);
   const nextActionAt = addHours(now, delayHours);
 
   const res = await db.query(
@@ -452,7 +576,7 @@ async function startEstimateRecovery(tenantId, lead, options = {}) {
       lead.name || lead.contact_name || "Guest",
       phone,
       lead.email || lead.contact_email || null,
-      firstStep.step,
+      firstStepName,
       nextActionAt.toISOString(),
       options.lead_source || "crm_webhook",
     ]
@@ -799,7 +923,7 @@ async function executeStep(recovery) {
   // We do NOT cancel — that would dump the recovery permanently. A legit
   // angry customer might still convert once their concern is resolved.
   // ─────────────────────────────────────────────────────────────────────
-  if (await hasRecentNegativeSentiment(recovery.tenant_id, recovery.contact_phone)) {
+ if (await hasRecentNegativeSentiment(recovery.tenant_id, recovery.contact_phone)) {
     console.log(
       "[Recovery] Sentiment pause id=%s phone=%s — rescheduling 24h out",
       recovery.id,
@@ -810,6 +934,21 @@ async function executeStep(recovery) {
       "UPDATE estimate_recoveries SET next_action_at = $1, updated_at = now() WHERE id = $2",
       [next.toISOString(), recovery.id]
     );
+    return;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Custom cadence intercept (Phase A — June 8, 2026).
+  //
+  // Custom steps are encoded as "custom_day_<N>" and are NOT in ALL_STEPS,
+  // so they must be routed to the dedicated handler BEFORE the stepDef
+  // lookup below (which would otherwise return undefined and mark the
+  // recovery dormant). executeCustomStep does its own DNC/sentiment-safe
+  // gating, send, and advancement — the DNC + sentiment checks above have
+  // already run, so it inherits those protections.
+  // ─────────────────────────────────────────────────────────────────────
+  if (isCustomStep(recovery.current_step)) {
+    await executeCustomStep(recovery);
     return;
   }
 
@@ -1014,6 +1153,204 @@ const stepDef = ALL_STEPS.get(recovery.current_step);
   }
 
   await advanceStep(recovery, stepDef);
+}
+
+// ─────────────────────────────────────────────────────────
+// CORE: Execute a single CUSTOM cadence step (Phase A — June 8, 2026)
+//
+// Self-contained handler for custom_day_<N> steps. Mirrors executeStep's
+// gating but reads the per-day channel from the tenant's custom array
+// instead of a fixed sequence step. Flow:
+//   1. Load settings + the normalized custom step array.
+//   2. Find the entry for the current day. (Gone from array → advance/dormant.)
+//   3. Gate via canSendRecovery for THAT day's channel.
+//        master_off/*_disabled/lead_paused → reschedule 24h
+//        quiet_hours                        → reschedule 1h
+//        lead_cadence_off                   → cancel
+//        sms_disabled / voice_disabled      → SKIP this day, advance to next
+//          (channel toggle wins; the other channel's days still fire)
+//   4. Build + send the touch (default copy in Phase A).
+//   5. Advance to the next day in the array; dormant when none remain.
+// ─────────────────────────────────────────────────────────
+async function executeCustomStep(recovery) {
+  const currentDay = decodeCustomStep(recovery.current_step);
+  if (currentDay === null) {
+    console.error("[Recovery] Custom step decode failed id=%s step=%s — dormant", recovery.id, recovery.current_step);
+    await markDormant(recovery.id);
+    return;
+  }
+
+  // Load settings + custom array.
+  let settings;
+  try {
+    settings = await require("../lib/recoverySettings").getRecoverySettings(recovery.tenant_id);
+  } catch (err) {
+    console.error("[Recovery] Custom getRecoverySettings failed id=%s err=%s — reschedule 1h", recovery.id, err.message);
+    const next = addHours(new Date(), 1);
+    await db.query(
+      "UPDATE estimate_recoveries SET next_action_at = $1, updated_at = now() WHERE id = $2",
+      [next.toISOString(), recovery.id]
+    ).catch(() => {});
+    return;
+  }
+
+  // Tenant may have switched OFF custom preset mid-recovery. If so, this
+  // recovery's custom_day_<N> step no longer maps to anything coherent —
+  // mark dormant rather than guess. (Rare; a preset change is a deliberate
+  // act and existing custom recoveries gracefully wind down.)
+  const customSteps = getCustomCadenceSteps(settings, null);
+  if (customSteps.length === 0) {
+    console.log("[Recovery] Custom step but tenant no longer on custom preset id=%s — dormant", recovery.id);
+    await markDormant(recovery.id);
+    return;
+  }
+
+  const entry = customSteps.find((s) => s.day === currentDay);
+  if (!entry) {
+    // The current day was removed from the array (mid-recovery edit). Advance
+    // to the next day greater than current, or dormant if none.
+    console.log("[Recovery] Custom day %d no longer in array id=%s — advancing", currentDay, recovery.id);
+    await advanceCustomStep(recovery, currentDay, customSteps);
+    return;
+  }
+
+  const channel = entry.channel === "call" ? "call" : "sms";
+  const gateChannel = channel === "call" ? "voice" : "sms";
+
+  // Phase 10 gate for THIS day's channel.
+  let gate;
+  try {
+    gate = await canSendRecovery({
+      tenantId: recovery.tenant_id,
+      channel:  gateChannel,
+      trigger:  "estimate_recovery",
+      leadId:   recovery.lead_id,
+    });
+  } catch (err) {
+    console.error("[Recovery] Custom gate check failed id=%s err=%s — FAILING CLOSED, reschedule 1h", recovery.id, err.message);
+    const next = addHours(new Date(), 1);
+    await db.query(
+      "UPDATE estimate_recoveries SET next_action_at = $1, updated_at = now() WHERE id = $2",
+      [next.toISOString(), recovery.id]
+    ).catch(() => {});
+    return;
+  }
+
+  console.log(
+    "[Recovery] CHECKPOINT-CUSTOM id=%s day=%d channel=%s allowed=%s reason=%s",
+    recovery.id, currentDay, channel, gate.allowed, gate.reason || "ok"
+  );
+
+  if (!gate.allowed) {
+    // Channel-toggle block → SKIP this day, advance to next. The channel
+    // toggle is a master safety switch; a custom day cannot override it.
+    // The OTHER channel's days in this same cadence still fire.
+    if (gate.reason === "sms_disabled" || gate.reason === "voice_disabled") {
+      console.log(
+        "[Recovery] Custom day %d skipped id=%s — %s (channel toggle off, advancing)",
+        currentDay, recovery.id, gate.reason
+      );
+      await advanceCustomStep(recovery, currentDay, customSteps);
+      return;
+    }
+
+    // Explicit per-lead opt-out → cancel.
+    if (gate.reason === "lead_cadence_off") {
+      await markCancelled(recovery.id);
+      return;
+    }
+
+    // quiet_hours → retry in 1h (same day once window passes).
+    // Everything else (master_off, estimate_recovery_disabled, lead_paused)
+    // → reschedule 24h; tenant may re-enable.
+    const rescheduleHours = gate.reason === "quiet_hours" ? 1 : 24;
+    const next = addHours(new Date(), rescheduleHours);
+    await db.query(
+      "UPDATE estimate_recoveries SET next_action_at = $1, updated_at = now() WHERE id = $2",
+      [next.toISOString(), recovery.id]
+    );
+    return;
+  }
+
+  // Load tenant for vars + send.
+  const tenant = await db.query(
+    `SELECT t.*, (SELECT pn.phone FROM phone_numbers pn WHERE pn.tenant_id = t.id ORDER BY pn.is_primary DESC NULLS LAST LIMIT 1) as matched_phone
+     FROM tenants t WHERE t.id = $1`,
+    [recovery.tenant_id]
+  ).then((r) => r.rows[0]);
+  if (!tenant) {
+    console.error("[Recovery] Custom step no tenant id=%s — dormant", recovery.id);
+    await markDormant(recovery.id);
+    return;
+  }
+
+  const vars = {
+    first_name:   getFirstName(recovery.contact_name),
+    company_name: tenant.company_name || tenant.name,
+  };
+
+  const touch = buildCustomTouch(entry, vars);
+  const stepLabel = encodeCustomStep(currentDay);
+
+  console.log(
+    "[Recovery] CHECKPOINT-CUSTOM-C about-to-send id=%s day=%d channel=%s to=%s",
+    recovery.id, currentDay, touch.channel, recovery.contact_phone
+  );
+
+  if (touch.channel === "sms") {
+    // Reuse sendRecoverySms by shimming a stepDef-shaped object carrying the
+    // resolved message + a step label for logging.
+    await sendRecoverySms(recovery, tenant, { step: stepLabel, channel: "sms", message: touch.message }, vars);
+  } else {
+    await makeRecoveryCall(recovery, tenant, { step: stepLabel, channel: "call", script: touch.script, voicemail: touch.voicemail }, vars);
+  }
+
+  // Notification on the FIRST touch of this custom recovery (zero prior
+  // attempts at entry). Same post-send placement + honest copy as the
+  // ghost path.
+  if ((recovery.sms_attempts || 0) === 0 && (recovery.call_attempts || 0) === 0) {
+    try {
+      const channels = [];
+      if (settings.sms_enabled)   channels.push("SMS");
+      if (settings.voice_enabled) channels.push("voice");
+      if (settings.email_enabled) channels.push("email");
+      const notificationService = require("./notifications");
+      notificationService.notifyEstimateRecoveryStarted(recovery.tenant_id, {
+        customer_name:   recovery.contact_name || null,
+        lead_id:         recovery.lead_id || null,
+        recovery_id:     recovery.id,
+        channels,
+        cadenceDayCount: customSteps.length,
+      }).catch((e) => console.error("[Recovery] notifyEstimateRecoveryStarted failed:", e.message));
+    } catch (e) {
+      console.error("[Recovery] Custom notification dispatch failed:", e.message);
+    }
+  }
+
+  await advanceCustomStep(recovery, currentDay, customSteps);
+}
+
+// Advance a custom recovery to the next day in the array greater than the
+// current day. Dormant when none remain. Delay is (nextDay - currentDay)
+// days, DISC-scaled like the ghost path.
+async function advanceCustomStep(recovery, currentDay, customSteps) {
+  const nextEntry = customSteps.find((s) => s.day > currentDay);
+  if (!nextEntry) {
+    await markDormant(recovery.id);
+    return;
+  }
+  const gapDays = nextEntry.day - currentDay;
+  const baseDelayHours = gapDays * 24;
+  const delayHours = await applyDiscMultiplier(baseDelayHours, recovery.lead_id, recovery.tenant_id);
+  const nextAt = addHours(new Date(), delayHours);
+  await db.query(
+    "UPDATE estimate_recoveries SET current_step = $1, next_action_at = $2, updated_at = now() WHERE id = $3",
+    [encodeCustomStep(nextEntry.day), nextAt.toISOString(), recovery.id]
+  );
+  console.log(
+    "[Recovery] Custom advance id=%s %d → %d (%s) in %dd",
+    recovery.id, currentDay, nextEntry.day, nextEntry.channel, gapDays
+  );
 }
 
 // ─────────────────────────────────────────────────────────

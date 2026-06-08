@@ -22,6 +22,16 @@
  *   x-impersonate-tenant-id header for superadmins, the requested tenant
  *   for parent/HQ users, and the JWT tenant_id otherwise.
  *
+ * CUSTOM CADENCE FORMAT (Phase A — June 8, 2026):
+ *   custom_cadence_days migrated from integer[] to jsonb to support
+ *   per-day channel selection. Two accepted input formats:
+ *     Legacy:  [1, 3, 7]                          (plain int days, SMS implied)
+ *     New:     [{day:1,channel:"sms"}, {day:5,channel:"call"}, ...]
+ *   Incoming payloads are normalized + validated here before write, then
+ *   written explicitly as jsonb (JSON.stringify + ::jsonb cast) so the
+ *   write doesn't depend on driver type-inference. recoverySettings.js
+ *   reads both formats via normalizeCustomCadence.
+ *
  * Endpoints:
  *   GET    /api/recovery/settings              — load current settings + tier allow-list
  *   PATCH  /api/recovery/settings              — update settings (tier-gated fields)
@@ -44,6 +54,12 @@ const express = require("express");
 const router  = express.Router();
 const db      = require("../lib/db");
 const { getGuaranteedTenantId } = require("../lib/auth");
+
+const {
+  getRecoverySettings,
+  normalizeCustomCadence,
+  CADENCE_PRESETS,
+} = require("../lib/recoverySettings");
 
 // Defensive audit-log wrapper — won't crash a route if auditLogger is missing.
 async function logAudit(payload) {
@@ -84,10 +100,45 @@ function getAllowedFields(plan) {
   return BASIC_FIELDS;
 }
 
-const {
-  getRecoverySettings,
-  CADENCE_PRESETS,
-} = require("../lib/recoverySettings");
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom cadence validation (Phase A — June 8, 2026)
+//
+// Accepts the raw value from the request body and returns:
+//   { ok: true,  value: <normalized {day,channel}[]> }   on success
+//   { ok: false, error: <message> }                       on invalid input
+//
+// Uses the same normalizeCustomCadence as the engine so the UI, the writer,
+// and the runtime all agree on what a custom cadence means. We treat an
+// empty result as valid ONLY if the input was itself an empty array — a
+// non-empty input that normalizes to empty means every entry was garbage,
+// which we reject so the user gets feedback instead of a silent no-op.
+// ─────────────────────────────────────────────────────────────────────────────
+function validateCustomCadence(raw) {
+  if (raw === null || raw === undefined) {
+    return { ok: true, value: [] };
+  }
+  if (!Array.isArray(raw)) {
+    return { ok: false, error: "custom_cadence_days must be an array" };
+  }
+  if (raw.length === 0) {
+    return { ok: true, value: [] };
+  }
+
+  const normalized = normalizeCustomCadence(raw);
+
+  if (normalized.length === 0) {
+    return {
+      ok: false,
+      error: "custom_cadence_days had no valid entries (days must be 0–90; channel must be 'sms' or 'call')",
+    };
+  }
+
+  // Warn-worthy but not fatal: if some entries were dropped during
+  // normalization (out of range / duplicate / malformed), we still accept
+  // the valid remainder but report how many survived so the caller can
+  // surface it. The frontend can compare lengths if it wants to flag this.
+  return { ok: true, value: normalized, dropped: raw.length - normalized.length };
+}
 
 // Plan lookup — authMiddleware sets req.user but not the full tenant row
 // for the resolved (possibly impersonated) tenant, so we hit the DB.
@@ -164,11 +215,39 @@ router.patch("/settings", async (req, res) => {
     return res.status(400).json({ error: "Invalid cadence_preset" });
   }
 
+  // Validate + normalize custom_cadence_days if present. Phase A: this is
+  // now jsonb and supports per-day channels. We normalize before write so
+  // the stored value is always canonical {day,channel}[] (or [] when empty).
+  let customCadenceDropped = 0;
+  if (Object.prototype.hasOwnProperty.call(updates, "custom_cadence_days")) {
+    const v = validateCustomCadence(updates.custom_cadence_days);
+    if (!v.ok) {
+      return res.status(400).json({ error: v.error });
+    }
+    updates.custom_cadence_days = v.value;       // canonical normalized array
+    customCadenceDropped = v.dropped || 0;
+  }
+
   // Build dynamic UPDATE. Keys come from the hardcoded allow-list, so no
   // SQL injection risk; values are parameterized.
+  //
+  // custom_cadence_days needs an explicit ::jsonb cast with a JSON string
+  // param, so the write doesn't depend on driver type-inference (the column
+  // is jsonb as of the Phase A migration). All other fields bind normally.
   const updateKeys = Object.keys(updates);
-  const setClauses = updateKeys.map((k, i) => `${k} = $${i + 2}`).join(", ");
-  const params     = [tenantId, ...updateKeys.map(k => updates[k])];
+  const setClauses = updateKeys.map((k, i) => {
+    if (k === "custom_cadence_days") {
+      return `${k} = $${i + 2}::jsonb`;
+    }
+    return `${k} = $${i + 2}`;
+  }).join(", ");
+
+  const params = [
+    tenantId,
+    ...updateKeys.map(k =>
+      k === "custom_cadence_days" ? JSON.stringify(updates[k]) : updates[k]
+    ),
+  ];
 
   try {
     const result = await db.query(
@@ -195,19 +274,19 @@ router.patch("/settings", async (req, res) => {
       await logAudit({
         tenantId, userId,
         action: "recovery_settings.update",
-        meta: { updated_fields: updateKeys, rejected },
+        meta: { updated_fields: updateKeys, rejected, custom_cadence_dropped: customCadenceDropped },
       });
-      return res.json({ settings: retry.rows[0], rejected });
+      return res.json({ settings: retry.rows[0], rejected, custom_cadence_dropped: customCadenceDropped });
     }
 
     await logAudit({
       tenantId, userId,
       action: "recovery_settings.update",
-      meta: { updated_fields: updateKeys, rejected },
+      meta: { updated_fields: updateKeys, rejected, custom_cadence_dropped: customCadenceDropped },
     });
 
     console.log("[recovery/settings PATCH] tenant=%s fields=%j", tenantId, updateKeys);
-    res.json({ settings: result.rows[0], rejected });
+    res.json({ settings: result.rows[0], rejected, custom_cadence_dropped: customCadenceDropped });
   } catch (err) {
     console.error("[recovery/settings PATCH] tenant=%s err=%s", tenantId, err.message);
     res.status(500).json({ error: "Failed to update recovery settings" });

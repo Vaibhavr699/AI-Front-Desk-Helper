@@ -71,15 +71,13 @@ async function fetchReviewsForTenant(tenantId) {
 
     await db.query(
       `INSERT INTO google_reviews
-         (tenant_id, google_review_id, reviewer_name, reviewer_photo,
+         (tenant_id, google_review_id, reviewer_name,
           rating, review_text, review_date, ai_draft, status, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', now())
-       ON CONFLICT (tenant_id, google_review_id) DO NOTHING`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', now())`,
       [
         tenantId,
         review.reviewId,
         review.reviewer?.displayName || "Anonymous",
-        review.reviewer?.profilePhotoUrl || null,
         review.starRating ? starRatingToInt(review.starRating) : 5,
         review.comment || null,
         review.createTime || new Date().toISOString(),

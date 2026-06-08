@@ -113,6 +113,12 @@ function getAllowedFields(plan) {
 // non-empty input that normalizes to empty means every entry was garbage,
 // which we reject so the user gets feedback instead of a silent no-op.
 // ─────────────────────────────────────────────────────────────────────────────
+// Max length for any single user-authored message/script/voicemail field.
+// 1600 chars ≈ 10 SMS segments — generous for a follow-up, but bounded so a
+// runaway paste can't blow past Twilio limits or rack up segment costs. Call
+// scripts/voicemails are read aloud, so this is well beyond a sane spoken length.
+const MAX_CUSTOM_TEXT_LEN = 1600;
+
 function validateCustomCadence(raw) {
   if (raw === null || raw === undefined) {
     return { ok: true, value: [] };
@@ -133,10 +139,23 @@ function validateCustomCadence(raw) {
     };
   }
 
-  // Warn-worthy but not fatal: if some entries were dropped during
-  // normalization (out of range / duplicate / malformed), we still accept
-  // the valid remainder but report how many survived so the caller can
-  // surface it. The frontend can compare lengths if it wants to flag this.
+  // Phase B (June 8, 2026): enforce a length cap on any user-authored text
+  // fields the normalizer passed through (message / script / voicemail).
+  // Blank/whitespace fields are left as-is (the engine treats them as
+  // "not provided" and falls back to canonical copy). Unknown {{tokens}}
+  // are NOT validated here — they pass through and render literally if
+  // unrecognized, by design.
+  for (const entry of normalized) {
+    for (const field of ["message", "script", "voicemail"]) {
+      if (typeof entry[field] === "string" && entry[field].length > MAX_CUSTOM_TEXT_LEN) {
+        return {
+          ok: false,
+          error: `custom cadence day ${entry.day} ${field} exceeds ${MAX_CUSTOM_TEXT_LEN} characters`,
+        };
+      }
+    }
+  }
+
   return { ok: true, value: normalized, dropped: raw.length - normalized.length };
 }
 

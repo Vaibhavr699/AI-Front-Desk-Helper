@@ -264,9 +264,22 @@ async function notifyHotLead(tenantId, { customer_name, amount_cents, lead_id, p
 }
 
 /**
- * Fires when the 21-day estimate recovery sequence engages.
+ * Fires when the estimate recovery sequence actually begins sending —
+ * i.e. after the first touch passes all gates and goes out. Moved here
+ * from recovery creation time (June 8, 2026) so the notification means
+ * "a real follow-up went out," not "a recovery row was created."
+ *
+ * Copy is rendered from the tenant's ACTUAL channels + cadence rather
+ * than hardcoded boilerplate. The old version always said "21 days,
+ * texts + calls + voicemails" regardless of config, which misreported
+ * SMS-only / voice-off tenants and fired even when gates suppressed all
+ * sends (the Paragon phantom-notification bug).
+ *
+ * channels: array like ['SMS','voice'] derived from the recovery settings
+ * cadenceDayCount: number of touches in the active cadence (preset or custom)
+ * Both optional — falls back to a generic line if not supplied.
  */
-async function notifyEstimateRecoveryStarted(tenantId, { customer_name, lead_id, recovery_id }) {
+async function notifyEstimateRecoveryStarted(tenantId, { customer_name, lead_id, recovery_id, channels, cadenceDayCount }) {
   try {
     if (!tenantId || !recovery_id) return null;
 
@@ -279,55 +292,33 @@ async function notifyEstimateRecoveryStarted(tenantId, { customer_name, lead_id,
     );
     if (existing.rows.length > 0) return null;
 
+    // Build an honest channel phrase from what's actually enabled.
+    const chanList = Array.isArray(channels) ? channels.filter(Boolean) : [];
+    let channelPhrase = "follow-ups";
+    if (chanList.length === 1) {
+      channelPhrase = chanList[0] === "voice" ? "calls" : `${chanList[0]} messages`;
+    } else if (chanList.length > 1) {
+      const labelMap = { SMS: "texts", sms: "texts", voice: "calls", email: "emails" };
+      const labeled = chanList.map((c) => labelMap[c] || c);
+      channelPhrase = labeled.slice(0, -1).join(", ") + " and " + labeled[labeled.length - 1];
+    }
+
+    const touchPhrase = Number.isFinite(cadenceDayCount) && cadenceDayCount > 0
+      ? `over ${cadenceDayCount} touch${cadenceDayCount === 1 ? "" : "es"}`
+      : "";
+
+    const detail = [channelPhrase, touchPhrase].filter(Boolean).join(" ");
+
     return await createNotification(tenantId, {
       type: 'estimate_recovery_started',
       title: 'AI Follow-Up Started',
       body: customer_name
-        ? `AI is now following up with ${customer_name} over 21 days (texts + calls + voicemails).`
-        : `21-day AI follow-up sequence started for a new estimate.`,
-      data: { customer_name, lead_id, recovery_id },
+        ? `AI is now following up with ${customer_name} via ${detail}.`
+        : `AI follow-up sequence started for a new estimate (${detail}).`,
+      data: { customer_name, lead_id, recovery_id, channels: chanList, cadenceDayCount: cadenceDayCount || null },
     });
   } catch (err) {
     console.error("[Notification] notifyEstimateRecoveryStarted failed:", err.message);
-    return null;
-  }
-}
-
-/**
- * Fires when a child location's Stripe sync fails. Apr 20, 2026.
- * Dedups within a 24-hour window so a single broken location doesn't
- * spam the bell every time someone hits the retry button or loads
- * the page. The retry button on Locations.jsx is the action — this
- * notification just gets eyes on the problem.
- */
-async function notifyStripeSyncFailed(parentTenantId, { child_tenant_id, child_name, error_message }) {
-  try {
-    if (!parentTenantId || !child_tenant_id) return null;
-
-    const existing = await db.query(
-      `SELECT id FROM notifications
-       WHERE tenant_id = $1
-         AND type = 'stripe_sync_failed'
-         AND data->>'child_tenant_id' = $2
-         AND created_at > now() - interval '24 hours'
-       LIMIT 1`,
-      [parentTenantId, String(child_tenant_id)]
-    );
-    if (existing.rows.length > 0) return null;
-
-    const displayName = child_name || "A location";
-    const errorSnippet = error_message
-      ? (error_message.length > 120 ? error_message.slice(0, 117) + "..." : error_message)
-      : "Stripe rejected the billing item.";
-
-    return await createNotification(parentTenantId, {
-      type: 'stripe_sync_failed',
-      title: 'Location Billing Issue',
-      body: `${displayName} couldn't sync to your Stripe subscription. ${errorSnippet} Open the Locations page to retry.`,
-      data: { child_tenant_id, child_name, error_message },
-    });
-  } catch (err) {
-    console.error("[Notification] notifyStripeSyncFailed failed:", err.message);
     return null;
   }
 }

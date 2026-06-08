@@ -390,7 +390,48 @@ async function startEstimateRecovery(tenantId, lead, options = {}) {
         )`,
     [tenantId, phone, last10]
   );
-  if (existing.rows.length > 0) return existing.rows[0];
+ if (existing.rows.length > 0) return existing.rows[0];
+
+  // ───────────────────────────────────────────────────────────────────
+  // Creation-time master gate (June 8, 2026 — Option A).
+  //
+  // Only check the DURABLE config fact: is estimate recovery fundamentally
+  // ON for this tenant? (recovery_enabled master + trigger_estimate_recovery).
+  // We deliberately do NOT check quiet hours / cadence / per-channel here —
+  // those are TIMING decisions evaluated at send time in executeStep, so a
+  // recovery created during quiet hours still gets created and simply waits.
+  //
+  // This stops accumulating phantom 'active' recoveries (and the premature
+  // notifications they triggered) for tenants who have recovery turned off,
+  // e.g. Paragon Exteriors with recovery_enabled=false. Gating here is
+  // defense-in-depth: executeStep's canSendRecovery still catches a tenant
+  // who flips the toggle off AFTER a recovery is created.
+  // ───────────────────────────────────────────────────────────────────
+  try {
+    const masterGate = await canSendRecovery({
+      tenantId,
+      channel: "sms",
+      trigger: "estimate_recovery",
+      leadId:  lead.id || null,
+    });
+    if (!masterGate.allowed && masterGate.reason !== "quiet_hours") {
+      // quiet_hours is a timing block, not a config-off block — let those
+      // through to creation so they defer rather than drop. Any other
+      // not-allowed reason at this stage means recovery isn't on for this
+      // tenant/trigger, so don't create the row at all.
+      if (["master_off", "trigger_off", "recovery_disabled", "estimate_recovery_off"].includes(masterGate.reason)) {
+        console.log(
+          "[Recovery] Creation gated id-skip tenant=%s reason=%s — not creating recovery",
+          tenantId, masterGate.reason
+        );
+        return null;
+      }
+    }
+  } catch (gateErr) {
+    // Fail-open on gate error: better to create the recovery (which is then
+    // gated again at send time) than to silently drop a real lead on a DB hiccup.
+    console.error("[Recovery] Creation gate check failed tenant=%s err=%s — proceeding (send-time gate still applies)", tenantId, gateErr.message);
+  }
 
   const now = new Date();
   const firstStep = GHOST_SEQUENCE[0];
@@ -416,19 +457,13 @@ async function startEstimateRecovery(tenantId, lead, options = {}) {
       options.lead_source || "crm_webhook",
     ]
   );
-  console.log("[Recovery] Estimate recovery started id=%s tenant=%s phone=%s", res.rows[0].id, tenantId, phone);
+console.log("[Recovery] Estimate recovery started id=%s tenant=%s phone=%s", res.rows[0].id, tenantId, phone);
 
-  // 📨 Estimate recovery engaged notification (non-blocking)
-  try {
-    const notificationService = require("./notifications");
-    notificationService.notifyEstimateRecoveryStarted(tenantId, {
-      customer_name: lead.name || lead.contact_name,
-      lead_id:       lead.id || null,
-      recovery_id:   res.rows[0].id,
-    }).catch((e) => console.error("[Recovery] notifyEstimateRecoveryStarted failed:", e.message));
-  } catch (e) {
-    console.error("[Recovery] Notification import failed:", e.message);
-  }
+  // NOTE (June 8, 2026): the "AI Follow-Up Started" notification used to fire
+  // HERE, at creation, before any gate ran — which produced phantom alerts
+  // for recoveries that were then suppressed at send time (Paragon bug). It
+  // now fires from executeStep AFTER the first touch actually goes out, so a
+  // notification reliably means a real message was sent. See executeStep.
 
   return res.rows[0];
 }
@@ -927,6 +962,47 @@ const stepDef = ALL_STEPS.get(recovery.current_step);
     await sendRecoverySms(recovery, tenant, stepDef, vars);
   } else if (stepDef.channel === "call") {
     await makeRecoveryCall(recovery, tenant, stepDef, vars);
+  }
+
+  // 📨 "AI Follow-Up Started" notification — fires once, on the FIRST touch
+  // of an estimate-recovery sequence, AFTER it actually sent (June 8, 2026).
+  // Guard: only the GHOST sequence's opening step, and only when no prior
+  // touch has gone out (sms_attempts + call_attempts were 0 at entry). This
+  // is the post-gate location, so the notification reliably means a real
+  // message went out. Copy is built from the tenant's actual channels +
+  // cadence, not hardcoded boilerplate. Non-blocking.
+  if (
+    recovery.current_step === GHOST_SEQUENCE[0].step &&
+    (recovery.sms_attempts || 0) === 0 &&
+    (recovery.call_attempts || 0) === 0
+  ) {
+    try {
+      const channels = [];
+      if (phase10Settings?.sms_enabled)   channels.push("SMS");
+      if (phase10Settings?.voice_enabled) channels.push("voice");
+      if (phase10Settings?.email_enabled) channels.push("email");
+
+      let cadenceDayCount = null;
+      try {
+        const cadenceDays = getCadenceDays(phase10Settings, null);
+        // +1 for the day-0 confirmation, which always sends and isn't in the
+        // preset day list. Falls back to null if cadence resolves empty.
+        cadenceDayCount = Array.isArray(cadenceDays) && cadenceDays.length > 0
+          ? cadenceDays.length + 1
+          : null;
+      } catch (_) { /* leave null — copy degrades gracefully */ }
+
+      const notificationService = require("./notifications");
+      notificationService.notifyEstimateRecoveryStarted(recovery.tenant_id, {
+        customer_name:   recovery.contact_name || null,
+        lead_id:         recovery.lead_id || null,
+        recovery_id:     recovery.id,
+        channels,
+        cadenceDayCount,
+      }).catch((e) => console.error("[Recovery] notifyEstimateRecoveryStarted failed:", e.message));
+    } catch (e) {
+      console.error("[Recovery] Notification dispatch failed:", e.message);
+    }
   }
 
   // Facebook touch for Facebook leads

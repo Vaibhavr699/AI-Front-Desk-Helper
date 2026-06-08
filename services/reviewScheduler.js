@@ -27,7 +27,7 @@ async function fetchReviewsForTenant(tenantId) {
 
   // 1. Pull tenant's Google credentials from DB
   const tenantRes = await db.query(
-    `SELECT id, name, company_name,
+    `SELECT id, name, company_name, city, state,
             google_access_token, google_refresh_token,
             google_location_id, google_account_id
      FROM tenants
@@ -61,6 +61,10 @@ async function fetchReviewsForTenant(tenantId) {
     );
     if (existing.rows.length > 0) continue; // already stored
 
+    // Skip reviews the business has already replied to on Google — no point
+    // drafting a response to something already answered.
+    if (review.hasOwnerReply) continue;
+
     // Generate AI draft response
     let aiDraft = null;
     try {
@@ -78,7 +82,7 @@ async function fetchReviewsForTenant(tenantId) {
         tenantId,
         review.reviewId,
         review.reviewer?.displayName || "Anonymous",
-        review.starRating ? starRatingToInt(review.starRating) : 5,
+        review.starRating || 5,
         review.comment || null,
         review.createTime || new Date().toISOString(),
         aiDraft,

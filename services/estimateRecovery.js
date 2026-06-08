@@ -383,27 +383,55 @@ function nearestCanonicalStepForDay(day, channel) {
   return dayMatch || ALL_STEPS.get("estimate_sent");
 }
 
+// Substitute {{first_name}} / {{company_name}} tokens in user-written custom
+// copy. (Phase B — June 8, 2026.) Canonical SMS copy uses ${v.x} JS templates
+// substituted at call time; user-written copy uses {{x}} mustache tokens
+// substituted here, matching the style already used by call scripts. Unknown
+// tokens are left as literal text by design — a contractor's typo shouldn't
+// error the send; they'll see the literal text and can fix it.
+function substituteTokens(text, vars) {
+  if (typeof text !== "string" || !text) return "";
+  return text
+    .replace(/\{\{\s*first_name\s*\}\}/gi, vars.first_name || "there")
+    .replace(/\{\{\s*company_name\s*\}\}/gi, vars.company_name || "");
+}
+
 // Build the touch payload for a custom cadence entry {day, channel}.
-// Phase A: copy comes from the nearest canonical step. Phase B will prefer
-// entry.message / entry.script / entry.voicemail when present.
+//
+// Phase B: PREFER user-authored text (entry.message / entry.script /
+// entry.voicemail) when present and non-blank; otherwise fall back to the
+// nearest canonical step's copy (Phase A behavior). Each field falls back
+// INDEPENDENTLY — e.g. a call day with a custom script but no voicemail uses
+// the canonical voicemail, not a reuse of the live script (different speech
+// acts). User text gets {{token}} substitution; canonical SMS copy is a
+// function evaluated with vars as before.
 function buildCustomTouch(entry, vars) {
   const channel = entry.channel === "call" ? "call" : "sms";
   const src = nearestCanonicalStepForDay(entry.day, channel);
 
+  const hasText = (v) => typeof v === "string" && v.trim().length > 0;
+
   if (channel === "sms") {
-    // Phase B: if (typeof entry.message === "string" && entry.message.trim()) use it.
-    const body = typeof src.message === "function" ? src.message(vars) : (src.message || "");
+    let body;
+    if (hasText(entry.message)) {
+      body = substituteTokens(entry.message, vars);
+    } else {
+      body = typeof src.message === "function" ? src.message(vars) : (src.message || "");
+    }
     return { channel: "sms", message: body };
   }
-  // call
-  return {
-    channel:   "call",
-    // Phase B: prefer entry.script / entry.voicemail when present.
-    script:    src.script    || "",
-    voicemail: src.voicemail || src.script || "",
-  };
-}
 
+  // call — script + voicemail fall back independently to canonical defaults.
+  const script = hasText(entry.script)
+    ? substituteTokens(entry.script, vars)
+    : (src.script || "");
+
+  const voicemail = hasText(entry.voicemail)
+    ? substituteTokens(entry.voicemail, vars)
+    : (src.voicemail || src.script || "");
+
+  return { channel: "call", script, voicemail };
+}
 // ─────────────────────────────────────────────────────────
 // CORE: Start a recovery sequence
 // ─────────────────────────────────────────────────────────

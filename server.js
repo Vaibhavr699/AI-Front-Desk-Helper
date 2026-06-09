@@ -3739,7 +3739,7 @@ wss.on("connection", async (twilioSocket, req) => {
   const parsedUrl = new URL(rawUrl, "http://localhost");
   const pathname = parsedUrl.pathname || "";
   const q = Object.fromEntries(parsedUrl.searchParams.entries());
-  const isFranchisorMode = q.franchise === "1";
+  const isFranchisorMode = q.franchise === "1" || typeFromPath === "franchise";
   let franchiseParent = null;       // the franchisor parent tenant
   let franchiseChildren = [];       // child location tenants
   let franchiseZipCaptured = false; // flips true once we route to a child
@@ -3896,9 +3896,13 @@ wss.on("connection", async (twilioSocket, req) => {
   }
 
 // ── Franchisor mode: load parent + children for in-session ZIP routing ─────
+  // The dialed number (To) is stripped from the WS query string by Twilio, so
+  // we resolve franchisor context from the PARENT tenant id already present in
+  // the path (tenant.id here is the parent the HTTP handler forced the stream
+  // onto). resolveByParentId avoids any dependency on q.To.
   if (isFranchisorMode && tenant && tenant.id) {
     try {
-      const fctx = await franchiseRouter.resolveInboundContext(to);
+      const fctx = await franchiseRouter.resolveByParentId(tenant.id);
       if (fctx.mode === "franchisor") {
         franchiseParent = fctx.parent;
         franchiseChildren = fctx.children;
@@ -3907,7 +3911,7 @@ wss.on("connection", async (twilioSocket, req) => {
         // session.update below.
         console.log("[AI-Desk] WS franchisor mode parent=%s children=%d", franchiseParent.id, franchiseChildren.length);
       } else {
-        console.warn("[AI-Desk] WS franchise=1 but resolve returned %s — treating as direct", fctx.mode);
+        console.warn("[AI-Desk] WS franchise path but resolveByParentId returned %s — treating as direct", fctx.mode);
       }
     } catch (e) {
       console.error("[AI-Desk] WS franchisor load failed (treating as direct):", e.message);

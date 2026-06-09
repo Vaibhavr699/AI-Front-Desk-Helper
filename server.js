@@ -3739,7 +3739,6 @@ wss.on("connection", async (twilioSocket, req) => {
   const parsedUrl = new URL(rawUrl, "http://localhost");
   const pathname = parsedUrl.pathname || "";
   const q = Object.fromEntries(parsedUrl.searchParams.entries());
-  const isFranchisorMode = q.franchise === "1" || typeFromPath === "franchise";
   let franchiseParent = null;       // the franchisor parent tenant
   let franchiseChildren = [];       // child location tenants
   let franchiseZipCaptured = false; // flips true once we route to a child
@@ -3774,6 +3773,11 @@ wss.on("connection", async (twilioSocket, req) => {
     callSidFromPath = pathSegments[3];
   }
 
+ // Franchise flag — read from path (q.franchise is stripped by Twilio on the
+  // <Stream> URL, so the path segment is the reliable signal). Declared HERE,
+  // after typeFromPath is assigned, to avoid a temporal-dead-zone ReferenceError.
+  const isFranchisorMode = q.franchise === "1" || typeFromPath === "franchise";
+  
   let callSid = callSidFromPath || q.CallSid || q.callSid;
   let isOutboundFromPath = typeFromPath === "outbound";
   let isOutbound = isOutboundFromPath || q.type === "outbound" || q.direction === "outbound";

@@ -4088,6 +4088,48 @@ wss.on("connection", async (twilioSocket, req) => {
       console.error("[AI-Desk][9A] flushAudioSignals failed callId=%s: %s", callId, e.message);
     }
   }
+
+  // ── Call-end lead-link backstop (Jun 9, 2026) ──────────────────────────
+  // The start-time lead link (in msg.event==="start") depends on the WS-URL
+  // `from`, which Twilio strips off <Stream> URLs on some calls. When that
+  // happens `from` is null at start, the link block is skipped, and the call
+  // row never gets lead_id (confirmed: zero "Lead linked" logs; calls left
+  // NULL despite a matching lead existing). This backstop runs at call-end:
+  // if leadId is still null, resolve the caller number from the closure `from`
+  // or — the reliable source — the call row's own from_number (written by the
+  // /twilio/status webhook), then getOrCreateLead and set leadId so the final
+  // safeUpdateCallSummary writes calls.lead_id. Never throws.
+  async function ensureLeadLinkedAtEnd() {
+    if (leadId) return leadId;            // already linked at start — nothing to do
+    if (!tenant) return null;
+    try {
+      let phone = from;
+      if (!phone) {
+        const r = await safePoolQuery("SELECT from_number FROM calls WHERE id = $1", [callId]);
+        phone = r?.rows?.[0]?.from_number || null;
+      }
+      if (!phone) {
+        console.warn("[AI-Desk] ensureLeadLinkedAtEnd: no phone for callId=%s — cannot link", callId);
+        return null;
+      }
+      const lead = await leadsService.getOrCreateLead(
+        tenant.id,
+        phone,
+        currentLeadCapture.full_name || currentLeadCapture.name || null,
+        leadSource,
+        "voice"
+      );
+      if (lead) {
+        leadId = lead.id;
+        console.log("[AI-Desk] Lead linked AT END callId=%s leadId=%s phone=%s", callId, leadId, phone);
+        return leadId;
+      }
+    } catch (e) {
+      console.error("[AI-Desk] ensureLeadLinkedAtEnd failed callId=%s: %s", callId, e.message);
+    }
+    return null;
+  }
+
   let hasBooked = false;
   let hasScheduledHangup = false;
   // One-shot guard: set true the moment a booking succeeds, consumed by the
@@ -5619,16 +5661,19 @@ from = msg.start?.customParameters?.From || msg.start?.from || from || null;
         openaiSocket.close();
       }
 
+      await ensureLeadLinkedAtEnd(); // Jun 9, 2026 — backstop link before final write
+
       await safeUpdateCallSummary(callId, {
         status: transferAttempted ? "transferred" : "completed",
         disposition: hasBooked ? "booked" : (transferAttempted ? "transferred" : "completed"),
         transcript,
         metadata: { leadCapture: currentLeadCapture },
+        leadId,
         markEnded: true
       });
 
       await flushAudioSignals(); // Phase 9A
-    } 
+    }
   };
 
   twilioSocket.on("close", async () => {
@@ -5638,11 +5683,14 @@ from = msg.start?.customParameters?.From || msg.start?.from || from || null;
       openaiSocket.close();
     }
     if (!hasScheduledHangup) {
+      await ensureLeadLinkedAtEnd(); // Jun 9, 2026 — backstop link before final write
+
       await safeUpdateCallSummary(callId, {
         status: transferAttempted ? "transferred" : "completed",
         disposition: hasBooked ? "booked" : (transferAttempted ? "transferred" : "completed"),
         transcript,
         metadata: { leadCapture: currentLeadCapture },
+        leadId,
         markEnded: true
       });
 

@@ -3452,14 +3452,29 @@ async function handleTwilioVoice(req, res, tenantId) {
       return;
     }
 
-    let wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId, tenant.lead_source, {
-      callSid:    req.body?.CallSid || req.query?.CallSid,
-      fromNumber: fromNum,
-      toNumber:   toNum,
-      direction:  "inbound",
-    });
+    let wsUrl;
     if (franchiseMode) {
-      wsUrl += (wsUrl.includes("?") ? "&" : "?") + "franchise=1";
+      // Twilio strips the query string off <Stream url>, so the franchise
+      // signal must live in the URL PATH. Build the 4-segment recovery-style
+      // path /twilio-media/{tenantId}/franchise/{callSid} that the WS handler
+      // reads as typeFromPath === "franchise".
+      const wsBase = toWebSocketBaseUrl(requestBaseUrl);
+      const sid = req.body?.CallSid || req.query?.CallSid || "";
+      wsUrl = `${wsBase}/twilio-media/${resolvedTenantId}/franchise/${encodeURIComponent(sid)}`;
+      const params = new URLSearchParams();
+      if (fromNum) params.set("From", fromNum);
+      if (toNum)   params.set("To",   toNum);
+      params.set("direction", "inbound");
+      if (tenant.lead_source) params.set("leadSource", tenant.lead_source);
+      const qs = params.toString();
+      if (qs) wsUrl += `?${qs}`;
+    } else {
+      wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId, tenant.lead_source, {
+        callSid:    req.body?.CallSid || req.query?.CallSid,
+        fromNumber: fromNum,
+        toNumber:   toNum,
+        direction:  "inbound",
+      });
     }
     if (!/^wss:\/\//i.test(wsUrl)) {
       const fallbackTwiml = buildFallbackTwiml(

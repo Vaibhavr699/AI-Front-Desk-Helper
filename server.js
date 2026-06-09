@@ -52,6 +52,7 @@ const { isWithinBusinessHours } = require("./lib/timeUtils");
 const { buildCoachingPromptInjection } = require("./lib/coachingPromptInjection");
 const crmWebhookPayload = require("./lib/crmWebhookPayload");
 const { getLast10Digits, normalizeE164Phone } = require("./lib/phone");
+const franchiseRouter = require("./lib/franchiseRouter");
 
 const _resetBase = (process.env.DASHBOARD_URL || process.env.BASE_URL || "").replace(/\/$/, "");
 console.log("[Startup] Password reset: Resend=" + (process.env.RESEND_API_KEY && process.env.EMAIL_FROM ? "yes" : "no") + ", ResetLinkBase=" + (_resetBase || "NOT SET – set DASHBOARD_URL or BASE_URL"));
@@ -1922,11 +1923,95 @@ function validateProposedDate(rawDate) {
   return { ok: true, normalized: `${y}-${mm}-${dd}` };
 }
 
-async function processSmsConversation(phone, incomingText, tenant = null) {
+async function processSmsConversation(phone, incomingText, tenant = null, routedToNumber = null) {
   const thread = getOrCreateSmsThread(phone);
   thread.lastInboundAt = Date.now();
   thread.history.push({ role: "user", text: incomingText, at: new Date().toISOString() });
+  thread.routedToNumber = routedToNumber || thread.routedToNumber || null;
 
+// ── Franchisor shared-number SMS routing (Jun 8, 2026) ─────────────────────
+  // If the inbound tenant is a franchisor parent with the toggle on, the first
+  // message asks for a ZIP; once we match a child we swap `tenant` to it and pin
+  // it on the thread for the rest of the conversation. Direct tenants and
+  // already-routed threads skip this entirely.
+  if (tenant && !thread.franchiseRoutedChildId) {
+    try {
+      const fctx = await franchiseRouter.resolveInboundContext(tenant.phone || thread.routedToNumber);
+      if (fctx.mode === "franchisor") {
+        const maybeZip = franchiseRouter.normalizeZip(incomingText);
+        if (!maybeZip) {
+          const opener = franchiseRouter.buildNeutralOpener(fctx.parent);
+          if (thread.leadId) {
+            messagesService.saveMessage(fctx.parent.id, thread.leadId, "sms", "outbound", opener);
+          }
+          thread.history.push({ role: "assistant", text: opener, at: new Date().toISOString() });
+          return { reply: opener, lead_capture: {}, booking_confirmed: null };
+        }
+        const match = franchiseRouter.matchZipToChild(fctx.children, maybeZip);
+        if (match.status === "matched") {
+          thread.franchiseRoutedChildId = match.child.id;
+          await franchiseRouter.reassignToChild({
+            parentId: fctx.parent.id, childId: match.child.id, zip: maybeZip,
+            leadId: thread.leadId,
+          });
+          const freshChild = await getTenantById(match.child.id).catch(() => match.child);
+          tenant = freshChild;
+          thread.tenantId = match.child.id;
+        } else if (match.status === "no_match") {
+          const nearest = franchiseRouter.nearestChildByZip(fctx.children, maybeZip);
+          await franchiseRouter.logRoutingOutcome({
+            parentId: fctx.parent.id, zip: maybeZip, outcome: "no_match",
+            leadId: thread.leadId, routedToChildId: nearest ? nearest.id : null,
+          });
+          if (nearest && thread.leadId) {
+            await db.query(
+              "UPDATE leads SET tenant_id = $1, lead_source = 'franchise_out_of_area', updated_at = now() WHERE id = $2",
+              [nearest.id, thread.leadId]
+            ).catch(() => {});
+            notificationsService.createNotification(nearest.id, {
+              type: 'out_of_area_lead',
+              title: 'Out-of-Area Lead (your call)',
+              body: `SMS lead in ZIP ${maybeZip} — nearest location. Claim if you want it.`,
+              data: { zip: maybeZip, leadId: thread.leadId, parent_id: fctx.parent.id },
+            }).catch(() => {});
+          }
+          const reply = "Thanks! We don't have a crew specifically covering that ZIP yet, but I'll take your details and have the nearest team reach out. What's your name and a quick description of the project?";
+          if (thread.leadId) messagesService.saveMessage(fctx.parent.id, thread.leadId, "sms", "outbound", reply);
+          thread.history.push({ role: "assistant", text: reply, at: new Date().toISOString() });
+          thread.franchiseRoutedChildId = nearest ? nearest.id : fctx.parent.id;
+          return { reply, lead_capture: {}, booking_confirmed: null };
+        } else if (match.status === "overlap") {
+          await franchiseRouter.logRoutingOutcome({
+            parentId: fctx.parent.id, zip: maybeZip, outcome: "overlap", leadId: thread.leadId,
+          });
+          notificationsService.createNotification(fctx.parent.id, {
+            type: 'franchise_zip_overlap',
+            title: 'ZIP Routing Conflict (SMS)',
+            body: `ZIP ${maybeZip} claimed by ${match.children.length} locations. Fix service-area lists.`,
+            data: { zip: maybeZip, child_ids: match.children.map(c => c.id), leadId: thread.leadId },
+          }).catch(() => {});
+          const reply = "Thanks! Let me take your details and connect you with the right local crew. What's your name and a quick description of the project?";
+          if (thread.leadId) messagesService.saveMessage(fctx.parent.id, thread.leadId, "sms", "outbound", reply);
+          thread.history.push({ role: "assistant", text: reply, at: new Date().toISOString() });
+          thread.franchiseRoutedChildId = fctx.parent.id;
+          return { reply, lead_capture: {}, booking_confirmed: null };
+        } else {
+          const reply = "Could you send just the 5-digit ZIP code for the property so I can connect you with the right local team?";
+          if (thread.leadId) messagesService.saveMessage(fctx.parent.id, thread.leadId, "sms", "outbound", reply);
+          thread.history.push({ role: "assistant", text: reply, at: new Date().toISOString() });
+          return { reply, lead_capture: {}, booking_confirmed: null };
+        }
+      }
+    } catch (e) {
+      console.error("[FranchiseRouter][SMS] routing failed (continuing direct):", e.message);
+    }
+  } else if (tenant && thread.franchiseRoutedChildId && thread.franchiseRoutedChildId !== tenant.id) {
+    try {
+      const child = await getTenantById(thread.franchiseRoutedChildId);
+      if (child) tenant = child;
+    } catch (_) { /* fall through with parent tenant */ }
+  }
+  
   if (tenant) {
     // Map thread.channel → contact_method bucket. sms/website/facebook
     // are the only values thread.channel ever takes (set in
@@ -3278,6 +3363,27 @@ async function handleTwilioVoice(req, res, tenantId) {
     resolvedTenantId = "gladiators";
   }
 
+  // ── Franchisor shared-number check (Jun 8, 2026) ───────────────────────
+  // If the dialed number belongs to a franchisor parent with the master
+  // toggle ON and ≥1 live child, route in "franchisor mode": open neutral,
+  // capture ZIP in-session, then swap to the matched child. Force the stream
+  // onto the PARENT tenant id and tag the WS URL with franchise=1 so the WS
+  // handler opens neutral and arms capture_service_zip. mode==="direct" (the
+  // default for every existing tenant) is a no-op.
+  let franchiseMode = false;
+  try {
+    const fctx = await franchiseRouter.resolveInboundContext(toNum);
+    if (fctx.mode === "franchisor") {
+      franchiseMode = true;
+      tenant = fctx.parent;
+      resolvedTenantId = fctx.parent.id;
+      console.log("[AI-Desk] Franchisor mode engaged parent=%s children=%d to=%s",
+        fctx.parent.id, fctx.children.length, toNum);
+    }
+  } catch (e) {
+    console.error("[AI-Desk] Franchisor resolve failed (continuing direct):", e.message);
+  }
+
   // Build 1 — fetch the phone_numbers row for the dialed number so we can
   // apply per-phone AI toggle, ring-first, per-phone BH opt-in, and custom
   // voicemail URL. Null-safe: if the row is missing or the query fails
@@ -3346,13 +3452,15 @@ async function handleTwilioVoice(req, res, tenantId) {
       return;
     }
 
-    // Need a WS URL whether we're streaming direct or as ring-first fallback.
-    const wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId, tenant.lead_source, {
+    let wsUrl = buildTenantWsUrl(requestBaseUrl, resolvedTenantId, tenant.lead_source, {
       callSid:    req.body?.CallSid || req.query?.CallSid,
       fromNumber: fromNum,
       toNumber:   toNum,
       direction:  "inbound",
     });
+    if (franchiseMode) {
+      wsUrl += (wsUrl.includes("?") ? "&" : "?") + "franchise=1";
+    }
     if (!/^wss:\/\//i.test(wsUrl)) {
       const fallbackTwiml = buildFallbackTwiml(
         "Please hold while we connect you to the team.",
@@ -3362,8 +3470,10 @@ async function handleTwilioVoice(req, res, tenantId) {
       return;
     }
 
-    // Case 2: ring a human first, fall through to AI or voicemail.
-    if (routing.ringFirst) {
+   // Case 2: ring a human first, fall through to AI or voicemail.
+    // Suppressed in franchisor mode — a shared number must not ring one
+    // location's human before ZIP routing decides which location owns the call.
+    if (routing.ringFirst && !franchiseMode) {
       const ringTwiml = buildRingFirstTwiml({
         ringFirstPhone:      routing.ringFirstPhone,
         ringFirstTimeout:    routing.ringFirstTimeoutSeconds,
@@ -3478,7 +3588,7 @@ app.post("/twilio-sms", async (req, res) => {
   try {
     const toNum  = req.body?.To || req.body?.to;
     const tenant = await getTenantByPhone(toNum);
-    const result = await processSmsConversation(from, body, tenant);
+    const result = await processSmsConversation(from, body, tenant, toNum);
 
     // Phase 8 (May 12, 2026) — when handoff is active or there's no reply
     // to send, return empty TwiML so Twilio doesn't relay anything to the
@@ -3629,6 +3739,10 @@ wss.on("connection", async (twilioSocket, req) => {
   const parsedUrl = new URL(rawUrl, "http://localhost");
   const pathname = parsedUrl.pathname || "";
   const q = Object.fromEntries(parsedUrl.searchParams.entries());
+  const isFranchisorMode = q.franchise === "1";
+  let franchiseParent = null;       // the franchisor parent tenant
+  let franchiseChildren = [];       // child location tenants
+  let franchiseZipCaptured = false; // flips true once we route to a child
   console.log("[AI-Desk DEBUG] WS connect rawUrl=%s pathname=%s q=%j", rawUrl, pathname, q);
 
   let isNurturing = q.type === "nurturing";
@@ -3781,6 +3895,25 @@ wss.on("connection", async (twilioSocket, req) => {
     }
   }
 
+// ── Franchisor mode: load parent + children for in-session ZIP routing ─────
+  if (isFranchisorMode && tenant && tenant.id) {
+    try {
+      const fctx = await franchiseRouter.resolveInboundContext(to);
+      if (fctx.mode === "franchisor") {
+        franchiseParent = fctx.parent;
+        franchiseChildren = fctx.children;
+        // tenant stays the PARENT until ZIP routing swaps it. The neutral
+        // opener + capture_service_zip tool are layered on in the
+        // session.update below.
+        console.log("[AI-Desk] WS franchisor mode parent=%s children=%d", franchiseParent.id, franchiseChildren.length);
+      } else {
+        console.warn("[AI-Desk] WS franchise=1 but resolve returned %s — treating as direct", fctx.mode);
+      }
+    } catch (e) {
+      console.error("[AI-Desk] WS franchisor load failed (treating as direct):", e.message);
+    }
+  }
+  
   // OUTBOUND SCRIPT RESOLUTION
   let outboundScript = null;
   if (isOutbound && campaignId) {
@@ -4251,6 +4384,27 @@ if (DEPRECATED_REALTIME_MODELS.has(model)) {
       // error; never blocks the call.
       const coachingInjection = await buildCoachingPromptInjection(tenant?.id);
 
+      // ── Franchisor mode: neutral opener + ZIP-capture tool ─────────────────
+      // Override the spoken persona to a thin neutral router until the caller's
+      // ZIP resolves a child. Do NOT reveal any single location's identity here.
+      // capture_service_zip is appended to the tool set; its handler does the
+      // match + session swap.
+      let franchiseInstructionPrefix = "";
+      if (isFranchisorMode && franchiseParent) {
+        const opener = franchiseRouter.buildNeutralOpener(franchiseParent);
+        franchiseInstructionPrefix =
+          "# ROUTING MODE (READ FIRST)\n" +
+          "You are the central line for " + (franchiseParent.company_name || franchiseParent.name || "this company") + ", " +
+          "which has multiple local teams. You do NOT yet know which local team serves this caller. " +
+          "Your FIRST job is to get the property's 5-digit ZIP code so you can route them to the right local team. " +
+          "Your first utterance must be, warmly and verbatim:\n\n\"" + opener + "\"\n\n" +
+          "As soon as the caller gives a ZIP (or an address you can read a ZIP from), call the capture_service_zip tool with it. " +
+          "Do NOT name any specific local team, do NOT quote prices, do NOT book anything, and do NOT collect full lead details " +
+          "until AFTER capture_service_zip has routed the call. If the caller refuses to give a ZIP, gently explain you need it to " +
+          "connect them to the team that covers their area.\n\n";
+        aiConfig.tools = [...(aiConfig.tools || []), CAPTURE_SERVICE_ZIP_TOOL];
+      }
+
       const silenceMs = parseInt(process.env.REALTIME_SILENCE_MS, 10) || 1500;
       const vadThreshold = parseFloat(process.env.REALTIME_VAD_THRESHOLD) || 0.85;
       const sessionUpdate = {
@@ -4273,7 +4427,7 @@ if (DEPRECATED_REALTIME_MODELS.has(model)) {
               voice: aiConfig.voice,
             },
           },
-          instructions: `${aiConfig.instructions}${coachingInjection ? "\n\n" + coachingInjection : ""}
+          instructions: `${franchiseInstructionPrefix}${aiConfig.instructions}${coachingInjection ? "\n\n" + coachingInjection : ""}
 
 # Delivery
 Speak at the pace of a relaxed, capable receptionist — slightly faster than measured, never rushed. Natural intonation, not perky. Let small pauses sit; you don't have to fill silence. Match the caller's energy: if they're chatty, be chatty; if they're terse, be terse.
@@ -4518,7 +4672,116 @@ sendToOpenAI(sessionUpdate);
             }
           }
           try {
-             if (name === "check_availability" && tenant) {
+            if (name === "capture_service_zip" && isFranchisorMode && franchiseParent) {
+              const match = franchiseRouter.matchZipToChild(franchiseChildren, args.zip);
+
+              if (match.status === "invalid_zip") {
+                output = JSON.stringify({
+                  success: false,
+                  message: "That didn't sound like a valid 5-digit ZIP. Ask the caller to repeat just the ZIP code for the property.",
+                });
+              } else if (match.status === "matched") {
+                const child = match.child;
+                franchiseZipCaptured = true;
+                try {
+                  const freshChild = await getTenantById(child.id);
+                  if (freshChild) {
+                    const transferNumber = (freshChild.transfer_numbers && freshChild.transfer_numbers[0]) || null;
+                    tenant = { ...freshChild, transferNumber };
+                  }
+                } catch (e) {
+                  console.error("[AI-Desk] capture_service_zip: child reload failed:", e.message);
+                  tenant = child;
+                }
+
+                await franchiseRouter.reassignToChild({
+                  parentId: franchiseParent.id,
+                  childId:  child.id,
+                  zip:      args.zip,
+                  callId:   callId,
+                  leadId:   leadId,
+                });
+
+                const childConfig = getAIConfig({
+                  tenant,
+                  isOutbound: false,
+                  isRecovery: false,
+                  isNurturing: false,
+                });
+                const childCoaching = await buildCoachingPromptInjection(tenant.id);
+                sendToOpenAI({
+                  type: "session.update",
+                  session: {
+                    type: "realtime",
+                    instructions: `${childConfig.instructions}${childCoaching ? "\n\n" + childCoaching : ""}
+
+# Delivery
+Speak at the pace of a relaxed, capable receptionist — slightly faster than measured, never rushed.`,
+                    tools: childConfig.tools,
+                  },
+                });
+
+                output = JSON.stringify({
+                  success: true,
+                  message: "Routed to the correct local team. From now on you ARE that team — greet the caller as " +
+                    (tenant.company_name || tenant.name || "the local team") +
+                    " and help them normally (answer questions, qualify, and book). Do not mention routing or ZIP codes again.",
+                });
+              } else if (match.status === "no_match") {
+                const nearest = franchiseRouter.nearestChildByZip(franchiseChildren, args.zip);
+                await franchiseRouter.logRoutingOutcome({
+                  parentId: franchiseParent.id,
+                  zip: args.zip,
+                  outcome: "no_match",
+                  callId, leadId,
+                  routedToChildId: nearest ? nearest.id : null,
+                });
+                if (nearest && leadId) {
+                  try {
+                    await db.query(
+                      "UPDATE leads SET tenant_id = $1, lead_source = 'franchise_out_of_area', updated_at = now() WHERE id = $2",
+                      [nearest.id, leadId]
+                    );
+                  } catch (e) {
+                    console.error("[AI-Desk] no_match lead reroute failed:", e.message);
+                  }
+                  notificationsService.createNotification(nearest.id, {
+                    type: 'out_of_area_lead',
+                    title: 'Out-of-Area Lead (your call)',
+                    body: `A caller in ZIP ${franchiseRouter.normalizeZip(args.zip)} reached ${franchiseParent.company_name || 'the franchise line'} but no team declared that ZIP. You're the nearest location — claim it if you want it.`,
+                    data: { zip: franchiseRouter.normalizeZip(args.zip), callId, leadId, parent_id: franchiseParent.id },
+                  }).catch(() => {});
+                }
+                notificationsService.createNotification(franchiseParent.id, {
+                  type: 'out_of_area_lead',
+                  title: 'Out-of-Area Lead',
+                  body: `Caller in ZIP ${franchiseRouter.normalizeZip(args.zip)} isn't covered by any location. Routed to ${nearest ? (nearest.company_name || nearest.name) : 'HQ (no nearest found)'} for review.`,
+                  data: { zip: franchiseRouter.normalizeZip(args.zip), callId, leadId, nearest_id: nearest ? nearest.id : null },
+                }).catch(() => {});
+
+                output = JSON.stringify({
+                  success: true,
+                  message: "We don't have a local team that has claimed that ZIP. Tell the caller warmly: 'We don't have a crew specifically covering your area yet, but let me take your details and have the nearest team reach out to see if they can help.' Collect name, phone, and a short project description, then let them know someone will follow up. Do NOT promise an appointment and do NOT book anything.",
+                });
+              } else if (match.status === "overlap") {
+                await franchiseRouter.logRoutingOutcome({
+                  parentId: franchiseParent.id,
+                  zip: args.zip,
+                  outcome: "overlap",
+                  callId, leadId,
+                });
+                notificationsService.createNotification(franchiseParent.id, {
+                  type: 'franchise_zip_overlap',
+                  title: 'ZIP Routing Conflict',
+                  body: `ZIP ${franchiseRouter.normalizeZip(args.zip)} is claimed by ${match.children.length} locations. Fix the service-area ZIP lists. The call was routed to HQ.`,
+                  data: { zip: franchiseRouter.normalizeZip(args.zip), child_ids: match.children.map(c => c.id), callId, leadId },
+                }).catch(() => {});
+                output = JSON.stringify({
+                  success: true,
+                  message: "Tell the caller warmly: 'Let me take your details and have our team connect you with the right local crew.' Collect name, phone, and a short project description. Do NOT book anything — a human will route this.",
+                });
+              }
+            } else if (name === "check_availability" && tenant) {
               const { appointment_date, appointment_time } = args;
 
               const slot = await bookingEngine.checkSlot({

@@ -850,6 +850,17 @@ export function updateZeeOutboundGates(zeeId, body) {
   });
 }
 
+// Update a franchisor's shared-number routing (Jun 9, 2026 — Phase 6).
+// Writes the master toggle + neutral ZIP-capture opener on the parent row.
+// body: { enabled?, neutral_opener? } — both optional, only provided fields update.
+// Returns { success, tenant } with the post-update values.
+export function updateFranchiseSharedNumber(parentId, body) {
+  return api(`/api/admin/tenants/${parentId}/franchise-shared-number`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
 // List HQ-eligible tenants (paying for an HQ tier plan).
 // Apr 29, 2026 — switched from parent_mode filter to HQ plan filter.
 // parent_mode defaults to 'operating_hq' on every tenant row, so it's

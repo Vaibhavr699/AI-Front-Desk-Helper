@@ -958,4 +958,118 @@ router.get("/tenants/:hqId/zees", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
+// -------------------- Update Franchisor Shared-Number Routing --------------------
+//
+// Jun 9, 2026 — Phase 6 Franchise (shared-number routing).
+// Powers the FranchiseSharedNumberCard on HqLocations.jsx. Lets a
+// superadmin (on behalf of a franchisor) flip the master shared-number
+// toggle and set the neutral ZIP-capture opener.
+//
+// Writes two columns on the FRANCHISOR PARENT tenant row:
+//   - franchise_shared_number_enabled (bool) — the on/off master switch
+//   - franchise_neutral_opener (text, nullable) — the greeting the AI
+//     speaks before it knows which location serves the caller
+//
+// Default-false means existing tenants are unaffected until explicitly
+// enabled. When enabled with a blank opener, lib/franchiseRouter
+// buildNeutralOpener falls back to a default greeting (the UI warns about
+// this so the franchisor isn't surprised by generic wording).
+//
+// Validation: target must be a parent (has ≥1 child via parent_id) so we
+// never arm shared-number routing on a tenant with no locations to route
+// to — that would strand every caller on the neutral opener with nowhere
+// to go.
+//
+// Auth: requireSuperAdmin (gated at router mount in server.js), matching
+// the other franchise/HQ controls on this page (outbound-gates, branding).
+router.patch("/tenants/:id/franchise-shared-number", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { enabled, neutral_opener } = req.body || {};
+
+    // At least one field must be provided
+    if (enabled === undefined && neutral_opener === undefined) {
+      return res.status(400).json({
+        error: "At least one of enabled, neutral_opener required",
+      });
+    }
+
+    // Type validation
+    if (enabled !== undefined && typeof enabled !== "boolean") {
+      return res.status(400).json({ error: "enabled must be boolean" });
+    }
+    if (
+      neutral_opener !== undefined &&
+      neutral_opener !== null &&
+      typeof neutral_opener !== "string"
+    ) {
+      return res.status(400).json({ error: "neutral_opener must be a string or null" });
+    }
+
+    // Load the target tenant + its child count.
+    const existing = await db.query(
+      `SELECT t.id, t.parent_mode,
+              (SELECT COUNT(*) FROM tenants c WHERE c.parent_id = t.id) AS child_count
+         FROM tenants t WHERE t.id = $1`,
+      [id]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: "Tenant not found" });
+    }
+    const tenant = existing.rows[0];
+    const childCount = parseInt(tenant.child_count, 10) || 0;
+
+    // Guard: never arm shared-number routing on a tenant with no children.
+    // A franchisor with zero locations would strand every caller on the
+    // neutral opener. Only enforced when turning it ON.
+    if (enabled === true && childCount === 0) {
+      return res.status(400).json({
+        error:
+          "Cannot enable shared-number routing — this tenant has no franchise locations to route to. Add at least one location first.",
+      });
+    }
+
+    // Build the update from only the provided fields.
+    const updates = [];
+    const values = [];
+    let idx = 1;
+
+    if (enabled !== undefined) {
+      updates.push(`franchise_shared_number_enabled = $${idx++}`);
+      values.push(enabled);
+    }
+    if (neutral_opener !== undefined) {
+      // Trim, and treat blank as NULL so buildNeutralOpener's default
+      // fallback kicks in rather than speaking an empty string.
+      const trimmed =
+        neutral_opener === null ? null : String(neutral_opener).trim() || null;
+      updates.push(`franchise_neutral_opener = $${idx++}`);
+      values.push(trimmed);
+    }
+
+    updates.push("updated_at = now()");
+    values.push(id);
+
+    const result = await db.query(
+      `UPDATE tenants SET ${updates.join(", ")} WHERE id = $${idx}
+       RETURNING id, franchise_shared_number_enabled, franchise_neutral_opener`,
+      values
+    );
+
+    console.log(
+      "[Admin] Franchise shared-number updated tenantId=%s enabled=%s hasOpener=%s by=%s",
+      id,
+      result.rows[0].franchise_shared_number_enabled,
+      !!result.rows[0].franchise_neutral_opener,
+      req.user.email
+    );
+
+    res.json({ success: true, tenant: result.rows[0] });
+  } catch (e) {
+    console.error("[Admin] Franchise shared-number update error:", e.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 module.exports = router;

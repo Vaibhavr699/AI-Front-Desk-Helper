@@ -603,7 +603,7 @@ function FranchiseSharedNumberCard({ hq, onSaved }) {
     persist(enabled, opener);
   }
 
-  const justSaved = savedAt && Date.now() - savedAt < 2500;
+  const justSaved = savedAt > 0 && Date.now() - savedAt < 2500;
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 mb-6">

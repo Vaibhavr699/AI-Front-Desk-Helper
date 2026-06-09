@@ -82,9 +82,15 @@ router.post("/voice/:tenantId?", async (req, res) => {
     console.log("[AI-Desk] Voice webhook call created CallSid=%s tenantId=%s direction=%s", CallSid, tenant.id, direction);
 
     const wsUrl = (BASE_URL || "").replace("https://", "wss://").replace("http://", "ws://") + "/twilio-media";
-    let streamUrl = `${wsUrl}/${tenant.id}/${CallSid}?From=${encodeURIComponent(fromNumber)}&To=${encodeURIComponent(toNumber)}&direction=${direction}`;
+    // Franchisor flag goes in the PATH, not the query string. Twilio drops
+    // query params on <Stream url> in some configs (same reason outbound/
+    // recovery use path segments), so query-string franchise=1 never reached
+    // the WS handler. Path: /twilio-media/{tenantId}/franchise/{callSid}
+    let streamUrl;
     if (franchiseMode) {
-      streamUrl += "&franchise=1";
+      streamUrl = `${wsUrl}/${tenant.id}/franchise/${CallSid}?From=${encodeURIComponent(fromNumber)}&To=${encodeURIComponent(toNumber)}&direction=${direction}&franchise=1`;
+    } else {
+      streamUrl = `${wsUrl}/${tenant.id}/${CallSid}?From=${encodeURIComponent(fromNumber)}&To=${encodeURIComponent(toNumber)}&direction=${direction}`;
     }
     const testCallFrom = (process.env.TEST_CALL_FROM || "").replace(/\s/g, "");
     if (testCallFrom && fromNumber && fromNumber.replace(/\D/g, "") === testCallFrom.replace(/\D/g, "")) {

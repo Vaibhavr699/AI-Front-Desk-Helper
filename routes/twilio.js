@@ -104,7 +104,17 @@ router.post("/voice/:tenantId?", async (req, res) => {
     } else {
       twiml += `<Connect>`;
     }
-    twiml += `<Stream url="${escapeXml(streamUrl)}" /></Connect></Response>`;
+    // From/To as <Parameter> elements (Jun 9, 2026). Twilio strips the query
+    // string off <Stream url> in some configs (same reason franchise/outbound
+    // moved their flags to the URL path), which left `from` null at the WS
+    // start event — lead linking was skipped on every inbound call (0 "Lead
+    // linked" logs, calls left lead_id NULL). customParameters are delivered
+    // in msg.start.customParameters and are NOT stripped, so the start handler
+    // (which already reads msg.start.customParameters.From) finally gets them.
+    twiml += `<Stream url="${escapeXml(streamUrl)}">`;
+    twiml += `<Parameter name="From" value="${escapeXml(fromNumber || "")}" />`;
+    twiml += `<Parameter name="To" value="${escapeXml(toNumber || "")}" />`;
+    twiml += `</Stream></Connect></Response>`;
 
     res.type("text/xml").send(twiml);
   } catch (err) {

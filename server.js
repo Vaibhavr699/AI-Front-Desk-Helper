@@ -4125,7 +4125,7 @@ wss.on("connection", async (twilioSocket, req) => {
           return;
         }
       greetingTriggered = true;
-      const useRecoveryFlow = isRecovery || isOutbound || (isNurturing && recoveryScript);
+     const useRecoveryFlow = isRecovery || isOutbound || (isNurturing && recoveryScript) || isFranchisorMode;
 
       console.log("[AI-Desk] triggerGreetingIfReady useRecoveryFlow=%s isOutbound=%s", useRecoveryFlow, isOutbound);
 

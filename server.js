@@ -5101,8 +5101,15 @@ Speak at the pace of a relaxed, capable receptionist — slightly faster than me
                 leadId:          leadId || null,
                 source:          leadSource || "voice",
                 callId:          callId,
-                  estimatedValue:  args.estimated_value ?? currentLeadCapture.estimated_value ?? null,
+                 estimatedValue:  args.estimated_value ?? currentLeadCapture.estimated_value ?? null,
               });
+
+              if (!bookResult.ok) {
+                if (bookResult.reason === "slot_taken") {
+                  output = JSON.stringify({
+                    success: false,
+                    message: "That time was just taken. Tell the caller it's no longer available and call check_availability for another time.",
+                  });
                 } else if (bookResult.reason === "day_closed") {
                   output = JSON.stringify({
                     success: false,
@@ -5112,12 +5119,6 @@ Speak at the pace of a relaxed, capable receptionist — slightly faster than me
                   output = JSON.stringify({
                     success: false,
                     message: `That time is outside our hours (we're open ${bookResult.open} to ${bookResult.close}). Tell the caller our hours and ask for a time within them, then call check_availability.`,
-                  });
-              if (!bookResult.ok) {
-                if (bookResult.reason === "slot_taken") {
-                  output = JSON.stringify({
-                    success: false,
-                    message: "That time was just taken. Tell the caller it's no longer available and call check_availability for another time.",
                   });
                 } else if (bookResult.reason === "invalid_datetime") {
                   output = JSON.stringify({

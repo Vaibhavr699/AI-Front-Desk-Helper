@@ -17,6 +17,8 @@ import {
   Search,
   PhoneCall,
   Calendar,
+  Megaphone,
+  Save,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { LumaSpin } from "../components/ui/luma-spin";
@@ -24,6 +26,7 @@ import {
   getTenants,
   listFranchiseZees,
   updateZeeOutboundGates,
+  updateFranchiseSharedNumber,
 } from "../api";
 
 /**
@@ -285,6 +288,10 @@ export default function HqLocations() {
         </div>
       )}
 
+      {/* Franchisor shared-number routing — Jun 9, 2026 */}
+      {hq && (
+        <FranchiseSharedNumberCard hq={hq} onSaved={(patch) => setHq((p) => ({ ...p, ...patch }))} />
+      )}
       {/* Empty state */}
       {zees.length === 0 && !loading && (
         <div className="bg-white rounded-2xl border-2 border-dashed border-slate-200 p-12 text-center">
@@ -535,5 +542,140 @@ function GateToggle({ label, hint, checked, onChange }) {
         />
       </div>
     </button>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Franchisor Shared-Number Routing card — Jun 9, 2026
+//
+// One franchisor number → many locations. When enabled, an inbound caller
+// hears a neutral opener asking for their ZIP, then the AI routes them to
+// the matching franchise location. Writes franchise_shared_number_enabled +
+// franchise_neutral_opener on the parent (franchisor) tenant row.
+// ────────────────────────────────────────────────────────────────────────
+function FranchiseSharedNumberCard({ hq, onSaved }) {
+  const [enabled, setEnabled] = useState(!!hq.franchise_shared_number_enabled);
+  const [opener, setOpener] = useState(hq.franchise_neutral_opener || "");
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState(0);
+  const [error, setError] = useState("");
+
+  // Re-sync local state if the parent object changes (e.g. after a refetch).
+  useEffect(() => {
+    setEnabled(!!hq.franchise_shared_number_enabled);
+    setOpener(hq.franchise_neutral_opener || "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hq.id]);
+
+  const openerBlank = !opener.trim();
+
+  async function persist(nextEnabled, nextOpener) {
+    setSaving(true);
+    setError("");
+    try {
+      const res = await updateFranchiseSharedNumber(hq.id, {
+        enabled: nextEnabled,
+        neutral_opener: nextOpener.trim() ? nextOpener.trim() : null,
+      });
+      const t = res?.tenant || {};
+      onSaved?.({
+        franchise_shared_number_enabled: !!t.franchise_shared_number_enabled,
+        franchise_neutral_opener: t.franchise_neutral_opener || null,
+      });
+      setSavedAt(Date.now());
+    } catch (e) {
+      setError(e.message || "Failed to save");
+      // Revert the toggle if the enable was rejected (e.g. no locations).
+      setEnabled(!!hq.franchise_shared_number_enabled);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Toggle saves immediately (matches the per-zee gate toggles' feel).
+  function handleToggle(next) {
+    setEnabled(next);
+    persist(next, opener);
+  }
+
+  // Opener saves on explicit button press (textarea — don't fire per keystroke).
+  function handleSaveOpener() {
+    persist(enabled, opener);
+  }
+
+  const justSaved = savedAt && Date.now() - savedAt < 2500;
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 mb-6">
+      <div className="flex items-start justify-between gap-3 mb-1">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-orange-50 text-orange-600 flex items-center justify-center border border-orange-100">
+            <Megaphone size={16} />
+          </div>
+          <div>
+            <h3 className="text-base font-black text-slate-900">Shared Franchise Number</h3>
+            <p className="text-[11px] text-slate-400 font-medium">
+              One number for all locations — callers are routed by ZIP
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 border-t border-slate-100 pt-3">
+        <GateToggle
+          label="Enable shared-number routing"
+          hint="Inbound callers hear a neutral greeting, give their ZIP, then get routed to the matching location"
+          checked={enabled}
+          onChange={handleToggle}
+        />
+
+        {enabled && (
+          <div className="mt-3">
+            <label className="text-[10px] font-black text-slate-900 uppercase tracking-wider">
+              Neutral greeting
+            </label>
+            <textarea
+              value={opener}
+              onChange={(e) => setOpener(e.target.value)}
+              rows={3}
+              placeholder="Thanks for calling — let me get you to the right local team. What's the ZIP code for the property?"
+              className="mt-1.5 w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 leading-relaxed focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 resize-none"
+            />
+
+            {openerBlank && (
+              <div className="mt-2 flex items-start gap-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                <AlertCircle size={13} className="shrink-0 mt-0.5" />
+                <span>
+                  Using a default greeting — set a custom one above so callers hear your franchise's wording on the main line.
+                </span>
+              </div>
+            )}
+
+            <div className="mt-2 flex items-center gap-3">
+              <button
+                onClick={handleSaveOpener}
+                disabled={saving}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-colors"
+              >
+                {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                Save greeting
+              </button>
+              {justSaved && !error && (
+                <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 font-bold">
+                  <CheckCircle2 size={12} /> Saved
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="mt-2 flex items-start gap-2 text-[11px] text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+            <AlertCircle size={13} className="shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

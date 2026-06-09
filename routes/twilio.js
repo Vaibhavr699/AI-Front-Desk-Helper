@@ -6,6 +6,7 @@ const callsService = require("../services/calls");
 const recordingService = require("../services/recording");
 const { updateCallByTwilioSid, getCallByTwilioSid } = require("../services/calls");
 const { getLast10Digits, normalizeE164Phone } = require("../lib/phone");
+const franchiseRouter = require("../lib/franchiseRouter");
 
 const router = express.Router();
 const BASE_URL = process.env.BASE_URL;
@@ -57,11 +58,34 @@ router.post("/voice/:tenantId?", async (req, res) => {
       direction = tenantByFrom ? "outbound" : "inbound";
     }
 
+    // ── Franchisor shared-number check (Jun 9, 2026) ───────────────────────
+    // If the dialed number belongs to a franchisor parent with the master
+    // toggle ON and ≥1 live child, route in "franchisor mode": force the
+    // stream onto the PARENT tenant id and tag the WS URL with franchise=1 so
+    // the WS handler in server.js opens the neutral opener and arms the
+    // capture_service_zip tool. resolveInboundContext returns mode "direct"
+    // for every existing tenant, so this is a no-op for them. Never throws.
+    let franchiseMode = false;
+    try {
+      const fctx = await franchiseRouter.resolveInboundContext(toNumber);
+      if (fctx.mode === "franchisor") {
+        franchiseMode = true;
+        tenant = fctx.parent;
+        console.log("[AI-Desk] Franchisor mode engaged (routes/twilio) parent=%s children=%d to=%s",
+          fctx.parent.id, fctx.children.length, toNumber);
+      }
+    } catch (e) {
+      console.error("[AI-Desk] Franchisor resolve failed (continuing direct):", e.message);
+    }
+
     await callsService.createCall(tenant.id, CallSid, fromNumber, toNumber, direction);
     console.log("[AI-Desk] Voice webhook call created CallSid=%s tenantId=%s direction=%s", CallSid, tenant.id, direction);
 
     const wsUrl = (BASE_URL || "").replace("https://", "wss://").replace("http://", "ws://") + "/twilio-media";
     let streamUrl = `${wsUrl}/${tenant.id}/${CallSid}?From=${encodeURIComponent(fromNumber)}&To=${encodeURIComponent(toNumber)}&direction=${direction}`;
+    if (franchiseMode) {
+      streamUrl += "&franchise=1";
+    }
     const testCallFrom = (process.env.TEST_CALL_FROM || "").replace(/\s/g, "");
     if (testCallFrom && fromNumber && fromNumber.replace(/\D/g, "") === testCallFrom.replace(/\D/g, "")) {
       streamUrl += "&turnBased=1";

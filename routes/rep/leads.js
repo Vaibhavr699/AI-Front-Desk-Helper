@@ -14,8 +14,8 @@
 // guessed UUIDs.
 //
 // "Mine" vs "all" leads:
-//   The leads table has no explicit rep-assignment column. We derive
-//   assignment two ways:
+//   A lead is "mine" if any of:
+//     • leads.created_by_rep_user_id  (the rep added it by hand in the app)
 //     • bookings.technician_id  (assigned appointments)
 //     • coaching_conversations.rep_user_id  (calls the rep has handled)
 //   Pass ?mine=true to filter to those. Default is all tenant leads.
@@ -85,29 +85,31 @@ router.post("/", ...repAuthChain, async (req, res) => {
       if (project_type) { updates.push(`project_type = COALESCE(project_type, $${p})`); vals.push(project_type); p++; }
       if (notes) { updates.push(`notes = COALESCE(notes, $${p})`); vals.push(notes); p++; }
       if (estimated_value) { updates.push(`estimated_revenue_cents = COALESCE(estimated_revenue_cents, $${p})`); vals.push(Math.round(estimated_value * 100)); p++; }
-      if (updates.length > 0) {
-        await db.query(`UPDATE leads SET ${updates.join(", ")}, updated_at = now() WHERE id = $1`, vals);
-      }
+      updates.push(`created_by_rep_user_id = COALESCE(created_by_rep_user_id, $${p})`); vals.push(req.rep.id); p++;
+      await db.query(`UPDATE leads SET ${updates.join(", ")}, updated_at = now() WHERE id = $1`, vals);
       const r = await db.query("SELECT * FROM leads WHERE id = $1", [existing.rows[0].id]);
       return res.json({ lead: r.rows[0], created: false });
     }
     const r = await db.query(
-      `INSERT INTO leads (tenant_id, name, phone, email, address, project_type, lead_source, notes, estimated_revenue_cents, contact_method, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'unknown', 'New Lead')
+      `INSERT INTO leads (tenant_id, name, phone, email, address, project_type, lead_source, notes, estimated_revenue_cents, created_by_rep_user_id, contact_method, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'unknown', 'New Lead')
        RETURNING *`,
       [
         req.rep.tenant_id, name, normalized,
         email || null, address || null, project_type || null,
         source || "rep_manual", notes || null,
         estimated_value ? Math.round(estimated_value * 100) : 0,
+        req.rep.id,
       ],
     );
     res.status(201).json({ lead: r.rows[0], created: true });
   } catch (e) {
     if (e.code === "23505") {
       const r = await db.query(
-        "SELECT * FROM leads WHERE tenant_id = $1 AND phone = $2",
-        [req.rep.tenant_id, normalizeE164Phone(String(req.body?.phone))],
+        `UPDATE leads SET created_by_rep_user_id = COALESCE(created_by_rep_user_id, $1), updated_at = now()
+          WHERE tenant_id = $2 AND phone = $3
+          RETURNING *`,
+        [req.rep.id, req.rep.tenant_id, normalizeE164Phone(String(req.body?.phone))],
       );
       return res.json({ lead: r.rows[0], created: false });
     }
@@ -188,7 +190,8 @@ router.get("/", ...repAuthChain, async (req, res) => {
     let mineClause = "";
     if (mine) {
       mineClause = `AND (
-        EXISTS (SELECT 1 FROM bookings b WHERE b.lead_id = l.id AND b.technician_id = $${p})
+        l.created_by_rep_user_id = $${p}
+        OR EXISTS (SELECT 1 FROM bookings b WHERE b.lead_id = l.id AND b.technician_id = $${p})
         OR EXISTS (SELECT 1 FROM coaching_conversations c WHERE c.lead_id = l.id AND c.rep_user_id = $${p})
       )`;
       params.push(req.rep.id);

@@ -51,6 +51,7 @@
 const bookingEngine = require("../lib/bookingEngine");
 const leadsService = require("./leads");
 const { isDncPhrase, isComplaintPhrase } = require("./sms");
+const conversationState = require("../lib/conversationState");
 
 // How many upcoming days to scan for open slots when building the day menu.
 // We collect days that actually HAVE availability, up to MAX_DAYS_SHOWN.
@@ -168,6 +169,7 @@ async function initiateSmsBooking(thread, tenant) {
   thread.bookingContact = { name: "", phone: thread.phone || "", email: "", address: "" };
 
   const lines = days.map((d, i) => `${i + 1}) ${d.label}`).join("\n");
+  persistBookingState(thread, tenant);
   console.log("[SMS Booking] day menu sent tenant=%s phone=%s days=%d", tenant.id, thread.phone, days.length);
   return {
     reply: `Let's get you on the calendar. Which day works? Reply with a number:\n${lines}\n\nOr reply 0 for a different date.`,
@@ -267,6 +269,7 @@ async function handleSmsBookingIncoming(thread, incomingText, tenant) {
       thread.bookingChosenSlot = { date: thread.bookingChosenDate, value: slot.value, time: slot.time };
       thread.bookingMenuState = "awaiting_contact";
       thread.bookingContactStep = firstMissingContactStep(thread.bookingContact);
+      persistBookingState(thread, tenant);
       console.log("[SMS Booking] slot locked tenant=%s date=%s value=%s", tenant.id, thread.bookingChosenDate, slot.value);
       return { reply: contactPrompt(thread.bookingContactStep, slot) };
     }
@@ -317,6 +320,7 @@ async function sendTimeMenu(thread, tenant, chosenDay) {
 
   thread.bookingSlotList = slots;
   thread.bookingMenuState = "awaiting_time";
+  persistBookingState(thread, tenant);
   const lines = slots.map((s, i) => `${i + 1}) ${s.time}`).join("\n");
   console.log("[SMS Booking] time menu sent tenant=%s date=%s slots=%d", tenant.id, chosenDay.date, slots.length);
   return { reply: `Open times on ${chosenDay.label}. Reply with a number:\n${lines}\n\nOr reply 0 for other times.` };
@@ -375,6 +379,7 @@ async function handleContactStep(thread, text, tenant) {
   const next = firstMissingContactStep(contact);
   if (next) {
     thread.bookingContactStep = next;
+    persistBookingState(thread, tenant);
     return { reply: contactPrompt(next, thread.bookingChosenSlot) };
   }
 
@@ -472,10 +477,31 @@ async function finalizeSmsBooking(thread, tenant) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Reset — clear all booking-menu state off the thread
+// Persistence (Phase 12 A2) — snapshot the booking-machine fields to the
+// conversation_states table so the flow survives a server restart/redeploy.
+// Fire-and-forget; never blocks the customer reply. Called at the end of
+// each transition that leaves a menu ACTIVE. Terminal transitions clear
+// instead (see resetBookingState).
+// ─────────────────────────────────────────────────────────────────────
+function persistBookingState(thread, tenant) {
+  if (!thread.leadId || !tenant || !thread.bookingMenuState) return;
+  conversationState.save(thread.leadId, tenant.id, {
+    bookingMenuState:   thread.bookingMenuState,
+    bookingDayList:     thread.bookingDayList || null,
+    bookingChosenDate:  thread.bookingChosenDate || null,
+    bookingSlotList:    thread.bookingSlotList || null,
+    bookingChosenSlot:  thread.bookingChosenSlot || null,
+    bookingContactStep: thread.bookingContactStep || null,
+    bookingContact:     thread.bookingContact || null,
+  }).catch(() => {});
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Reset — clear all booking-menu state off the thread (+ persisted row)
 // ─────────────────────────────────────────────────────────────────────
 
 function resetBookingState(thread) {
+  if (thread.leadId) conversationState.clear(thread.leadId).catch(() => {});
   thread.bookingMenuState = null;
   thread.bookingDayList = null;
   thread.bookingChosenDate = null;
@@ -485,9 +511,130 @@ function resetBookingState(thread) {
   thread.bookingContact = null;
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Resume (Phase 12 A2) — produce the "picking back up" message after a
+// rehydrated state is copied onto the thread (by server.js on inbound).
+//
+// A human receptionist resuming a conversation reminds you where you were
+// and re-shows what you need — they don't make you confirm a stale time.
+// So:
+//   awaiting_day     → re-show the day menu with a warm re-orient.
+//   awaiting_time    → re-fetch + re-show that day's open times (they may
+//                      have changed since the gap), re-orient to the day.
+//   awaiting_contact → the slot was being held; RE-VALIDATE it. If still
+//                      open, resume contact collection at the right field.
+//                      If taken during the gap, tell them warmly and re-show
+//                      that day's times instead of confirming a dead slot.
+//
+// `ageMs` lets the caller decide whether a re-orient is even warranted; this
+// function assumes the caller already decided to resume (gap big enough to
+// be worth a "picking back up" line). Returns { reply } or null if there's
+// nothing meaningful to resume into (caller then proceeds normally).
+// ─────────────────────────────────────────────────────────────────────
+async function resumeBookingMessage(thread, tenant) {
+  if (!thread.bookingMenuState || !tenant) return null;
+  const tz = tenant.timezone || "America/Chicago";
+
+  if (thread.bookingMenuState === "awaiting_day") {
+    const days = thread.bookingDayList || [];
+    if (days.length === 0) {
+      resetBookingState(thread);
+      return { reply: "Welcome back! What day works best for your appointment?" };
+    }
+    const lines = days.map((d, i) => `${i + 1}) ${d.label}`).join("\n");
+    return { reply: `Welcome back — let's finish getting you scheduled. Which day works? Reply with a number:\n${lines}\n\nOr reply 0 for a different date.` };
+  }
+
+  if (thread.bookingMenuState === "awaiting_time") {
+    const date = thread.bookingChosenDate;
+    const label = date ? formatDayLabel(date, tz) : "that day";
+    // Re-fetch fresh slots — availability may have changed during the gap.
+    let slots = [];
+    try {
+      const avail = await bookingEngine.getAvailability({
+        tenantId: tenant.id, date, durationMinutes: DEFAULT_DURATION_MIN,
+      });
+      if (avail && avail.ok && Array.isArray(avail.slots)) slots = avail.slots.slice(0, MAX_SLOTS_SHOWN);
+    } catch (e) {
+      console.error("[SMS Booking] resume awaiting_time getAvailability failed: %s", e.message);
+    }
+    if (slots.length === 0) {
+      thread.bookingMenuState = "awaiting_day";
+      thread.bookingChosenDate = null;
+      const days = thread.bookingDayList || [];
+      if (days.length === 0) {
+        resetBookingState(thread);
+        return { reply: `Welcome back! ${label} is full now — what other day works for you?` };
+      }
+      const reList = days.map((d, i) => `${i + 1}) ${d.label}`).join("\n");
+      persistBookingState(thread, tenant);
+      return { reply: `Welcome back! Looks like ${label} filled up. Pick another day:\n${reList}\n\nOr reply 0 for a different date.` };
+    }
+    thread.bookingSlotList = slots;
+    persistBookingState(thread, tenant);
+    const lines = slots.map((s, i) => `${i + 1}) ${s.time}`).join("\n");
+    return { reply: `Welcome back — picking up where we left off on ${label}. Here are the open times, reply with a number:\n${lines}\n\nOr reply 0 for other times.` };
+  }
+
+  if (thread.bookingMenuState === "awaiting_contact") {
+    const slot = thread.bookingChosenSlot;
+    if (!slot || !slot.date || !slot.value) {
+      // Corrupt/incomplete — restart cleanly.
+      const keptDate = thread.bookingChosenDate;
+      resetBookingState(thread);
+      return { reply: "Welcome back! Let's pick a time — what day works for you?" };
+    }
+    // Re-validate the held slot — never make them confirm a time that's gone.
+    let stillOpen = false;
+    try {
+      const slotCheck = await bookingEngine.getAvailability({
+        tenantId: tenant.id, date: slot.date, durationMinutes: DEFAULT_DURATION_MIN,
+      });
+      if (slotCheck && slotCheck.ok && Array.isArray(slotCheck.slots)) {
+        stillOpen = slotCheck.slots.some((s) => s.value === slot.value);
+        // Refresh the slot list for a possible re-show.
+        thread.bookingSlotList = slotCheck.slots.slice(0, MAX_SLOTS_SHOWN);
+      }
+    } catch (e) {
+      console.error("[SMS Booking] resume awaiting_contact re-validate failed: %s", e.message);
+      stillOpen = true; // fail open — let them continue; book() re-checks anyway.
+    }
+    const label = formatDayLabel(slot.date, tz);
+    if (!stillOpen) {
+      // Slot taken during the gap — drop back to the time menu for that day.
+      thread.bookingChosenSlot = null;
+      thread.bookingMenuState = "awaiting_time";
+      const slots = thread.bookingSlotList || [];
+      if (slots.length === 0) {
+        thread.bookingMenuState = "awaiting_day";
+        const days = thread.bookingDayList || [];
+        const reList = days.map((d, i) => `${i + 1}) ${d.label}`).join("\n");
+        persistBookingState(thread, tenant);
+        return { reply: `Welcome back! The ${slot.time} slot on ${label} got booked while we were apart. What day works for you?${reList ? "\n" + reList : ""}` };
+      }
+      const lines = slots.map((s, i) => `${i + 1}) ${s.time}`).join("\n");
+      persistBookingState(thread, tenant);
+      return { reply: `Welcome back! Looks like ${slot.time} on ${label} got grabbed while we were apart. Here are the open times now, reply with a number:\n${lines}\n\nOr reply 0 for other times.` };
+    }
+    // Slot still open — resume collecting whatever contact field is next.
+    const step = firstMissingContactStep(thread.bookingContact || {});
+    if (!step) {
+      // Everything's collected — just finalize.
+      return await finalizeSmsBooking(thread, tenant);
+    }
+    thread.bookingContactStep = step;
+    persistBookingState(thread, tenant);
+    const stepPrompt = contactPrompt(step, slot);
+    return { reply: `Welcome back! I've still got your ${label} at ${slot.time} held. ${stepPrompt}` };
+  }
+
+  return null;
+}
+
 module.exports = {
   initiateSmsBooking,
   handleSmsBookingIncoming,
+  resumeBookingMessage,
   resetBookingState,
   // exported for unit testing
   parseMenuNumber,

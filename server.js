@@ -49,6 +49,7 @@ const messagesService = require("./services/messages");
 const emailService = require("./services/email");
 const smsBookingService = require("./services/smsBooking");
 const conversationState = require("./lib/conversationState");
+const { buildLeadHistoryBlock } = require("./lib/leadHistory");
 const { getAIConfig, REALTIME_TOOLS, RECOVERY_TOOLS, CAPTURE_SERVICE_ZIP_TOOL } = require("./lib/orchestrator");
 const { isWithinBusinessHours } = require("./lib/timeUtils");
 const { buildCoachingPromptInjection } = require("./lib/coachingPromptInjection");
@@ -1354,6 +1355,7 @@ function getOrCreateSmsThread(phone) {
     bookingContactStep: null,
     bookingContact: null,
     bookingFreeTextDate: null,
+   sessionStartedAt: Date.now(),  // Phase 12 A2.1 — cutoff for prior-history injection
   }; 
   smsThreads.set(normalizedPhone, created);
   return created;
@@ -1476,7 +1478,7 @@ function buildSmsServiceAreaBlock(tenant) {
   return lines.join("\n");
 }
 
-function buildSmsSystemPrompt(thread, tenant = null, availableSlots = [], coachingInjection = "") {
+function buildSmsSystemPrompt(thread, tenant = null, availableSlots = [], coachingInjection = "", leadHistoryBlock = "") {
   const companyName = tenant?.company_name || tenant?.name || "our team";
   const toneOfVoice = tenant?.tone_of_voice || "professional";
   const timezone    = tenant?.timezone || BUSINESS_TIMEZONE || "America/Chicago";
@@ -1637,6 +1639,14 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = [], coachi
     combined += "\n\n" + coachingInjection;
   }
 
+// Phase 12 A2.1 (Jun 10, 2026) — cross-channel prior-customer history.
+  // Injected after coaching so it sits near the end of the prompt where the
+  // model weights recent context heavily. Empty string when this lead has no
+  // prior history (new customer) — block disappears entirely.
+  if (leadHistoryBlock && leadHistoryBlock.length > 0) {
+    combined += "\n\n" + leadHistoryBlock;
+  }
+  
   return [
     combined,
     "\nReturn strict JSON only with keys: reply, lead_capture, should_book, book_intent, should_cancel, should_reschedule, should_dnc, appointment_date, appointment_time, follow_up_minutes.",
@@ -1672,8 +1682,20 @@ async function runSmsAiOrchestrator(thread, incomingText, tenant = null) {
   // never blocks the SMS reply.
   const coachingInjection = await buildCoachingPromptInjection(tenant?.id);
 
+  // Phase 12 A2.1 (Jun 10, 2026) — cross-channel prior history for this lead.
+  // Keys strictly off thread.leadId (resolved by getOrCreateLead's verified
+  // E.164/session match — no fuzzy matching here). excludeAfter drops the
+  // current session's just-saved turns. "" for new leads or on any DB error.
+  let leadHistoryBlock = "";
+  if (thread.leadId) {
+    leadHistoryBlock = await buildLeadHistoryBlock(thread.leadId, {
+      excludeAfter: thread.sessionStartedAt || null,
+      currentChannel: thread.channel,
+    });
+  }
+
   const input = [
-    { role: "system", content: buildSmsSystemPrompt(thread, tenant, availableSlots, coachingInjection) },
+    { role: "system", content: buildSmsSystemPrompt(thread, tenant, availableSlots, coachingInjection, leadHistoryBlock) },
     ...thread.history.map((msg) => ({
       role: msg.role,
       content: String(msg.text || "")

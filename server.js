@@ -2061,27 +2061,43 @@ async function processSmsConversation(phone, incomingText, tenant = null, routed
       ) {
         try {
           const persisted = await conversationState.load(thread.leadId);
-          if (persisted && persisted.state && persisted.state.bookingMenuState) {
+          if (persisted && persisted.state) {
             const s = persisted.state;
-            thread.bookingMenuState   = s.bookingMenuState;
-            thread.bookingDayList     = s.bookingDayList || null;
-            thread.bookingChosenDate  = s.bookingChosenDate || null;
-            thread.bookingSlotList    = s.bookingSlotList || null;
-            thread.bookingChosenSlot  = s.bookingChosenSlot || null;
-            thread.bookingContactStep = s.bookingContactStep || null;
-            thread.bookingContact     = s.bookingContact || null;
+            let resume = null;
 
-            // Gap > 3 min → warm "welcome back" re-orient + slot re-validate.
-            // Shorter gap → resume silently; the menu interception below
-            // handles their reply normally.
-            if (persisted.ageMs > 3 * 60 * 1000) {
-              const resume = await smsBookingService.resumeBookingMessage(thread, tenant);
-              if (resume && resume.reply) {
-                thread.history.push({ role: "assistant", text: resume.reply, at: new Date().toISOString() });
-                thread.lastOutboundAt = Date.now();
-                messagesService.saveMessage(tenant.id, thread.leadId, "sms", "outbound", resume.reply);
-                return { reply: resume.reply, lead_capture: {}, booking_confirmed: null };
+            if (s.bookingMenuState) {
+              // Restore booking-flow state (services/smsBooking.js).
+              thread.bookingMenuState   = s.bookingMenuState;
+              thread.bookingDayList     = s.bookingDayList || null;
+              thread.bookingChosenDate  = s.bookingChosenDate || null;
+              thread.bookingSlotList    = s.bookingSlotList || null;
+              thread.bookingChosenSlot  = s.bookingChosenSlot || null;
+              thread.bookingContactStep = s.bookingContactStep || null;
+              thread.bookingContact     = s.bookingContact || null;
+
+              if (persisted.ageMs > 3 * 60 * 1000) {
+                resume = await smsBookingService.resumeBookingMessage(thread, tenant);
               }
+            } else if (s.cancelState) {
+              // Restore cancel-flow state (services/sms.js).
+              thread.cancelState                = s.cancelState;
+              thread.pendingCancelBookingId     = s.pendingCancelBookingId || null;
+              thread.pendingCancelBookingsList  = s.pendingCancelBookingsList || null;
+
+              if (persisted.ageMs > 3 * 60 * 1000) {
+                const smsService = require("./services/sms");
+                resume = await smsService.resumeCancelMessage(thread, tenant);
+              }
+            }
+
+            // Gap > 3 min → emit the warm "welcome back" re-orient and return
+            // early. Shorter gap → resume silently; the interception blocks
+            // below handle their reply normally.
+            if (resume && resume.reply) {
+              thread.history.push({ role: "assistant", text: resume.reply, at: new Date().toISOString() });
+              thread.lastOutboundAt = Date.now();
+              messagesService.saveMessage(tenant.id, thread.leadId, "sms", "outbound", resume.reply);
+              return { reply: resume.reply, lead_capture: {}, booking_confirmed: null };
             }
           }
         } catch (e) {

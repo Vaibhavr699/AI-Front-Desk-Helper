@@ -48,6 +48,7 @@ const bookingEngine = require("./lib/bookingEngine");
 const messagesService = require("./services/messages");
 const emailService = require("./services/email");
 const smsBookingService = require("./services/smsBooking");
+const conversationState = require("./lib/conversationState");
 const { getAIConfig, REALTIME_TOOLS, RECOVERY_TOOLS, CAPTURE_SERVICE_ZIP_TOOL } = require("./lib/orchestrator");
 const { isWithinBusinessHours } = require("./lib/timeUtils");
 const { buildCoachingPromptInjection } = require("./lib/coachingPromptInjection");
@@ -2048,6 +2049,46 @@ async function processSmsConversation(phone, incomingText, tenant = null, routed
       thread.leadId = lead.id;
       thread.tenantId = tenant.id;
       messagesService.saveMessage(tenant.id, lead.id, thread.channel || "sms", "inbound", incomingText);
+
+      // ── Phase 12 A2 — rehydrate durable conversation state ─────────────
+      // If the server restarted mid-flow, the in-memory booking state was
+      // wiped but a live persisted state may exist for this lead. Restore it
+      // and resume. SMS-only; only when nothing's already active in memory.
+      if (
+        thread.channel === "sms" &&
+        !thread.bookingMenuState &&
+        !thread.cancelState
+      ) {
+        try {
+          const persisted = await conversationState.load(thread.leadId);
+          if (persisted && persisted.state && persisted.state.bookingMenuState) {
+            const s = persisted.state;
+            thread.bookingMenuState   = s.bookingMenuState;
+            thread.bookingDayList     = s.bookingDayList || null;
+            thread.bookingChosenDate  = s.bookingChosenDate || null;
+            thread.bookingSlotList    = s.bookingSlotList || null;
+            thread.bookingChosenSlot  = s.bookingChosenSlot || null;
+            thread.bookingContactStep = s.bookingContactStep || null;
+            thread.bookingContact     = s.bookingContact || null;
+
+            // Gap > 3 min → warm "welcome back" re-orient + slot re-validate.
+            // Shorter gap → resume silently; the menu interception below
+            // handles their reply normally.
+            if (persisted.ageMs > 3 * 60 * 1000) {
+              const resume = await smsBookingService.resumeBookingMessage(thread, tenant);
+              if (resume && resume.reply) {
+                thread.history.push({ role: "assistant", text: resume.reply, at: new Date().toISOString() });
+                thread.lastOutboundAt = Date.now();
+                messagesService.saveMessage(tenant.id, thread.leadId, "sms", "outbound", resume.reply);
+                return { reply: resume.reply, lead_capture: {}, booking_confirmed: null };
+              }
+            }
+          }
+        } catch (e) {
+          console.error("[ConvState] rehydrate failed leadId=%s: %s", thread.leadId, e.message);
+        }
+      }
+
       try {
         const parsed = await nurturingService.tryParseReferralReply(tenant.id, lead.id, incomingText);
         if (parsed.isReferralReply && parsed.referralPhone) {

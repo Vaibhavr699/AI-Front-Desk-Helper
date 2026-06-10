@@ -27,6 +27,28 @@ const SUPPORT_EMAIL_DEFAULT = "support@aifrontdeskhelper.com";
 // Its emails send from this address; AIFDH emails keep the default EMAIL_FROM.
 const REP_COACH_FROM = process.env.REP_COACH_EMAIL_FROM || "AI Rep Coach <noreply@airepcoach.com>";
 
+// ════════════════════════════════════════════════════════════════════════════
+// sendEmail — central send + (Jun 10, 2026) dashboard visibility logging.
+//
+// Every email in the system funnels through here. The Jun 10 change adds three
+// OPTIONAL params — tenantId, leadId, logBody — and, when BOTH tenantId and
+// leadId are supplied, writes an `email`/`outbound` row to the messages table
+// so the email appears in the Conversations EMAIL filter and on the lead
+// timeline.
+//
+// WHY: before this, NO outbound email ever wrote a messages row (confirmed:
+// the EMAIL filter showed zero outbound rows tenant-wide). Customer-facing
+// emails — booking confirmations, nurturing/seasonal — were invisible to
+// tenant admins even though they sent. This is the same bug class as the
+// missed-call SMS / website-booking-summary invisibility, fixed the same way:
+// log through to messages.
+//
+// System emails (password reset, admin/team invites, usage alerts, the
+// contact-form + website-chat notifications to ourselves, the owner-facing
+// cancellation + transfer alerts) deliberately pass NEITHER id, so they never
+// pollute the customer conversation view. Logging is fire-and-forget: a
+// logging failure must never fail an email that already sent.
+// ════════════════════════════════════════════════════════════════════════════
 async function sendEmail({ to, subject, html, text, bcc, replyTo, from, attachments, tenantId = null, leadId = null, logBody = null }) {
   if (!resend) {
     console.warn("[Email] Not sending – Resend not configured (check RESEND_API_KEY and EMAIL_FROM).");
@@ -53,19 +75,19 @@ async function sendEmail({ to, subject, html, text, bcc, replyTo, from, attachme
   console.log("[Email] Sent to", toList.join(", "), "id:", data?.id);
 
   // Dashboard visibility (Jun 10, 2026): log customer-facing emails to the
-  // messages table so they appear in the Conversations EMAIL filter. Only
-  // logs when tenantId + leadId are supplied — system emails (password reset,
-  // admin/team invites, usage alerts, contact-form notifications) pass neither
-  // and correctly stay out of the customer timeline. Fire-and-forget: a
-  // logging failure must never fail an email that already sent.
+  // messages table so they show in the Conversations EMAIL filter + lead
+  // timeline. Only when BOTH ids are present — system emails pass neither
+  // and stay out of the customer view. Fire-and-forget; never fails the send.
   if (tenantId && leadId) {
     try {
       const messagesService = require("./messages");
       const bodyForLog = logBody || subject || "(email sent)";
-      messagesService.saveMessage(tenantId, leadId, "email", "outbound", bodyForLog, {
-        subject,
-        resend_email_id: data?.id || null,
-      }).catch((e) => console.error("[Email] message log failed:", e.message));
+      messagesService
+        .saveMessage(tenantId, leadId, "email", "outbound", bodyForLog, {
+          subject: subject || null,
+          resend_email_id: data?.id || null,
+        })
+        .catch((e) => console.error("[Email] message log failed:", e.message));
     } catch (e) {
       console.error("[Email] message log threw:", e.message);
     }
@@ -140,9 +162,10 @@ async function sendBookingConfirmationEmail(tenant, booking) {
     replyTo: ownerEmail || undefined,
     subject: `Your estimate is scheduled – ${tenant.company_name}`,
     html,
+    // Dashboard visibility (Jun 10, 2026): log to the lead's timeline.
     tenantId: tenant.id,
     leadId: booking.lead_id || null,
-    logBody: `📧 Confirmation email sent: estimate scheduled for ${booking.preferred_date || ""} at ${booking.appointment_time || ""}.`,
+    logBody: `📧 Confirmation email sent — estimate scheduled for ${booking.preferred_date || "your appointment"}${booking.appointment_time ? " at " + booking.appointment_time : ""}.`,
   });
 }
 
@@ -550,8 +573,15 @@ async function sendTechnicianAssignmentEmail(tenant, technician, booking) {
   });
 }
 
-/** Nurturing: post-service follow-up (1 day after Completed). */
-async function sendPostServiceFollowUpEmail(companyName, customerName, to, replyTo) {
+/**
+ * Nurturing: post-service follow-up (1 day after Completed).
+ *
+ * opts (Jun 10, 2026): { tenantId, leadId } — when supplied, sendEmail logs
+ * an email/outbound row to the lead timeline so the touch is visible in the
+ * Conversations EMAIL filter. Optional + back-compatible: callers that don't
+ * pass opts simply send without logging (unchanged behavior).
+ */
+async function sendPostServiceFollowUpEmail(companyName, customerName, to, replyTo, opts = {}) {
   const name = (customerName || "there").trim() || "there";
   const company = (companyName || "We").trim() || "We";
   const html = `
@@ -565,12 +595,18 @@ async function sendPostServiceFollowUpEmail(companyName, customerName, to, reply
     replyTo: replyTo || undefined,
     subject: `Quick follow-up – ${company}`,
     html,
+    tenantId: opts.tenantId || null,
+    leadId: opts.leadId || null,
+    logBody: `📧 Post-service follow-up email: ${body}`,
   });
   return { ok: result.ok, body, error: result.error };
 }
 
-/** Nurturing: referral request (e.g. 5 days after service). */
-async function sendReferralRequestEmail(companyName, customerName, to, replyTo) {
+/**
+ * Nurturing: referral request (e.g. 5 days after service).
+ * opts (Jun 10, 2026): { tenantId, leadId } — see sendPostServiceFollowUpEmail.
+ */
+async function sendReferralRequestEmail(companyName, customerName, to, replyTo, opts = {}) {
   const name = (customerName || "there").trim() || "there";
   const company = (companyName || "We").trim() || "We";
   const html = `
@@ -584,12 +620,18 @@ async function sendReferralRequestEmail(companyName, customerName, to, replyTo) 
     replyTo: replyTo || undefined,
     subject: `Quick favor – ${company}`,
     html,
+    tenantId: opts.tenantId || null,
+    leadId: opts.leadId || null,
+    logBody: `📧 Referral request email: ${body}`,
   });
   return { ok: result.ok, body, error: result.error };
 }
 
-/** Nurturing: maintenance reminder (e.g. 6 months after service). */
-async function sendMaintenanceReminderEmail(companyName, customerName, to, replyTo) {
+/**
+ * Nurturing: maintenance reminder (e.g. 6 months after service).
+ * opts (Jun 10, 2026): { tenantId, leadId } — see sendPostServiceFollowUpEmail.
+ */
+async function sendMaintenanceReminderEmail(companyName, customerName, to, replyTo, opts = {}) {
   const name = (customerName || "there").trim() || "there";
   const company = (companyName || "We").trim() || "We";
   const html = `
@@ -603,12 +645,18 @@ async function sendMaintenanceReminderEmail(companyName, customerName, to, reply
     replyTo: replyTo || undefined,
     subject: `We're here when you're ready – ${company}`,
     html,
+    tenantId: opts.tenantId || null,
+    leadId: opts.leadId || null,
+    logBody: `📧 Maintenance reminder email: ${body}`,
   });
   return { ok: result.ok, body, error: result.error };
 }
 
-/** Nurturing: re-engagement / dormant (e.g. 12 months after service). */
-async function sendReengagementEmail(companyName, customerName, to, replyTo) {
+/**
+ * Nurturing: re-engagement / dormant (e.g. 12 months after service).
+ * opts (Jun 10, 2026): { tenantId, leadId } — see sendPostServiceFollowUpEmail.
+ */
+async function sendReengagementEmail(companyName, customerName, to, replyTo, opts = {}) {
   const name = (customerName || "there").trim() || "there";
   const company = (companyName || "We").trim() || "We";
   const html = `
@@ -622,12 +670,18 @@ async function sendReengagementEmail(companyName, customerName, to, replyTo) {
     replyTo: replyTo || undefined,
     subject: `Quick check-in – ${company}`,
     html,
+    tenantId: opts.tenantId || null,
+    leadId: opts.leadId || null,
+    logBody: `📧 Re-engagement email: ${body}`,
   });
   return { ok: result.ok, body, error: result.error };
 }
 
-/** Nurturing: seasonal campaign (month-based). */
-async function sendSeasonalCampaignEmail(companyName, customerName, subjectLine, bodyHtml, to, replyTo) {
+/**
+ * Nurturing: seasonal campaign (month-based).
+ * opts (Jun 10, 2026): { tenantId, leadId } — see sendPostServiceFollowUpEmail.
+ */
+async function sendSeasonalCampaignEmail(companyName, customerName, subjectLine, bodyHtml, to, replyTo, opts = {}) {
   const name = (customerName || "there").trim() || "there";
   const company = (companyName || "We").trim() || "We";
   const html = `
@@ -640,6 +694,9 @@ async function sendSeasonalCampaignEmail(companyName, customerName, subjectLine,
     replyTo: replyTo || undefined,
     subject: subjectLine || `News from ${company}`,
     html,
+    tenantId: opts.tenantId || null,
+    leadId: opts.leadId || null,
+    logBody: `📧 Seasonal campaign email: ${subjectLine || "News from " + company}`,
   });
   return { ok: result.ok, error: result.error };
 }

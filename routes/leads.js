@@ -272,7 +272,7 @@ async function detectLeadChannel(leadId) {
       [leadId]
     );
     const ch = res.rows[0]?.channel;
-    if (ch === "website" || ch === "facebook" || ch === "sms") return ch;
+    if (ch === "website" || ch === "facebook" || ch === "sms" || ch === "email") return ch;
     return "sms";
   } catch (err) {
     console.error("[Channel detect] Failed leadId=%s err=%s", leadId, err.message);
@@ -731,8 +731,8 @@ router.post("/:id/send", async (req, res) => {
     const trimmedBody = body.trim();
 
     // Channel resolution: explicit param wins; else auto-detect.
-    if (channel && !["sms", "website", "facebook"].includes(channel)) {
-      return res.status(400).json({ error: "Invalid channel. Must be sms, website, or facebook." });
+    if (channel && !["sms", "website", "facebook", "email"].includes(channel)) {
+      return res.status(400).json({ error: "Invalid channel. Must be sms, website, facebook, or email." });
     }
     if (!channel) {
       channel = await detectLeadChannel(lead.id);
@@ -829,8 +829,65 @@ router.post("/:id/send", async (req, res) => {
             [tenant.id]
           ).catch(() => {});
         }
-        return res.status(502).json({ error: `Facebook send failed: ${e.message}` });
+       return res.status(502).json({ error: `Facebook send failed: ${e.message}` });
       }
+
+    } else if (channel === "email") {
+      // ── Email path: send via Resend, log to the lead timeline ────────
+      //
+      // Unlike sms/website/facebook (whose routing key lives in lead.phone),
+      // email replies go to lead.email. The customer's reply returns through
+      // the Resend inbound webhook (/webhooks/resend/inbound), which writes an
+      // email/inbound row, so the thread stays whole on this lead.
+      //
+      // We send through emailService.sendEmail WITHOUT passing tenantId/leadId
+      // here, because we write the messages row ourselves below (the shared
+      // INSERT) with sent_by_user_id + handoff — passing the IDs too would
+      // double-log. The reply-to is the tenant owner so any direct reply also
+      // reaches them.
+      const emailService = require("../services/email");
+      const toAddress = (lead.email || "").trim();
+      if (!toAddress) {
+        return res.status(400).json({ error: "Lead has no email address on file" });
+      }
+
+      // Resolve an owner reply-to so the customer's response is routed back.
+      let ownerReplyTo = null;
+      try {
+        if (tenant.google_calendar_email) {
+          ownerReplyTo = tenant.google_calendar_email;
+        } else {
+          const adminRes = await db.query(
+            "SELECT email FROM dashboard_users WHERE tenant_id = $1 ORDER BY (role = 'admin') DESC, created_at ASC LIMIT 1",
+            [tenant.id]
+          );
+          ownerReplyTo = adminRes.rows[0]?.email || null;
+        }
+      } catch (_) { /* reply-to is best-effort */ }
+
+      const companyName = tenant.company_name || tenant.name || "our team";
+      const safeHtml = String(trimmedBody)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/\n/g, "<br/>");
+      const html = `<p>${safeHtml}</p><p style="margin-top:16px;color:#6b7280;font-size:13px;">— ${companyName}</p>`;
+
+      const emailResult = await emailService.sendEmail({
+        to: toAddress,
+        replyTo: ownerReplyTo || undefined,
+        subject: `Message from ${companyName}`,
+        html,
+        text: trimmedBody,
+      });
+
+      if (!emailResult.ok) {
+        console.error(
+          "[Manual Email] Send failed leadId=%s tenant=%s err=%s",
+          lead.id, tenant.id, emailResult.error || "unknown"
+        );
+        return res.status(502).json({ error: `Email send failed: ${emailResult.error || "unknown error"}` });
+      }
+      providerMessageId = emailResult.id || null;
+      providerMetadata = { ...providerMetadata, resend_email_id: emailResult.id || null };
     }
 
     // Record the outbound message. Same INSERT across all channels —

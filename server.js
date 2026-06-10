@@ -1510,6 +1510,9 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = [], coachi
     "  - We have full_name + phone + email already collected",
     "  - The question is about scheduling the CUSTOMER'S appointment, not asking when WE work",
     "",
+    "book_intent: set TRUE the moment the customer expresses they WANT to book/schedule an appointment, BEFORE you have all their details. Examples that set book_intent=true: \"I want to book\", \"can I schedule an appointment\", \"let's set up an estimate\", \"do you have any openings\". This is SEPARATE from should_book — book_intent means they want to start scheduling; should_book means you have everything needed to actually book. Keep book_intent=true for the rest of the conversation once they've shown booking intent.",
+    "On the WEBSITE channel specifically: once book_intent=true, the customer will be shown a tappable calendar to pick a real time slot — so do NOT ask them for a date or time in text, and do NOT try to confirm a specific appointment time yourself. Just acknowledge warmly (e.g. \"Great, let's find you a time — pick a slot below\") and let the scheduler take over. You should still collect name, phone, address, and email if the conversation calls for it, but the date/time selection happens through the calendar, not through you.",
+    "",
     "should_cancel: set TRUE ONLY when customer EXPLICITLY says one of:",
     "  - \"cancel my appointment\" / \"I want to cancel\" / \"no longer need this\"",
     "  - \"not interested anymore\"",
@@ -1625,7 +1628,7 @@ function buildSmsSystemPrompt(thread, tenant = null, availableSlots = [], coachi
 
   return [
     combined,
-    "\nReturn strict JSON only with keys: reply, lead_capture, should_book, should_cancel, should_reschedule, should_dnc, appointment_date, appointment_time, follow_up_minutes.",
+    "\nReturn strict JSON only with keys: reply, lead_capture, should_book, book_intent, should_cancel, should_reschedule, should_dnc, appointment_date, appointment_time, follow_up_minutes.",
     `Known lead data: ${JSON.stringify(thread.leadCapture)}`,
   ].join("\n");
 }
@@ -1701,6 +1704,7 @@ async function runSmsAiOrchestrator(thread, incomingText, tenant = null) {
               ]
             },
             should_book: { type: "boolean" },
+            book_intent: { type: "boolean" },
             should_cancel: { type: "boolean" },
             should_reschedule: { type: "boolean" },
             should_dnc: { type: "boolean" },
@@ -1709,7 +1713,7 @@ async function runSmsAiOrchestrator(thread, incomingText, tenant = null) {
             follow_up_minutes: { type: "number" }
           },
           required: [
-            "reply", "lead_capture", "should_book", "should_cancel",
+            "reply", "lead_capture", "should_book", "book_intent", "should_cancel",
             "should_reschedule", "should_dnc", "appointment_date", "appointment_time",
             "follow_up_minutes"
           ]
@@ -1797,12 +1801,14 @@ async function handleLeadBooking(thread, ai, tenantOverride = null) {
   const fullName = ai.lead_capture?.full_name || thread.leadCapture?.full_name;
   const phone    = ai.lead_capture?.phone     || thread.leadCapture?.phone || thread.phone;
   const email    = ai.lead_capture?.email     || thread.leadCapture?.email;
-  if (!fullName || !phone || !email) {
+  const address  = ai.lead_capture?.address   || thread.leadCapture?.address;
+  if (!fullName || !phone || !email || !address) {
     const missing = [];
     if (!fullName) missing.push("full name");
     if (!phone)    missing.push("phone number");
     if (!email)    missing.push("email address");
-    return `To finalize your booking, I just need your ${missing.join(" and ")}. Please share that and I'll get you scheduled!`;
+    if (!address)  missing.push("service address");
+    return `To finalize your booking, I just need your ${missing.join(", ")}. Please share that and I'll get you scheduled!`;
   }
  
   // Date validation — produces the user-facing "that date passed" / ">90 days"
@@ -2360,7 +2366,26 @@ async function processSmsConversation(phone, incomingText, tenant = null, routed
 
   let replyText = ai.reply || "Thanks for reaching out!";
 
-  const bookingResult = await handleLeadBooking(thread, ai, tenant);
+  // ── Website book_intent handoff (Phase 12, Jun 10, 2026) ───────────────
+  // On the website channel, once the customer wants to book we DON'T parse
+  // a free-text date/time ourselves — the widget shows a tappable real-slot
+  // calendar (renderDatePicker → /api/booking/book) instead. We return
+  // book_intent=true so the widget triggers window.__aiWidgetStartBooking(),
+  // and we SKIP handleLeadBooking so the free-text booking path (which fired
+  // before the address gate and re-fired on every later turn, producing the
+  // "✅ booked" → "no longer available" loop) never runs for website.
+  // SMS/Facebook keep the free-text booking path — they have no picker UI.
+  const websiteBookHandoff = thread.channel === "website" && ai.book_intent === true && !thread.bookedEventId;
+
+  // Re-book guard (all channels): once a booking exists on this thread, never
+  // call the engine again. Prevents the orchestrator re-attempting the same
+  // slot on follow-up turns and getting slot_taken on the customer's OWN
+  // booking — the root cause of the repeated "no longer available" replies.
+  let bookingResult = null;
+  if (!websiteBookHandoff && !thread.bookedEventId) {
+    bookingResult = await handleLeadBooking(thread, ai, tenant);
+  }
+
  if (bookingResult) {
     replyText = bookingResult;
   } else if (!ai.should_book && !thread.bookedEventId) {
@@ -2396,6 +2421,7 @@ if (!thread.bookedEventId) {
   return {
     reply: replyText,
     lead_capture: ai.lead_capture,
+    book_intent: websiteBookHandoff === true,
     booking_confirmed: (ai.should_book && isNewBookingConfirmation(bookingResult)) ? {
       date: ai.appointment_date,
       time: ai.appointment_time

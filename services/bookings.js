@@ -602,6 +602,17 @@ function formatBookingForVoiceConfirm(booking) {
   return datePart;
 }
 
+/**
+ * Fetch a single booking by id. Used by the SMS cancel-flow resume
+ * (Phase 12 A2) to re-show the friendly date/time when rehydrating an
+ * awaiting_confirm cancel after a restart. Returns the row or null.
+ */
+async function getBookingById(bookingId) {
+  if (!bookingId) return null;
+  const res = await db.query("SELECT * FROM bookings WHERE id = $1 LIMIT 1", [bookingId]);
+  return res.rows[0] || null;
+}
+
 module.exports = {
   createBooking,
   updateBooking,
@@ -611,4 +622,5 @@ module.exports = {
   findUpcomingBookingsByPhone,
   formatBookingForVoiceConfirm,
   getLast10Digits,
+  getBookingById,
 };

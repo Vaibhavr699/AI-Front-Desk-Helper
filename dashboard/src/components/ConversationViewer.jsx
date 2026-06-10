@@ -7,14 +7,19 @@ import {
 import { format } from 'date-fns';
 
 // ─────────────────────────────────────────────────────────────────────
-// Channel display config — drives the "Replying via X" badge + the
-// validation messaging. Keep this aligned with the backend channel
-// enum in routes/leads.js (sms | website | facebook).
+// Channel display config — drives the "Replying via X" badge / switcher +
+// the validation messaging. Keep this aligned with the backend channel
+// enum in routes/leads.js (sms | website | facebook | email).
+//
+// email (Jun 10, 2026): the one channel NOT keyed on lead.phone — it
+// routes on lead.email. Amber treatment matches the timeline's existing
+// email icon styling.
 // ─────────────────────────────────────────────────────────────────────
 const CHANNEL_LABELS = {
   sms:      { name: 'SMS',      icon: MessageSquare, color: 'text-green-600',  bg: 'bg-green-50',  border: 'border-green-200' },
   website:  { name: 'Website',  icon: Globe,         color: 'text-purple-600', bg: 'bg-purple-50', border: 'border-purple-200' },
   facebook: { name: 'Facebook', icon: Facebook,      color: 'text-blue-600',   bg: 'bg-blue-50',   border: 'border-blue-200' },
+  email:    { name: 'Email',    icon: Mail,          color: 'text-amber-600',  bg: 'bg-amber-50',  border: 'border-amber-200' },
 };
 
 const ConversationViewer = ({ leadId, leadName }) => {
@@ -30,6 +35,11 @@ const ConversationViewer = ({ leadId, leadName }) => {
 
   // Resume AI state
   const [resumingAi, setResumingAi] = useState(false);
+
+  // Option B (Jun 10, 2026): manual channel override. null = follow
+  // auto-detect; a channel string = owner explicitly picked it. Reset
+  // whenever the selected lead changes (in the leadId effect below).
+  const [channelOverride, setChannelOverride] = useState(null);
 
   const scrollRef = useRef(null);
 
@@ -54,6 +64,7 @@ const ConversationViewer = ({ leadId, leadName }) => {
     if (leadId) {
       setMessageText('');
       setSendError('');
+      setChannelOverride(null);
       loadAll();
     }
   }, [leadId, loadAll]);
@@ -70,6 +81,7 @@ const ConversationViewer = ({ leadId, leadName }) => {
   // auto-detect logic in detectLeadChannel() so the badge shown to the
   // owner matches what actually happens server-side.
   //
+  // Jun 10, 2026: now also recognizes 'email' as a replyable channel.
   // Falls back to 'sms' for leads with no inbound history at all.
   // ─────────────────────────────────────────────────────────────────────
   const detectedChannel = useMemo(() => {
@@ -79,7 +91,12 @@ const ConversationViewer = ({ leadId, leadName }) => {
     // — they're not channels we can reply on.
     for (const item of timeline) {
       if (item.type === 'message' && item.direction === 'inbound') {
-        if (item.channel === 'website' || item.channel === 'facebook' || item.channel === 'sms') {
+        if (
+          item.channel === 'website' ||
+          item.channel === 'facebook' ||
+          item.channel === 'sms' ||
+          item.channel === 'email'
+        ) {
           return item.channel;
         }
       }
@@ -87,15 +104,23 @@ const ConversationViewer = ({ leadId, leadName }) => {
     return 'sms';
   }, [timeline]);
 
+  // Option B: the channel actually used = manual override if the owner
+  // picked one, otherwise the auto-detected channel. The override is only
+  // honored if it's a channel the lead can actually receive on (guarded
+  // by the switcher, which only offers available channels).
+  const activeChannel = channelOverride || detectedChannel;
+
   const handleSend = async () => {
     if (!messageText.trim() || sending) return;
     setSending(true);
     setSendError('');
     try {
-      // Pass the detected channel explicitly so the UI badge and the
-      // actual send route stay in sync. The backend re-detects defensively.
-      await sendOwnerMessage(leadId, messageText.trim(), detectedChannel);
+      // Pass the active channel explicitly (override or auto-detect) so the
+      // UI and the send route stay in sync. The backend re-validates and
+      // returns a clean error if the lead can't receive on this channel.
+      await sendOwnerMessage(leadId, messageText.trim(), activeChannel);
       setMessageText('');
+      setChannelOverride(null);
       await loadAll();
     } catch (err) {
       console.error('Send failed:', err);
@@ -154,20 +179,54 @@ const ConversationViewer = ({ leadId, leadName }) => {
   const isHandoff = !!lead?.human_handoff_at;
   const isDnc = !!lead?.do_not_contact;
   const charCount = messageText.length;
-  const willSegment = charCount > 160 && detectedChannel === 'sms';
 
   // ─────────────────────────────────────────────────────────────────────
-  // Channel-aware compose-box gating:
+  // Channel-aware compose-box gating (Option B, Jun 10, 2026):
   //   sms      → requires lead.phone in E.164 format
   //   website  → requires lead.phone (which for website leads = sessionId)
   //   facebook → requires lead.phone (which for FB leads = sender_id)
-  // All channels require SOMETHING in lead.phone — the field is reused
-  // as the per-channel identifier. If lead.phone is empty, no channel
-  // can route a reply.
+  //   email    → requires lead.email  ← the one channel NOT keyed on phone
+  //
+  // sms/website/facebook all reuse lead.phone as their per-channel
+  // identifier; email is the exception — it routes on lead.email. So we
+  // track two independent identifiers and gate per selected channel.
   // ─────────────────────────────────────────────────────────────────────
-  const hasIdentifier = !!lead?.phone;
-  const channelConfig = CHANNEL_LABELS[detectedChannel] || CHANNEL_LABELS.sms;
+  const hasPhone = !!lead?.phone;
+  const hasEmail = !!lead?.email;
+
+  // Which channels can this lead actually receive on right now? Phone-keyed
+  // channels need lead.phone; email needs lead.email. We surface the
+  // auto-detected phone-channel (sms/website/facebook) plus email — we do
+  // NOT let the owner switch a website lead to "sms", since that's the same
+  // identifier with different routing semantics. The real choice Option B
+  // exposes is "the channel they came in on" vs "email".
+  const phoneChannel = detectedChannel === 'email' ? 'sms' : detectedChannel;
+  const availableChannels = [];
+  if (hasPhone) availableChannels.push(phoneChannel);
+  if (hasEmail) availableChannels.push('email');
+
+  // The lead can be replied to at all if it has EITHER identifier.
+  const hasIdentifier = hasPhone || hasEmail;
+
+  // If the active channel isn't actually available (e.g. auto-detected sms
+  // but the lead only has an email on file), fall back to whatever IS
+  // available so the compose box stays usable instead of showing a dead
+  // "no identifier" state for a lead we can in fact email.
+  const effectiveChannel = availableChannels.includes(activeChannel)
+    ? activeChannel
+    : (availableChannels[0] || activeChannel);
+
+  const channelConfig = CHANNEL_LABELS[effectiveChannel] || CHANNEL_LABELS.sms;
   const ChannelIcon = channelConfig.icon;
+
+  // Show the switcher only when there's a genuine choice (lead has BOTH a
+  // phone-keyed channel AND an email). A single-channel lead keeps the
+  // static badge exactly as before.
+  const showChannelSwitcher = hasPhone && hasEmail;
+
+  // SMS-only segment warning — keyed on the effective channel so switching
+  // to Email drops the 160-char segmenting note and uses the 1600 limit.
+  const willSegment = charCount > 160 && effectiveChannel === 'sms';
 
   return (
     <div className="h-full flex flex-col bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -336,16 +395,44 @@ const ConversationViewer = ({ leadId, leadName }) => {
             </div>
           ) : (
             <>
-              {/* Phase 8.3 — channel-of-reply indicator */}
-              <div className={`mb-3 px-3 py-1.5 rounded-lg flex items-center gap-2 text-xs font-medium border ${channelConfig.bg} ${channelConfig.border}`}>
-                <ChannelIcon size={14} className={channelConfig.color} />
-                <span className={channelConfig.color}>
-                  Replying via <strong>{channelConfig.name}</strong>
-                </span>
-                <span className="text-gray-400 ml-auto">
-                  Auto-detected from latest customer message
-                </span>
-              </div>
+              {/* Channel-of-reply indicator + switcher (Option B) */}
+              {showChannelSwitcher ? (
+                <div className="mb-3 flex items-center gap-2">
+                  {availableChannels.map((ch) => {
+                    const cfg = CHANNEL_LABELS[ch] || CHANNEL_LABELS.sms;
+                    const Icon = cfg.icon;
+                    const isActive = ch === effectiveChannel;
+                    return (
+                      <button
+                        key={ch}
+                        type="button"
+                        onClick={() => setChannelOverride(ch)}
+                        className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs font-medium border transition-all ${
+                          isActive
+                            ? `${cfg.bg} ${cfg.border} ${cfg.color}`
+                            : 'bg-white border-gray-200 text-gray-400 hover:border-gray-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        <Icon size={14} className={isActive ? cfg.color : 'text-gray-400'} />
+                        {cfg.name}
+                      </button>
+                    );
+                  })}
+                  <span className="text-[10px] text-gray-400 ml-auto italic">
+                    {channelOverride ? 'Channel chosen by you' : 'Auto-detected — tap to switch'}
+                  </span>
+                </div>
+              ) : (
+                <div className={`mb-3 px-3 py-1.5 rounded-lg flex items-center gap-2 text-xs font-medium border ${channelConfig.bg} ${channelConfig.border}`}>
+                  <ChannelIcon size={14} className={channelConfig.color} />
+                  <span className={channelConfig.color}>
+                    Replying via <strong>{channelConfig.name}</strong>
+                  </span>
+                  <span className="text-gray-400 ml-auto">
+                    Auto-detected from latest customer message
+                  </span>
+                </div>
+              )}
 
               <div className="flex gap-3 items-end">
                 <div className="flex-1">
@@ -370,7 +457,7 @@ const ConversationViewer = ({ leadId, leadName }) => {
                         <span className="text-amber-600">
                           {charCount} chars · sends as {Math.ceil(charCount / 160)} SMS segments
                         </span>
-                      ) : detectedChannel === 'sms' ? (
+                      ) : effectiveChannel === 'sms' ? (
                         <span>{charCount} / 160</span>
                       ) : (
                         <span>{charCount} / 1600</span>

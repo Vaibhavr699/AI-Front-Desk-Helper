@@ -47,6 +47,7 @@ const leadsService = require("./services/leads");
 const bookingEngine = require("./lib/bookingEngine");
 const messagesService = require("./services/messages");
 const emailService = require("./services/email");
+const smsBookingService = require("./services/smsBooking");
 const { getAIConfig, REALTIME_TOOLS, RECOVERY_TOOLS, CAPTURE_SERVICE_ZIP_TOOL } = require("./lib/orchestrator");
 const { isWithinBusinessHours } = require("./lib/timeUtils");
 const { buildCoachingPromptInjection } = require("./lib/coachingPromptInjection");
@@ -1343,6 +1344,15 @@ function getOrCreateSmsThread(phone) {
     cancelState: null,
     pendingCancelBookingId: null,
     pendingCancelBookingsList: null,
+    // Phase 12 A1 — SMS numbered slot-picker state (services/smsBooking.js)
+    bookingMenuState: null,
+    bookingDayList: null,
+    bookingChosenDate: null,
+    bookingSlotList: null,
+    bookingChosenSlot: null,
+    bookingContactStep: null,
+    bookingContact: null,
+    bookingFreeTextDate: null,
   }; 
   smsThreads.set(normalizedPhone, created);
   return created;
@@ -2265,6 +2275,24 @@ async function processSmsConversation(phone, incomingText, tenant = null, routed
   // null if the state was unknown/corrupt (which it resets, then we fall
   // through to the AI orchestrator path).
   // ─────────────────────────────────────────────────────────────────────
+// ── Phase 12 A1 — SMS booking menu interception ────────────────────────
+  // Mirrors the cancel state machine: if a numbered booking menu is active,
+  // let it consume numeric replies BEFORE the AI sees them. Returns { reply }
+  // when handled, or null to fall through (free-text time, "0" escape, or
+  // DNC/complaint — all of which the AI handles). channel==='sms' only;
+  // Facebook keeps free-text booking until A4.
+  if (thread.bookingMenuState && tenant && thread.channel === "sms") {
+    const bookingResult = await smsBookingService.handleSmsBookingIncoming(thread, incomingText, tenant);
+    if (bookingResult) {
+      thread.history.push({ role: "assistant", text: bookingResult.reply, at: new Date().toISOString() });
+      thread.lastOutboundAt = Date.now();
+      if (thread.leadId) {
+        messagesService.saveMessage(tenant.id, thread.leadId, thread.channel || "sms", "outbound", bookingResult.reply);
+      }
+      thread.followUpCount = 0;
+      return { reply: bookingResult.reply, lead_capture: {}, booking_confirmed: null };
+    }
+  }
   if (thread.cancelState && tenant) {
     const smsService = require("./services/sms");
     const cancelResult = await smsService.handleSmsCancellationIncoming(thread, incomingText, tenant);
@@ -2376,7 +2404,23 @@ async function processSmsConversation(phone, incomingText, tenant = null, routed
   // "✅ booked" → "no longer available" loop) never runs for website.
   // SMS/Facebook keep the free-text booking path — they have no picker UI.
   const websiteBookHandoff = thread.channel === "website" && ai.book_intent === true && !thread.bookedEventId;
-
+// ── Phase 12 A1 — SMS booking-menu initiation ──────────────────────────
+  // On real SMS (not website, not FB), once the AI flags booking intent and
+  // no menu is already running and nothing's booked yet, start the numbered
+  // day menu instead of free-text date parsing. Returns the menu as the reply.
+  if (thread.channel === "sms" && ai.book_intent === true && !thread.bookingMenuState && !thread.bookedEventId) {
+    const startMenu = await smsBookingService.initiateSmsBooking(thread, tenant);
+    if (startMenu && startMenu.reply) {
+      thread.history.push({ role: "assistant", text: startMenu.reply, at: new Date().toISOString() });
+      thread.lastOutboundAt = Date.now();
+      if (thread.leadId) {
+        messagesService.saveMessage(tenant.id, thread.leadId, thread.channel || "sms", "outbound", startMenu.reply);
+      }
+      thread.followUpCount = 0;
+      return { reply: startMenu.reply, lead_capture: {}, booking_confirmed: null };
+    }
+  }
+  
   // Re-book guard (all channels): once a booking exists on this thread, never
   // call the engine again. Prevents the orchestrator re-attempting the same
   // slot on follow-up turns and getting slot_taken on the customer's OWN

@@ -27,7 +27,7 @@ const SUPPORT_EMAIL_DEFAULT = "support@aifrontdeskhelper.com";
 // Its emails send from this address; AIFDH emails keep the default EMAIL_FROM.
 const REP_COACH_FROM = process.env.REP_COACH_EMAIL_FROM || "AI Rep Coach <noreply@airepcoach.com>";
 
-async function sendEmail({ to, subject, html, text, bcc, replyTo, from, attachments }) {
+async function sendEmail({ to, subject, html, text, bcc, replyTo, from, attachments, tenantId = null, leadId = null, logBody = null }) {
   if (!resend) {
     console.warn("[Email] Not sending – Resend not configured (check RESEND_API_KEY and EMAIL_FROM).");
     return { ok: false, error: "Email not configured" };
@@ -51,6 +51,26 @@ async function sendEmail({ to, subject, html, text, bcc, replyTo, from, attachme
     return { ok: false, error: error.message };
   }
   console.log("[Email] Sent to", toList.join(", "), "id:", data?.id);
+
+  // Dashboard visibility (Jun 10, 2026): log customer-facing emails to the
+  // messages table so they appear in the Conversations EMAIL filter. Only
+  // logs when tenantId + leadId are supplied — system emails (password reset,
+  // admin/team invites, usage alerts, contact-form notifications) pass neither
+  // and correctly stay out of the customer timeline. Fire-and-forget: a
+  // logging failure must never fail an email that already sent.
+  if (tenantId && leadId) {
+    try {
+      const messagesService = require("./messages");
+      const bodyForLog = logBody || subject || "(email sent)";
+      messagesService.saveMessage(tenantId, leadId, "email", "outbound", bodyForLog, {
+        subject,
+        resend_email_id: data?.id || null,
+      }).catch((e) => console.error("[Email] message log failed:", e.message));
+    } catch (e) {
+      console.error("[Email] message log threw:", e.message);
+    }
+  }
+
   return { ok: true, id: data?.id };
 }
 
@@ -120,6 +140,9 @@ async function sendBookingConfirmationEmail(tenant, booking) {
     replyTo: ownerEmail || undefined,
     subject: `Your estimate is scheduled – ${tenant.company_name}`,
     html,
+    tenantId: tenant.id,
+    leadId: booking.lead_id || null,
+    logBody: `📧 Confirmation email sent: estimate scheduled for ${booking.preferred_date || ""} at ${booking.appointment_time || ""}.`,
   });
 }
 

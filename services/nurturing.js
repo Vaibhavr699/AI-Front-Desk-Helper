@@ -207,7 +207,7 @@ async function processOneNurturing(row) {
 
   if (campaign_type === "post_service_followup") {
     if (toEmail) {
-      const r = await emailService.sendPostServiceFollowUpEmail(company_name, lead_name, toEmail, ownerReplyTo);
+      const r = await emailService.sendPostServiceFollowUpEmail(company_name, lead_name, toEmail, ownerReplyTo, { tenantId: tenant_id, leadId: lead_id });
       emailSent = r.ok;
       body      = r.body || "Quick follow-up after your recent service.";
     }
@@ -218,7 +218,7 @@ async function processOneNurturing(row) {
     }
   } else if (campaign_type === "referral_request") {
     if (toEmail) {
-      const r = await emailService.sendReferralRequestEmail(company_name, lead_name, toEmail, ownerReplyTo);
+      const r = await emailService.sendReferralRequestEmail(company_name, lead_name, toEmail, ownerReplyTo, { tenantId: tenant_id, leadId: lead_id });
       emailSent = r.ok;
       body      = r.body || "Quick favor — know someone who could use our help?";
     }
@@ -230,7 +230,7 @@ async function processOneNurturing(row) {
   } else if (campaign_type === "maintenance_reminder") {
     const touchpointHeader = (row.schedule_metadata && row.schedule_metadata.header) || "";
     if (toEmail) {
-      const r = await emailService.sendMaintenanceReminderEmail(company_name, lead_name, toEmail, ownerReplyTo);
+      const r = await emailService.sendMaintenanceReminderEmail(company_name, lead_name, toEmail, ownerReplyTo, { tenantId: tenant_id, leadId: lead_id });
       emailSent = r.ok;
       body      = r.body || "Maintenance reminder.";
     }
@@ -244,7 +244,7 @@ async function processOneNurturing(row) {
   } else if (campaign_type === "reengagement") {
     const touchpointHeader = (row.schedule_metadata && row.schedule_metadata.header) || "";
     if (toEmail) {
-      const r = await emailService.sendReengagementEmail(company_name, lead_name, toEmail, ownerReplyTo);
+      const r = await emailService.sendReengagementEmail(company_name, lead_name, toEmail, ownerReplyTo, { tenantId: tenant_id, leadId: lead_id });
       emailSent = r.ok;
       body      = r.body || "Quick check-in.";
     }
@@ -749,9 +749,10 @@ async function processSeasonalCampaigns() {
     }
 
     for (const row of allLeads) {
-      if (row.email) {
+     if (row.email) {
         await emailService.sendSeasonalCampaignEmail(
-          t.company_name, row.name, subject, bodyHtml, row.email, ownerReplyTo
+          t.company_name, row.name, subject, bodyHtml, row.email, ownerReplyTo,
+          { tenantId: t.id, leadId: row.id }
         ).catch(() => {});
       }
       if (row.phone) {

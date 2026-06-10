@@ -38,10 +38,22 @@
  *   were getting bounced indefinitely against the YES/NO matcher. Now
  *   those phrases exit the state machine and fall through to the AI
  *   orchestrator + soft-intent DNC path in processSmsConversation.
+ *
+ * Phase 12 A2 (Jun 10, 2026): durable cancel-flow state. The cancel state
+ *   machine's progress (cancelState + pendingCancelBookingId +
+ *   pendingCancelBookingsList) lived ONLY on the in-memory thread, so a
+ *   Render restart/redeploy mid-cancel wiped it and the customer had to
+ *   start over. Now mirrored to the conversation_states table (mig 091)
+ *   via persistCancelState / clearCancelState, keyed on lead_id (1-hour
+ *   TTL in lib/conversationState.js). resumeCancelMessage produces the
+ *   human "welcome back" re-orient when server.js rehydrates a cancel
+ *   flow after a gap. Mirrors the booking-flow persistence in
+ *   services/smsBooking.js exactly.
  */
 
 const db = require("../lib/db");
 const twilio = require("../lib/twilio");
+const conversationState = require("../lib/conversationState");
 
 // ─────────────────────────────────────────────────────────────────────
 // Helpers — formatting + phone lookup
@@ -163,7 +175,7 @@ async function sendBookingCancellationSms(tenant, booking) {
     return { ok: false, skipped: "do_not_contact" };
   }
 
-const firstName    = getFirstName(booking.contact_name);
+  const firstName    = getFirstName(booking.contact_name);
   const companyName  = tenant.company_name || tenant.name || "your contractor";
   const friendlyDate = formatFriendlyDate(booking.preferred_date);
 
@@ -265,7 +277,7 @@ async function sendEstimateLinkSms(tenant, toPhone, link, sourceCallId = null) {
     return { ok: false, error: "do_not_contact", skipped: "do_not_contact" };
   }
 
- const companyName = tenant.company_name || tenant.name || "us";
+  const companyName = tenant.company_name || tenant.name || "us";
 
   // Body locked May 4, 2026 (Drew, Phase E1):
   //   Vertical-agnostic — works for painting, roofing, fencing, etc.
@@ -394,6 +406,84 @@ function isComplaintPhrase(text) {
   return COMPLAINT_PHRASES.some((rx) => rx.test(text));
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Phase 12 A2 (Jun 10, 2026) — durable cancel-flow state persistence.
+//
+// Mirrors smsBooking.js: snapshot the three cancel-machine fields to the
+// conversation_states table at each transition that leaves the flow
+// ACTIVE; clear the persisted row at every terminal/abort transition.
+// All fire-and-forget — never blocks the customer reply, never throws.
+// Keyed on lead_id (channel-agnostic, 1-hour TTL in lib/conversationState).
+// ─────────────────────────────────────────────────────────────────────
+
+function persistCancelState(thread, tenant) {
+  if (!thread.leadId || !tenant || !thread.cancelState) return;
+  conversationState.save(thread.leadId, tenant.id, {
+    cancelState: thread.cancelState,
+    pendingCancelBookingId: thread.pendingCancelBookingId || null,
+    pendingCancelBookingsList: thread.pendingCancelBookingsList || null,
+  }).catch(() => {});
+}
+
+function clearCancelState(thread) {
+  if (thread.leadId) conversationState.clear(thread.leadId).catch(() => {});
+  thread.cancelState = null;
+  thread.pendingCancelBookingId = null;
+  thread.pendingCancelBookingsList = null;
+}
+
+/**
+ * Produce the human "picking back up" reply after server.js rehydrates a
+ * cancel flow whose state was lost to a restart (gap > 3 min). A human
+ * receptionist resuming reminds you where you were and re-shows what you
+ * need — they don't make you re-explain. Returns { reply } or null.
+ *
+ * awaiting_choice → re-show the numbered booking list.
+ * awaiting_confirm → re-show the YES/NO confirm for the held booking
+ *                    (re-fetched for a friendly label; generic if lookup fails).
+ * awaiting_reason → re-prompt for the optional reason.
+ */
+async function resumeCancelMessage(thread, tenant) {
+  if (!thread.cancelState) return null;
+  const bookingsService = require("./bookings");
+
+  if (thread.cancelState === "awaiting_choice") {
+    const list = thread.pendingCancelBookingsList || [];
+    if (list.length === 0) {
+      clearCancelState(thread);
+      return { reply: "Welcome back! Which appointment did you want to cancel? Reply CANCEL to start over." };
+    }
+    const reList = list.map((it, i) => `${i + 1}) ${it.friendly}`).join("\n");
+    return {
+      reply: `Welcome back — you were cancelling an appointment. Which one?\n${reList}\n\nReply with the number, or NONE to keep them all.`,
+    };
+  }
+
+  if (thread.cancelState === "awaiting_confirm") {
+    const id = thread.pendingCancelBookingId;
+    let friendly = "your appointment";
+    if (id) {
+      try {
+        const b = await bookingsService.getBookingById(id);
+        if (b) friendly = bookingsService.formatBookingForVoiceConfirm(b);
+      } catch (e) {
+        /* fall through with the generic label */
+      }
+    }
+    return {
+      reply: `Welcome back — just to pick up where we left off: cancel ${friendly}? Reply YES to confirm or NO to keep it.`,
+    };
+  }
+
+  if (thread.cancelState === "awaiting_reason") {
+    return {
+      reply: "Welcome back — your appointment is set to be cancelled. Was there anything specific that came up, just so we can let the team know? Reply with a quick note, or NONE to skip.",
+    };
+  }
+
+  return null;
+}
+
 async function initiateSmsCancellation(thread, tenant) {
   const bookingsService = require("./bookings");
   const phone = thread.leadCapture?.phone || thread.phone;
@@ -428,6 +518,7 @@ async function initiateSmsCancellation(thread, tenant) {
     thread.cancelState = "awaiting_confirm";
     thread.pendingCancelBookingId = b.id;
     thread.pendingCancelBookingsList = null;
+    persistCancelState(thread, tenant);
     console.log("[SMS Cancel Flow] 1 booking found, awaiting confirm bookingId=%s", b.id);
     return {
       reply: `I see your appointment ${friendly}. Reply YES to confirm cancellation, or NO to keep it.`,
@@ -441,6 +532,7 @@ async function initiateSmsCancellation(thread, tenant) {
   thread.cancelState = "awaiting_choice";
   thread.pendingCancelBookingsList = items;
   thread.pendingCancelBookingId = null;
+  persistCancelState(thread, tenant);
   console.log("[SMS Cancel Flow] %d bookings found, awaiting choice phone=%s",
     items.length, phone);
 
@@ -458,9 +550,7 @@ async function handleSmsCancellationIncoming(thread, incomingText, tenant) {
 
   if (/^(nevermind|never mind|forget it|cancel that|stop)$/i.test(lc)) {
     console.log("[SMS Cancel Flow] Universal abort from state=%s", thread.cancelState);
-    thread.cancelState = null;
-    thread.pendingCancelBookingId = null;
-    thread.pendingCancelBookingsList = null;
+    clearCancelState(thread);
     return { reply: "No problem, keeping your appointment as-is." };
   }
 
@@ -480,18 +570,14 @@ async function handleSmsCancellationIncoming(thread, incomingText, tenant) {
   if (isDncPhrase(text)) {
     console.log("[SMS Cancel Flow] DNC phrase detected mid-cancel state=%s text=%s — exiting flow, falling through to AI",
       thread.cancelState, text.slice(0, 100));
-    thread.cancelState = null;
-    thread.pendingCancelBookingId = null;
-    thread.pendingCancelBookingsList = null;
+    clearCancelState(thread);
     return null;
   }
 
   if (isComplaintPhrase(text)) {
     console.log("[SMS Cancel Flow] Complaint phrase detected mid-cancel state=%s text=%s — exiting flow, falling through to AI",
       thread.cancelState, text.slice(0, 100));
-    thread.cancelState = null;
-    thread.pendingCancelBookingId = null;
-    thread.pendingCancelBookingsList = null;
+    clearCancelState(thread);
     return null;
   }
 
@@ -502,8 +588,7 @@ async function handleSmsCancellationIncoming(thread, incomingText, tenant) {
 
       if (/^(none|no)$/i.test(lc)) {
         console.log("[SMS Cancel Flow] awaiting_choice → cancelled by customer");
-        thread.cancelState = null;
-        thread.pendingCancelBookingsList = null;
+        clearCancelState(thread);
         return { reply: "Got it, keeping all your appointments." };
       }
 
@@ -521,6 +606,7 @@ async function handleSmsCancellationIncoming(thread, incomingText, tenant) {
       thread.cancelState = "awaiting_confirm";
       thread.pendingCancelBookingId = chosen.id;
       thread.pendingCancelBookingsList = null;
+      persistCancelState(thread, tenant);
       console.log("[SMS Cancel Flow] awaiting_choice → awaiting_confirm bookingId=%s", chosen.id);
       return {
         reply: `Just to confirm, you want to cancel: ${chosen.friendly}? Reply YES to confirm or NO to keep it.`,
@@ -539,8 +625,7 @@ async function handleSmsCancellationIncoming(thread, incomingText, tenant) {
 
       if (no) {
         console.log("[SMS Cancel Flow] awaiting_confirm → declined");
-        thread.cancelState = null;
-        thread.pendingCancelBookingId = null;
+        clearCancelState(thread);
         return { reply: "Got it, keeping your appointment." };
       }
 
@@ -551,6 +636,7 @@ async function handleSmsCancellationIncoming(thread, incomingText, tenant) {
       }
 
       thread.cancelState = "awaiting_reason";
+      persistCancelState(thread, tenant);
       console.log("[SMS Cancel Flow] awaiting_confirm → awaiting_reason bookingId=%s",
         thread.pendingCancelBookingId);
       return {
@@ -562,7 +648,7 @@ async function handleSmsCancellationIncoming(thread, incomingText, tenant) {
       const bookingId = thread.pendingCancelBookingId;
       if (!bookingId) {
         console.error("[SMS Cancel Flow] awaiting_reason with no pendingCancelBookingId — resetting");
-        thread.cancelState = null;
+        clearCancelState(thread);
         return {
           reply: "Sorry, something went wrong on our end. Please call us if you still need to cancel.",
         };
@@ -577,8 +663,7 @@ async function handleSmsCancellationIncoming(thread, incomingText, tenant) {
           cancellation_reason: reason,
         });
 
-        thread.cancelState = null;
-        thread.pendingCancelBookingId = null;
+        clearCancelState(thread);
 
         if (!booking) {
           console.warn("[SMS Cancel Flow] cancelBooking returned null bookingId=%s", bookingId);
@@ -605,8 +690,7 @@ async function handleSmsCancellationIncoming(thread, incomingText, tenant) {
       } catch (e) {
         console.error("[SMS Cancel Flow] Cancel failed bookingId=%s err=%s",
           bookingId, e.message);
-        thread.cancelState = null;
-        thread.pendingCancelBookingId = null;
+        clearCancelState(thread);
         return {
           reply: "Sorry, something went wrong cancelling your appointment. Please call us directly so we can help.",
         };
@@ -615,9 +699,7 @@ async function handleSmsCancellationIncoming(thread, incomingText, tenant) {
 
     default:
       console.warn("[SMS Cancel Flow] Unknown cancelState=%s — resetting", thread.cancelState);
-      thread.cancelState = null;
-      thread.pendingCancelBookingId = null;
-      thread.pendingCancelBookingsList = null;
+      clearCancelState(thread);
       return null;
   }
 }
@@ -628,6 +710,8 @@ module.exports = {
   // Phase 4C (multi-turn cancellation conversation)
   initiateSmsCancellation,
   handleSmsCancellationIncoming,
+  // Phase 12 A2 (durable cancel-flow resume)
+  resumeCancelMessage,
   // Phase E1 (outbound estimate link)
   sendEstimateLinkSms,
   // Helpers

@@ -1800,7 +1800,7 @@ if (includes) {
           { key: "name",    label: "Name *",            type: "text",  placeholder: "First and last" },
           { key: "phone",   label: "Phone *",           type: "tel",   placeholder: "(555) 555-5555" },
           { key: "email",   label: "Email *",           type: "email", placeholder: "you@example.com" },
-          { key: "address", label: "Address (optional)", type: "text", placeholder: "Street, city, ZIP" },
+          { key: "address", label: "Address *", type: "text", placeholder: "Street, city, ZIP" },
         ];
         fields.forEach(f => {
           const w = document.createElement("div");
@@ -1855,6 +1855,7 @@ if (includes) {
           if (!c.name || c.name.trim().length < 2) errs.push("Please enter your name.");
           if (!c.phone || c.phone.replace(/\D/g, "").length < 10) errs.push("Please enter a valid phone.");
           if (!c.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email)) errs.push("Please enter a valid email.");
+          if (!c.address || c.address.trim().length < 5) errs.push("Please enter your service address.");
           if (consentCheck && !consentCheck.checked) errs.push("Please agree to receive text messages to book.");
           if (errs.length) {
             errBox.innerText = errs.join(" ");

@@ -54,7 +54,7 @@ export default function RoiHeroCard({ tenantId }) {
     let alive = true;
     setData(null);
     setFailed(false);
-    fetch(`${API_BASE}/api/dashboard/roi-summary?tenant_id=${encodeURIComponent(tenantId)}`, {
+    fetch(`${API_BASE}/api/roi-summary?tenant_id=${encodeURIComponent(tenantId)}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`roi-summary ${r.status}`))))

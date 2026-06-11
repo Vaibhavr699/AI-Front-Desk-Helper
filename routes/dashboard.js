@@ -3460,18 +3460,14 @@ router.get("/roi-summary", async (req, res) => {
     // bounded (a tenant's bookings over ~2 months), so JS-side after-hours
     // evaluation — which needs Intl tz math — is fine here, mirroring how
     // rollupV5's after-hours tile does it.
+    // Bookings for the window — no per-row subquery (that correlated EXISTS
+    // was doing a seq-scan per booking and timing out at ~170s). We pull the
+    // recovery-attributed lead_ids ONCE below and look them up in a Set.
     const rowsRes = await db.query(
       `SELECT b.id, b.created_at, b.lead_id, b.lead_source, b.call_id,
               COALESCE(NULLIF(b.actual_revenue_cents, 0), b.estimated_revenue_cents, 0)::bigint AS revenue_cents,
               COALESCE(t.timezone, 'America/Chicago') AS tz,
-              t.business_hours,
-              (b.lead_id IS NOT NULL AND EXISTS (
-                 SELECT 1
-                   FROM estimate_recoveries er
-                   JOIN recovery_touches rt ON rt.recovery_id = er.id
-                  WHERE er.lead_id = b.lead_id
-                    AND rt.created_at < b.created_at
-              )) AS recovery_attributed
+              t.business_hours
          FROM bookings b
          JOIN tenants t ON t.id = b.tenant_id
         WHERE b.tenant_id = ANY($1)
@@ -3479,6 +3475,27 @@ router.get("/roi-summary", async (req, res) => {
           AND LOWER(COALESCE(b.status, '')) <> ALL($3::text[])`,
       [tenantIds, prevMonthStart, ROI_EXCLUDED_STATUSES]
     );
+
+    // Recovery-attributed lead_ids in one shot: any lead (for these tenants)
+    // that has at least one recovery touch. We treat the lead as recovery-
+    // touched and let the JS loop below confirm the touch predates the
+    // booking via created_at. Single pass, indexed join — no N-subqueries.
+    let recoveryLeadIds = new Set();
+    try {
+      const recRes = await db.query(
+        `SELECT DISTINCT er.lead_id
+           FROM estimate_recoveries er
+           JOIN recovery_touches rt ON rt.recovery_id = er.id
+          WHERE er.tenant_id = ANY($1)
+            AND er.lead_id IS NOT NULL`,
+        [tenantIds]
+      );
+      recoveryLeadIds = new Set(recRes.rows.map((r) => r.lead_id));
+    } catch (recErr) {
+      // If recovery tables differ/missing, don't fail the whole card —
+      // just skip recovery attribution (after-hours still works).
+      console.error("[ROI Summary] recovery lookup skipped:", recErr.message);
+    }
 
     const current = {
       total_cents: 0,
@@ -3503,7 +3520,7 @@ router.get("/roi-summary", async (req, res) => {
         current.booking_count += 1;
 
         const afterHours = roiIsAfterHours(row.created_at, row.tz, row.business_hours);
-        const recovered = row.recovery_attributed === true;
+        const recovered = row.lead_id != null && recoveryLeadIds.has(row.lead_id);
 
         if (afterHours) {
           current.after_hours_cents += cents;

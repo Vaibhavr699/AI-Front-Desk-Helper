@@ -4,6 +4,7 @@ import { AlertCircle } from "lucide-react";
 import { getCalls, getBookings, getMetrics, getTenant, getPlans, getActivityFeed, getSalesWins } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import CoachAlertCard from "../components/CoachAlertCard";
+import RoiHeroCard from "../components/RoiHeroCard";
 import { useBrand } from "../contexts/BrandContext";
 
 const fmtC = n => "$" + Math.round(n / 100).toLocaleString();
@@ -120,57 +121,11 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
     fill_rate: 0, book_rate: 0, overall_rate: 0,
   };
 
-  const totalRecovered = Math.round(revenue / 100);
-  const missedCallRev = Math.round(totalRecovered * 0.39);
-  const followupRev = Math.round(totalRecovered * 0.29);
-  const estimateRev = Math.round(totalRecovered * 0.22);
-  const reengageRev = Math.round(totalRecovered * 0.10);
-  const roi = totalRecovered > 0 ? Math.round(totalRecovered / 497) : 0;
-
   // ═══════════════════════════════════════════════════════════════════
   // BRAND-AWARE: use brand color var instead of hardcoded #E8600A so
   // tenant-specific colors flow through. Initials for logo fallback.
   // ═══════════════════════════════════════════════════════════════════
   const BRAND = "var(--brand-600)";
-  const BRAND_SOFT = "rgba(var(--brand-600), 0.15)";
-
-  // ═══════════════════════════════════════════════════════════════════
-  // HERO PALETTE — Apr 19, 2026 P0 fix. The Revenue Recovered hero was
-  // dark navy with brand-color numbers. When Gladiators (#03222a dark
-  // teal) flipped to white_label, the headline number went invisible —
-  // near-black on near-black. Fix: dark navy + orange stays for AFDH
-  // (ai_branded), white_label tenants get a cream-bg palette where any
-  // brand color reads cleanly. Contrast bug only affects WL tenants now.
-  // ═══════════════════════════════════════════════════════════════════
-  const hero = isDefault
-    ? {
-        bg: "#1A2744",              // dark navy (AFDH default)
-        tileBg: "#243358",          // slightly lighter navy for ROI box + icon squares
-        trackBg: "#2d3f60",         // progress bar track
-        eyebrow: "#8899bb",         // "APRIL 2026 · AI RECOVERED" label
-        titleText: "#e8edf5",       // "Revenue Recovered by AI"
-        subText: "#8899bb",         // "Would have been $0 without AI"
-        rowLabel: "#aab8cc",        // four mini-stat row labels
-        roiValueColor: "#4ade80",   // green ROI number
-        savingsColor: "#4ade80",    // green "$0 without AI" accent
-      }
-    : {
-        bg: "#F8F7F2",              // cream (sits cleanly on the #F5F4F0 page bg)
-        tileBg: "#ffffff",          // ROI box + icon squares
-        trackBg: "#e8e6e0",         // progress bar track
-        eyebrow: "#888",
-        titleText: "#1a1a1a",
-        subText: "#666",
-        rowLabel: "#444",
-        roiValueColor: "#16a34a",   // darker green for contrast on cream
-        savingsColor: "#16a34a",
-      };
-
-  // Shadow + border give the cream hero definition against the page bg;
-  // the navy hero already pops against #F5F4F0 so it doesn't need either.
-  const heroShell = isDefault
-    ? { background: hero.bg, borderRadius: 16, padding: 20, position: "relative", overflow: "hidden" }
-    : { background: hero.bg, borderRadius: 16, padding: 20, position: "relative", overflow: "hidden", border: "1px solid #e8e6e0" };
 
   const initials = (companyName || "FD").trim().charAt(0).toUpperCase();
   const footerLabel = isDefault ? "AI Front Desk Helper" : companyName;
@@ -233,50 +188,7 @@ export default function Dashboard({ tenantId, tenants = [], onTenantChange }) {
 
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 20px", display: "flex", flexDirection: "column", gap: 20 }}>
 
-        {/* ── CARD 1: REVENUE RECOVERED HERO ── */}
-        {/* Hero colors all come from `hero` / `heroShell` at the top of the
-            component. ai_branded → dark navy. white_label → cream. Keeping
-            the numeric + semantic colors (green for ROI, mini-stat pop colors)
-            is intentional — those are meaning-carriers, not brand surface. */}
-        <div>
-          <div style={s.secLabel}>
-            <div style={s.secBar} /><div style={s.secTitle}>Revenue Recovered by AI</div>
-            <div style={s.secSub}>This month</div>
-          </div>
-          <div style={heroShell}>
-            <div style={{ position: "absolute", top: -40, right: -40, width: 200, height: 200, borderRadius: "50%", background: BRAND_SOFT, pointerEvents: "none" }} />
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
-              <div>
-                <div style={{ fontSize: 9, color: hero.eyebrow, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>{MONTH} {NOW_YEAR} · AI recovered</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: hero.titleText }}>Revenue Recovered by AI</div>
-                <div style={{ fontSize: 40, fontWeight: 800, color: BRAND, lineHeight: 1, margin: "4px 0 3px" }}>${totalRecovered.toLocaleString()}</div>
-                <div style={{ fontSize: 10, color: hero.subText }}>Would have been <span style={{ color: hero.savingsColor, fontWeight: 600 }}>$0 without AI</span></div>
-              </div>
-              <div style={{ background: hero.tileBg, borderRadius: 10, padding: "10px 14px", textAlign: "right" }}>
-                <div style={{ fontSize: 8, color: hero.eyebrow, textTransform: "uppercase", letterSpacing: "0.06em" }}>ROI</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: hero.roiValueColor, lineHeight: 1 }}>{roi}x</div>
-                <div style={{ fontSize: 9, color: hero.eyebrow, marginTop: 2 }}>$497/mo cost</div>
-              </div>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 8 }}>
-              {[
-                { icon: "📞", label: "Missed calls recovered", amt: missedCallRev, color: isDefault ? "#4ade80" : "#16a34a", barColor: "#16a34a", pct: 90 },
-                { icon: "💬", label: "Follow-up conversions", amt: followupRev, color: isDefault ? "#fb923c" : "#ea580c", barColor: BRAND, pct: 72 },
-                { icon: "📋", label: "Cold estimate follow-ups", amt: estimateRev, color: isDefault ? "#60a5fa" : "#2563eb", barColor: "#2563eb", pct: 56 },
-                { icon: "🔄", label: "Re-engagement campaigns", amt: reengageRev, color: isDefault ? "#c084fc" : "#7c3aed", barColor: "#7c3aed", pct: 30 },
-              ].map((r, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <div style={{ width: 24, height: 24, borderRadius: 6, background: hero.tileBg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>{r.icon}</div>
-                  <div style={{ fontSize: 10, color: hero.rowLabel, flex: 1 }}>{r.label}</div>
-                  <div style={{ width: 50, height: 3, background: hero.trackBg, borderRadius: 2, overflow: "hidden", flexShrink: 0 }}>
-                    <div style={{ width: `${r.pct}%`, height: "100%", background: r.barColor, borderRadius: 2 }} />
-                  </div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: r.color, flexShrink: 0, width: 52, textAlign: "right" }}>${r.amt.toLocaleString()}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+       <RoiHeroCard tenantId={tenantId} />
 
         {/* ── COACH ALERTS ── */}
         <div>

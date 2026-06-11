@@ -3447,55 +3447,53 @@ router.get("/roi-summary", async (req, res) => {
   try {
     const tenantIds = await getTargetTenantIds(req);
     if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
+    console.log("[ROI] step1 tenantIds", tenantIds.length);
 
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    // Same day-window into the previous month (e.g. Jun 1-11 vs May 1-11).
     const msIntoMonth = now.getTime() - monthStart.getTime();
     const prevWindowEnd = new Date(prevMonthStart.getTime() + msIntoMonth);
 
-    // One query pulls both months' bookings with tenant tz/hours and the
-    // recovery-attribution flag; everything else aggregates in JS. Volume is
-    // bounded (a tenant's bookings over ~2 months), so JS-side after-hours
-    // evaluation — which needs Intl tz math — is fine here, mirroring how
-    // rollupV5's after-hours tile does it.
-    // Bookings for the window — no per-row subquery (that correlated EXISTS
-    // was doing a seq-scan per booking and timing out at ~170s). We pull the
-    // recovery-attributed lead_ids ONCE below and look them up in a Set.
-    const rowsRes = await db.query(
-      `SELECT b.id, b.created_at, b.lead_id, b.lead_source, b.call_id,
-              COALESCE(NULLIF(b.actual_revenue_cents, 0), b.estimated_revenue_cents, 0)::bigint AS revenue_cents,
-              COALESCE(t.timezone, 'America/Chicago') AS tz,
-              t.business_hours
-         FROM bookings b
-         JOIN tenants t ON t.id = b.tenant_id
-        WHERE b.tenant_id = ANY($1)
-          AND b.created_at >= $2
-          AND LOWER(COALESCE(b.status, '')) <> ALL($3::text[])`,
-      [tenantIds, prevMonthStart, ROI_EXCLUDED_STATUSES]
-    );
+    // Hard timeout wrapper: never let a single query hang the dashboard card.
+    // If any query takes >6s, we reject, the catch returns 500, and the card
+    // hides itself instead of spinning forever. (db.query on a pooled client
+    // ignores SET LOCAL, so we enforce the ceiling here in JS.)
+    const withTimeout = (promise, label, ms = 6000) =>
+      Promise.race([
+        promise,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`ROI ${label} exceeded ${ms}ms`)), ms)
+        ),
+      ]);
 
-    // Recovery-attributed lead_ids in one shot: any lead (for these tenants)
-    // that has at least one recovery touch. We treat the lead as recovery-
-    // touched and let the JS loop below confirm the touch predates the
-    // booking via created_at. Single pass, indexed join — no N-subqueries.
-    let recoveryLeadIds = new Set();
-    try {
-      const recRes = await db.query(
-        `SELECT DISTINCT er.lead_id
-           FROM estimate_recoveries er
-           JOIN recovery_touches rt ON rt.recovery_id = er.id
-          WHERE er.tenant_id = ANY($1)
-            AND er.lead_id IS NOT NULL`,
-        [tenantIds]
-      );
-      recoveryLeadIds = new Set(recRes.rows.map((r) => r.lead_id));
-    } catch (recErr) {
-      // If recovery tables differ/missing, don't fail the whole card —
-      // just skip recovery attribution (after-hours still works).
-      console.error("[ROI Summary] recovery lookup skipped:", recErr.message);
-    }
+    // Recovery attribution folded into the bookings query via a LEFT JOIN to
+    // a pre-aggregated set of recovery-touched lead_ids — no correlated
+    // per-row subquery, no second round-trip. The CTE runs once.
+    const rowsRes = await withTimeout(
+      db.query(
+        `WITH recovered_leads AS (
+           SELECT DISTINCT er.lead_id
+             FROM estimate_recoveries er
+            WHERE er.tenant_id = ANY($1)
+              AND er.lead_id IS NOT NULL
+              AND EXISTS (SELECT 1 FROM recovery_touches rt WHERE rt.recovery_id = er.id)
+         )
+         SELECT b.id, b.created_at, b.lead_id, b.lead_source, b.call_id,
+                COALESCE(NULLIF(b.actual_revenue_cents, 0), b.estimated_revenue_cents, 0)::bigint AS revenue_cents,
+                COALESCE(t.timezone, 'America/Chicago') AS tz,
+                t.business_hours,
+                (b.lead_id IS NOT NULL AND b.lead_id IN (SELECT lead_id FROM recovered_leads)) AS recovery_attributed
+           FROM bookings b
+           JOIN tenants t ON t.id = b.tenant_id
+          WHERE b.tenant_id = ANY($1)
+            AND b.created_at >= $2
+            AND LOWER(COALESCE(b.status, '')) <> ALL($3::text[])`,
+        [tenantIds, prevMonthStart, ROI_EXCLUDED_STATUSES]
+      ),
+      "bookings"
+    );
+    console.log("[ROI] step2 rows", rowsRes.rows.length);
 
     const current = {
       total_cents: 0,
@@ -3504,9 +3502,9 @@ router.get("/roi-summary", async (req, res) => {
       after_hours_count: 0,
       recovery_cents: 0,
       recovery_count: 0,
-      missed_moments_cents: 0,   // union of the two above, deduped per booking
+      missed_moments_cents: 0,
       missed_moments_count: 0,
-      channels: {},              // label → { count, cents }
+      channels: {},
     };
     let prevTotalCents = 0;
 
@@ -3515,12 +3513,11 @@ router.get("/roi-summary", async (req, res) => {
       const cents = Number(row.revenue_cents) || 0;
 
       if (createdAt >= monthStart) {
-        // ── current month-to-date ──
         current.total_cents += cents;
         current.booking_count += 1;
 
         const afterHours = roiIsAfterHours(row.created_at, row.tz, row.business_hours);
-        const recovered = row.lead_id != null && recoveryLeadIds.has(row.lead_id);
+        const recovered = row.recovery_attributed === true;
 
         if (afterHours) {
           current.after_hours_cents += cents;
@@ -3540,7 +3537,6 @@ router.get("/roi-summary", async (req, res) => {
         current.channels[ch].count += 1;
         current.channels[ch].cents += cents;
       } else if (createdAt >= prevMonthStart && createdAt < prevWindowEnd) {
-        // ── previous month, same day-window ──
         prevTotalCents += cents;
       }
     }
@@ -3552,10 +3548,12 @@ router.get("/roi-summary", async (req, res) => {
           ? 100
           : 0;
 
+    console.log("[ROI] step3 done total", current.total_cents);
+
     res.json({
       ok: true,
-      month: monthStart.toISOString().slice(0, 7), // "2026-06"
-      revenue_basis: "estimated", // actuals used where present; UI labels honestly
+      month: monthStart.toISOString().slice(0, 7),
+      revenue_basis: "estimated",
       month_to_date: {
         total_cents: current.total_cents,
         booking_count: current.booking_count,
@@ -3575,9 +3573,8 @@ router.get("/roi-summary", async (req, res) => {
       trend_pct: trendPct,
     });
   } catch (e) {
-    console.error("[ROI Summary] error:", e);
+    console.error("[ROI Summary] error:", e.message);
     res.status(500).json({ error: "Server error" });
   }
 });
-
 module.exports = router;

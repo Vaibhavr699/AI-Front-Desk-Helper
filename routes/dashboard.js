@@ -3358,4 +3358,209 @@ router.get("/tenants/:parentId/rollup", async (req, res) => {
   }
 });
 
+// ═════════════════════════════════════════════════════════════════════════
+// ROI HERO (Jun 11, 2026) — paste this entire block into routes/dashboard.js
+// directly ABOVE the final `module.exports = router;` line.
+//
+// One read-only endpoint powering the dashboard hero card:
+//   "$X booked this month through your AI front desk"
+//   + the strictly-attributable subset: "$Y from moments you'd have missed"
+//     (after-hours bookings + recovery-resurrected leads, deduped).
+//
+// Definitions (deliberate, keep honest):
+//   - Revenue per booking = actual_revenue_cents when > 0, else
+//     estimated_revenue_cents. The UI labels the total "estimated" until
+//     outcome capture upgrades it.
+//   - Cancelled/lost/rejected bookings EXCLUDED — inflated numbers cost trust.
+//   - After-hours = booking created outside the tenant's business_hours,
+//     evaluated in the tenant's timezone. The helper below is copied
+//     VERBATIM from routes/rollupV5.js (isAfterHours) so the single-tenant
+//     hero and the franchise rollup tile can never disagree. If you ever
+//     change one, change both (or extract to lib/).
+//   - Recovery-attributed = the booking's lead received at least one
+//     recovery touch BEFORE the booking was created (the cadence
+//     resurrected it).
+//   - Trend compares month-to-date against the SAME day-window of the
+//     previous month (not the full month) so mid-month numbers don't look
+//     artificially down.
+// ═════════════════════════════════════════════════════════════════════════
+
+const ROI_EXCLUDED_STATUSES = ["cancelled", "lost", "rejected", "lost lead"];
+
+const ROI_DAY_KEYS = [
+  "sunday", "monday", "tuesday", "wednesday",
+  "thursday", "friday", "saturday",
+];
+const ROI_WEEKDAY_ORDER = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// Copied from routes/rollupV5.js isAfterHours() — same semantics.
+function roiIsAfterHours(createdAt, tz, businessHours) {
+  const d = new Date(createdAt);
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+
+  const weekdayShort = parts.find((p) => p.type === "weekday")?.value;
+  let hour = parts.find((p) => p.type === "hour")?.value;
+  const minute = parts.find((p) => p.type === "minute")?.value;
+
+  if (hour === "24") hour = "00";
+
+  const dowIndex = ROI_WEEKDAY_ORDER.indexOf(weekdayShort);
+  if (dowIndex < 0 || !hour || !minute) return true;
+
+  const localTime = `${hour}:${minute}`;
+  const dayKey = ROI_DAY_KEYS[dowIndex];
+
+  if (!businessHours || typeof businessHours !== "object") {
+    const isWeekend = dowIndex === 0 || dowIndex === 6;
+    if (isWeekend) return true;
+    return localTime < "08:00" || localTime >= "18:00";
+  }
+
+  const dayConfig = businessHours[dayKey];
+  if (!dayConfig || dayConfig.closed === true) return true;
+
+  const open = dayConfig.open || "08:00";
+  const close = dayConfig.close || "18:00";
+
+  return localTime < open || localTime >= close;
+}
+
+// Bucket a booking into a display channel for the hero card chips.
+function roiChannelFor(row) {
+  if (row.call_id) return "Phone";
+  const src = String(row.lead_source || "").toLowerCase();
+  if (src.includes("sms") || src.includes("text")) return "SMS";
+  if (src.includes("chat") || src.includes("website") || src.includes("web")) return "Website";
+  if (src.includes("facebook") || src.includes("instagram") || src === "fb") return "Social";
+  if (src.includes("email")) return "Email";
+  return "Other";
+}
+
+router.get("/roi-summary", async (req, res) => {
+  try {
+    const tenantIds = await getTargetTenantIds(req);
+    if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
+
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    // Same day-window into the previous month (e.g. Jun 1-11 vs May 1-11).
+    const msIntoMonth = now.getTime() - monthStart.getTime();
+    const prevWindowEnd = new Date(prevMonthStart.getTime() + msIntoMonth);
+
+    // One query pulls both months' bookings with tenant tz/hours and the
+    // recovery-attribution flag; everything else aggregates in JS. Volume is
+    // bounded (a tenant's bookings over ~2 months), so JS-side after-hours
+    // evaluation — which needs Intl tz math — is fine here, mirroring how
+    // rollupV5's after-hours tile does it.
+    const rowsRes = await db.query(
+      `SELECT b.id, b.created_at, b.lead_id, b.lead_source, b.call_id,
+              COALESCE(NULLIF(b.actual_revenue_cents, 0), b.estimated_revenue_cents, 0)::bigint AS revenue_cents,
+              COALESCE(t.timezone, 'America/Chicago') AS tz,
+              t.business_hours,
+              (b.lead_id IS NOT NULL AND EXISTS (
+                 SELECT 1
+                   FROM estimate_recoveries er
+                   JOIN recovery_touches rt ON rt.recovery_id = er.id
+                  WHERE er.lead_id = b.lead_id
+                    AND rt.created_at < b.created_at
+              )) AS recovery_attributed
+         FROM bookings b
+         JOIN tenants t ON t.id = b.tenant_id
+        WHERE b.tenant_id = ANY($1)
+          AND b.created_at >= $2
+          AND LOWER(COALESCE(b.status, '')) <> ALL($3::text[])`,
+      [tenantIds, prevMonthStart, ROI_EXCLUDED_STATUSES]
+    );
+
+    const current = {
+      total_cents: 0,
+      booking_count: 0,
+      after_hours_cents: 0,
+      after_hours_count: 0,
+      recovery_cents: 0,
+      recovery_count: 0,
+      missed_moments_cents: 0,   // union of the two above, deduped per booking
+      missed_moments_count: 0,
+      channels: {},              // label → { count, cents }
+    };
+    let prevTotalCents = 0;
+
+    for (const row of rowsRes.rows) {
+      const createdAt = new Date(row.created_at);
+      const cents = Number(row.revenue_cents) || 0;
+
+      if (createdAt >= monthStart) {
+        // ── current month-to-date ──
+        current.total_cents += cents;
+        current.booking_count += 1;
+
+        const afterHours = roiIsAfterHours(row.created_at, row.tz, row.business_hours);
+        const recovered = row.recovery_attributed === true;
+
+        if (afterHours) {
+          current.after_hours_cents += cents;
+          current.after_hours_count += 1;
+        }
+        if (recovered) {
+          current.recovery_cents += cents;
+          current.recovery_count += 1;
+        }
+        if (afterHours || recovered) {
+          current.missed_moments_cents += cents;
+          current.missed_moments_count += 1;
+        }
+
+        const ch = roiChannelFor(row);
+        if (!current.channels[ch]) current.channels[ch] = { count: 0, cents: 0 };
+        current.channels[ch].count += 1;
+        current.channels[ch].cents += cents;
+      } else if (createdAt >= prevMonthStart && createdAt < prevWindowEnd) {
+        // ── previous month, same day-window ──
+        prevTotalCents += cents;
+      }
+    }
+
+    const trendPct =
+      prevTotalCents > 0
+        ? Math.round(((current.total_cents - prevTotalCents) / prevTotalCents) * 100)
+        : current.total_cents > 0
+          ? 100
+          : 0;
+
+    res.json({
+      ok: true,
+      month: monthStart.toISOString().slice(0, 7), // "2026-06"
+      revenue_basis: "estimated", // actuals used where present; UI labels honestly
+      month_to_date: {
+        total_cents: current.total_cents,
+        booking_count: current.booking_count,
+        missed_moments: {
+          total_cents: current.missed_moments_cents,
+          booking_count: current.missed_moments_count,
+          after_hours_cents: current.after_hours_cents,
+          after_hours_count: current.after_hours_count,
+          recovery_cents: current.recovery_cents,
+          recovery_count: current.recovery_count,
+        },
+        channels: Object.entries(current.channels)
+          .map(([label, v]) => ({ label, count: v.count, cents: v.cents }))
+          .sort((a, b) => b.cents - a.cents),
+      },
+      previous_month_same_window: { total_cents: prevTotalCents },
+      trend_pct: trendPct,
+    });
+  } catch (e) {
+    console.error("[ROI Summary] error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 module.exports = router;

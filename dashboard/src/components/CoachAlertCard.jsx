@@ -1,54 +1,85 @@
 // CoachAlertCard.jsx
 // Place in: dashboard/src/components/CoachAlertCard.jsx
 //
-// Usage in Dashboard.jsx — replace the KPI grid section with:
+// Usage in Dashboard.jsx:
 //   import CoachAlertCard from "../components/CoachAlertCard";
 //   <CoachAlertCard metrics={metrics} goals={goals} calls={calls} />
 //
 // The card generates 2-4 specific, dollar-quantified alerts from live data.
 // Each alert has a severity (urgent/warning/good) and an action link.
+//
+// ── Jun 11, 2026 unit-bug fix ──────────────────────────────────────────────
+// metrics.metrics.ops.avg_job_value comes from routes/dashboard.js in CENTS,
+// but this card was using it as DOLLARS. That turned a ~$1,113 average job
+// into "$111,364 avg", and the booking-rate alert's "left on the table" line
+// into "$890,912 / $1,002,276" — fabricated-looking numbers that cost trust
+// (the same disease as the old Revenue Recovered hero). Fixes:
+//   1. avg_job_value is converted cents → dollars ONCE, at the top.
+//   2. The dollars fallback (2400) is now applied AFTER conversion, so units
+//      never get mixed depending on which branch runs.
+//   3. "Missed revenue" on the booking-rate alert is clamped to the pipeline's
+//      own estimated value — a shop can't leave more on the table than its
+//      whole open pipeline is worth.
+//   4. The "no goal set" alert no longer hardcodes "April" — it uses the
+//      actual current month.
 
 import { Link } from "react-router-dom";
 
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+// Sane default average job value, in DOLLARS, used only when the tenant has
+// no computed avg yet. Kept in one place so it can't drift between branches.
+const DEFAULT_AVG_JOB_DOLLARS = 2400;
+
 function generateAlerts(metrics, goals, calls) {
   const alerts = [];
-  const nowMonth = new Date().getMonth();
+  const now = new Date();
+  const nowMonth = now.getMonth();
 
-  const staleEstimates = metrics?.ai?.calls_hung_up || 0;
-  const staleValue = metrics?.pipeline?.estimated_revenue
-    ? Math.round(metrics.pipeline.estimated_revenue / 100)
-    : 0;
+  // ── Pull raw metrics, normalizing units up front ──────────────────────────
   const openLeads = metrics?.pipeline?.open_estimates || 0;
   const bookingRate = metrics?.totals?.booking_rate || 0;
   const calls30d = metrics?.totals?.calls || 0;
-  const avgJobValue = metrics?.metrics?.ops?.avg_job_value || 0;
   const closeRate = metrics?.sales?.close_rate || 0;
-  const hungUp = metrics?.ai?.calls_hung_up || 0;
   const confused = metrics?.ai?.calls_confused || 0;
   const todayCalls = metrics?.today?.calls || 0;
   const todayBooked = metrics?.today?.booked || 0;
 
-  // Goal pace alert
-  const monthGoalRow = goals?.months?.find(m => m.month === nowMonth);
+  // avg_job_value is stored/returned in CENTS. Convert to dollars exactly once.
+  const avgJobCents = metrics?.metrics?.ops?.avg_job_value || 0;
+  const avgJobDollars = avgJobCents > 0
+    ? Math.round(avgJobCents / 100)
+    : DEFAULT_AVG_JOB_DOLLARS;
+
+  // pipeline.estimated_revenue is also in CENTS.
+  const pipelineEstimatedDollars = metrics?.pipeline?.estimated_revenue
+    ? Math.round(metrics.pipeline.estimated_revenue / 100)
+    : 0;
+
+  // ── Goal pace alert ───────────────────────────────────────────────────────
+  // goals.months[].revenue_goal / actual_revenue are in CENTS.
+  const monthGoalRow = goals?.months?.find((m) => m.month === nowMonth);
   const monthGoal = monthGoalRow ? Math.round((monthGoalRow.revenue_goal || 0) / 100) : 0;
   const monthActual = monthGoalRow ? Math.round((monthGoalRow.actual_revenue || 0) / 100) : 0;
 
   if (monthGoal > 0 && monthActual > 0) {
-    const dayOfMonth = new Date().getDate();
-    const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+    const dayOfMonth = now.getDate();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
     const expectedPct = Math.round((dayOfMonth / daysInMonth) * 100);
     const actualPct = Math.round((monthActual / monthGoal) * 100);
-    const gap = monthGoal - monthActual;
-    const avgJob = avgJobValue > 0 ? avgJobValue : 2400;
-    const jobsNeeded = Math.ceil(gap / avgJob);
+    const gap = Math.max(0, monthGoal - monthActual);
+    const jobsNeeded = gap > 0 ? Math.ceil(gap / avgJobDollars) : 0;
 
-    if (actualPct < expectedPct - 10) {
+    if (actualPct < expectedPct - 10 && gap > 0) {
       alerts.push({
         severity: "urgent",
         icon: "🎯",
         title: "Behind on monthly goal",
-        detail: `$${gap.toLocaleString()} gap to hit $${monthGoal.toLocaleString()}. Need ${jobsNeeded} more jobs at $${avgJob.toLocaleString()} avg to close it.`,
-        action: "Set goals",
+        detail: `$${gap.toLocaleString()} to go to hit your $${monthGoal.toLocaleString()} ${MONTH_NAMES[nowMonth]} target — about ${jobsNeeded} more job${jobsNeeded === 1 ? "" : "s"} at your $${avgJobDollars.toLocaleString()} average.`,
+        action: "Adjust goals →",
         href: "/metrics",
       });
     } else if (actualPct >= expectedPct) {
@@ -56,8 +87,8 @@ function generateAlerts(metrics, goals, calls) {
         severity: "good",
         icon: "🏆",
         title: "Ahead of monthly goal pace",
-        detail: `$${monthActual.toLocaleString()} booked — ${actualPct}% of $${monthGoal.toLocaleString()} target. ${daysInMonth - dayOfMonth} days left to push further.`,
-        action: "View goals",
+        detail: `$${monthActual.toLocaleString()} booked — ${actualPct}% of your $${monthGoal.toLocaleString()} ${MONTH_NAMES[nowMonth]} target, with ${daysInMonth - dayOfMonth} days left.`,
+        action: "View goals →",
         href: "/metrics",
       });
     }
@@ -66,34 +97,51 @@ function generateAlerts(metrics, goals, calls) {
       severity: "warning",
       icon: "📋",
       title: "No monthly goal set",
-      detail: "You can't track pace without a target. Set your April goal now — takes 30 seconds.",
+      detail: `You can't track pace without a target. Set your ${MONTH_NAMES[nowMonth]} goal — it takes about 30 seconds.`,
       action: "Set goals →",
       href: "/metrics",
     });
   }
 
-  // Stale estimates alert
-  if (openLeads > 5 && staleValue > 0) {
-    const atRisk = Math.round(staleValue * 0.4);
+  // ── Stale estimates alert ─────────────────────────────────────────────────
+  // "At risk" = a conservative 40% of the open pipeline's estimated value.
+  // Both numbers are already in dollars here.
+  if (openLeads > 5 && pipelineEstimatedDollars > 0) {
+    const atRisk = Math.round(pipelineEstimatedDollars * 0.4);
     alerts.push({
       severity: "urgent",
       icon: "⚡",
-      title: `${openLeads} open estimates — $${atRisk.toLocaleString()} at risk`,
-      detail: `Estimates older than 5 days drop 40% close rate. Trigger follow-up sequence now to recover.`,
+      title: `${openLeads} open estimates — about $${atRisk.toLocaleString()} at risk`,
+      detail: `Estimates tend to go cold after about 5 days. Running the follow-up sequence now is the cheapest way to save them.`,
       action: "View follow-ups →",
       href: "/follow-ups",
     });
   }
 
-  // Booking rate alert
+  // ── Booking rate alert ────────────────────────────────────────────────────
+  // missedJobs is an estimate of how many of the last-30-day calls didn't
+  // convert that arguably should have (gap below the 30% target). missedRevenue
+  // is then clamped to the open pipeline's value so it can never balloon into
+  // an implausible headline number.
   if (bookingRate > 0 && bookingRate < 30) {
-    const missedJobs = calls30d > 0 ? Math.round(calls30d * ((30 - bookingRate) / 100)) : 0;
-    const missedRevenue = missedJobs * (avgJobValue > 0 ? avgJobValue : 2400);
+    const missedJobs = calls30d > 0
+      ? Math.round(calls30d * ((30 - bookingRate) / 100))
+      : 0;
+    let missedRevenue = missedJobs * avgJobDollars;
+
+    // Sanity clamp: you can't leave more on the table than your whole open
+    // pipeline is worth. Prevents the "$890,912" fabricated-looking figure.
+    if (pipelineEstimatedDollars > 0) {
+      missedRevenue = Math.min(missedRevenue, pipelineEstimatedDollars);
+    }
+
     alerts.push({
       severity: "urgent",
       icon: "📞",
-      title: `Booking rate at ${bookingRate}% — below 30% target`,
-      detail: `~${missedJobs} calls not converting. At $${(avgJobValue > 0 ? avgJobValue : 2400).toLocaleString()} avg that's $${missedRevenue.toLocaleString()} left on the table this month. Pull recordings.`,
+      title: `Booking rate at ${bookingRate}% — below the 30% target`,
+      detail: missedJobs > 0
+        ? `Roughly ${missedJobs} call${missedJobs === 1 ? "" : "s"} didn't convert. At your $${avgJobDollars.toLocaleString()} average, that's about $${missedRevenue.toLocaleString()} in potential work worth reviewing. Pull the recordings.`
+        : `Worth pulling recent recordings to see where calls are dropping off.`,
       action: "Review calls →",
       href: "/calls",
     });
@@ -101,44 +149,44 @@ function generateAlerts(metrics, goals, calls) {
     alerts.push({
       severity: "good",
       icon: "📈",
-      title: `Booking rate at ${bookingRate}% — above industry avg`,
-      detail: `Industry average is 25%. Your AI is converting at ${bookingRate}%. Keep the follow-up sequences running.`,
+      title: `Booking rate at ${bookingRate}% — above industry average`,
+      detail: `Industry average is around 25%. Your AI is converting at ${bookingRate}%. Keep the follow-up sequences running.`,
       action: "View metrics →",
       href: "/metrics",
     });
   }
 
-  // Confused calls alert
+  // ── Confused calls alert ──────────────────────────────────────────────────
   if (confused > 5 && calls30d > 0) {
     const confusedPct = Math.round((confused / calls30d) * 100);
     if (confusedPct > 8) {
       alerts.push({
         severity: "warning",
         icon: "🎙",
-        title: `${confusedPct}% confusion rate on calls`,
-        detail: `${confused} callers showed confusion signals this month. AI script may need clearer service descriptions or FAQ updates.`,
+        title: `${confusedPct}% of calls showed confusion signals`,
+        detail: `${confused} caller${confused === 1 ? "" : "s"} sounded confused this month. The AI script may need clearer service descriptions or FAQ updates.`,
         action: "Update AI settings →",
         href: "/settings",
       });
     }
   }
 
-  // Today's pace alert
+  // ── Today's pace alert ────────────────────────────────────────────────────
   if (todayCalls > 0) {
     const todayRate = Math.round((todayBooked / todayCalls) * 100);
     if (todayRate === 0 && todayCalls >= 3) {
       alerts.push({
         severity: "warning",
         icon: "🔔",
-        title: `${todayCalls} calls today — 0 bookings`,
-        detail: `Something may be off with today's AI flow. Check the last 3 call recordings to find the drop-off point.`,
+        title: `${todayCalls} calls today — 0 bookings yet`,
+        detail: `Something may be off with today's AI flow. Check the last few call recordings to find the drop-off point.`,
         action: "Review today's calls →",
         href: "/calls",
       });
     }
   }
 
-  // No alerts fallback
+  // ── No alerts fallback ────────────────────────────────────────────────────
   if (alerts.length === 0) {
     alerts.push({
       severity: "good",
@@ -191,8 +239,8 @@ const SEVERITY = {
 
 export default function CoachAlertCard({ metrics, goals, calls }) {
   const alerts = generateAlerts(metrics, goals, calls);
-  const urgentCount = alerts.filter(a => a.severity === "urgent").length;
-  const warningCount = alerts.filter(a => a.severity === "warning").length;
+  const urgentCount = alerts.filter((a) => a.severity === "urgent").length;
+  const warningCount = alerts.filter((a) => a.severity === "warning").length;
 
   return (
     <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #e8e6e0", overflow: "hidden" }}>

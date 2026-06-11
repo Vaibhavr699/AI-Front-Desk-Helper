@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { memo } from "react";
 import { Pressable, Text, View } from "react-native";
 
 import { formatProjectType, formatTime } from "@/src/shared/lib/format";
@@ -12,11 +13,11 @@ import { WidgetEstimateBadge } from "./widget-estimate-badge";
 type Props = {
   appointment: Appointment;
   selected?: boolean;
-  onPress?: () => void;
-  onViewBriefing?: () => void;
+  onPress?: (appointment: Appointment) => void;
+  onViewBriefing?: (appointment: Appointment) => void;
 };
 
-export function AppointmentCard({
+function AppointmentCardBase({
   appointment,
   selected = false,
   onPress,
@@ -34,7 +35,9 @@ export function AppointmentCard({
 
   return (
     <Pressable
-      onPress={onPress}
+      onPress={onPress ? () => onPress(appointment) : undefined}
+      accessibilityRole="button"
+      accessibilityLabel={`${customerName}, ${time}`}
       className={`rounded-sm border ${borderClass} ${ringClass} bg-white p-4 active:bg-surface-raised`}
     >
       <View className="flex-row items-start justify-between gap-3">
@@ -76,8 +79,10 @@ export function AppointmentCard({
 
       {onViewBriefing ? (
         <Pressable
-          onPress={onViewBriefing}
-          className="mt-4 h-10 flex-row items-center justify-center gap-1.5 rounded-xl bg-brand-600 active:bg-brand-700"
+          onPress={() => onViewBriefing(appointment)}
+          accessibilityRole="button"
+          accessibilityLabel="View briefing"
+          className="mt-4 h-10 flex-row items-center justify-center gap-1.5 rounded-sm bg-brand-600 active:bg-brand-700"
         >
           <Text className="text-sm font-semibold text-white">View briefing</Text>
           <Ionicons name="arrow-forward" size={14} color="#ffffff" />
@@ -86,3 +91,5 @@ export function AppointmentCard({
     </Pressable>
   );
 }
+
+export const AppointmentCard = memo(AppointmentCardBase);

@@ -21,6 +21,12 @@ export type RoleplayTranscriptTurn = {
   at: string;
 };
 
+export type RoleplayVoiceResponse = {
+  rep_turn: RoleplayTranscriptTurn;
+  ai_turn: RoleplayTranscriptTurn;
+  ai_audio_base64: string | null;
+};
+
 export type RoleplayScoring = {
   overall_score: number | null;
   dimensions: Record<string, number | null>;

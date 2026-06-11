@@ -72,6 +72,12 @@ export function PreSessionScreen({ leadId }: Props) {
     };
   }, []);
 
+  useEffect(() => {
+    if (profile?.home_state) {
+      setStateCode((cur) => cur ?? profile.home_state ?? null);
+    }
+  }, [profile?.home_state]);
+
   const networkStatus: CheckStatus =
     networkConnected == null
       ? "checking"

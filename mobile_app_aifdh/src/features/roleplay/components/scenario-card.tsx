@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Pressable, Text, View } from "react-native";
 
 import { DiscBadge } from "@/src/features/appointments/components/disc-badge";
@@ -9,13 +10,15 @@ import { SkillChip } from "./skill-chip";
 
 type Props = {
   scenario: RoleplayScenario;
-  onPress?: () => void;
+  onPress?: (scenario: RoleplayScenario) => void;
 };
 
-export function ScenarioCard({ scenario, onPress }: Props) {
+function ScenarioCardBase({ scenario, onPress }: Props) {
   return (
     <Pressable
-      onPress={onPress}
+      onPress={onPress ? () => onPress(scenario) : undefined}
+      accessibilityRole="button"
+      accessibilityLabel={`Roleplay scenario: ${scenario.title}`}
       className="flex-1 gap-3 rounded-sm border border-surface-border bg-white p-4 active:bg-surface-raised"
     >
       <View className="flex-row items-start justify-between gap-3">
@@ -52,3 +55,5 @@ export function ScenarioCard({ scenario, onPress }: Props) {
     </Pressable>
   );
 }
+
+export const ScenarioCard = memo(ScenarioCardBase);

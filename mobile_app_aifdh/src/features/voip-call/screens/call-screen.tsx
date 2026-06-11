@@ -63,13 +63,36 @@ export function CallScreen() {
         {isActive ? (
           <Pressable
             onPress={hangUp}
+            accessibilityRole="button"
+            accessibilityLabel="Hang up"
             className="h-16 w-16 items-center justify-center rounded-full bg-red-600 active:bg-red-700"
           >
             <Ionicons name="call" size={28} color="#fff" style={{ transform: [{ rotate: "135deg" }] }} />
           </Pressable>
+        ) : phase === "failed" ? (
+          <View className="w-full max-w-xs gap-3">
+            <Pressable
+              onPress={() => leadId && start(leadId)}
+              accessibilityRole="button"
+              accessibilityLabel="Try the call again"
+              className="items-center rounded-sm bg-brand-600 px-8 py-3 active:bg-brand-700"
+            >
+              <Text className="text-sm font-semibold text-white">Try again</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => router.back()}
+              accessibilityRole="button"
+              accessibilityLabel="Done"
+              className="items-center rounded-sm bg-white/10 px-8 py-3 active:bg-white/20"
+            >
+              <Text className="text-sm font-semibold text-white">Done</Text>
+            </Pressable>
+          </View>
         ) : (
           <Pressable
             onPress={() => router.back()}
+            accessibilityRole="button"
+            accessibilityLabel="Done"
             className="rounded-sm bg-white/10 px-8 py-3 active:bg-white/20"
           >
             <Text className="text-sm font-semibold text-white">Done</Text>

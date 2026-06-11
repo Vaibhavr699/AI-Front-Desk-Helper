@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useMemo } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -21,7 +21,7 @@ function formatWhen(iso: string | null): string {
   });
 }
 
-function Row({ item }: { item: HistoryConversation }) {
+const Row = memo(function Row({ item }: { item: HistoryConversation }) {
   const router = useRouter();
   const score = item.overall_score;
   const swatch = score != null ? scoreToColor(score) : null;
@@ -54,7 +54,7 @@ function Row({ item }: { item: HistoryConversation }) {
       <Ionicons name="chevron-forward" size={16} color={colors.ink.dim} />
     </Pressable>
   );
-}
+});
 
 export function HistoryScreen() {
   const router = useRouter();
@@ -64,6 +64,11 @@ export function HistoryScreen() {
   const conversations = useMemo(
     () => data?.pages.flatMap((p) => p.conversations) ?? [],
     [data],
+  );
+
+  const renderRow = useCallback(
+    ({ item }: { item: HistoryConversation }) => <Row item={item} />,
+    [],
   );
 
   return (
@@ -89,8 +94,13 @@ export function HistoryScreen() {
       ) : isError ? (
         <View className="flex-1 items-center justify-center gap-4 px-8">
           <Ionicons name="alert-circle-outline" size={28} color="#dc2626" />
+          <Text className="text-base font-semibold text-ink-primary">
+            Couldn&apos;t load history
+          </Text>
           <Pressable
             onPress={() => refetch()}
+            accessibilityRole="button"
+            accessibilityLabel="Try again"
             className="rounded-sm bg-brand-600 px-6 py-2.5 active:bg-brand-700"
           >
             <Text className="text-sm font-semibold text-white">Try again</Text>
@@ -100,7 +110,7 @@ export function HistoryScreen() {
         <FlatList
           data={conversations}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <Row item={item} />}
+          renderItem={renderRow}
           contentContainerClassName="gap-2 p-4 pb-10"
           onEndReachedThreshold={0.4}
           onEndReached={() => {

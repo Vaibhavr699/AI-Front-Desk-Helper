@@ -4,6 +4,7 @@ import {
   endInHomeSession,
   fetchCuePreferences,
   fetchInHomeSession,
+  fetchInHomeSessions,
   startInHomeSession,
   submitSessionFeedback,
   updateCuePreferences,
@@ -13,7 +14,16 @@ import type { CuePreferences, StartSessionInput } from "./types";
 export const inHomeKeys = {
   all: ["in-home"] as const,
   session: (id: string) => [...inHomeKeys.all, "session", id] as const,
+  sessions: () => [...inHomeKeys.all, "sessions"] as const,
 };
+
+export function useInHomeSessions() {
+  return useQuery({
+    queryKey: inHomeKeys.sessions(),
+    queryFn: fetchInHomeSessions,
+    staleTime: 30_000,
+  });
+}
 
 export function useStartInHomeSession() {
   return useMutation({

@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useLeadDetail } from "@/src/features/leads/queries";
+import { useRepProfile } from "@/src/features/settings/queries";
 import { colors } from "@/src/shared/theme/tokens";
 
 import {
@@ -22,12 +23,19 @@ export function FieldRecordingScreen() {
   const { leadId } = useLocalSearchParams<{ leadId: string }>();
   const router = useRouter();
   const { data: lead } = useLeadDetail(leadId || null);
+  const { data: profile } = useRepProfile();
   const { recording, duration, uri, permissionGranted, startRecording, stopRecording } = useFieldRecorder();
 
   const [stateCode, setStateCode] = useState<string | null>(null);
   const [consentAck, setConsentAck] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    if (profile?.home_state) {
+      setStateCode((cur) => cur ?? profile.home_state ?? null);
+    }
+  }, [profile?.home_state]);
 
   const isTwoParty = stateCode ? isTwoPartyConsentState(stateCode) : false;
   const consentReady = !!stateCode && (!isTwoParty || consentAck);
@@ -82,12 +90,24 @@ export function FieldRecordingScreen() {
           <View className="mt-6 w-full max-w-sm">
             <PendingUploadsBanner />
           </View>
-          <Pressable
-            onPress={() => router.back()}
-            className="mt-8 rounded-sm bg-brand-600 px-8 py-3 active:bg-brand-700"
-          >
-            <Text className="text-sm font-semibold text-white">Done</Text>
-          </Pressable>
+          <View className="mt-8 w-full max-w-sm gap-3">
+            <Pressable
+              onPress={() => router.replace("/(tabs)/coaching" as never)}
+              accessibilityRole="button"
+              accessibilityLabel="View my coaching"
+              className="items-center rounded-sm bg-brand-600 px-8 py-3 active:bg-brand-700"
+            >
+              <Text className="text-sm font-semibold text-white">View my coaching</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => router.back()}
+              accessibilityRole="button"
+              accessibilityLabel="Back to customer"
+              className="items-center rounded-sm border border-surface-border px-8 py-3 active:bg-surface-raised"
+            >
+              <Text className="text-sm font-semibold text-ink-primary">Back to customer</Text>
+            </Pressable>
+          </View>
         </View>
       </SafeAreaView>
     );

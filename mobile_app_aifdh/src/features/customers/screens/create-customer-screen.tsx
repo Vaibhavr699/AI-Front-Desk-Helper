@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -13,6 +13,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { StatePicker } from "@/src/features/in-home-session/components/state-picker";
+import { useRepProfile } from "@/src/features/settings/queries";
 import { colors } from "@/src/shared/theme/tokens";
 
 import { useCreateCustomer } from "../queries";
@@ -20,14 +22,22 @@ import { useCreateCustomer } from "../queries";
 export function CreateCustomerScreen() {
   const router = useRouter();
   const create = useCreateCustomer();
+  const { data: profile } = useRepProfile();
 
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [address, setAddress] = useState("");
+  const [state, setState] = useState<string | null>(null);
   const [projectType, setProjectType] = useState("");
   const [estimatedValue, setEstimatedValue] = useState("");
   const [notes, setNotes] = useState("");
+
+  useEffect(() => {
+    if (profile?.home_state) {
+      setState((cur) => cur ?? profile.home_state ?? null);
+    }
+  }, [profile?.home_state]);
 
   async function handleSave() {
     if (!name.trim() || !phone.trim()) {
@@ -40,6 +50,7 @@ export function CreateCustomerScreen() {
         phone: phone.trim(),
         email: email.trim() || undefined,
         address: address.trim() || undefined,
+        state: state ?? undefined,
         project_type: projectType.trim() || undefined,
         estimated_value: estimatedValue ? parseFloat(estimatedValue) : undefined,
         notes: notes.trim() || undefined,
@@ -76,12 +87,16 @@ export function CreateCustomerScreen() {
         className="flex-1"
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <ScrollView contentContainerClassName="px-5 py-6 gap-5">
+        <ScrollView contentContainerClassName="mx-auto w-full max-w-2xl px-5 py-6 gap-5">
           <View className="gap-4">
             <Field label="Name" value={name} onChange={setName} placeholder="Mike Johnson" required />
             <Field label="Phone" value={phone} onChange={setPhone} placeholder="(402) 555-1234" keyboardType="phone-pad" required />
             <Field label="Email" value={email} onChange={setEmail} placeholder="mike@email.com" keyboardType="email-address" />
             <Field label="Address" value={address} onChange={setAddress} placeholder="123 Oak Street, Lincoln, NE" />
+            <View className="gap-1.5">
+              <Text className="text-sm font-medium text-ink-secondary">State</Text>
+              <StatePicker value={state} onChange={setState} title="Customer state" />
+            </View>
             <Field label="Project type" value={projectType} onChange={setProjectType} placeholder="Interior painting" />
             <Field label="Estimated value ($)" value={estimatedValue} onChange={setEstimatedValue} placeholder="2500" keyboardType="numeric" />
             <View className="gap-1.5">

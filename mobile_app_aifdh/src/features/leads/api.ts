@@ -30,9 +30,22 @@ export async function fetchLeads(params: ListParams = {}): Promise<LeadsListResp
   return data;
 }
 
+function toNumOrNull(value: unknown): number | null {
+  if (value == null) return null;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 export async function fetchLeadDetail(leadId: string): Promise<LeadDetail> {
   const { data } = await api.get<LeadDetail>(`/rep/leads/${leadId}`);
-  return data;
+  return {
+    ...data,
+    coaching_conversations: (data.coaching_conversations ?? []).map((c) => ({
+      ...c,
+      overall_score: toNumOrNull(c.overall_score),
+      persona_confidence: toNumOrNull(c.persona_confidence),
+    })),
+  };
 }
 
 export async function enterQuote(

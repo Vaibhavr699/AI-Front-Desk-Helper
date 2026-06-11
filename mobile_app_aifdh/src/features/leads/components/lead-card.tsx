@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { memo } from "react";
 import { Pressable, Text, View } from "react-native";
 
 import { DiscBadge } from "@/src/features/appointments/components/disc-badge";
@@ -13,7 +14,7 @@ import { StatusBadge } from "./status-badge";
 type Props = {
   lead: LeadSummary;
   selected?: boolean;
-  onPress?: () => void;
+  onPress?: (lead: LeadSummary) => void;
 };
 
 function timeAgo(iso: string): string {
@@ -28,13 +29,15 @@ function timeAgo(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
-export function LeadCard({ lead, selected = false, onPress }: Props) {
+function LeadCardBase({ lead, selected = false, onPress }: Props) {
   const name = lead.name ?? "Unnamed lead";
   const projectType = formatProjectType(lead.project_type);
   const borderClass = selected ? "border-brand-500" : "border-surface-border";
   return (
     <Pressable
-      onPress={onPress}
+      onPress={onPress ? () => onPress(lead) : undefined}
+      accessibilityRole="button"
+      accessibilityLabel={`${name}, ${projectType}`}
       className={`rounded-sm border ${borderClass} bg-white p-4 active:bg-surface-raised`}
     >
       <View className="flex-row items-start justify-between gap-3">
@@ -75,3 +78,5 @@ export function LeadCard({ lead, selected = false, onPress }: Props) {
     </Pressable>
   );
 }
+
+export const LeadCard = memo(LeadCardBase);

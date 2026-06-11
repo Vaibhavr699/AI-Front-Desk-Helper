@@ -3,6 +3,7 @@ export type CreateCustomerInput = {
   phone: string;
   email?: string;
   address?: string;
+  state?: string;
   project_type?: string;
   estimated_value?: number;
   source?: string;
@@ -13,6 +14,7 @@ export type UpdateCustomerInput = {
   name?: string;
   email?: string;
   address?: string;
+  state?: string;
   project_type?: string;
   notes?: string;
   estimated_value?: number;

@@ -42,6 +42,26 @@ export type TranscriptEntry = {
   at: string;
 };
 
+export type InHomeSessionAlert = {
+  id: string;
+  alert_type: string;
+  alert_content: string | null;
+  alert_color: string | null;
+  alert_urgency: "green" | "yellow" | "orange" | "red" | null;
+  fired_at: string;
+};
+
+export type InHomeSessionSummary = {
+  id: string;
+  lead_id: string | null;
+  started_at: string;
+  ended_at: string | null;
+  outcome: string | null;
+  estimate_value_cents: number | null;
+  rep_satisfaction: number | null;
+  consent_state: string | null;
+};
+
 export type StartSessionResponse = {
   session: InHomeSession;
   ws_path: string;

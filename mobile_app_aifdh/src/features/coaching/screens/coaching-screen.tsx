@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Pressable,
@@ -13,31 +14,28 @@ import { PendingUploadsBanner } from "@/src/features/field-recording/offline/com
 import { useResponsive } from "@/src/shared/hooks/use-responsive";
 import { colors } from "@/src/shared/theme/tokens";
 
-import { DimensionsCard } from "../components/dimensions-card";
-import { HighlightCard } from "../components/highlight-card";
-import { OverallCard } from "../components/overall-card";
+import { CoachingEmptyState } from "../components/coaching-empty-state";
+import { FocusCard } from "../components/focus-card";
 import { RecentConversationsCard } from "../components/recent-conversations-card";
-import { StartRoleplayCard } from "../components/start-roleplay-card";
-import { TipsCard } from "../components/tips-card";
-import { TrendChart } from "../components/trend-chart";
+import { ScoreSnapshot } from "../components/score-snapshot";
+import { SkillsBreakdown } from "../components/skills-breakdown";
 import { useCoachingMe } from "../queries";
 
 export function CoachingScreen() {
+  const router = useRouter();
   const { isTablet } = useResponsive();
   const { data, isLoading, isError, error, refetch, isRefetching } =
     useCoachingMe(30);
 
+  const goPractice = () =>
+    router.navigate("/(tabs)/coaching/roleplay" as never);
+
   return (
     <SafeAreaView className="flex-1 bg-surface-base" edges={["top"]}>
-      <View className="flex-row items-center gap-3 px-6 pb-4 pt-6 md:px-8">
-        <View className="h-10 w-10 items-center justify-center rounded-xl bg-brand-50">
-          <Ionicons name="stats-chart" size={20} color={colors.brand[600]} />
-        </View>
-        <View>
-          <Text className="text-2xl font-bold text-ink-primary">My Coaching</Text>
-          <Text className="text-xs text-ink-muted">Your performance overview</Text>
-        </View>
+      <View className="px-6 pb-4 pt-6 md:px-8">
+        <Text className="text-2xl font-bold text-ink-primary">My Coaching</Text>
       </View>
+
       {isLoading ? (
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator color={colors.brand[600]} />
@@ -48,21 +46,25 @@ export function CoachingScreen() {
             <Ionicons name="alert-circle-outline" size={28} color="#dc2626" />
           </View>
           <Text className="text-base font-semibold text-ink-primary">
-            Couldn't load coaching
+            Couldn&apos;t load coaching
           </Text>
           <Text className="text-center text-sm text-ink-muted">
-            {error instanceof Error ? error.message : "Check your connection and try again."}
+            {error instanceof Error
+              ? error.message
+              : "Check your connection and try again."}
           </Text>
           <Pressable
             onPress={() => refetch()}
-            className="h-11 items-center justify-center rounded-xl bg-brand-600 px-6 active:bg-brand-700"
+            accessibilityRole="button"
+            accessibilityLabel="Try again"
+            className="h-11 items-center justify-center rounded-sm bg-brand-600 px-6 active:bg-brand-700"
           >
             <Text className="text-sm font-semibold text-white">Try again</Text>
           </Pressable>
         </View>
       ) : (
         <ScrollView
-          contentContainerClassName="pb-10 pt-2"
+          contentContainerClassName="pb-10 pt-1"
           refreshControl={
             <RefreshControl
               refreshing={isRefetching}
@@ -73,57 +75,72 @@ export function CoachingScreen() {
         >
           <View className="mx-auto w-full max-w-5xl gap-4 px-4 md:px-8">
             <PendingUploadsBanner />
-            {data.overall.conversations === 0 && (
-              <View className="flex-row items-center gap-3 rounded-sm bg-brand-50 p-4">
-                <Ionicons name="sparkles-outline" size={20} color={colors.brand[600]} />
-                <View className="flex-1">
-                  <Text className="text-sm font-medium text-brand-700">
-                    No coaching data yet
-                  </Text>
-                  <Text className="text-xs text-brand-600/70">
-                    Start a roleplay or in-home session to see your scores here
-                  </Text>
-                </View>
-              </View>
-            )}
 
-            {isTablet ? (
+            <Pressable
+              onPress={() => router.navigate("/(tabs)/coaching/sessions" as never)}
+              accessibilityRole="button"
+              accessibilityLabel="View live sessions"
+              className="flex-row items-center justify-between rounded-sm bg-white p-4 active:bg-surface-raised"
+            >
+              <View className="flex-row items-center gap-2.5">
+                <View className="h-8 w-8 items-center justify-center rounded-sm bg-brand-50">
+                  <Ionicons name="radio-outline" size={16} color={colors.brand[600]} />
+                </View>
+                <Text className="text-sm font-semibold text-ink-secondary">
+                  Live sessions
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={colors.ink.muted} />
+            </Pressable>
+
+            {data.overall.conversations === 0 ? (
+              <CoachingEmptyState />
+            ) : isTablet ? (
               <View className="flex-row gap-4">
                 <View className="flex-1 gap-4">
-                  <OverallCard
+                  <FocusCard
+                    weakest={data.weakest_dimension}
+                    onPractice={goPractice}
+                  />
+                  <ScoreSnapshot
                     avgScore={data.overall.avg_score}
                     conversations={data.overall.conversations}
                     windowDays={data.window_days}
+                    trend={data.trend}
                   />
-                  <TrendChart trend={data.trend} />
-                  <View className="flex-row gap-3">
-                    <HighlightCard kind="best" dimension={data.best_dimension} />
-                    <HighlightCard kind="weakest" dimension={data.weakest_dimension} />
-                  </View>
-                  <StartRoleplayCard />
+                  <RecentConversationsCard
+                    conversations={data.recent_conversations}
+                  />
                 </View>
                 <View className="flex-1 gap-4">
-                  <DimensionsCard dimensions={data.dimensions} />
-                  <TipsCard weakestDimension={data.weakest_dimension?.dimension ?? null} />
-                  <RecentConversationsCard conversations={data.recent_conversations} />
+                  <SkillsBreakdown
+                    dimensions={data.dimensions}
+                    best={data.best_dimension}
+                    weakest={data.weakest_dimension}
+                    defaultOpen
+                  />
                 </View>
               </View>
             ) : (
               <View className="gap-4">
-                <OverallCard
+                <FocusCard
+                  weakest={data.weakest_dimension}
+                  onPractice={goPractice}
+                />
+                <ScoreSnapshot
                   avgScore={data.overall.avg_score}
                   conversations={data.overall.conversations}
                   windowDays={data.window_days}
+                  trend={data.trend}
                 />
-                <View className="flex-row gap-3">
-                  <HighlightCard kind="best" dimension={data.best_dimension} />
-                  <HighlightCard kind="weakest" dimension={data.weakest_dimension} />
-                </View>
-                <TrendChart trend={data.trend} />
-                <DimensionsCard dimensions={data.dimensions} />
-                <TipsCard weakestDimension={data.weakest_dimension?.dimension ?? null} />
-                <StartRoleplayCard />
-                <RecentConversationsCard conversations={data.recent_conversations} />
+                <RecentConversationsCard
+                  conversations={data.recent_conversations}
+                />
+                <SkillsBreakdown
+                  dimensions={data.dimensions}
+                  best={data.best_dimension}
+                  weakest={data.weakest_dimension}
+                />
               </View>
             )}
           </View>

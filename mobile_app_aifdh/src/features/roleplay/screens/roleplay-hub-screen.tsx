@@ -1,8 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Pressable,
   RefreshControl,
@@ -14,20 +14,33 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useResponsive } from "@/src/shared/hooks/use-responsive";
 import { colors } from "@/src/shared/theme/tokens";
 
+import { CustomScenarioModal } from "../components/custom-scenario-modal";
 import { ScenarioCard } from "../components/scenario-card";
 import { useScenarios } from "../queries";
+import type { RoleplayScenario } from "../types";
 
 export function RoleplayHubScreen() {
   const router = useRouter();
   const { isTablet } = useResponsive();
   const { data, isLoading, isError, error, refetch, isRefetching } =
     useScenarios();
+  const [showCustom, setShowCustom] = useState(false);
 
   const scenarios = data?.scenarios ?? [];
 
-  function openScenario(id: string) {
-    router.push(`/(tabs)/coaching/roleplay/scenario/${id}`);
-  }
+  const handleScenarioPress = useCallback(
+    (scenario: RoleplayScenario) => {
+      router.push(`/(tabs)/coaching/roleplay/scenario/${scenario.id}`);
+    },
+    [router],
+  );
+
+  const renderScenario = useCallback(
+    ({ item }: { item: RoleplayScenario }) => (
+      <ScenarioCard scenario={item} onPress={handleScenarioPress} />
+    ),
+    [handleScenarioPress],
+  );
 
   return (
     <SafeAreaView className="flex-1 bg-surface-base" edges={["top"]}>
@@ -64,32 +77,21 @@ export function RoleplayHubScreen() {
                 <CtaPill
                   icon="add-circle"
                   label="Create custom"
-                  onPress={() =>
-                    Alert.alert(
-                      "Custom scenarios",
-                      "Building this in the next iteration. For now, pick one below.",
-                    )
-                  }
+                  onPress={() => setShowCustom(true)}
                 />
                 <CtaPill
                   icon="time-outline"
                   label="History"
                   onPress={() =>
-                    Alert.alert(
-                      "Roleplay history",
-                      "Past sessions list ships in the next iteration.",
+                    router.navigate(
+                      "/(tabs)/coaching/roleplay/history" as never,
                     )
                   }
                 />
               </View>
             </View>
           }
-          renderItem={({ item }) => (
-            <ScenarioCard
-              scenario={item}
-              onPress={() => openScenario(item.id)}
-            />
-          )}
+          renderItem={renderScenario}
           ListEmptyComponent={
             <View className="items-center gap-2 px-8 py-12">
               <Ionicons
@@ -104,6 +106,10 @@ export function RoleplayHubScreen() {
           }
         />
       )}
+      <CustomScenarioModal
+        visible={showCustom}
+        onClose={() => setShowCustom(false)}
+      />
     </SafeAreaView>
   );
 }

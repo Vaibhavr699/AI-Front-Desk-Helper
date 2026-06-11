@@ -29,6 +29,8 @@ export function useCoachingHistory(days = 30) {
       fetchCoachingHistory({ days, offset: pageParam }),
     initialPageParam: 0,
     getNextPageParam: (last) => last.next_offset,
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
   });
 }
 
@@ -37,5 +39,6 @@ export function useConversationReview(id: string | null) {
     queryKey: coachingKeys.conversation(id ?? "none"),
     queryFn: () => fetchConversationReview(id as string),
     enabled: !!id,
+    staleTime: 2 * 60_000,
   });
 }

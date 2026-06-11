@@ -35,6 +35,7 @@ const { composeBriefingBody } = require("../../services/preVisitBriefing");
 const router = express.Router();
 
 const { normalizeE164Phone } = require("../../lib/phone");
+const { isValidUsState } = require("../../lib/usStates");
 
 const PAGE_SIZE_DEFAULT = 50;
 const PAGE_SIZE_MAX = 200;
@@ -57,9 +58,17 @@ router.post("/", ...repAuthChain, async (req, res) => {
     if (!req.rep.tenant_flags?.rep_coach_enabled) {
       return res.status(403).json({ error: "Rep Coach not enabled for this tenant" });
     }
-    const { name, phone, email, address, project_type, estimated_value, source, notes } = req.body || {};
+    const { name, phone, email, address, project_type, estimated_value, source, notes, state } = req.body || {};
     if (!name || !phone) {
       return res.status(400).json({ error: "name and phone are required" });
+    }
+    let stateValue = null;
+    if (state) {
+      const code = String(state).trim().toUpperCase();
+      if (!isValidUsState(code)) {
+        return res.status(400).json({ error: "Invalid state" });
+      }
+      stateValue = code;
     }
     if (badEmail(email)) {
       return res.status(400).json({ error: "Invalid email address" });
@@ -85,21 +94,22 @@ router.post("/", ...repAuthChain, async (req, res) => {
       if (project_type) { updates.push(`project_type = COALESCE(project_type, $${p})`); vals.push(project_type); p++; }
       if (notes) { updates.push(`notes = COALESCE(notes, $${p})`); vals.push(notes); p++; }
       if (estimated_value) { updates.push(`estimated_revenue_cents = COALESCE(estimated_revenue_cents, $${p})`); vals.push(Math.round(estimated_value * 100)); p++; }
+      if (stateValue) { updates.push(`state = COALESCE(state, $${p})`); vals.push(stateValue); p++; }
       updates.push(`created_by_rep_user_id = COALESCE(created_by_rep_user_id, $${p})`); vals.push(req.rep.id); p++;
       await db.query(`UPDATE leads SET ${updates.join(", ")}, updated_at = now() WHERE id = $1`, vals);
       const r = await db.query("SELECT * FROM leads WHERE id = $1", [existing.rows[0].id]);
       return res.json({ lead: r.rows[0], created: false });
     }
     const r = await db.query(
-      `INSERT INTO leads (tenant_id, name, phone, email, address, project_type, lead_source, notes, estimated_revenue_cents, created_by_rep_user_id, contact_method, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'unknown', 'New Lead')
+      `INSERT INTO leads (tenant_id, name, phone, email, address, project_type, lead_source, notes, estimated_revenue_cents, created_by_rep_user_id, state, contact_method, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'unknown', 'New Lead')
        RETURNING *`,
       [
         req.rep.tenant_id, name, normalized,
         email || null, address || null, project_type || null,
         source || "rep_manual", notes || null,
         estimated_value ? Math.round(estimated_value * 100) : 0,
-        req.rep.id,
+        req.rep.id, stateValue,
       ],
     );
     res.status(201).json({ lead: r.rows[0], created: true });
@@ -120,9 +130,20 @@ router.post("/", ...repAuthChain, async (req, res) => {
 
 router.patch("/:id", ...repAuthChain, async (req, res) => {
   try {
-    const { name, email, address, project_type, notes, estimated_value, status } = req.body || {};
+    const { name, email, address, project_type, notes, estimated_value, status, state } = req.body || {};
     if (badEmail(email)) {
       return res.status(400).json({ error: "Invalid email address" });
+    }
+    let patchState;
+    if (state !== undefined) {
+      patchState = null;
+      if (state !== null && String(state).trim() !== "") {
+        const code = String(state).trim().toUpperCase();
+        if (!isValidUsState(code)) {
+          return res.status(400).json({ error: "Invalid state" });
+        }
+        patchState = code;
+      }
     }
     if (badAmount(estimated_value)) {
       return res.status(400).json({ error: "estimated_value must be a non-negative number" });
@@ -144,6 +165,7 @@ router.patch("/:id", ...repAuthChain, async (req, res) => {
     if (notes !== undefined) { updates.push(`notes = $${p}`); vals.push(notes); p++; }
     if (status !== undefined) { updates.push(`status = $${p}`); vals.push(status); p++; }
     if (estimated_value !== undefined) { updates.push(`estimated_revenue_cents = $${p}`); vals.push(Math.round(estimated_value * 100)); p++; }
+    if (state !== undefined) { updates.push(`state = $${p}`); vals.push(patchState); p++; }
     if (updates.length === 0) {
       return res.status(400).json({ error: "No fields to update" });
     }
@@ -200,7 +222,7 @@ router.get("/", ...repAuthChain, async (req, res) => {
 
     params.push(limit, offset);
     const sql = `
-      SELECT l.id, l.name, l.phone, l.email, l.address, l.project_type, l.status,
+      SELECT l.id, l.name, l.phone, l.email, l.address, l.state, l.project_type, l.status,
              l.lead_source, l.estimated_revenue_cents, l.created_at, l.updated_at,
              l.buyer_persona, l.persona_confidence,
              l.disc_primary, l.disc_secondary, l.disc_confidence,
@@ -223,6 +245,7 @@ router.get("/", ...repAuthChain, async (req, res) => {
       phone: l.phone,
       email: l.email,
       address: l.address,
+      state: l.state,
       project_type: l.project_type,
       status: l.status,
       lead_source: l.lead_source,
@@ -333,6 +356,7 @@ router.get("/:id", ...repAuthChain, async (req, res) => {
       phone: lead.phone,
       email: lead.email,
       address: lead.address,
+      state: lead.state,
       project_type: lead.project_type,
       notes: lead.notes,
       status: lead.status,

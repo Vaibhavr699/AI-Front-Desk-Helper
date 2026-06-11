@@ -21,6 +21,7 @@ export function FilterChips({ value, onChange }: Props) {
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
+      style={{ flexGrow: 0 }}
       contentContainerClassName="gap-2 px-4 pb-3"
     >
       {OPTIONS.map((opt) => {

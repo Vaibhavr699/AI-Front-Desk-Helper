@@ -1,12 +1,17 @@
-import { Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { memo } from "react";
+import { Pressable, Text, View } from "react-native";
+
+import { colors } from "@/src/shared/theme/tokens";
 
 import type { RoleplayTranscriptTurn } from "../types";
 
 type Props = {
   turn: RoleplayTranscriptTurn;
+  onPlay?: (text: string) => void;
 };
 
-export function MessageBubble({ turn }: Props) {
+function MessageBubbleBase({ turn, onPlay }: Props) {
   const isRep = turn.role === "rep";
   return (
     <View
@@ -19,11 +24,28 @@ export function MessageBubble({ turn }: Props) {
             : "max-w-[80%] rounded-sm rounded-bl-md border border-surface-border bg-white px-4 py-3"
         }
       >
-        <Text
-          className={`text-[10px] font-semibold uppercase tracking-wider ${isRep ? "text-blue-100" : "text-ink-muted"}`}
-        >
-          {isRep ? "You" : "Customer"}
-        </Text>
+        <View className="flex-row items-center justify-between gap-3">
+          <Text
+            className={`text-[10px] font-semibold uppercase tracking-wider ${isRep ? "text-blue-100" : "text-ink-muted"}`}
+          >
+            {isRep ? "You" : "Customer"}
+          </Text>
+          {!isRep && onPlay ? (
+            <Pressable
+              onPress={() => onPlay(turn.text)}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Play customer line"
+              className="h-6 w-6 items-center justify-center rounded-full active:bg-surface-raised"
+            >
+              <Ionicons
+                name="volume-medium"
+                size={15}
+                color={colors.brand[600]}
+              />
+            </Pressable>
+          ) : null}
+        </View>
         <Text
           className={`mt-1 text-base leading-relaxed ${isRep ? "text-white" : "text-ink-primary"}`}
         >
@@ -33,6 +55,8 @@ export function MessageBubble({ turn }: Props) {
     </View>
   );
 }
+
+export const MessageBubble = memo(MessageBubbleBase);
 
 export function TypingBubble() {
   return (

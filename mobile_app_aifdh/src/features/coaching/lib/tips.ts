@@ -28,6 +28,36 @@ const DIMENSION_TIPS: Record<string, Tip[]> = {
       body: "After value is established, switch from 'would you like' to 'when would you like'. Asking 'are you ready?' invites them to say no.",
     },
   ],
+  close: [
+    {
+      title: "Assume the close",
+      body: "After value is established, switch from 'would you like' to 'when would you like'. Asking 'are you ready?' invites them to say no.",
+    },
+  ],
+  property_walkthrough: [
+    {
+      title: "Narrate as you walk",
+      body: "Walk the space out loud — point out what you see room by room. The customer should feel you noticed things they'd miss, before you ever talk price.",
+    },
+  ],
+  education: [
+    {
+      title: "Teach one thing they didn't know",
+      body: "Explain the 'why' behind your recommendation — the failure you're preventing, the code, the material difference. Educated customers stop shopping on price alone.",
+    },
+  ],
+  value_framing: [
+    {
+      title: "Frame outcomes, not features",
+      body: "Translate specs into what they get: fewer callbacks, a longer warranty, peace of mind. People buy the result, not the product.",
+    },
+  ],
+  professionalism: [
+    {
+      title: "Set expectations up front",
+      body: "Tell them exactly what happens next and when. Being the rep who's organized and reliable wins deals that price alone won't.",
+    },
+  ],
   presenting: [
     {
       title: "Cut your pitch in half",

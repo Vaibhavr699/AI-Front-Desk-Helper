@@ -6,6 +6,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { DiscBadge } from "@/src/features/appointments/components/disc-badge";
 import { colors } from "@/src/shared/theme/tokens";
 
+import { CoachingRecordingsCard } from "../components/coaching-recordings-card";
 import { ConversationHistory } from "../components/conversation-history";
 import { CustomerInfoCard } from "../components/customer-info-card";
 import { IntelligenceCard } from "../components/intelligence-card";
@@ -98,6 +99,8 @@ export function LeadDetailBody({ lead }: { lead: LeadDetail }) {
         ) : null}
 
         <IntelligenceCard intelligence={lead.intelligence} leadId={lead.id} />
+
+        <CoachingRecordingsCard conversations={lead.coaching_conversations} />
 
         <ConversationHistory messages={lead.messages} calls={lead.calls} />
       </View>

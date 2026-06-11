@@ -1,11 +1,15 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { Alert, Linking, Pressable, Text, View } from "react-native";
+import { useState } from "react";
+import { Linking, Pressable, Text, View } from "react-native";
 
 import { useTenantFlags } from "@/src/features/auth/store";
 import { colors } from "@/src/shared/theme/tokens";
 
 import type { LeadDetail } from "../types";
+
+import { NotesModal } from "./notes-modal";
+import { QuoteEntryModal } from "./quote-entry-modal";
 
 type Props = {
   lead: LeadDetail;
@@ -14,6 +18,7 @@ type Props = {
 export function LeadActionBar({ lead }: Props) {
   const router = useRouter();
   const { rep_coach_enabled } = useTenantFlags();
+  const [modal, setModal] = useState<"note" | "quote" | null>(null);
 
   function call() {
     if (rep_coach_enabled && lead.phone) {
@@ -24,12 +29,6 @@ export function LeadActionBar({ lead }: Props) {
   }
   function sms() {
     if (lead.phone) Linking.openURL(`sms:${lead.phone}`);
-  }
-  function addNote() {
-    Alert.alert("Add note", "Notes modal coming next.");
-  }
-  function enterQuote() {
-    Alert.alert("Enter quote", "Quote-entry flow coming next.");
   }
   function startInHome() {
     router.push(`/in-home/prepare/${lead.id}` as never);
@@ -59,9 +58,21 @@ export function LeadActionBar({ lead }: Props) {
       <View className="flex-row gap-2">
         <ActionButton icon="call" label="Call" onPress={call} disabled={!lead.phone} />
         <ActionButton icon="chatbox-ellipses" label="SMS" onPress={sms} disabled={!lead.phone} />
-        <ActionButton icon="create" label="Note" onPress={addNote} />
-        <ActionButton icon="pricetag" label="Quote" onPress={enterQuote} />
+        <ActionButton icon="create" label="Note" onPress={() => setModal("note")} />
+        <ActionButton icon="pricetag" label="Quote" onPress={() => setModal("quote")} />
       </View>
+
+      <NotesModal
+        leadId={lead.id}
+        initialNotes={lead.notes ?? null}
+        visible={modal === "note"}
+        onClose={() => setModal(null)}
+      />
+      <QuoteEntryModal
+        leadId={lead.id}
+        visible={modal === "quote"}
+        onClose={() => setModal(null)}
+      />
     </View>
   );
 }

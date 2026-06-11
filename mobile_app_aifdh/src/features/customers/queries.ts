@@ -10,7 +10,7 @@ export function useCreateCustomer() {
   return useMutation({
     mutationFn: (input: CreateCustomerInput) => createCustomer(input),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: leadsKeys.all });
+      qc.invalidateQueries({ queryKey: [...leadsKeys.all, "list"] });
     },
   });
 }
@@ -20,8 +20,9 @@ export function useUpdateCustomer() {
   return useMutation({
     mutationFn: ({ id, input }: { id: string; input: UpdateCustomerInput }) =>
       updateCustomer(id, input),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: leadsKeys.all });
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: [...leadsKeys.all, "list"] });
+      qc.invalidateQueries({ queryKey: leadsKeys.detail(variables.id) });
     },
   });
 }

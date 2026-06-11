@@ -4,6 +4,7 @@ import {
   fetchProfile,
   revokeTrustedDevice,
   updateCoachingDeliveryPrefs,
+  updateRepHomeState,
   updateRepPhone,
 } from "./api";
 import type { CoachingDeliveryPrefs } from "./types";
@@ -17,7 +18,7 @@ export function useRepProfile() {
   return useQuery({
     queryKey: settingsKeys.profile(),
     queryFn: fetchProfile,
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
   });
 }
 
@@ -36,6 +37,16 @@ export function useUpdateRepPhone() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (phone: string | null) => updateRepPhone(phone),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.profile() });
+    },
+  });
+}
+
+export function useUpdateRepHomeState() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (home_state: string | null) => updateRepHomeState(home_state),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: settingsKeys.profile() });
     },

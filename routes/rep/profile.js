@@ -15,13 +15,14 @@ const db = require("../../lib/db");
 const repAuth = require("../../lib/repAuth");
 const { repAuthChain } = require("../../lib/requireRep");
 const { normalizeE164Phone } = require("../../lib/phone");
+const { isValidUsState } = require("../../lib/usStates");
 
 const router = express.Router();
 
 router.get("/", ...repAuthChain, async (req, res) => {
   try {
     const r = await db.query(
-      `SELECT u.id, u.email, u.role, u.tenant_id, u.phone,
+      `SELECT u.id, u.email, u.role, u.tenant_id, u.phone, u.home_state,
               u.rep_seat_tier, u.rep_seat_activated_at,
               u.coaching_delivery_prefs, u.preferred_earbud_device,
               u.expo_push_token IS NOT NULL AS push_registered,
@@ -53,6 +54,7 @@ router.get("/", ...repAuthChain, async (req, res) => {
       id: u.id,
       email: u.email,
       phone: u.phone || null,
+      home_state: u.home_state || null,
       role: u.role,
       tenant: {
         id: u.tenant_id,
@@ -121,6 +123,18 @@ router.patch("/", ...repAuthChain, async (req, res) => {
       }
       updates.push(`phone = $${p++}`);
       values.push(phoneValue);
+    }
+    if (typeof req.body?.home_state === "string" || req.body?.home_state === null) {
+      let stateValue = null;
+      if (req.body.home_state) {
+        const code = String(req.body.home_state).trim().toUpperCase();
+        if (!isValidUsState(code)) {
+          return res.status(400).json({ error: "Invalid state", code: "STATE_INVALID" });
+        }
+        stateValue = code;
+      }
+      updates.push(`home_state = $${p++}`);
+      values.push(stateValue);
     }
     if (updates.length === 0) {
       return res.status(400).json({ error: "No editable fields in body" });

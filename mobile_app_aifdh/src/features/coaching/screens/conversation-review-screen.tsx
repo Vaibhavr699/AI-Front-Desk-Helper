@@ -130,7 +130,7 @@ export function ConversationReviewScreen({ id }: Props) {
           </Pressable>
         </View>
       ) : (
-        <ScrollView contentContainerClassName="gap-4 p-4 pb-10">
+        <ScrollView contentContainerClassName="mx-auto w-full max-w-2xl gap-4 p-4 pb-10">
           {(() => {
             const c = data.conversation;
             const notScored = c.overall_score == null || !!c.scoring_skip_reason;
@@ -218,7 +218,7 @@ export function ConversationReviewScreen({ id }: Props) {
 
                 {c.lead_id && (
                   <Pressable
-                    onPress={() => router.push(`/(tabs)/leads/${c.lead_id}`)}
+                    onPress={() => router.navigate(`/(tabs)/leads/${c.lead_id}`)}
                     className="flex-row items-center justify-center gap-2 rounded-sm bg-white p-4 active:bg-surface-raised"
                   >
                     <Ionicons name="person-outline" size={16} color={colors.brand[600]} />

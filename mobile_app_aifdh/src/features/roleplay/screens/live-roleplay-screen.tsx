@@ -1,13 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
   View,
@@ -16,9 +16,17 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { colors } from "@/src/shared/theme/tokens";
 
+import { speakText } from "../api";
+import { playMp3Base64 } from "../audio/play-mp3";
+import { useVoiceRecorder } from "../audio/use-voice-recorder";
 import { MessageBubble, TypingBubble } from "../components/message-bubble";
 import { SessionTimer } from "../components/session-timer";
-import { useEndSession, useRespond, useSessionDetail } from "../queries";
+import {
+  useEndSession,
+  useRespond,
+  useRespondVoice,
+  useSessionDetail,
+} from "../queries";
 import type { RoleplayTranscriptTurn } from "../types";
 
 type Props = {
@@ -29,13 +37,16 @@ export function LiveRoleplayScreen({ sessionId }: Props) {
   const router = useRouter();
   const { data, isLoading, isError, error, refetch } = useSessionDetail(sessionId);
   const respond = useRespond(sessionId);
+  const respondVoice = useRespondVoice(sessionId);
   const end = useEndSession(sessionId);
+  const recorder = useVoiceRecorder();
 
   const [localTurns, setLocalTurns] = useState<RoleplayTranscriptTurn[]>([]);
   const [input, setInput] = useState("");
   const [hydrated, setHydrated] = useState(false);
+  const [processingVoice, setProcessingVoice] = useState(false);
 
-  const scrollRef = useRef<ScrollView>(null);
+  const listRef = useRef<FlatList<RoleplayTranscriptTurn>>(null);
 
   useEffect(() => {
     if (data && !hydrated) {
@@ -51,13 +62,6 @@ export function LiveRoleplayScreen({ sessionId }: Props) {
       );
     }
   }, [data?.completed_at, router, sessionId]);
-
-  useEffect(() => {
-    const id = setTimeout(() => {
-      scrollRef.current?.scrollToEnd({ animated: true });
-    }, 60);
-    return () => clearTimeout(id);
-  }, [localTurns.length, respond.isPending]);
 
   const scenarioTitle = useMemo(
     () => data?.scenario?.title ?? data?.custom_scenario_text ?? "Roleplay",
@@ -89,6 +93,50 @@ export function LiveRoleplayScreen({ sessionId }: Props) {
       );
     }
   }
+
+  async function toggleRecord() {
+    if (respond.isPending || processingVoice || end.isPending) return;
+    if (recorder.isRecording) {
+      const uri = await recorder.stop();
+      if (!uri) return;
+      setProcessingVoice(true);
+      try {
+        const result = await respondVoice.mutateAsync(uri);
+        setLocalTurns((prev) => [...prev, result.rep_turn, result.ai_turn]);
+        if (result.ai_audio_base64) {
+          playMp3Base64(result.ai_audio_base64).catch(() => {});
+        }
+      } catch (err) {
+        Alert.alert(
+          "Couldn't send",
+          err instanceof Error ? err.message : "Try again in a moment.",
+        );
+      } finally {
+        setProcessingVoice(false);
+      }
+    } else {
+      const ok = await recorder.start();
+      if (!ok) {
+        Alert.alert(
+          "Microphone needed",
+          "Enable microphone access to use voice roleplay.",
+        );
+      }
+    }
+  }
+
+  const playTurn = useCallback((text: string) => {
+    speakText(text)
+      .then(({ audio_base64 }) => playMp3Base64(audio_base64))
+      .catch(() => {});
+  }, []);
+
+  const renderTurn = useCallback(
+    ({ item }: { item: RoleplayTranscriptTurn }) => (
+      <MessageBubble turn={item} onPlay={playTurn} />
+    ),
+    [playTurn],
+  );
 
   function confirmEnd() {
     if (end.isPending) return;
@@ -193,18 +241,20 @@ export function LiveRoleplayScreen({ sessionId }: Props) {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
       >
-        <ScrollView
-          ref={scrollRef}
-          contentContainerClassName="px-4 py-4 md:px-8"
+        <FlatList
+          ref={listRef}
+          data={localTurns}
+          keyExtractor={(item, i) => `${item.role}-${i}-${item.at}`}
+          renderItem={renderTurn}
+          contentContainerClassName="mx-auto w-full max-w-3xl px-4 py-4 md:px-8"
           keyboardShouldPersistTaps="handled"
-        >
-          <View className="mx-auto w-full max-w-3xl">
-            {localTurns.map((turn, i) => (
-              <MessageBubble key={`${turn.role}-${i}-${turn.at}`} turn={turn} />
-            ))}
-            {respond.isPending ? <TypingBubble /> : null}
-          </View>
-        </ScrollView>
+          onContentSizeChange={() =>
+            listRef.current?.scrollToEnd({ animated: true })
+          }
+          ListFooterComponent={
+            respond.isPending || processingVoice ? <TypingBubble /> : null
+          }
+        />
 
         <View className="border-t border-surface-divider bg-white px-4 py-3 md:px-8">
           <View className="mx-auto w-full max-w-3xl gap-3">
@@ -212,6 +262,8 @@ export function LiveRoleplayScreen({ sessionId }: Props) {
               <Pressable
                 onPress={confirmEnd}
                 disabled={end.isPending}
+                accessibilityRole="button"
+                accessibilityLabel="End session"
                 className="flex-row items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-3 py-1.5 active:bg-red-100"
               >
                 <Ionicons name="stop-circle-outline" size={14} color="#b91c1c" />
@@ -219,30 +271,71 @@ export function LiveRoleplayScreen({ sessionId }: Props) {
                   {end.isPending ? "Scoring…" : "End session"}
                 </Text>
               </Pressable>
-
-              <View className="flex-row items-center gap-1.5 rounded-full border border-surface-border bg-white px-3 py-1.5 opacity-60">
-                <Ionicons name="bulb-outline" size={14} color={colors.ink.muted} />
-                <Text className="text-xs font-semibold text-ink-muted">
-                  Hint · soon
-                </Text>
-              </View>
             </View>
 
+            {recorder.isRecording ? (
+              <Text className="text-center text-xs font-semibold text-red-600">
+                Listening… tap the mic to send
+              </Text>
+            ) : processingVoice ? (
+              <Text className="text-center text-xs font-semibold text-ink-muted">
+                Transcribing…
+              </Text>
+            ) : (
+              <Text className="text-center text-[11px] text-ink-dim">
+                Tap the mic to speak, or type below
+              </Text>
+            )}
+
             <View className="flex-row items-end gap-2">
+              <Pressable
+                onPress={toggleRecord}
+                disabled={respond.isPending || end.isPending || processingVoice}
+                className={`h-12 w-12 items-center justify-center rounded-full ${
+                  recorder.isRecording
+                    ? "bg-red-600 active:bg-red-700"
+                    : "bg-brand-600 active:bg-brand-700"
+                }`}
+              >
+                {processingVoice ? (
+                  <ActivityIndicator color="#ffffff" size="small" />
+                ) : (
+                  <Ionicons
+                    name={recorder.isRecording ? "stop" : "mic"}
+                    size={20}
+                    color="#ffffff"
+                  />
+                )}
+              </Pressable>
               <TextInput
                 value={input}
                 onChangeText={setInput}
                 multiline
                 placeholder="Type your response…"
                 placeholderTextColor={colors.ink.dim}
-                editable={!respond.isPending && !end.isPending}
+                editable={
+                  !respond.isPending &&
+                  !end.isPending &&
+                  !recorder.isRecording &&
+                  !processingVoice
+                }
                 className="max-h-32 flex-1 rounded-sm border border-surface-border bg-surface-raised px-4 py-3 text-base text-ink-primary"
               />
               <Pressable
                 onPress={send}
-                disabled={!input.trim() || respond.isPending || end.isPending}
+                disabled={
+                  !input.trim() ||
+                  respond.isPending ||
+                  end.isPending ||
+                  recorder.isRecording ||
+                  processingVoice
+                }
                 className={`h-12 w-12 items-center justify-center rounded-full ${
-                  input.trim() && !respond.isPending && !end.isPending
+                  input.trim() &&
+                  !respond.isPending &&
+                  !end.isPending &&
+                  !recorder.isRecording &&
+                  !processingVoice
                     ? "bg-brand-600 active:bg-brand-700"
                     : "bg-surface-raised"
                 }`}
@@ -251,7 +344,11 @@ export function LiveRoleplayScreen({ sessionId }: Props) {
                   name="send"
                   size={18}
                   color={
-                    input.trim() && !respond.isPending && !end.isPending
+                    input.trim() &&
+                    !respond.isPending &&
+                    !end.isPending &&
+                    !recorder.isRecording &&
+                    !processingVoice
                       ? "#ffffff"
                       : colors.ink.dim
                   }

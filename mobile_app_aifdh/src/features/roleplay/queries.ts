@@ -10,6 +10,7 @@ import {
   fetchSessionDetail,
   fetchSessions,
   respondToSession,
+  respondToSessionVoice,
   startSession,
 } from "./api";
 
@@ -43,6 +44,16 @@ export function useRespond(sessionId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (message: string) => respondToSession(sessionId, message),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: roleplayKeys.session(sessionId) });
+    },
+  });
+}
+
+export function useRespondVoice(sessionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (uri: string) => respondToSessionVoice(sessionId, uri),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: roleplayKeys.session(sessionId) });
     },

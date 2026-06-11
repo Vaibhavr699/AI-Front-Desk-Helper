@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -45,25 +45,56 @@ export function TodayScreen() {
     [appointments, selectedId],
   );
 
-  function navigateToLead(leadId: string) {
-    router.push(`/(tabs)/leads/${leadId}`);
-  }
+  const navigateToLead = useCallback(
+    (leadId: string) => {
+      router.push(`/(tabs)/leads/${leadId}`);
+    },
+    [router],
+  );
 
-  function handleCardPress(appointment: Appointment) {
-    if (isTablet) {
-      setSelectedId(appointment.id);
-    } else if (appointment.lead) {
-      navigateToLead(appointment.lead.id);
-    }
-  }
+  const handleCardPress = useCallback(
+    (appointment: Appointment) => {
+      if (isTablet) {
+        setSelectedId(appointment.id);
+      } else if (appointment.lead) {
+        navigateToLead(appointment.lead.id);
+      }
+    },
+    [isTablet, navigateToLead],
+  );
 
-  function handleCardBriefing(appointment: Appointment) {
-    if (appointment.lead) navigateToLead(appointment.lead.id);
-  }
+  const handleCardBriefing = useCallback(
+    (appointment: Appointment) => {
+      if (appointment.lead) navigateToLead(appointment.lead.id);
+    },
+    [navigateToLead],
+  );
 
   function startQuickSession() {
     router.push("/in-home/prepare/quick" as never);
   }
+
+  const renderTabletItem = useCallback(
+    ({ item }: { item: Appointment }) => (
+      <AppointmentCard
+        appointment={item}
+        selected={item.id === selectedId}
+        onPress={handleCardPress}
+      />
+    ),
+    [selectedId, handleCardPress],
+  );
+
+  const renderPhoneItem = useCallback(
+    ({ item }: { item: Appointment }) => (
+      <AppointmentCard
+        appointment={item}
+        onPress={handleCardPress}
+        onViewBriefing={handleCardBriefing}
+      />
+    ),
+    [handleCardPress, handleCardBriefing],
+  );
 
   return (
     <SafeAreaView className="flex-1 bg-surface-base" edges={["top"]}>
@@ -94,13 +125,7 @@ export function TodayScreen() {
                   tintColor={colors.brand[600]}
                 />
               }
-              renderItem={({ item }) => (
-                <AppointmentCard
-                  appointment={item}
-                  selected={item.id === selectedId}
-                  onPress={() => handleCardPress(item)}
-                />
-              )}
+              renderItem={renderTabletItem}
             />
           </View>
           <View className="flex-1">
@@ -122,13 +147,7 @@ export function TodayScreen() {
               tintColor={colors.brand[600]}
             />
           }
-          renderItem={({ item }) => (
-            <AppointmentCard
-              appointment={item}
-              onPress={() => handleCardPress(item)}
-              onViewBriefing={() => handleCardBriefing(item)}
-            />
-          )}
+          renderItem={renderPhoneItem}
         />
       )}
       <View className="absolute bottom-6 left-0 right-0 items-center">

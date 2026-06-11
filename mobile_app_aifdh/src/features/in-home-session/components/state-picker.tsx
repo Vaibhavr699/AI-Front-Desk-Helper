@@ -17,9 +17,10 @@ import { US_STATES, type StateOption } from "../consent-states";
 type Props = {
   value: string | null;
   onChange: (code: string) => void;
+  title?: string;
 };
 
-export function StatePicker({ value, onChange }: Props) {
+export function StatePicker({ value, onChange, title = "Visit state" }: Props) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -60,7 +61,7 @@ export function StatePicker({ value, onChange }: Props) {
         <SafeAreaView className="flex-1 bg-surface-base">
           <View className="flex-row items-center justify-between border-b border-surface-divider px-4 py-3">
             <Text className="text-lg font-semibold text-ink-primary">
-              Visit state
+              {title}
             </Text>
             <Pressable
               onPress={() => setOpen(false)}

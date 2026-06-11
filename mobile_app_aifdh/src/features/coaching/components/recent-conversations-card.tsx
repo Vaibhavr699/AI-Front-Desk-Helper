@@ -36,7 +36,7 @@ export function RecentConversationsCard({ conversations }: Props) {
         </View>
         {conversations.length > 0 && (
           <Pressable
-            onPress={() => router.push("/(tabs)/coaching/history")}
+            onPress={() => router.navigate("/(tabs)/coaching/history")}
             hitSlop={8}
             className="flex-row items-center gap-1 active:opacity-60"
           >

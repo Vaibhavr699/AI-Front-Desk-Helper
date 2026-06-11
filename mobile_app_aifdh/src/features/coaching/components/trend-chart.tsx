@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { memo, useMemo } from "react";
 import { Text, View } from "react-native";
 import Svg, { Circle, Line, Path } from "react-native-svg";
 
@@ -14,8 +15,23 @@ const VIEWBOX_WIDTH = 300;
 const VIEWBOX_HEIGHT = 120;
 const MAX_SCORE = 10;
 
-export function TrendChart({ trend }: Props) {
-  if (trend.length < 2) {
+function TrendChartBase({ trend }: Props) {
+  const geo = useMemo(() => {
+    if (trend.length < 2) return null;
+    const xStep = VIEWBOX_WIDTH / (trend.length - 1);
+    const points = trend.map((p, i) => {
+      const x = i * xStep;
+      const y = VIEWBOX_HEIGHT - (p.avg_score / MAX_SCORE) * VIEWBOX_HEIGHT;
+      return { x, y, value: p.avg_score };
+    });
+    const path = points
+      .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`)
+      .join(" ");
+    const fillPath = `${path} L ${points[points.length - 1].x.toFixed(2)} ${VIEWBOX_HEIGHT} L 0 ${VIEWBOX_HEIGHT} Z`;
+    return { points, path, fillPath };
+  }, [trend]);
+
+  if (!geo) {
     return (
       <View className="gap-3 rounded-sm bg-white p-6">
         <View className="flex-row items-center gap-2">
@@ -36,18 +52,7 @@ export function TrendChart({ trend }: Props) {
     );
   }
 
-  const xStep = VIEWBOX_WIDTH / (trend.length - 1);
-  const points = trend.map((p, i) => {
-    const x = i * xStep;
-    const y = VIEWBOX_HEIGHT - (p.avg_score / MAX_SCORE) * VIEWBOX_HEIGHT;
-    return { x, y, value: p.avg_score };
-  });
-
-  const path = points
-    .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`)
-    .join(" ");
-
-  const fillPath = `${path} L ${points[points.length - 1].x.toFixed(2)} ${VIEWBOX_HEIGHT} L 0 ${VIEWBOX_HEIGHT} Z`;
+  const { points, path, fillPath } = geo;
 
   return (
     <View className="gap-3 rounded-sm bg-white p-6">
@@ -117,3 +122,5 @@ export function TrendChart({ trend }: Props) {
     </View>
   );
 }
+
+export const TrendChart = memo(TrendChartBase);

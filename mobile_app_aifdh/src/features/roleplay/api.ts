@@ -1,4 +1,5 @@
-import { api } from "@/src/shared/api/client";
+import { API_BASE_URL } from "@/src/config/env";
+import { api, authTokenHolder } from "@/src/shared/api/client";
 
 import type {
   RoleplayScenario,
@@ -6,6 +7,7 @@ import type {
   RoleplaySession,
   RoleplaySessionSummary,
   RoleplayTranscriptTurn,
+  RoleplayVoiceResponse,
 } from "./types";
 
 export async function fetchScenarios(): Promise<{ scenarios: RoleplayScenario[] }> {
@@ -33,6 +35,39 @@ export async function respondToSession(
     session_id: sessionId,
     message,
   });
+  return data;
+}
+
+export async function respondToSessionVoice(
+  sessionId: string,
+  uri: string,
+): Promise<RoleplayVoiceResponse> {
+  const form = new FormData();
+  form.append("audio", {
+    uri,
+    name: `roleplay-${Date.now()}.m4a`,
+    type: "audio/mp4",
+  } as unknown as Blob);
+  form.append("session_id", sessionId);
+
+  const token = authTokenHolder.get();
+  const resp = await fetch(`${API_BASE_URL}/api/rep/roleplay/respond-voice`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ error: "Voice send failed" }));
+    throw new Error(err.error || "Voice send failed");
+  }
+  return resp.json() as Promise<RoleplayVoiceResponse>;
+}
+
+export async function speakText(text: string): Promise<{ audio_base64: string }> {
+  const { data } = await api.post<{ audio_base64: string }>(
+    "/rep/roleplay/speak",
+    { text },
+  );
   return data;
 }
 

@@ -4,6 +4,8 @@ import { API_BASE_URL } from "@/src/config/env";
 import type {
   CuePreferences,
   InHomeSession,
+  InHomeSessionAlert,
+  InHomeSessionSummary,
   StartSessionInput,
   StartSessionResponse,
 } from "./types";
@@ -36,8 +38,15 @@ export async function endInHomeSession(
 
 export async function fetchInHomeSession(
   sessionId: string,
-): Promise<{ session: InHomeSession; alerts: unknown[] }> {
+): Promise<{ session: InHomeSession; alerts: InHomeSessionAlert[] }> {
   const { data } = await api.get(`/rep/in-home/sessions/${sessionId}`);
+  return data;
+}
+
+export async function fetchInHomeSessions(): Promise<{
+  sessions: InHomeSessionSummary[];
+}> {
+  const { data } = await api.get("/rep/in-home/sessions");
   return data;
 }
 

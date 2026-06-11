@@ -57,10 +57,9 @@ export function LiveSessionScreen({ sessionId }: Props) {
 
   const wsRef = useRef<InHomeWsClient | null>(null);
   const startedAtRef = useRef<number>(Date.now());
+  const [wsClient, setWsClient] = useState<InHomeWsClient | null>(null);
 
-  const { streaming, startStreaming, stopStreaming } = useAudioStream(
-    wsRef.current,
-  );
+  const { streaming, startStreaming, stopStreaming } = useAudioStream(wsClient);
 
   useEffect(() => {
     if (data?.session?.started_at) {
@@ -110,6 +109,7 @@ export function LiveSessionScreen({ sessionId }: Props) {
     const wsPath = `/ws/rep/in-home/${sessionId}`;
     const client = new InHomeWsClient(buildWsUrl(wsPath, sessionToken));
     wsRef.current = client;
+    setWsClient(client);
     const offStatus = client.onStatus(setWsStatus);
     const offMessage = client.on(handleWsMessage);
     client.connect();
@@ -118,6 +118,7 @@ export function LiveSessionScreen({ sessionId }: Props) {
       offMessage();
       client.close();
       wsRef.current = null;
+      setWsClient(null);
     };
   }, [sessionId, sessionToken, data?.session, handleWsMessage]);
 

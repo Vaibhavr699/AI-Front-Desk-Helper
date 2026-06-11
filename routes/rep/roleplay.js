@@ -1,6 +1,7 @@
 "use strict";
 
 const express = require("express");
+const multer = require("multer");
 const db = require("../../lib/db");
 const repAuth = require("../../lib/repAuth");
 const { repAuthChain } = require("../../lib/requireRep");
@@ -9,8 +10,11 @@ const {
   generateCustomPersona,
   scoreRoleplay,
 } = require("../../lib/roleplayAi");
+const { transcribeBuffer } = require("../../services/fieldRecording");
+const { synthesizeRoleplayAudio } = require("../../services/roleplayTts");
 
 const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
 function shapeScenario(row) {
   return {
@@ -200,6 +204,96 @@ router.post("/respond", ...repAuthChain, async (req, res) => {
     res.json({ rep_turn: repTurn, ai_turn: aiTurn });
   } catch (e) {
     console.error("[rep/roleplay/respond]", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.post("/respond-voice", ...repAuthChain, upload.single("audio"), async (req, res) => {
+  try {
+    const session_id = req.body?.session_id;
+    if (!session_id || !req.file) {
+      return res.status(400).json({ error: "session_id and audio required" });
+    }
+
+    const r = await db.query(
+      `SELECT s.*,
+              sc.title, sc.industry, sc.scenario_type, sc.disc_type,
+              sc.skills_trained, sc.caller_persona_prompt
+         FROM roleplay_sessions s
+         LEFT JOIN roleplay_scenarios sc ON sc.id = s.scenario_id
+        WHERE s.id = $1 AND s.user_id = $2 AND s.tenant_id = $3`,
+      [session_id, req.rep.id, req.rep.tenant_id]
+    );
+    const row = r.rows[0];
+    if (!row) return res.status(404).json({ error: "Session not found" });
+    if (row.completed_at) {
+      return res.status(409).json({ error: "Session already ended" });
+    }
+
+    let repText = "";
+    try {
+      const ext = req.file.originalname?.split(".").pop() || "m4a";
+      const t = await transcribeBuffer(req.file.buffer, ext);
+      repText = (t.text || "").trim();
+    } catch (err) {
+      console.error("[rep/roleplay/respond-voice] transcribe failed:", err.message);
+      return res.status(502).json({ error: "Couldn't hear that. Try again." });
+    }
+    if (!repText) {
+      return res.status(422).json({ error: "Didn't catch that — try speaking again." });
+    }
+
+    const scenarioForAi = {
+      title: row.title,
+      industry: row.industry,
+      scenario_type: row.scenario_type,
+      disc_type: row.disc_type,
+      skills_trained: row.skills_trained || [],
+      caller_persona_prompt: row.caller_persona_prompt || row.custom_persona_prompt,
+    };
+
+    const transcript = row.transcript || [];
+    const repTurn = { role: "rep", text: repText, at: new Date().toISOString() };
+    const nextTranscript = [...transcript, repTurn];
+
+    let aiTurn;
+    try {
+      aiTurn = await generateAiTurn(scenarioForAi, nextTranscript);
+    } catch (err) {
+      console.error("[rep/roleplay/respond-voice] ai turn failed:", err.message);
+      return res.status(502).json({ error: "Customer is quiet. Try again in a moment." });
+    }
+
+    const updated = [...nextTranscript, aiTurn];
+    await db.query(
+      "UPDATE roleplay_sessions SET transcript = $1::jsonb WHERE id = $2",
+      [JSON.stringify(updated), session_id]
+    );
+
+    let aiAudioBase64 = null;
+    try {
+      const buf = await synthesizeRoleplayAudio(aiTurn.text);
+      if (buf) aiAudioBase64 = buf.toString("base64");
+    } catch (err) {
+      console.error("[rep/roleplay/respond-voice] tts failed:", err.message);
+    }
+
+    res.json({ rep_turn: repTurn, ai_turn: aiTurn, ai_audio_base64: aiAudioBase64 });
+  } catch (e) {
+    console.error("[rep/roleplay/respond-voice]", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.post("/speak", ...repAuthChain, async (req, res) => {
+  try {
+    const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+    if (!text) return res.status(400).json({ error: "text required" });
+    const buf = await synthesizeRoleplayAudio(text);
+    if (!buf) return res.status(502).json({ error: "Couldn't synthesize audio" });
+    res.json({ audio_base64: buf.toString("base64") });
+  } catch (e) {
+    console.error("[rep/roleplay/speak]", e);
     res.status(500).json({ error: "Server error" });
   }
 });

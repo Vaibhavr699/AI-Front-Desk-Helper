@@ -19,6 +19,7 @@ export type RepProfile = {
   id: string;
   email: string;
   phone: string | null;
+  home_state: string | null;
   role: string;
   tenant: {
     id: string;

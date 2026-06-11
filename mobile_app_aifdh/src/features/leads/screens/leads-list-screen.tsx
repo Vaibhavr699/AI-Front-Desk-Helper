@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -66,17 +66,32 @@ export function LeadsListScreen() {
     }
   }, [isTablet, leads, selectedId]);
 
-  function handlePress(lead: LeadSummary) {
-    if (isTablet) {
-      setSelectedId(lead.id);
-    } else {
-      router.push(`/(tabs)/leads/${lead.id}`);
-    }
-  }
+  const handlePress = useCallback(
+    (lead: LeadSummary) => {
+      if (isTablet) {
+        setSelectedId(lead.id);
+      } else {
+        router.push(`/(tabs)/leads/${lead.id}`);
+      }
+    },
+    [isTablet, router],
+  );
+
+  const renderLead = useCallback(
+    ({ item }: { item: LeadSummary }) => (
+      <LeadCard
+        lead={item}
+        selected={isTablet && item.id === selectedId}
+        onPress={handlePress}
+      />
+    ),
+    [isTablet, selectedId, handlePress],
+  );
 
   const list = (
     <FlatList
       data={leads}
+      className="flex-1"
       keyExtractor={(l) => l.id}
       contentContainerClassName="gap-3 px-4 pb-8 pt-2"
       refreshControl={
@@ -90,13 +105,7 @@ export function LeadsListScreen() {
         if (hasNextPage && !isFetchingNextPage) fetchNextPage();
       }}
       onEndReachedThreshold={0.4}
-      renderItem={({ item }) => (
-        <LeadCard
-          lead={item}
-          selected={isTablet && item.id === selectedId}
-          onPress={() => handlePress(item)}
-        />
-      )}
+      renderItem={renderLead}
       ListFooterComponent={
         isFetchingNextPage ? (
           <View className="py-4">

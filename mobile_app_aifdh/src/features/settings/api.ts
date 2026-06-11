@@ -17,6 +17,10 @@ export async function updateRepPhone(phone: string | null): Promise<void> {
   await api.patch("/rep/profile", { phone });
 }
 
+export async function updateRepHomeState(home_state: string | null): Promise<void> {
+  await api.patch("/rep/profile", { home_state });
+}
+
 export async function revokeTrustedDevice(fingerprint: string): Promise<void> {
   await api.post("/rep/auth/logout", { device_fingerprint: fingerprint });
 }

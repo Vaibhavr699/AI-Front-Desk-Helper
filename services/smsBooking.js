@@ -418,6 +418,12 @@ async function finalizeSmsBooking(thread, tenant) {
       projectDetails: thread.leadCapture?.project_details || "",
       leadId: thread.leadId || null,
       source: thread.channel || "sms",
+      // Est-Rev fix (Jun 11, 2026) — feed PR7's revenue plumbing on the
+      // picker path too. Same field the AI should_book path passes; without
+      // it the booking row lands with no estimated revenue (the Jun-15 $0
+      // lead). The A2 resume path also finalizes through this function, so
+      // one fix covers both entry points.
+      estimatedValue: thread.leadCapture?.estimated_value ?? null,
     });
   } catch (e) {
     console.error("[SMS Booking] engine.book threw tenant=%s: %s", tenant.id, e.message);

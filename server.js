@@ -2626,6 +2626,20 @@ async function processFacebookConversation(senderId, messageText, tenant = null,
     }
   }
 
+  // ── A4 (Jun 11, 2026) — Facebook booking-menu interception ──────────────
+  if (thread.bookingMenuState && tenant) {
+    const bookingResult = await smsBookingService.handleSmsBookingIncoming(thread, messageText, tenant);
+    if (bookingResult) {
+      thread.history.push({ role: "assistant", text: bookingResult.reply, at: new Date().toISOString() });
+      thread.lastOutboundAt = Date.now();
+      if (thread.leadId) {
+        messagesService.saveMessage(tenant.id, thread.leadId, "facebook", "outbound", bookingResult.reply);
+      }
+      thread.followUpCount = 0;
+      return { reply: bookingResult.reply, lead_capture: {}, booking_confirmed: null };
+    }
+  }
+  
   let ai;
   try {
     // We reuse the exact same AI orchestrator as SMS and Web Chat
@@ -2672,14 +2686,32 @@ async function processFacebookConversation(senderId, messageText, tenant = null,
 
   let replyText = ai.reply || "Thanks for reaching out!";
 
-  const bookingResult = await handleLeadBooking(thread, ai, tenant);
-  if (bookingResult) {
-    replyText = bookingResult;
-  } else if (!ai.should_book) {
-    // Default follow up for inquiry
-    const followUpMinutes = Number(ai.follow_up_minutes) || 120;
-    thread.needsFollowUpAt = Date.now() + followUpMinutes * 60 * 1000;
-  }
+    // ── A4 (Jun 11, 2026) — Facebook booking-menu initiation ───────────────
+    if (ai.book_intent === true && !thread.bookingMenuState && !thread.bookedEventId) {
+      const startMenu = await smsBookingService.initiateSmsBooking(thread, tenant);
+      if (startMenu && startMenu.reply) {
+        thread.history.push({ role: "assistant", text: startMenu.reply, at: new Date().toISOString() });
+        thread.lastOutboundAt = Date.now();
+        if (thread.leadId) {
+          messagesService.saveMessage(tenant.id, thread.leadId, "facebook", "outbound", startMenu.reply);
+        }
+        thread.followUpCount = 0;
+        return { reply: startMenu.reply, lead_capture: {}, booking_confirmed: null };
+      }
+    }
+
+    // Re-book guard (matches SMS): never re-fire the free-text engine once booked.
+    let bookingResult = null;
+    if (!thread.bookedEventId) {
+      bookingResult = await handleLeadBooking(thread, ai, tenant);
+    }
+    if (bookingResult) {
+      replyText = bookingResult;
+    } else if (!ai.should_book && !thread.bookedEventId) {
+      // Default follow up for inquiry
+      const followUpMinutes = Number(ai.follow_up_minutes) || 120;
+      thread.needsFollowUpAt = Date.now() + followUpMinutes * 60 * 1000;
+    }
 
   if ((thread.leadCapture?.full_name || hasPhoneToSend) && !thread.crmLeadSent) {
     if (!isNewBookingConfirmation(bookingResult)) {

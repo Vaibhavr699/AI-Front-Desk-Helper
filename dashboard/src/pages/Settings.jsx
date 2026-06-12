@@ -325,10 +325,18 @@ const LEAD_SOURCES = [
   {
     id: "thumbtack",
     name: "Thumbtack",
-    blurb: "Auto-respond to Thumbtack leads the moment they arrive.",
-    status: "coming_soon",
+    blurb: "Thumbtack sends each new lead straight to your AI the instant a customer reaches out — so it texts them within seconds, while you're still top of their list.",
+    status: "active",
     accent: "#009FD9",
     initial: "T",
+    webhookPath: (tid) => `/api/webhooks/thumbtack/${tid}`,
+    steps: [
+      "Copy your unique webhook URL below.",
+      "Log in to Thumbtack.com, click your profile photo (top right), then Integrations → Manage webhooks. If you have more than one business profile, pick the one you want.",
+      "Click Create webhook, paste your URL, and choose to receive Leads. Save.",
+      "Send a test from Thumbtack — it shows up tagged \"test lead\" in your delivery log. Your AI will text the test number, confirming it's live.",
+    ],
+    note: "Thumbtack allows only ONE lead integration per account — if your Thumbtack is already connected to another CRM or tool, disconnect that first. Thumbtack sends the customer's name and phone (no email), and the connection is one-way, so your AI replies by text directly instead of inside the Thumbtack inbox.",
   },
   {
     id: "networx",
@@ -5121,6 +5129,8 @@ Thanks!`;
                       );
                    })}
                   </div>
+                </div>
+              )}
                 </div>
               )}
 

@@ -12,6 +12,11 @@ async function ensureAudioMode(): Promise<void> {
 }
 
 let counter = 0;
+let activeStop: (() => void) | null = null;
+
+export function stopActiveCue(): void {
+  if (activeStop) activeStop();
+}
 
 export async function playCueMp3Base64(base64: string): Promise<void> {
   await ensureAudioMode();
@@ -21,11 +26,22 @@ export async function playCueMp3Base64(base64: string): Promise<void> {
   });
 
   const player = createAudioPlayer({ uri: path });
+  let done = false;
   const cleanup = () => {
+    if (done) return;
+    done = true;
+    if (activeStop === stop) activeStop = null;
     try {
       player.remove();
     } catch {}
     FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
+  };
+  const stop = () => {
+    try {
+      player.pause();
+    } catch {}
+    sub.remove();
+    cleanup();
   };
 
   const sub = player.addListener("playbackStatusUpdate", (status) => {
@@ -35,5 +51,6 @@ export async function playCueMp3Base64(base64: string): Promise<void> {
     }
   });
 
+  activeStop = stop;
   player.play();
 }

@@ -62,8 +62,12 @@ class AudioRouteModule : Module() {
       types.add(AudioDeviceInfo.TYPE_USB_HEADSET)
     }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      // BLE_HEADSET is private (earbud); BLE_SPEAKER is NOT — it would play
+      // cue audio out loud into the room, so it is intentionally excluded.
       types.add(AudioDeviceInfo.TYPE_BLE_HEADSET)
-      types.add(AudioDeviceInfo.TYPE_BLE_SPEAKER)
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      types.add(AudioDeviceInfo.TYPE_HEARING_AID)
     }
     return type in types
   }

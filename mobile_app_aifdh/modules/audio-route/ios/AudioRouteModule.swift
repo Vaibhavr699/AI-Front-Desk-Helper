@@ -38,7 +38,7 @@ public class AudioRouteModule: Module {
       .bluetoothHFP,
       .headphones,
       .usbAudio,
-      .carAudio,
+      .carAudio, // deliberate keep: rep-alone-in-truck briefings
     ]
     return AVAudioSession.sharedInstance().currentRoute.outputs.contains {
       externalPorts.contains($0.portType)

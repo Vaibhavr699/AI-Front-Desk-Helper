@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { get } from "../api";
+import FeedbackModal from "../components/CallCoach/FeedbackModal";
 
 const CUE_META = {
   ask_discovery: { label: "Ask Discovery", color: "bg-amber-100 text-amber-800", dot: "bg-amber-500" },
@@ -39,6 +40,8 @@ export default function InHomeSessionDetail({ tenantId }) {
   const { id } = useParams();
   const [session, setSession] = useState(null);
   const [alerts, setAlerts] = useState([]);
+  const [recording, setRecording] = useState(null);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -51,6 +54,7 @@ export default function InHomeSessionDetail({ tenantId }) {
         if (!cancelled) {
           setSession(json.session);
           setAlerts(json.alerts || []);
+          setRecording(json.recording || null);
         }
       } catch (err) {
         if (!cancelled) setError(err.message);
@@ -119,6 +123,43 @@ export default function InHomeSessionDetail({ tenantId }) {
           </div>
         </div>
       </div>
+
+      {(recording || session.coaching_conversation_id) && (
+        <div className="mb-6 bg-white border border-gray-200 rounded-lg p-4">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
+              Session recording
+            </h2>
+            {recording?.conversation_id && (
+              <button
+                onClick={() => setFeedbackOpen(true)}
+                className="px-3 py-1.5 rounded-lg bg-brand-600 text-white text-xs font-semibold hover:bg-brand-700"
+              >
+                Leave feedback
+              </button>
+            )}
+          </div>
+          {recording?.url ? (
+            <audio controls preload="none" src={recording.url} className="w-full">
+              Your browser does not support audio playback.
+            </audio>
+          ) : (
+            <p className="text-sm text-gray-400">
+              Recording is still processing or unavailable.
+            </p>
+          )}
+        </div>
+      )}
+
+      {recording?.conversation_id && (
+        <FeedbackModal
+          conversationId={recording.conversation_id}
+          sourceType="in_home_session"
+          open={feedbackOpen}
+          onClose={() => setFeedbackOpen(false)}
+          onSubmitted={() => setFeedbackOpen(false)}
+        />
+      )}
 
       {Object.keys(cueSummary).length > 0 && (
         <div className="mb-6 flex flex-wrap gap-2">

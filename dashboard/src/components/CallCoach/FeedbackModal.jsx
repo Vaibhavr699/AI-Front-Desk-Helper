@@ -35,7 +35,18 @@ export default function FeedbackModal({ conversationId, sourceType, open, onClos
   // but the wording was voice-only. Branch on source_type so an SMS
   // conversation doesn't say "call" / "on the line" / "over the phone".
   const isSms = sourceType === "ai_sms";
-  const copy = isSms
+  const isInHome = sourceType === "in_home_session";
+  const copy = isInHome
+    ? {
+        title: "Coach the rep on this visit",
+        subtitle:
+          "Your feedback goes to the rep on this in-home visit. Be specific about what they did well and what to do differently next time.",
+        rightPlaceholder:
+          "e.g. Strong discovery — you asked about the homeowner's timeline before pitching, which set up the close.",
+        improvePlaceholder:
+          "e.g. You jumped to price too early. Walk the whole house and build value first, then present the number.",
+      }
+    : isSms
     ? {
         title: "Coach the AI on this conversation",
         subtitle:

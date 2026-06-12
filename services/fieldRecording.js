@@ -3,7 +3,8 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const { S3Client, PutObjectCommand, GetObjectCommand } = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const OpenAI = require("openai");
 
 let _s3 = null;
@@ -39,6 +40,14 @@ async function uploadToS3(tenantId, conversationId, buffer, extension) {
     ContentType: extension === "m4a" ? "audio/mp4" : "audio/wav",
   }));
   return key;
+}
+
+async function getSignedRecordingUrl(s3Key, expiresInSeconds = 900) {
+  const s3 = getS3();
+  const bucket = process.env.AWS_S3_BUCKET_RECORDINGS;
+  if (!s3 || !bucket || !s3Key) return null;
+  const command = new GetObjectCommand({ Bucket: bucket, Key: s3Key });
+  return getSignedUrl(s3, command, { expiresIn: expiresInSeconds });
 }
 
 async function transcribeBuffer(buffer, extension) {
@@ -105,4 +114,9 @@ async function diarizeTranscript(fullText) {
     }));
 }
 
-module.exports = { uploadToS3, transcribeBuffer, diarizeTranscript };
+module.exports = {
+  uploadToS3,
+  getSignedRecordingUrl,
+  transcribeBuffer,
+  diarizeTranscript,
+};

@@ -12,6 +12,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useAuthStore } from '@/src/features/auth/store';
 import { initSyncManager } from '@/src/features/field-recording/offline/sync-manager';
+import { initSessionEndQueue } from '@/src/features/in-home-session/end-queue';
 import {
   ensureNotificationHandler,
   registerForPushNotifications,
@@ -51,6 +52,7 @@ export default function RootLayout() {
 
   useEffect(() => {
     initSyncManager();
+    initSessionEndQueue();
   }, []);
 
   useEffect(() => {

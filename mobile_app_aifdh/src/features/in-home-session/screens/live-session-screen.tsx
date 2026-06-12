@@ -13,6 +13,7 @@ import { CueOverlayBanner } from "../components/cue-overlay-banner";
 import { DiscLiveBadge } from "../components/disc-live-badge";
 import { WalkthroughStrip } from "../components/walkthrough-strip";
 import { buildWsUrl } from "../api";
+import { queueSessionEnd } from "../end-queue";
 import { useAudioStream } from "../hooks/use-audio-stream";
 import { useWatchCue } from "../hooks/use-watch-cue";
 import { useCueAudio } from "../hooks/use-cue-audio";
@@ -173,19 +174,20 @@ export function LiveSessionScreen({ sessionId }: Props) {
           text: "End session",
           style: "destructive",
           onPress: async () => {
+            await stopStreaming();
+            await flushUnacked();
+            clearWatch();
             try {
-              await stopStreaming();
-              await flushUnacked();
-              clearWatch();
               await end.mutateAsync({ sessionId, outcome: "completed" });
-              wsRef.current?.close();
-              router.replace("/(tabs)" as never);
-            } catch (err) {
+            } catch {
+              await queueSessionEnd(sessionId, "completed");
               Alert.alert(
-                "Couldn’t end session",
-                err instanceof Error ? err.message : "Try again in a moment.",
+                "Saved — will sync later",
+                "You’re offline, so we saved this session locally. It’ll finish syncing automatically once you’re back online.",
               );
             }
+            wsRef.current?.close();
+            router.replace("/(tabs)" as never);
           },
         },
       ],

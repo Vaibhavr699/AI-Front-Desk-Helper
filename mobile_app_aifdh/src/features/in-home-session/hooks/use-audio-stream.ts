@@ -73,9 +73,22 @@ export function useAudioStream(
     });
   }, []);
 
+  const onRecordingStatus = useCallback((status: Audio.RecordingStatus) => {
+    if (!activeRef.current || busyRef.current) return;
+    if (status.canRecord && !status.isRecording) {
+      console.warn("[useAudioStream] recording stopped unexpectedly (interruption)");
+      setError(true);
+      setStreaming(false);
+      Vibration.vibrate([0, 200, 100, 200]);
+    }
+  }, []);
+
   const createRecorder = useCallback(async (): Promise<boolean> => {
     try {
-      const { recording } = await Audio.Recording.createAsync(RECORDING_OPTIONS);
+      const { recording } = await Audio.Recording.createAsync(
+        RECORDING_OPTIONS,
+        onRecordingStatus,
+      );
       recordingRef.current = recording;
       failuresRef.current = 0;
       return true;
@@ -90,7 +103,7 @@ export function useAudioStream(
       }
       return false;
     }
-  }, []);
+  }, [onRecordingStatus]);
 
   const startStreaming = useCallback(async () => {
     if (!permissionGranted || !wsClient) return;

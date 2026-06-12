@@ -57,7 +57,6 @@ const router = express.Router();
 const db = require("../lib/db");
 const { getTenantById } = require("../lib/tenant");
 const leadsService = require("../services/leads");
-const messagesService = require("../services/messages");
 const notificationsService = require("../services/notifications");
 const emailService = require("../services/email");
 const { normalizeE164Phone } = require("../lib/phone");
@@ -272,26 +271,35 @@ router.post("/:tenantId", async (req, res) => {
     }).catch((e) => console.error("[Angi] updateLeadInfo failed:", e.message));
 
     // ── Speed-to-lead: fire the AI SMS opener now ───────────────────────────
-    // Reuse the same Twilio send path the rest of the app uses. We require
-    // sendTwilioSms from server.js? No — it's defined in server.js and not
-    // exported. So we send via the messages/twilio service layer instead.
-    // IMPORTANT: this route does NOT have direct access to server.js's
-    // sendTwilioSms(); we use services/sms.js's sender (sendSms) which wraps
-    // the same tenant-aware Twilio credential resolution. If your sms service
-    // exposes a different export name, adjust the require below.
+    // Use lib/outboundSms.send — the SAME general-purpose sender that
+    // services/sms.js's sendBookingCancellationSms and sendEstimateLinkSms
+    // call. It resolves the tenant's own Twilio credentials/From number AND
+    // writes the message to the `messages` table, so the Angi opener shows up
+    // on the lead's conversation timeline automatically (no separate
+    // saveMessage call needed). Returns { ok, sid?, reason?, error? }.
     let smsSent = false;
     try {
-      const smsService = require("../services/sms");
+      const outboundSms = require("../lib/outboundSms");
       const opener = buildAngiOpener(tenant, lead);
-      // sendSms(tenantId, toPhone, body) — tenant-aware sender.
-      const result = await smsService.sendSms(tenant.id, normalizedPhone, opener);
-      smsSent = !!(result && (result.ok || result.sid));
-      if (smsSent) {
-        messagesService.saveMessage(tenant.id, leadRow.id, "sms", "outbound", opener, {
-          source: "angi_speed_to_lead",
-        });
+      const result = await outboundSms.send({
+        tenant,
+        to: normalizedPhone,
+        body: opener,
+        source: "angi_speed_to_lead",
+        leadId: leadRow.id,
+        sourceId: lead.angiLeadId || null,
+        meta: {
+          angi_lead_id: lead.angiLeadId || null,
+          angi_service: lead.serviceType || null,
+        },
+      });
+      smsSent = !!(result && result.ok);
+      if (!smsSent) {
+        console.warn("[Angi] outboundSms.send non-ok tenant=%s lead=%s reason=%s err=%s",
+          tenant.id, leadRow.id, result?.reason || "unknown", result?.error || "(none)");
       } else {
-        console.warn("[Angi] SMS send returned non-ok tenant=%s lead=%s", tenant.id, leadRow.id);
+        console.log("[Angi] speed-to-lead SMS sent tenant=%s lead=%s sid=%s",
+          tenant.id, leadRow.id, result.sid || "(none)");
       }
     } catch (e) {
       console.error("[Angi] speed-to-lead SMS failed:", e.message);

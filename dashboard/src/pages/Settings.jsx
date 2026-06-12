@@ -292,6 +292,54 @@ function WebhookGuideDrawer({ isOpen, onClose, webhook, onCopy }) {
   );
 }
 
+const LEAD_SOURCE_BACKEND =
+  import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com";
+
+const LEAD_SOURCES = [
+  {
+    id: "angi",
+    name: "Angi Leads",
+    blurb: "Angi (formerly Angie's List / HomeAdvisor) sends each new lead straight to your AI the instant it comes in — so it texts the homeowner within seconds, before your competitors call.",
+    status: "active",
+    accent: "#FF6153",
+    initial: "A",
+    webhookPath: (tid) => `/api/webhooks/angi/${tid}`,
+    steps: [
+      "Log in to your Angi for Pros account and find your SPID (Account Number) under Account → Statement → Account Overview.",
+      "Copy your unique webhook URL below.",
+      "Email crmintegrations@angi.com with your SPID and that URL (use the button below — it writes the email for you).",
+      "Angi enables the feed on their side, usually within 1 business day. New leads then flow in automatically.",
+    ],
+    composeEmail: ({ companyName, webhookUrl }) =>
+      `Subject: Angi Leads CRM Integration Request\n\n` +
+      `Hi Angi Integrations team,\n\n` +
+      `I'd like to set up the Angi Leads CRM (JSON POST) integration for my account.\n\n` +
+      `Company: ${companyName}\n` +
+      `Angi SPID / Account Number: [PASTE YOUR SPID HERE]\n` +
+      `Endpoint URL to POST leads to:\n${webhookUrl}\n\n` +
+      `Could you also send your Standard Lead API field-definitions document so I can confirm the field mapping on my end? ` +
+      `And please let me know if my account uses masked/temporary phone numbers, and how to add my sending number to the connected-numbers allowlist so my texts deliver.\n\n` +
+      `Thanks!\n${companyName}`,
+    note: "AI voice callbacks are intentionally not auto-fired for Angi leads (TCPA) — the AI reaches out by text first.",
+  },
+  {
+    id: "thumbtack",
+    name: "Thumbtack",
+    blurb: "Auto-respond to Thumbtack leads the moment they arrive.",
+    status: "coming_soon",
+    accent: "#009FD9",
+    initial: "T",
+  },
+  {
+    id: "networx",
+    name: "Networx",
+    blurb: "Speed-to-lead for Networx home-service leads.",
+    status: "coming_soon",
+    accent: "#1FA463",
+    initial: "N",
+  },
+];
+
 const TENANT_STORAGE_KEY = "tenantId";
 
 // ── Timezone options (Apr 23, 2026) ──────────────────────────────────
@@ -4974,11 +5022,113 @@ Thanks!`;
                       SAVE FACEBOOK SETTINGS
                     </button>
                   </div>
+                </div>     
+      {/* Lead Sources (Phase 14) — third-party lead integrations. Display-only v1. */}
+              {tenant?.id && (
+                <div className="pt-6 border-t border-gray-100">
+                  <h2 className="text-xl font-bold text-gray-900 mb-2 flex items-center gap-2">
+                    <Zap className="text-primary w-5 h-5" />
+                    Lead Sources
+                  </h2>
+                  <p className="text-sm text-gray-500 mb-6 leading-relaxed max-w-2xl">
+                    Connect the places your leads already come from — Angi, Thumbtack, and more.
+                    The instant a new lead lands, your AI texts them to start the conversation,
+                    so you're first to respond instead of racing the other contractors who got
+                    the same lead.
+                  </p>
+
+                  <div className="space-y-4">
+                    {LEAD_SOURCES.map((src) => {
+                      const isActive = src.status === "active";
+                      const webhookUrl = isActive ? `${LEAD_SOURCE_BACKEND}${src.webhookPath(tenant?.id)}` : null;
+                      const companyName = tenant?.company_name || tenant?.name || "our business";
+
+                      if (!isActive) {
+                        return (
+                          <div key={src.id} className="flex items-center gap-4 p-5 bg-gray-50 border border-gray-200 rounded-2xl opacity-75">
+                            <div className="w-11 h-11 rounded-xl flex items-center justify-center text-white font-black text-lg shrink-0" style={{ background: src.accent }}>
+                              {src.initial}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h3 className="text-sm font-black text-gray-700">{src.name}</h3>
+                                <span className="px-2 py-0.5 bg-gray-200 text-gray-500 text-[9px] font-black uppercase tracking-widest rounded-md">Coming soon</span>
+                              </div>
+                              <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">{src.blurb}</p>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div key={src.id} className="bg-white border-2 rounded-2xl overflow-hidden shadow-sm" style={{ borderColor: `${src.accent}33` }}>
+                          <div className="px-6 py-5 flex items-center gap-4" style={{ background: `${src.accent}0D` }}>
+                            <div className="w-11 h-11 rounded-xl flex items-center justify-center text-white font-black text-lg shrink-0" style={{ background: src.accent }}>
+                              {src.initial}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h3 className="text-base font-black text-gray-900">{src.name}</h3>
+                                <span className="px-2 py-0.5 text-white text-[9px] font-black uppercase tracking-widest rounded-md shadow-sm" style={{ background: src.accent }}>Ready to connect</span>
+                              </div>
+                              <p className="text-xs text-gray-600 mt-0.5 leading-relaxed">{src.blurb}</p>
+                            </div>
+                          </div>
+
+                          <div className="p-6 space-y-5">
+                            <div>
+                              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">How to connect</p>
+                              <ol className="space-y-2">
+                                {src.steps.map((step, i) => (
+                                  <li key={i} className="flex gap-3 text-xs text-gray-700 leading-relaxed">
+                                    <span className="w-5 h-5 rounded-full text-white flex items-center justify-center text-[10px] font-black shrink-0" style={{ background: src.accent }}>{i + 1}</span>
+                                    <span className="pt-0.5">{step}</span>
+                                  </li>
+                                ))}
+                              </ol>
+                            </div>
+
+                            <div>
+                              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Your unique webhook URL</p>
+                              <div className="flex items-center gap-2">
+                                <div className="flex-1 p-3 bg-gray-50 border border-gray-200 rounded-xl font-mono text-[10px] text-gray-800 break-all select-all">{webhookUrl}</div>
+                                <button type="button" onClick={() => { navigator.clipboard.writeText(webhookUrl); success(`${src.name} webhook URL copied!`); }} className="p-3 text-white rounded-xl transition-colors shadow-lg shrink-0" style={{ background: src.accent }} title="Copy to clipboard">
+                                  <CopyIcon className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+
+                            {src.composeEmail && (
+                              <div>
+                                <button type="button" onClick={() => { const body = src.composeEmail({ companyName, webhookUrl }); navigator.clipboard.writeText(body); success("Email copied — paste it into your email app and add your SPID!"); }} className="w-full flex items-center justify-center gap-2 px-5 py-3 text-white rounded-xl font-black text-xs uppercase tracking-widest shadow-lg transition-all active:scale-95" style={{ background: src.accent }}>
+                                  <Mail className="w-4 h-4" />
+                                  Copy email for Angi (crmintegrations@angi.com)
+                                </button>
+                                <p className="text-[10px] text-gray-400 italic mt-2 text-center leading-relaxed">
+                                  Opens nothing automatically — it copies a ready-to-send email to your clipboard. Paste it into your email app, drop in your SPID, and send to crmintegrations@angi.com.
+                                </p>
+                              </div>
+                            )}
+
+                            {src.note && (
+                              <div className="flex items-start gap-2 p-3 bg-blue-50/50 border border-blue-100 rounded-xl">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-blue-500 shrink-0 mt-0.5" />
+                                <p className="text-[11px] text-blue-800 leading-relaxed">{src.note}</p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                   })}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
-             {activeTab === "plans" && (
+       </div>
+      )}   
+
+          {activeTab === "plans" && (
              <div className="space-y-8">
                {/* Phase 7 E — Estimator Add-On status block.
                    Mutually exclusive states (in render order):

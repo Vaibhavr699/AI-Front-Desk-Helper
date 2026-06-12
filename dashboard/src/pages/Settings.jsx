@@ -5133,7 +5133,6 @@ Thanks!`;
               )}
                 </div>
               </div>
-            </div>
           )}
 
           {activeTab === "plans" && (

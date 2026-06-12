@@ -29,6 +29,14 @@ const DIMENSIONS = [
   { key: "professionalism",      label: "Professionalism" },
 ];
 
+function labelize(key) {
+  return String(key || "")
+    .split("_")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
 function scoreColor(score) {
   if (score == null) return { bg: "bg-gray-50", border: "border-gray-200", text: "text-gray-500", bar: "bg-gray-300" };
   const s = parseFloat(score);
@@ -159,6 +167,13 @@ export default function CallCoachDetail({ tenantId }) {
   const personaMeta     = PERSONA_LABELS[conversation.buyer_persona] || PERSONA_LABELS.unknown;
   const transcriptTurns = formatTranscript(conversation.transcript);
   const scoreByDim      = Object.fromEntries((scores || []).map((s) => [s.dimension, s]));
+  const knownLabels     = Object.fromEntries(DIMENSIONS.map((d) => [d.key, d.label]));
+  const displayDims     = (scores && scores.length > 0)
+    ? scores.map((s) => ({
+        key: s.dimension,
+        label: knownLabels[s.dimension] || labelize(s.dimension),
+      }))
+    : DIMENSIONS;
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
@@ -220,7 +235,7 @@ export default function CallCoachDetail({ tenantId }) {
 
       {/* Dimension scores */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        {DIMENSIONS.map(({ key, label }) => {
+        {displayDims.map(({ key, label }) => {
           const s = scoreByDim[key];
           const c = scoreColor(s?.score);
           const quotes = evidenceQuotes(s?.evidence);

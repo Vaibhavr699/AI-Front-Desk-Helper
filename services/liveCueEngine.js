@@ -48,25 +48,57 @@ RULES:
 - Keep headline under 50 chars, full_text under 120 chars.
 - full_text should be actionable coaching advice, not a description of the problem.
 
-WALKTHROUGH COVERAGE — also report which of these sales-visit stages were discussed in this window (by EITHER speaker), as a list of any that apply:
-- "rooms" — the space/rooms/areas were surveyed or described
-- "scope" — the actual work/project scope was discussed
-- "timeline" — when the work would happen / scheduling
-- "budget" — price, cost, or budget came up
-- "close" — asking for the sale, next step, signing, or booking
+`;
 
+const SYSTEM_PROMPT_TAIL = `
 Return ONLY valid JSON:
 { "cue": "ask_discovery" | "listen" | ... | null, "headline": "...", "full_text": "...", "disc_type": "D" | "I" | "S" | "C" | null, "confidence": 0.0-1.0, "covered_topics": ["budget", "timeline"] }
 
 If no cue is warranted, set "cue" to null but still report covered_topics.`;
 
+const DEFAULT_WALKTHROUGH = [
+  { key: "rooms", label: "the space/rooms/areas were surveyed or described" },
+  { key: "scope", label: "the actual work/project scope was discussed" },
+  { key: "timeline", label: "when the work would happen / scheduling" },
+  { key: "budget", label: "price, cost, or budget came up" },
+  { key: "close", label: "asking for the sale, next step, signing, or booking" },
+];
+
+function buildWalkthroughBlock(walkthrough) {
+  const lines = walkthrough.map((s) => `- "${s.key}" — ${s.label}`).join("\n");
+  return `WALKTHROUGH COVERAGE — also report which of these sales-visit stages were discussed in this window (by EITHER speaker), as a list of any that apply:\n${lines}\n\n`;
+}
+
+function buildEmphasisBlock(emphasis) {
+  if (!emphasis) return "";
+  const parts = [];
+  if (Array.isArray(emphasis.priority_cues) && emphasis.priority_cues.length > 0) {
+    parts.push(
+      `This team prioritizes these cues — weight them more heavily when warranted: ${emphasis.priority_cues.join(", ")}.`,
+    );
+  }
+  if (typeof emphasis.guidance === "string" && emphasis.guidance.trim()) {
+    parts.push(`Team coaching focus: ${emphasis.guidance.trim()}`);
+  }
+  if (parts.length === 0) return "";
+  return `\nTEAM EMPHASIS:\n${parts.join("\n")}\n`;
+}
+
+function buildSystemPrompt(walkthrough, emphasis) {
+  const stages = Array.isArray(walkthrough) && walkthrough.length > 0 ? walkthrough : DEFAULT_WALKTHROUGH;
+  return SYSTEM_PROMPT + buildWalkthroughBlock(stages) + buildEmphasisBlock(emphasis) + SYSTEM_PROMPT_TAIL;
+}
+
 class LiveCueEngine {
-  constructor({ sessionId, tenantId, onCue, onChecklistUpdate, disabledCues }) {
+  constructor({ sessionId, tenantId, onCue, onChecklistUpdate, disabledCues, walkthrough, cueEmphasis }) {
     this.sessionId = sessionId;
     this.tenantId = tenantId;
     this.onCue = onCue;
     this.onChecklistUpdate = onChecklistUpdate || (() => {});
     this.disabledCues = new Set(disabledCues || []);
+    this.walkthrough = Array.isArray(walkthrough) && walkthrough.length > 0 ? walkthrough : DEFAULT_WALKTHROUGH;
+    this.walkthroughKeys = new Set(this.walkthrough.map((s) => s.key));
+    this.systemPrompt = buildSystemPrompt(this.walkthrough, cueEmphasis);
     this.transcript = [];
     this.lastCueFiredAt = {};
     this.windowTimer = null;
@@ -124,7 +156,7 @@ class LiveCueEngine {
       const resp = await getOpenAI().chat.completions.create({
         model: CUE_MODEL,
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: this.systemPrompt },
           { role: "user", content: userMessage },
         ],
         temperature: 0.2,
@@ -143,9 +175,8 @@ class LiveCueEngine {
 
       // Walkthrough coverage — runs regardless of whether a cue fires.
       if (Array.isArray(result.covered_topics)) {
-        const valid = ["rooms", "scope", "timeline", "budget", "close"];
         for (const topic of result.covered_topics) {
-          if (valid.includes(topic) && !this.coveredTopics.has(topic)) {
+          if (this.walkthroughKeys.has(topic) && !this.coveredTopics.has(topic)) {
             this.coveredTopics.add(topic);
             console.log("[liveCueEngine] walkthrough covered:", topic);
             this.onChecklistUpdate(topic);

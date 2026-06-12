@@ -35,6 +35,8 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../lib/db");
+const { getSignedRecordingUrl } = require("../services/fieldRecording");
+const scorecards = require("../lib/scorecards");
 
 let logAction;
 try {
@@ -754,10 +756,121 @@ router.get("/in-home/sessions/:id", async (req, res) => {
     const session = sessionR.rows[0];
     if (!session) return res.status(404).json({ error: "Session not found" });
 
-    res.json({ session, alerts: alertsR.rows });
+    let recording = null;
+    if (session.coaching_conversation_id) {
+      const convR = await db.query(
+        `SELECT id, metadata, transcript
+           FROM coaching_conversations
+          WHERE id = $1 AND tenant_id = $2`,
+        [session.coaching_conversation_id, tenantId],
+      );
+      const convo = convR.rows[0];
+      if (convo) {
+        const s3Key = convo.metadata?.s3_key || null;
+        const url = s3Key ? await getSignedRecordingUrl(s3Key) : null;
+        recording = { conversation_id: convo.id, url };
+      }
+    }
+
+    res.json({ session, alerts: alertsR.rows, recording });
   } catch (err) {
     console.error("[callCoach] in-home session detail error:", err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Scorecard config — tenant-customizable in-home walkthrough stages.
+// GET  /api/call-coach/scorecard/walkthrough   (any dashboard user)
+// PATCH /api/call-coach/scorecard/walkthrough  (owner/admin only)
+// ─────────────────────────────────────────────────────────────────────────
+router.get("/scorecard/walkthrough", async (req, res) => {
+  const tenantId = getTenantId(req);
+  if (!tenantId) return res.status(401).json({ error: "No tenant" });
+  try {
+    const walkthrough = await scorecards.getWalkthrough(tenantId);
+    res.json({ walkthrough });
+  } catch (err) {
+    console.error("[callCoach] get walkthrough error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch("/scorecard/walkthrough", async (req, res) => {
+  const tenantId = getTenantId(req);
+  if (!tenantId) return res.status(401).json({ error: "No tenant" });
+  if (!["owner", "admin"].includes(req.user?.role)) {
+    return res.status(403).json({ error: "Owner or admin only" });
+  }
+  try {
+    const walkthrough = await scorecards.setWalkthrough(
+      tenantId,
+      req.body?.walkthrough,
+      req.user?.id || null,
+    );
+    res.json({ walkthrough });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get("/scorecard/cue-emphasis", async (req, res) => {
+  const tenantId = getTenantId(req);
+  if (!tenantId) return res.status(401).json({ error: "No tenant" });
+  try {
+    const cue_emphasis = await scorecards.getCueEmphasis(tenantId);
+    res.json({ cue_emphasis });
+  } catch (err) {
+    console.error("[callCoach] get cue-emphasis error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch("/scorecard/cue-emphasis", async (req, res) => {
+  const tenantId = getTenantId(req);
+  if (!tenantId) return res.status(401).json({ error: "No tenant" });
+  if (!["owner", "admin"].includes(req.user?.role)) {
+    return res.status(403).json({ error: "Owner or admin only" });
+  }
+  try {
+    const cue_emphasis = await scorecards.setCueEmphasis(
+      tenantId,
+      req.body?.cue_emphasis,
+      req.user?.id || null,
+    );
+    res.json({ cue_emphasis });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get("/scorecard/dimensions", async (req, res) => {
+  const tenantId = getTenantId(req);
+  if (!tenantId) return res.status(401).json({ error: "No tenant" });
+  try {
+    const dimensions = await scorecards.getScoringDimensions(tenantId);
+    res.json({ dimensions });
+  } catch (err) {
+    console.error("[callCoach] get dimensions error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch("/scorecard/dimensions", async (req, res) => {
+  const tenantId = getTenantId(req);
+  if (!tenantId) return res.status(401).json({ error: "No tenant" });
+  if (!["owner", "admin"].includes(req.user?.role)) {
+    return res.status(403).json({ error: "Owner or admin only" });
+  }
+  try {
+    const dimensions = await scorecards.setScoringDimensions(
+      tenantId,
+      req.body?.dimensions,
+      req.user?.id || null,
+    );
+    res.json({ dimensions });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 

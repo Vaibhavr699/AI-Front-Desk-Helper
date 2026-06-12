@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { get } from "../../api";
+import WalkthroughEditor from "./WalkthroughEditor";
+import CueEmphasisEditor from "./CueEmphasisEditor";
+import DimensionsEditor from "./DimensionsEditor";
 
 const CUE_LABELS = {
   ask_discovery: { label: "Ask Discovery", color: "bg-amber-100 text-amber-800" },
@@ -64,6 +67,9 @@ export default function InHomeCuesTab({ tenantId }) {
 
   return (
     <div>
+      <WalkthroughEditor />
+      <CueEmphasisEditor />
+      <DimensionsEditor />
       <div className="mb-4 flex items-center gap-2">
         <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold mr-1">Range:</span>
         {DATE_RANGES.map((r) => (

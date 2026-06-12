@@ -645,6 +645,7 @@ app.use("/api/estimator", require("./routes/estimator"));
 app.use("/api/booking", require("./routes/booking"));
 app.use("/twilio", twilioRoutes);
 app.use("/api/webhooks", require("./routes/webhooks"));
+app.use("/api/webhooks/angi", require("./routes/angiLeads"));
 app.use("/api/auth", authRoutes);
 // ── Phase 6 C: Rep mobile app routes ──
 // Mounted BEFORE the `/api` catch-all on L521 — /api/rep/auth/login + /totp

@@ -17,6 +17,7 @@ import { StatePicker } from "@/src/features/in-home-session/components/state-pic
 import { PendingUploadsBanner } from "../offline/components/pending-uploads-banner";
 import { enqueueRecording } from "../offline/recording-queue";
 import { triggerSync } from "../offline/sync-manager";
+import { OrphanRecoveryBanner } from "../recorder/orphan-recovery-banner";
 import { useFieldRecorder } from "../hooks/use-field-recorder";
 
 export function FieldRecordingScreen() {
@@ -24,7 +25,15 @@ export function FieldRecordingScreen() {
   const router = useRouter();
   const { data: lead } = useLeadDetail(leadId || null);
   const { data: profile } = useRepProfile();
-  const { recording, duration, uri, permissionGranted, startRecording, stopRecording } = useFieldRecorder();
+  const {
+    recording,
+    duration,
+    permissionGranted,
+    error: recorderError,
+    startRecording,
+    stopRecording,
+    openSettings,
+  } = useFieldRecorder();
 
   const [stateCode, setStateCode] = useState<string | null>(null);
   const [consentAck, setConsentAck] = useState(false);
@@ -172,7 +181,10 @@ export function FieldRecordingScreen() {
             <Text className="text-sm text-ink-muted">This may take a moment.</Text>
           </View>
         ) : (
-          <View className="items-center gap-6">
+          <View className="w-full max-w-sm items-center gap-6">
+            <View className="w-full">
+              <OrphanRecoveryBanner />
+            </View>
             <View className="h-32 w-32 items-center justify-center rounded-full bg-brand-50">
               <Ionicons name="mic" size={48} color={colors.brand[600]} />
             </View>
@@ -182,13 +194,30 @@ export function FieldRecordingScreen() {
             <Text className="text-center text-sm text-ink-muted">
               Place your phone on the table or nearby.{"\n"}The mic will capture the conversation.
             </Text>
-            {!permissionGranted && (
+            {recorderError === "permission" || !permissionGranted ? (
+              <View className="w-full items-center gap-3">
+                <Text className="text-center text-sm text-red-600">
+                  Microphone access is off, so recording can't start.
+                </Text>
+                <Pressable
+                  onPress={openSettings}
+                  className="flex-row items-center gap-2 rounded-sm border border-red-200 bg-red-50 px-5 py-2.5 active:bg-red-100"
+                >
+                  <Ionicons name="settings-outline" size={16} color="#b91c1c" />
+                  <Text className="text-sm font-semibold text-red-700">
+                    Open settings
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {recorderError === "start_failed" && (
               <Text className="text-center text-sm text-red-600">
-                Microphone permission required. Check your device settings.
+                Recording couldn't start — the mic may be in use by a call. Try
+                again in a moment.
               </Text>
             )}
             <Pressable
-              onPress={startRecording}
+              onPress={() => startRecording(leadId ?? null)}
               disabled={!permissionGranted}
               className={`flex-row items-center gap-2 rounded-sm px-8 py-3.5 ${permissionGranted ? "bg-brand-600 active:bg-brand-700" : "bg-gray-300"}`}
             >

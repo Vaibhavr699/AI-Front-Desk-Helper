@@ -339,12 +339,36 @@ const LEAD_SOURCES = [
     note: "Thumbtack allows only ONE lead integration per account — if your Thumbtack is already connected to another CRM or tool, disconnect that first. Thumbtack sends the customer's name and phone (no email), and the connection is one-way, so your AI replies by text directly instead of inside the Thumbtack inbox.",
   },
   {
+    id: "yelp",
+    name: "Yelp",
+    blurb: "Relay your Yelp Request-a-Quote leads into your AI through Zapier — so the moment a Yelp lead comes in with a phone number, your AI texts them.",
+    status: "active",
+    accent: "#D32323",
+    initial: "Y",
+    webhookPath: (tid) => `/api/webhooks/yelp/${tid}`,
+    steps: [
+      "Copy your unique webhook URL below.",
+      "In Zapier (you'll need a paid Zapier account), create a Zap with the trigger \"Yelp Leads → New Lead\" and connect your Yelp business account.",
+      "Add the action \"Webhooks by Zapier → POST\" and paste your URL above as the POST URL. Set the payload type to JSON.",
+      "Map these fields in the Zapier action so we read them: name, phone_number, category, and message. Turn the Zap on.",
+    ],
+    note: "Yelp only includes a phone number on about 40% of leads (when the customer opts in to phone/SMS), and emails are masked. When there's no phone, we forward the lead to you so you can reply inside Yelp — Yelp ranks you on reply speed. This relay needs a paid Zapier account on your side.",
+  },
+ {
     id: "networx",
     name: "Networx",
-    blurb: "Speed-to-lead for Networx home-service leads.",
-    status: "coming_soon",
+    blurb: "Networx sends each home-service lead you buy straight to your AI the instant it lands — so it texts the homeowner within seconds.",
+    status: "active",
     accent: "#1FA463",
     initial: "N",
+    webhookPath: (tid) => `/api/webhooks/networx/${tid}`,
+    steps: [
+      "Copy your unique webhook URL below.",
+      "Log in to your Networx pro dashboard (or contact your Networx account rep) and ask to send your leads to a webhook / lead-delivery URL.",
+      "Paste your URL as the delivery endpoint and ask them to send leads as JSON.",
+      "Once Networx confirms delivery is on, new leads flow in automatically and your AI texts each one within seconds.",
+    ],
+    note: "Networx leads are broker leads — shared with several pros — so speed matters. If a lead arrives without a phone number, we forward it to you so it's never lost.",
   },
 ];
 

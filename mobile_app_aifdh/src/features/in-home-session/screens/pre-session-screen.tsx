@@ -2,9 +2,9 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Battery from "expo-battery";
 import * as Network from "expo-network";
 import { useRouter } from "expo-router";
-import { Audio } from "expo-av";
+import { AudioModule } from "expo-audio";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Linking, Pressable, ScrollView, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useLeadDetail } from "@/src/features/leads/queries";
@@ -16,6 +16,7 @@ import {
   type CheckStatus,
 } from "../components/checklist-item";
 import { ConsentPrompt } from "../components/consent-prompt";
+import { DiscBriefingCard } from "../components/disc-briefing-card";
 import { StatePicker } from "../components/state-picker";
 import { useSuggestedState } from "../hooks/use-suggested-state";
 import {
@@ -60,13 +61,13 @@ export function PreSessionScreen({ leadId }: Props) {
       }
     })();
     (async () => {
-      const current = await Audio.getPermissionsAsync();
-      if (current.status === "granted") {
+      const current = await AudioModule.getRecordingPermissionsAsync();
+      if (current.granted) {
         if (mounted) setMicStatus("ok");
         return;
       }
-      const { status } = await Audio.requestPermissionsAsync();
-      if (mounted) setMicStatus(status === "granted" ? "ok" : "fail");
+      const res = await AudioModule.requestRecordingPermissionsAsync();
+      if (mounted) setMicStatus(res.granted ? "ok" : "fail");
     })();
     return () => {
       mounted = false;
@@ -194,6 +195,13 @@ export function PreSessionScreen({ leadId }: Props) {
 
       <ScrollView contentContainerClassName="px-4 pb-10 pt-4 md:px-8 gap-4">
         <View className="mx-auto w-full max-w-2xl gap-4">
+          {lead?.intelligence?.disc_primary ? (
+            <DiscBriefingCard
+              primary={lead.intelligence.disc_primary}
+              confidence={lead.intelligence.disc_confidence}
+            />
+          ) : null}
+
           <View className="gap-2">
             <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
               Visit state
@@ -237,6 +245,17 @@ export function PreSessionScreen({ leadId }: Props) {
             title="Microphone access"
             detail={micDetail}
           />
+          {micStatus === "fail" ? (
+            <Pressable
+              onPress={() => Linking.openSettings().catch(() => {})}
+              className="flex-row items-center justify-center gap-2 rounded-sm border border-red-200 bg-red-50 px-4 py-2.5 active:bg-red-100"
+            >
+              <Ionicons name="settings-outline" size={16} color="#b91c1c" />
+              <Text className="text-sm font-semibold text-red-700">
+                Open settings to enable microphone
+              </Text>
+            </Pressable>
+          ) : null}
 
           <View className="rounded-sm border border-surface-border bg-surface-raised p-4">
             <View className="flex-row items-center gap-2">

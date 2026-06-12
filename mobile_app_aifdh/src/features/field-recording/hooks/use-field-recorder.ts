@@ -1,10 +1,9 @@
-import { useCallback, useEffect } from "react";
+import { useCallback } from "react";
 import { Linking } from "react-native";
 import { useSyncExternalStore } from "react";
 
 import {
   clearError,
-  ensurePermission,
   getSnapshot,
   startRecording as startRecordingStore,
   stopRecording as stopRecordingStore,
@@ -13,12 +12,6 @@ import {
 
 export function useFieldRecorder() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-
-  useEffect(() => {
-    if (!snapshot.permissionGranted) {
-      ensurePermission();
-    }
-  }, [snapshot.permissionGranted]);
 
   const startRecording = useCallback(
     (leadId: string | null = null) => startRecordingStore(leadId),
@@ -37,6 +30,7 @@ export function useFieldRecorder() {
     uri: snapshot.uri,
     permissionGranted: snapshot.permissionGranted,
     error: snapshot.error,
+    metering: snapshot.metering,
     startRecording,
     stopRecording,
     clearError,

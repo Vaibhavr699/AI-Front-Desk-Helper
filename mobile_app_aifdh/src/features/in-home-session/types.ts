@@ -129,6 +129,7 @@ export type WsServerMessage =
   | { type: "checklist_update"; key: string; completed: boolean }
   | { type: "transcriber_error"; message: string }
   | { type: "chunk_ack"; seq: number }
+  | { type: "walkthrough_config"; walkthrough: { key: string; label: string }[] }
   | { type: "echo"; received?: unknown; binary?: boolean; bytes?: number };
 
 export type WsClientMessage =

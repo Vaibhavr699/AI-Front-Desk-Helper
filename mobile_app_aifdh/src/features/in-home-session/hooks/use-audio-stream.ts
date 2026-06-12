@@ -1,4 +1,10 @@
-import { Audio } from "expo-av";
+import {
+  AudioModule,
+  RecordingPresets,
+  setAudioModeAsync,
+  useAudioRecorder,
+  type RecordingOptions,
+} from "expo-audio";
 import * as FileSystem from "expo-file-system/legacy";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Vibration } from "react-native";
@@ -7,28 +13,12 @@ import { uploadSessionChunk } from "../api";
 import { clearSession, listChunks, persistChunk } from "../audio/session-chunk-store";
 import type { InHomeWsClient } from "../ws-client";
 
-const RECORDING_OPTIONS: Audio.RecordingOptions = {
+const RECORDING_OPTIONS: RecordingOptions = {
+  ...RecordingPresets.HIGH_QUALITY,
   isMeteringEnabled: false,
-  android: {
-    extension: ".m4a",
-    outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-    audioEncoder: Audio.AndroidAudioEncoder.AAC,
-    sampleRate: 44100,
-    numberOfChannels: 1,
-    bitRate: 96000,
-  },
-  ios: {
-    extension: ".m4a",
-    outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
-    audioQuality: Audio.IOSAudioQuality.MEDIUM,
-    sampleRate: 44100,
-    numberOfChannels: 1,
-    bitRate: 96000,
-  },
-  web: {
-    mimeType: "audio/webm",
-    bitsPerSecond: 96000,
-  },
+  sampleRate: 22050,
+  numberOfChannels: 1,
+  bitRate: 64000,
 };
 
 const CHUNK_INTERVAL_MS = 4000;
@@ -56,10 +46,10 @@ export function useAudioStream(
   wsClient: InHomeWsClient | null,
   sessionId: string,
 ): AudioStreamState {
+  const recorder = useAudioRecorder(RECORDING_OPTIONS);
   const [streaming, setStreaming] = useState(false);
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [error, setError] = useState(false);
-  const recordingRef = useRef<Audio.Recording | null>(null);
   const chunkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activeRef = useRef(false);
   const busyRef = useRef(false);
@@ -68,33 +58,19 @@ export function useAudioStream(
   const ackedRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
-    Audio.requestPermissionsAsync().then(({ granted }) => {
-      setPermissionGranted(granted);
-    });
+    AudioModule.requestRecordingPermissionsAsync()
+      .then((res) => setPermissionGranted(!!res.granted))
+      .catch(() => {});
   }, []);
 
-  const onRecordingStatus = useCallback((status: Audio.RecordingStatus) => {
-    if (!activeRef.current || busyRef.current) return;
-    if (status.canRecord && !status.isRecording) {
-      console.warn("[useAudioStream] recording stopped unexpectedly (interruption)");
-      setError(true);
-      setStreaming(false);
-      Vibration.vibrate([0, 200, 100, 200]);
-    }
-  }, []);
-
-  const createRecorder = useCallback(async (): Promise<boolean> => {
+  const beginSegment = useCallback(async (): Promise<boolean> => {
     try {
-      const { recording } = await Audio.Recording.createAsync(
-        RECORDING_OPTIONS,
-        onRecordingStatus,
-      );
-      recordingRef.current = recording;
+      await recorder.prepareToRecordAsync(RECORDING_OPTIONS);
+      recorder.record();
       failuresRef.current = 0;
       return true;
     } catch (err) {
-      console.warn("[useAudioStream] recorder create failed:", err);
-      recordingRef.current = null;
+      console.warn("[useAudioStream] segment start failed:", err);
       failuresRef.current += 1;
       if (failuresRef.current >= MAX_RESTART_ATTEMPTS) {
         setError(true);
@@ -103,7 +79,7 @@ export function useAudioStream(
       }
       return false;
     }
-  }, [onRecordingStatus]);
+  }, [recorder]);
 
   const startStreaming = useCallback(async () => {
     if (!permissionGranted || !wsClient) return;
@@ -115,16 +91,16 @@ export function useAudioStream(
     ackedRef.current = new Set();
 
     try {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
+      await setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: true,
+        shouldPlayInBackground: true,
       });
     } catch (err) {
       console.warn("[useAudioStream] audio mode failed:", err);
     }
 
-    const ok = await createRecorder();
+    const ok = await beginSegment();
     if (!ok) {
       activeRef.current = false;
       return;
@@ -132,13 +108,12 @@ export function useAudioStream(
     setStreaming(true);
 
     chunkTimerRef.current = setInterval(async () => {
-      if (busyRef.current || !recordingRef.current || !activeRef.current) return;
+      if (busyRef.current || !activeRef.current) return;
       busyRef.current = true;
-      const current = recordingRef.current;
       const seq = seqRef.current++;
       try {
-        await current.stopAndUnloadAsync();
-        const uri = current.getURI();
+        await recorder.stop();
+        const uri = recorder.uri;
         if (uri) {
           const stored = await persistChunk(sessionId, seq, uri);
           if (wsClient) {
@@ -150,18 +125,18 @@ export function useAudioStream(
           }
         }
         if (activeRef.current) {
-          await createRecorder();
+          await beginSegment();
         }
       } catch (err) {
         console.warn("[useAudioStream] chunk error:", err);
         if (activeRef.current) {
-          await createRecorder();
+          await beginSegment();
         }
       } finally {
         busyRef.current = false;
       }
     }, CHUNK_INTERVAL_MS);
-  }, [permissionGranted, wsClient, sessionId, createRecorder]);
+  }, [permissionGranted, wsClient, sessionId, beginSegment, recorder]);
 
   const stopStreaming = useCallback(async () => {
     activeRef.current = false;
@@ -169,24 +144,19 @@ export function useAudioStream(
       clearInterval(chunkTimerRef.current);
       chunkTimerRef.current = null;
     }
-    const current = recordingRef.current;
-    recordingRef.current = null;
-    if (current) {
-      try {
-        const status = await current.getStatusAsync();
-        if (status.canRecord || status.isRecording) {
-          await current.stopAndUnloadAsync();
-          const uri = current.getURI();
-          if (uri) {
-            const seq = seqRef.current++;
-            await persistChunk(sessionId, seq, uri);
-          }
+    try {
+      if (recorder.isRecording) {
+        await recorder.stop();
+        const uri = recorder.uri;
+        if (uri) {
+          const seq = seqRef.current++;
+          await persistChunk(sessionId, seq, uri);
         }
-      } catch {}
-    }
+      }
+    } catch {}
     busyRef.current = false;
     setStreaming(false);
-  }, [sessionId]);
+  }, [sessionId, recorder]);
 
   const markAcked = useCallback((seq: number) => {
     ackedRef.current.add(seq);

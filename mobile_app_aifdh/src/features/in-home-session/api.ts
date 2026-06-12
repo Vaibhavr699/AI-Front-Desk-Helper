@@ -1,4 +1,4 @@
-import { api } from "@/src/shared/api/client";
+import { api, authTokenHolder } from "@/src/shared/api/client";
 import { API_BASE_URL } from "@/src/config/env";
 
 import type {
@@ -73,6 +73,34 @@ export async function updateCuePreferences(
 ): Promise<{ cue_preferences: CuePreferences }> {
   const { data } = await api.patch("/rep/cue-settings", updates);
   return data;
+}
+
+export async function uploadSessionChunk(
+  sessionId: string,
+  seq: number,
+  uri: string,
+): Promise<void> {
+  const form = new FormData();
+  form.append("chunk", {
+    uri,
+    name: `${String(seq).padStart(6, "0")}.m4a`,
+    type: "audio/mp4",
+  } as any);
+  form.append("seq", String(seq));
+
+  const token = authTokenHolder.get();
+  const resp = await fetch(
+    `${API_BASE_URL}/api/rep/in-home/sessions/${sessionId}/chunks`,
+    {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    },
+  );
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ error: "Chunk upload failed" }));
+    throw new Error(err.error || "Chunk upload failed");
+  }
 }
 
 export function buildWsUrl(wsPath: string, sessionToken: string): string {

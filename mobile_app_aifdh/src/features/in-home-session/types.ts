@@ -128,6 +128,7 @@ export type WsServerMessage =
   | { type: "cue_audio"; cue_id: string; format: string; data: string }
   | { type: "checklist_update"; key: string; completed: boolean }
   | { type: "transcriber_error"; message: string }
+  | { type: "chunk_ack"; seq: number }
   | { type: "echo"; received?: unknown; binary?: boolean; bytes?: number };
 
 export type WsClientMessage =

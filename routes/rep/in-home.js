@@ -1,11 +1,82 @@
 "use strict";
 
 const express = require("express");
+const fs = require("fs");
+const multer = require("multer");
 const db = require("../../lib/db");
 const repAuth = require("../../lib/repAuth");
 const { repAuthChain } = require("../../lib/requireRep");
+const { stitchSession, cleanupWorkDir } = require("../../services/inHomeStitch");
+const { clearSession, chunkPath, sessionDir } = require("../../lib/inHomeChunkStore");
+const {
+  uploadToS3,
+  transcribeBuffer,
+  diarizeTranscript,
+} = require("../../services/fieldRecording");
+const { analyzeConversation } = require("../../lib/coachingEngine");
 
 const router = express.Router();
+const chunkUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
+
+async function processSessionRecording({ session, tenantId, repUserId }) {
+  let stitched = null;
+  try {
+    stitched = await stitchSession(session.id);
+    if (!stitched) return;
+
+    const convR = await db.query(
+      `INSERT INTO coaching_conversations
+         (tenant_id, source_type, rep_user_id, lead_id, duration_seconds)
+       VALUES ($1, 'in_home_session', $2, $3, $4)
+       RETURNING id`,
+      [tenantId, repUserId, session.lead_id || null, 0],
+    );
+    const conversationId = convR.rows[0].id;
+
+    await db.query(
+      `UPDATE in_home_sessions
+          SET coaching_conversation_id = $1
+        WHERE id = $2`,
+      [conversationId, session.id],
+    );
+
+    const s3Key = await uploadToS3(tenantId, conversationId, stitched.buffer, "m4a");
+    const result = await transcribeBuffer(stitched.buffer, "m4a");
+
+    let transcript = result.segments;
+    try {
+      const diarized = await diarizeTranscript(result.text);
+      if (diarized && diarized.length >= 2) transcript = diarized;
+    } catch (err) {
+      console.error("[inHomeStitch] diarization failed:", err.message);
+    }
+
+    await db.query(
+      `UPDATE coaching_conversations
+          SET transcript = $1::jsonb,
+              duration_seconds = COALESCE(NULLIF($2, 0), duration_seconds),
+              metadata = jsonb_build_object('s3_key', $3, 'in_home_session_id', $4),
+              updated_at = now()
+        WHERE id = $5`,
+      [JSON.stringify(transcript), result.duration, s3Key, session.id, conversationId],
+    );
+    await analyzeConversation({ conversationId });
+    console.log(
+      "[inHomeStitch] stored session=%s conversation=%s chunks=%s",
+      session.id,
+      conversationId,
+      stitched.chunkCount,
+    );
+  } catch (err) {
+    console.error("[inHomeStitch] processing failed session=%s: %s", session.id, err.message);
+  } finally {
+    if (stitched) cleanupWorkDir(stitched.workDir);
+    clearSession(session.id);
+  }
+}
 
 const VALID_NETWORK_MODES = new Set(["online", "degraded", "offline"]);
 
@@ -190,6 +261,14 @@ router.post("/end", ...repAuthChain, async (req, res) => {
     });
 
     res.json({ session: shapeSession(update.rows[0]) });
+
+    setImmediate(() => {
+      processSessionRecording({
+        session: update.rows[0],
+        tenantId: req.rep.tenant_id,
+        repUserId: req.rep.id,
+      });
+    });
   } catch (e) {
     console.error("[rep/in-home/end]", e);
     res.status(500).json({ error: "Server error" });
@@ -264,6 +343,39 @@ router.post(
       res.json({ session: shapeSession(r.rows[0]) });
     } catch (e) {
       console.error("[rep/in-home/sessions/:id/feedback]", e);
+      res.status(500).json({ error: "Server error" });
+    }
+  },
+);
+
+router.post(
+  "/sessions/:id/chunks",
+  ...repAuthChain,
+  chunkUpload.single("chunk"),
+  async (req, res) => {
+    try {
+      const seq = Number(req.body?.seq);
+      if (!Number.isInteger(seq) || seq < 0) {
+        return res.status(400).json({ error: "seq must be a non-negative integer" });
+      }
+      if (!req.file) {
+        return res.status(400).json({ error: "chunk file required" });
+      }
+      const r = await db.query(
+        `SELECT id FROM in_home_sessions
+          WHERE id = $1 AND user_id = $2 AND tenant_id = $3`,
+        [req.params.id, req.rep.id, req.rep.tenant_id],
+      );
+      if (!r.rows[0]) return res.status(404).json({ error: "Session not found" });
+
+      const dest = chunkPath(req.params.id, seq);
+      if (!fs.existsSync(dest)) {
+        fs.mkdirSync(sessionDir(req.params.id), { recursive: true });
+        fs.writeFileSync(dest, req.file.buffer);
+      }
+      res.json({ seq, stored: true });
+    } catch (e) {
+      console.error("[rep/in-home/sessions/:id/chunks]", e);
       res.status(500).json({ error: "Server error" });
     }
   },

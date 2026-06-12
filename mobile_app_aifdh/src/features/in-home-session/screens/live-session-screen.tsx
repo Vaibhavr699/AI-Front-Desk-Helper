@@ -59,7 +59,14 @@ export function LiveSessionScreen({ sessionId }: Props) {
   const startedAtRef = useRef<number>(Date.now());
   const [wsClient, setWsClient] = useState<InHomeWsClient | null>(null);
 
-  const { streaming, startStreaming, stopStreaming } = useAudioStream(wsClient);
+  const {
+    streaming,
+    error: streamError,
+    startStreaming,
+    stopStreaming,
+    markAcked,
+    flushUnacked,
+  } = useAudioStream(wsClient, sessionId);
 
   useEffect(() => {
     if (data?.session?.started_at) {
@@ -84,6 +91,10 @@ export function LiveSessionScreen({ sessionId }: Props) {
           cueAudio.play(msg.data);
           break;
         }
+        case "chunk_ack": {
+          markAcked(msg.seq);
+          break;
+        }
         case "disc_update":
           setDisc(msg.reading);
           break;
@@ -101,7 +112,7 @@ export function LiveSessionScreen({ sessionId }: Props) {
           break;
       }
     },
-    [sendCueToWatch, cueAudio],
+    [sendCueToWatch, cueAudio, markAcked],
   );
 
   useEffect(() => {
@@ -164,6 +175,7 @@ export function LiveSessionScreen({ sessionId }: Props) {
           onPress: async () => {
             try {
               await stopStreaming();
+              await flushUnacked();
               clearWatch();
               await end.mutateAsync({ sessionId, outcome: "completed" });
               wsRef.current?.close();
@@ -191,6 +203,15 @@ export function LiveSessionScreen({ sessionId }: Props) {
   return (
     <SafeAreaView className="flex-1 bg-surface-base" edges={["top"]}>
       <CueOverlayBanner cue={activeCue} onDismiss={handleDismissCue} />
+      {streamError ? (
+        <View className="flex-row items-center gap-2 bg-red-600 px-4 py-2">
+          <Ionicons name="warning" size={16} color="#ffffff" />
+          <Text className="flex-1 text-xs font-semibold text-white">
+            Recording stopped unexpectedly. Tap End and restart the session to
+            keep capturing.
+          </Text>
+        </View>
+      ) : null}
       <Header
         timer={timer}
         wsStatus={wsStatus}

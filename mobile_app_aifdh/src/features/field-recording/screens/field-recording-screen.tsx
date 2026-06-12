@@ -17,6 +17,7 @@ import { StatePicker } from "@/src/features/in-home-session/components/state-pic
 import { PendingUploadsBanner } from "../offline/components/pending-uploads-banner";
 import { enqueueRecording } from "../offline/recording-queue";
 import { triggerSync } from "../offline/sync-manager";
+import { LevelBars } from "../components/level-bars";
 import { OrphanRecoveryBanner } from "../recorder/orphan-recovery-banner";
 import { useFieldRecorder } from "../hooks/use-field-recorder";
 
@@ -30,6 +31,7 @@ export function FieldRecordingScreen() {
     duration,
     permissionGranted,
     error: recorderError,
+    metering,
     startRecording,
     stopRecording,
     openSettings,
@@ -165,6 +167,7 @@ export function FieldRecordingScreen() {
               <View className="h-5 w-5 rounded-sm bg-red-500" />
             </View>
             <Text className="font-mono text-5xl font-bold tabular-nums text-ink-primary">{timer}</Text>
+            <LevelBars level={metering} />
             <Text className="text-sm text-ink-muted">Recording in progress...</Text>
             <Pressable
               onPress={handleStop}

@@ -96,6 +96,18 @@ export function LiveSessionScreen({ sessionId }: Props) {
           markAcked(msg.seq);
           break;
         }
+        case "walkthrough_config": {
+          if (Array.isArray(msg.walkthrough) && msg.walkthrough.length > 0) {
+            setWalkthrough(
+              msg.walkthrough.map((s) => ({
+                key: s.key,
+                label: s.label,
+                completed: false,
+              })),
+            );
+          }
+          break;
+        }
         case "disc_update":
           setDisc(msg.reading);
           break;

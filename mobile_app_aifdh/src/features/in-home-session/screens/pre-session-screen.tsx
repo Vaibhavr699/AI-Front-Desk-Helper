@@ -17,6 +17,7 @@ import {
 } from "../components/checklist-item";
 import { ConsentPrompt } from "../components/consent-prompt";
 import { StatePicker } from "../components/state-picker";
+import { useSuggestedState } from "../hooks/use-suggested-state";
 import {
   consentScriptFor,
   isTwoPartyConsentState,
@@ -72,11 +73,19 @@ export function PreSessionScreen({ leadId }: Props) {
     };
   }, []);
 
+  const { suggested: gpsState } = useSuggestedState();
+
   useEffect(() => {
-    if (profile?.home_state) {
+    if (gpsState) {
+      setStateCode((cur) => cur ?? gpsState);
+    }
+  }, [gpsState]);
+
+  useEffect(() => {
+    if (profile?.home_state && !gpsState) {
       setStateCode((cur) => cur ?? profile.home_state ?? null);
     }
-  }, [profile?.home_state]);
+  }, [profile?.home_state, gpsState]);
 
   const networkStatus: CheckStatus =
     networkConnected == null

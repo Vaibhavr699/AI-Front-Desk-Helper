@@ -5123,8 +5123,6 @@ Thanks!`;
                   </div>
                 </div>
               )}
-            </div>
-          )} 
 
           {activeTab === "plans" && (
              <div className="space-y-8">

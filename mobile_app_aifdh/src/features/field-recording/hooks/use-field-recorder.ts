@@ -43,7 +43,11 @@ export function useFieldRecorder() {
 
   const startRecording = useCallback(async () => {
     if (!permissionGranted) return;
-    await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: true,
+      playsInSilentModeIOS: true,
+      staysActiveInBackground: true,
+    });
     const rec = new Audio.Recording();
     await rec.prepareToRecordAsync(RECORDING_OPTIONS);
     await rec.startAsync();

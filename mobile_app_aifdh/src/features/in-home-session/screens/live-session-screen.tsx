@@ -140,6 +140,24 @@ export function LiveSessionScreen({ sessionId }: Props) {
     }
   }, [wsStatus, streaming, startStreaming]);
 
+  const consentCueShownRef = useRef(false);
+  useEffect(() => {
+    if (!streaming || consentCueShownRef.current) return;
+    consentCueShownRef.current = true;
+    const cue: CoachingAlert = {
+      id: "consent-on-tape",
+      type: "warning",
+      urgency: "red",
+      headline: "Read the consent script now",
+      full_text:
+        "Recording has started. Read your consent line to the customer now so their agreement is captured on the recording.",
+      vibration: "double_tap",
+      fired_at: new Date().toISOString(),
+    };
+    setAlerts((prev) => [cue, ...prev]);
+    setActiveCue(cue);
+  }, [streaming]);
+
   useEffect(() => {
     const id = setInterval(() => {
       setElapsed(Math.floor((Date.now() - startedAtRef.current) / 1000));

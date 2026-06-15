@@ -650,6 +650,7 @@ app.use("/api/webhooks/thumbtack", require("./routes/thumbtackLeads"));
 app.use("/api/webhooks/yelp", require("./routes/yelpLeads"));
 app.use("/api/webhooks/networx", require("./routes/networxLeads"));
 app.use("/api/v1", require("./routes/v1"));
+app.use("/api/mcp", require("./routes/mcp"));
 app.use("/api/auth", authRoutes);
 // ── Phase 6 C: Rep mobile app routes ──
 // Mounted BEFORE the `/api` catch-all on L521 — /api/rep/auth/login + /totp

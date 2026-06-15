@@ -47,6 +47,7 @@ const router = express.Router();
 
 const bookingEngine = require("../lib/bookingEngine");
 const db = require("../lib/db");
+const { writeBookingVisibilityRow } = require("../lib/bookingVisibility");
 
 const DEFAULT_DURATION_MIN = 60;
 const DAY_SCAN_HORIZON = 14;
@@ -283,6 +284,17 @@ async function runCreateBooking(tenant, args, req) {
   }
 
   console.log("[mcp] BOOKED via MCP tenant=%s bookingId=%s date=%s time=%s", tenant.id, result.bookingId, date, time);
+
+  writeBookingVisibilityRow({
+    tenantId: tenant.id,
+    leadId: result.leadId,
+    bookingId: result.bookingId,
+    date, time,
+    contactName: String(args.name).slice(0, 120),
+    projectType: args.project_type || "",
+    source: "mcp",
+  });
+
   return toolText({ ok: true, booking_id: result.bookingId, lead_id: result.leadId, date, time });
 }
 

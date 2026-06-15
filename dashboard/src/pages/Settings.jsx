@@ -586,6 +586,11 @@ export default function Settings({ tenantId }) {
     cost_custom_percentage: null,
     pre_visit_sms_enabled: true,
     pre_visit_sms_recipient_phone: "",
+    // ── Booking notifications (owner alerts on every booking) ─────────
+    booking_notify_sms_enabled: true,
+    booking_notify_email_enabled: true,
+    booking_notify_sms_phone: "",
+    booking_notify_email: "",
     // ── Service Area (mig 068, May 14, 2026) ──────────────────
     // type: "none" | "states" | "radius" | "zips"
     // "none" = no boundary stored (NULL in DB); prompt rules skipped entirely.
@@ -756,6 +761,10 @@ export default function Settings({ tenantId }) {
         cost_custom_percentage: t.cost_custom_percentage ?? null,
         pre_visit_sms_enabled: t.pre_visit_sms_enabled !== false,
         pre_visit_sms_recipient_phone: t.pre_visit_sms_recipient_phone || "",
+        booking_notify_sms_enabled: t.booking_notify_sms_enabled !== false,
+        booking_notify_email_enabled: t.booking_notify_email_enabled !== false,
+        booking_notify_sms_phone: t.booking_notify_sms_phone || "",
+        booking_notify_email: t.booking_notify_email || "",
         // Service area (mig 068)
         service_area_type: t.service_area?.type || "none",
         service_area_states: t.service_area?.type === "states" ? (t.service_area.values || []) : [],
@@ -1368,8 +1377,12 @@ export default function Settings({ tenantId }) {
       estimator_pop_enabled: form.estimator_pop_enabled,
       cost_region: form.cost_region || null,
       cost_custom_percentage: form.cost_region === "custom" ? form.cost_custom_percentage : null,
-      pre_visit_sms_enabled: form.pre_visit_sms_enabled,
-      pre_visit_sms_recipient_phone: form.pre_visit_sms_recipient_phone.trim() || null
+     pre_visit_sms_enabled: form.pre_visit_sms_enabled,
+      pre_visit_sms_recipient_phone: form.pre_visit_sms_recipient_phone.trim() || null,
+      booking_notify_sms_enabled: form.booking_notify_sms_enabled,
+      booking_notify_email_enabled: form.booking_notify_email_enabled,
+      booking_notify_sms_phone: form.booking_notify_sms_phone.trim() || null,
+      booking_notify_email: form.booking_notify_email.trim() || null
     };
 
     if (form.facebook_page_access_token) payload.facebook_page_access_token = form.facebook_page_access_token;
@@ -3578,6 +3591,106 @@ export default function Settings({ tenantId }) {
                     </p>
                   </div>
                 )}
+              </section>
+              {/* ─────────────────────────────────────────────────────────────
+                   8. Booking notifications (owner alerts, Jun 15, 2026)
+                   Text + email the owner whenever ANY booking lands (every
+                   channel: voice, SMS, widget, API, MCP, public page).
+                   ───────────────────────────────────────────────────────────── */}
+              <section className="pt-4 border-t border-gray-100">
+                <div className="mb-4">
+                  <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
+                    <Mail className="w-4 h-4 text-primary" />
+                    Booking notifications
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1 leading-relaxed max-w-xl">
+                    Get a text and/or email the moment a new appointment is booked —
+                    from any channel (phone, text, website, or AI assistant). Leave a
+                    field blank or toggle it off to skip that channel.
+                  </p>
+                </div>
+
+                <div className="space-y-5">
+                  {/* SMS row */}
+                  <div className="p-4 bg-gray-50 border border-gray-200 rounded-2xl">
+                    <div className="flex items-start justify-between gap-4 mb-3">
+                      <div className="flex items-center gap-2">
+                        <MessageSquare className="w-4 h-4 text-primary" />
+                        <span className="text-sm font-black text-gray-900">Text me</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateForm("booking_notify_sms_enabled", !form.booking_notify_sms_enabled)}
+                        className={`relative w-12 h-7 rounded-full transition-colors shrink-0 ${
+                          form.booking_notify_sms_enabled ? "bg-gray-900" : "bg-gray-300"
+                        }`}
+                        aria-pressed={form.booking_notify_sms_enabled}
+                        aria-label="Toggle booking SMS notifications"
+                      >
+                        <div className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${
+                          form.booking_notify_sms_enabled ? "translate-x-5" : "translate-x-0.5"
+                        }`} />
+                      </button>
+                    </div>
+                    {form.booking_notify_sms_enabled && (
+                      <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                        <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-2">
+                          Phone for booking texts
+                        </label>
+                        <input
+                          type="tel"
+                          value={form.booking_notify_sms_phone}
+                          onChange={(e) => handleUpdateForm("booking_notify_sms_phone", e.target.value)}
+                          placeholder="+1 (402) 555-1234"
+                          className="w-full md:max-w-sm px-4 py-3 bg-white border border-slate-200 rounded-xl font-mono text-sm focus:ring-4 focus:ring-primary/5 transition-all outline-none placeholder:text-slate-400"
+                        />
+                        <p className="text-xs text-gray-500 mt-1.5 italic">
+                          Leave blank to turn off booking texts.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Email row */}
+                  <div className="p-4 bg-gray-50 border border-gray-200 rounded-2xl">
+                    <div className="flex items-start justify-between gap-4 mb-3">
+                      <div className="flex items-center gap-2">
+                        <Mail className="w-4 h-4 text-primary" />
+                        <span className="text-sm font-black text-gray-900">Email me</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleUpdateForm("booking_notify_email_enabled", !form.booking_notify_email_enabled)}
+                        className={`relative w-12 h-7 rounded-full transition-colors shrink-0 ${
+                          form.booking_notify_email_enabled ? "bg-gray-900" : "bg-gray-300"
+                        }`}
+                        aria-pressed={form.booking_notify_email_enabled}
+                        aria-label="Toggle booking email notifications"
+                      >
+                        <div className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform ${
+                          form.booking_notify_email_enabled ? "translate-x-5" : "translate-x-0.5"
+                        }`} />
+                      </button>
+                    </div>
+                    {form.booking_notify_email_enabled && (
+                      <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                        <label className="block text-xs font-black text-gray-500 uppercase tracking-widest mb-2">
+                          Email for booking alerts
+                        </label>
+                        <input
+                          type="email"
+                          value={form.booking_notify_email}
+                          onChange={(e) => handleUpdateForm("booking_notify_email", e.target.value)}
+                          placeholder="owner@yourcompany.com"
+                          className="w-full md:max-w-sm px-4 py-3 bg-white border border-slate-200 rounded-xl font-medium text-sm focus:ring-4 focus:ring-primary/5 transition-all outline-none placeholder:text-slate-400"
+                        />
+                        <p className="text-xs text-gray-500 mt-1.5 italic">
+                          Leave blank to turn off booking emails.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </section>
             </div>
           )}

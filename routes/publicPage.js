@@ -47,6 +47,7 @@ const router = express.Router();
 
 const bookingEngine = require("../lib/bookingEngine");
 const db = require("../lib/db");
+const { writeBookingVisibilityRow } = require("../lib/bookingVisibility");
 
 const DEFAULT_DURATION_MIN = 60;
 const DAY_SCAN_HORIZON = 14;
@@ -287,8 +288,10 @@ ${jsonLd}
   .ok { background:#e9f7ef; border:1px solid #b6e2c6; color:#1d6f42; padding:14px; border-radius:10px; }
   .err { background:#fdecec; border:1px solid #f3c0c0; color:#b3261e; padding:10px 12px; border-radius:9px; margin-top:10px; }
   footer { text-align:center; color:var(--muted); font-size:.8rem; margin-top:28px; }
-  /* honeypot — hidden from humans, bots fill it */
-  .hp { position:absolute; left:-9999px; width:1px; height:1px; overflow:hidden; }
+  /* honeypot — hidden from humans and assistive tech; real users never fill it.
+     Named/styled so browser autofill won't populate it (autofill targets
+     fields like name/email/company; an opaque name like hp_url is ignored). */
+  .hp { position:absolute; left:-9999px; top:-9999px; width:1px; height:1px; opacity:0; overflow:hidden; pointer-events:none; }
 </style>
 </head>
 <body>
@@ -328,8 +331,8 @@ ${jsonLd}
       </div>
       <label for="details">Project details (optional)</label>
       <input id="details" placeholder="e.g. exterior repaint, ~2000 sq ft">
-      <!-- honeypot -->
-      <div class="hp"><label>Leave this blank</label><input id="company" tabindex="-1" autocomplete="off"></div>
+      <!-- honeypot: hidden, no autofill-recognizable name, aria-hidden from screen readers -->
+      <div class="hp" aria-hidden="true"><input id="hp_url" name="hp_url" type="text" tabindex="-1" autocomplete="off"></div>
       <div style="margin-top:16px"><button class="btn btn-primary" id="submitBtn">Confirm booking</button></div>
       <div id="formMsg"></div>
     </div>
@@ -413,7 +416,7 @@ ${jsonLd}
       email: document.getElementById("email").value.trim(),
       address: document.getElementById("address").value.trim(),
       project_details: document.getElementById("details").value.trim(),
-      company: document.getElementById("company").value  // honeypot
+      hp_url: document.getElementById("hp_url").value  // honeypot
     };
     if (!payload.date || !payload.time) { showErr("Please pick a day and a time."); return; }
     if (!payload.name || !payload.phone) { showErr("Please enter your name and phone."); return; }
@@ -460,8 +463,9 @@ router.post("/:slugOrId/submit", async (req, res) => {
 
   const b = req.body || {};
 
-  // Honeypot: a real human leaves "company" blank; a bot fills every field.
-  if (b.company && String(b.company).trim() !== "") {
+  // Honeypot: a real human leaves hp_url blank; a bot fills every field.
+  // (Field is named opaquely + aria-hidden so browser autofill won't trip it.)
+  if (b.hp_url && String(b.hp_url).trim() !== "") {
     console.warn("[publicPage] honeypot tripped tenant=%s", tenant.id);
     // Pretend success so bots don't learn the trap; nothing is booked.
     return res.json({ ok: true, booking_id: null, lead_id: null });
@@ -514,6 +518,18 @@ router.post("/:slugOrId/submit", async (req, res) => {
 
   console.log("[publicPage] BOOKED via public page tenant=%s bookingId=%s date=%s time=%s",
     tenant.id, result.bookingId, date, time);
+
+  // Surface as a Conversations thread (the one thing the engine doesn't do).
+  writeBookingVisibilityRow({
+    tenantId: tenant.id,
+    leadId: result.leadId,
+    bookingId: result.bookingId,
+    date, time,
+    contactName: String(b.name).slice(0, 120),
+    projectType: b.project_type || "",
+    source: "public_page",
+  });
+
   return res.json({ ok: true, booking_id: result.bookingId, lead_id: result.leadId });
 });
 

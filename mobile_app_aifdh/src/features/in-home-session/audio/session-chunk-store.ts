@@ -34,6 +34,22 @@ export async function persistChunk(
   return dest;
 }
 
+export async function copyChunk(
+  sessionId: string,
+  seq: number,
+  srcUri: string,
+): Promise<{ uri: string; size: number }> {
+  await ensureDir(sessionId);
+  const dest = chunkUri(sessionId, seq);
+  await FileSystem.copyAsync({ from: srcUri, to: dest });
+  let size = 0;
+  try {
+    const info = await FileSystem.getInfoAsync(dest);
+    if (info.exists && typeof info.size === "number") size = info.size;
+  } catch {}
+  return { uri: dest, size };
+}
+
 export async function listChunks(sessionId: string): Promise<SessionChunk[]> {
   const dir = sessionDir(sessionId);
   const info = await FileSystem.getInfoAsync(dir);

@@ -10,8 +10,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Vibration } from "react-native";
 
 import { uploadSessionChunk } from "../api";
-import { clearSession, listChunks, persistChunk } from "../audio/session-chunk-store";
+import { clearSession, copyChunk, listChunks } from "../audio/session-chunk-store";
 import type { InHomeWsClient } from "../ws-client";
+
+const MIN_CHUNK_BYTES = 2000;
 
 const RECORDING_OPTIONS: RecordingOptions = {
   ...RecordingPresets.HIGH_QUALITY,
@@ -115,14 +117,22 @@ export function useAudioStream(
         await recorder.stop();
         const uri = recorder.uri;
         if (uri) {
-          const stored = await persistChunk(sessionId, seq, uri);
-          if (wsClient) {
+          // Copy (not move) so the recorder keeps its own file intact for the
+          // next segment, then verify the chunk actually has audio before
+          // sending — empty/tiny chunks would be silently dropped server-side.
+          const { uri: stored, size } = await copyChunk(sessionId, seq, uri);
+          console.log(`[useAudioStream] chunk seq=${seq} bytes=${size}`);
+          if (size >= MIN_CHUNK_BYTES && wsClient) {
             const b64 = await FileSystem.readAsStringAsync(stored, {
               encoding: FileSystem.EncodingType.Base64,
             });
             const body = decodeBase64(b64);
             wsClient.sendBinary(prefixSeq(seq, body));
+          } else if (size < MIN_CHUNK_BYTES) {
+            console.warn(`[useAudioStream] chunk seq=${seq} too small (${size}b), skipped`);
           }
+        } else {
+          console.warn(`[useAudioStream] chunk seq=${seq} had no uri after stop`);
         }
         if (activeRef.current) {
           await beginSegment();
@@ -150,7 +160,7 @@ export function useAudioStream(
         const uri = recorder.uri;
         if (uri) {
           const seq = seqRef.current++;
-          await persistChunk(sessionId, seq, uri);
+          await copyChunk(sessionId, seq, uri);
         }
       }
     } catch {}

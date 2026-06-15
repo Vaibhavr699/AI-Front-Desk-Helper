@@ -16,7 +16,9 @@
         "NSFaceIDUsageDescription": "AI Rep Coach uses Face ID to unlock the app on this device.",
         "NSMicrophoneUsageDescription": "AI Rep Coach records in-home sales conversations so they can be transcribed and coached.",
         "ITSAppUsesNonExemptEncryption": false,
-        "UIBackgroundModes": ["audio"],
+        "UIBackgroundModes": [
+          "audio"
+        ],
         "NSLocationWhenInUseUsageDescription": "AI Rep Coach uses your location only to suggest the correct visit state for recording-consent rules. You can always change it manually."
       }
     },
@@ -82,7 +84,9 @@
           "locationWhenInUsePermission": "AI Rep Coach uses your location only to suggest the correct visit state for recording-consent rules. You can always change it manually."
         }
       ],
-      "@bacons/apple-targets"
+      "@bacons/apple-targets",
+      "expo-asset",
+      "./plugins/withOptionalGps"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -128,12 +128,17 @@ function estimatorActive(tenant) {
 function readProfile(tenant) {
   const pick = (...keys) => {
     for (const k of keys) {
-      if (tenant[k] != null && String(tenant[k]).trim() !== "") return String(tenant[k]).trim();
+      const v = tenant[k];
+      // Only accept primitive string/number values; skip objects/arrays
+      // (e.g. service_area stored as JSON) so we never render "[object Object]".
+      if (v == null) continue;
+      if (typeof v === "object") continue;
+      if (String(v).trim() !== "") return String(v).trim();
     }
     return "";
   };
   return {
-    name: pick("name", "business_name", "company_name") || "This Business",
+    name: pick("company_name", "name", "business_name") || "This Business",
     phone: pick("business_phone", "company_phone", "phone", "twilio_number", "phone_number"),
     email: pick("support_email", "business_email", "contact_email"),
     website: pick("website", "website_url", "company_website"),
@@ -143,6 +148,7 @@ function readProfile(tenant) {
     postal: pick("zip", "postal_code", "business_zip"),
     serviceArea: pick("service_area", "service_area_text"),
     description: pick("business_description", "description", "tagline"),
+    brandColor: pick("brand_color") || "#1f6feb",
     timezone: tenant.timezone || "America/Chicago",
   };
 }
@@ -239,7 +245,7 @@ router.get("/:slugOrId", async (req, res) => {
       <section class="card">
         <h2>Get an instant quote</h2>
         <p>Want a ballpark price first? Get an instant estimate online — takes about a minute.</p>
-        <a class="btn btn-secondary" href="/?tenant=${encodeURIComponent(tenant.id)}#quote">Get an instant quote</a>
+        <a class="btn btn-secondary" href="/q/${encodeURIComponent(tenant.id)}">Get an instant quote</a>
       </section>` : "";
 
   const html = `<!doctype html>
@@ -257,7 +263,7 @@ router.get("/:slugOrId", async (req, res) => {
 ${jsonLd}
 </script>
 <style>
-  :root { --ink:#14202b; --muted:#5b6b78; --line:#e4e9ee; --brand:#1f6feb; --bg:#f6f8fa; }
+  :root { --ink:#14202b; --muted:#5b6b78; --line:#e4e9ee; --brand:${esc(profile.brandColor)}; --bg:#f6f8fa; }
   * { box-sizing: border-box; }
   body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color:var(--ink); background:var(--bg); }
   .wrap { max-width: 760px; margin: 0 auto; padding: 28px 18px 60px; }

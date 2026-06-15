@@ -39,6 +39,7 @@ const router = express.Router();
 
 const bookingEngine = require("../lib/bookingEngine");
 const db = require("../lib/db");
+const { writeBookingVisibilityRow } = require("../lib/bookingVisibility");
 
 // Same horizon logic as the SMS picker, for the "no date given" availability scan.
 const DAY_SCAN_HORIZON = 14;   // look up to 14 days out
@@ -288,6 +289,17 @@ router.post("/booking/:tenantId", async (req, res) => {
   }
 
   console.log("[v1] BOOKED via API tenant=%s bookingId=%s date=%s time=%s", tenant.id, result.bookingId, date, time);
+
+  writeBookingVisibilityRow({
+    tenantId: tenant.id,
+    leadId: result.leadId,
+    bookingId: result.bookingId,
+    date, time,
+    contactName: String(contact.name).slice(0, 120),
+    projectType: body.project_type || "",
+    source: "api",
+  });
+
   return res.json({
     ok: true,
     booking_id: result.bookingId,

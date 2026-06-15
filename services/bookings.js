@@ -11,6 +11,7 @@ const notificationService = require("./notifications");
 const { getLast10Digits, normalizeE164Phone } = require("../lib/phone");
 const leadsService = require("./leads");
 const pushNotifications = require("./pushNotifications");
+const ownerBookingAlert = require("../lib/ownerBookingAlert");
 
 /** Normalize and validate booking payload from AI (handles camelCase, extra fields, bad dates). */
 function normalizeBookingData(data, isUpdate = false) {
@@ -240,6 +241,14 @@ async function createBooking(tenantId, callId, data, leadId = null, leadSource =
   }
 
   const tenant = await getTenantById(tenantId);
+
+  // 📲 Owner text + email alert (Jun 15, 2026) — fires for every channel since
+  // every booking flows through createBooking. Best-effort, never blocks.
+  if (tenant) {
+    ownerBookingAlert.notifyOwnerOfBooking(tenant, booking)
+      .catch((e) => console.error("[AI-Desk] owner booking alert failed:", e.message));
+  }
+
   let crmSynced = false;
   try {
     const syncResult = await crm.syncBookingToCrm(tenantId, booking);

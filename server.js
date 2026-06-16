@@ -192,6 +192,7 @@ const LEAD_CAPTURE_FIELDS = [
   "timeline",
   "appointment_date",
   "appointment_time"
+  "estimated_value"
 ];
 
 function isValidE164(phone) {

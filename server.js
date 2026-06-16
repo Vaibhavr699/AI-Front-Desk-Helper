@@ -175,6 +175,63 @@ require("node-cron").schedule("0 2 * * *", async () => {
 });
 console.log("[startup] repSharingScorer cron scheduled (0 2 * * *)");
 
+// Branded booking domain — verification poller (Jun 16, 2026)
+// Polls Render for any tenant whose booking_domain_status='verifying'.
+// Once Render reports the domain verified (cert issued), flips to 'active'
+// and stamps booking_domain_verified_at. Runs every 10 minutes.
+const renderDomains = require("./lib/renderDomains");
+require("node-cron").schedule("*/10 * * * *", async () => {
+  try {
+    const { rows } = await db.query(
+      `SELECT id, booking_domain, booking_domain_render_id
+         FROM tenants
+        WHERE booking_domain_status = 'verifying'
+          AND booking_domain IS NOT NULL
+        LIMIT 50`
+    );
+    if (rows.length === 0) return;
+    console.log("[bookingDomainPoller] checking %d verifying domain(s)", rows.length);
+
+    for (const t of rows) {
+      try {
+        const s = await renderDomains.getDomainStatus(t.booking_domain);
+        if (!s.ok) {
+          console.warn("[bookingDomainPoller] status check failed tenant=%s host=%s reason=%s",
+            t.id, t.booking_domain, s.reason);
+          continue;
+        }
+        if (!s.found) {
+          // Render no longer lists it — domain was removed on Render's side.
+          console.warn("[bookingDomainPoller] domain not found on Render tenant=%s host=%s",
+            t.id, t.booking_domain);
+          continue;
+        }
+        // Render verificationStatus is "verified" once DNS + cert are done.
+        const vs = String(s.verificationStatus || "").toLowerCase();
+        if (vs === "verified") {
+          await db.query(
+            `UPDATE tenants
+                SET booking_domain_status = 'active',
+                    booking_domain_verified_at = now(),
+                    updated_at = now()
+              WHERE id = $1 AND booking_domain_status = 'verifying'`,
+            [t.id]
+          );
+          console.log("[bookingDomainPoller] ACTIVE tenant=%s host=%s 🎉", t.id, t.booking_domain);
+        } else {
+          console.log("[bookingDomainPoller] still pending tenant=%s host=%s status=%s",
+            t.id, t.booking_domain, s.verificationStatus || "(none)");
+        }
+      } catch (inner) {
+        console.error("[bookingDomainPoller] tenant=%s error=%s", t.id, inner.message);
+      }
+    }
+  } catch (e) {
+    console.error("[bookingDomainPoller] cron tick error:", e.message);
+  }
+});
+console.log("[startup] bookingDomainPoller cron scheduled (*/10 * * * *)");
+
 const auditLogsRouter = require("./routes/auditLogs");
 const { resolveHostnameToTenant } = require("./lib/hostnameResolver");
 

@@ -3580,4 +3580,167 @@ router.get("/roi-summary", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
+// ═════════════════════════════════════════════════════════════════════════
+// BRANDED BOOKING DOMAIN (Jun 16, 2026)
+// Register / check / remove a tenant's branded booking subdomain
+// (e.g. book.gladiatorspainting.com → serves routes/publicPage.js at "/").
+//
+// booking_domain is set ONLY here, never via the generic PATCH /tenants/:id
+// allowlist — registering it requires a Render API call, so DB-write and
+// Render-attach happen together or not at all. This keeps the DB column and
+// Render's accepted-hosts list from drifting.
+//
+// Flow: POST register → validate host, call Render add-domain, store
+// render_id + status='verifying'. A cron (verification poller) flips status
+// to 'active' once Render reports verified + cert issued. The tenant adds a
+// CNAME (book → ai-front-desk-backend.onrender.com) at their registrar.
+// ═════════════════════════════════════════════════════════════════════════
+
+const renderDomains = require("../lib/renderDomains");
+
+// Hostname validation: a real DNS hostname, lowercase, no scheme/path/port.
+// We require at least one dot (a subdomain or apex), reject our own domains
+// and onrender.com, and cap length. Returns { ok, host } | { ok:false, error }.
+function validateBookingHost(raw) {
+  let h = String(raw || "").trim().toLowerCase();
+  if (!h) return { ok: false, error: "Domain is required" };
+  // Strip accidental scheme / trailing slash / path the user may paste.
+  h = h.replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/:\d+$/, "");
+  if (h.length > 253) return { ok: false, error: "Domain is too long" };
+  // RFC-ish hostname check: labels of a-z0-9-, dot-separated, TLD ≥2 alpha.
+  if (!/^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/.test(h)) {
+    return { ok: false, error: "Enter a valid domain like book.yourcompany.com" };
+  }
+  if (h.endsWith(".onrender.com")) {
+    return { ok: false, error: "Use your own domain, not an onrender.com address" };
+  }
+  if (h === "aifrontdeskhelper.com" || h.endsWith(".aifrontdeskhelper.com")) {
+    return { ok: false, error: "That domain isn't available" };
+  }
+  return { ok: true, host: h };
+}
+
+// POST /tenants/:id/booking-domain  { domain }
+// Registers (or replaces) the tenant's branded booking domain.
+router.post("/tenants/:id/booking-domain", async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    // Ownership / permission gate — same shape as reset-api-key.
+    const checkResult = await db.query("SELECT parent_id, booking_domain FROM tenants WHERE id = $1", [id]);
+    const targetTenant = checkResult.rows[0];
+    if (!targetTenant) return res.status(404).json({ error: "Tenant not found" });
+    if (req.user?.tenant_id && req.user.tenant_id !== id && !req.user.is_super_admin) {
+      if (req.user.tenant_business_type !== "parent" || targetTenant.parent_id !== req.user.tenant_id) {
+        return res.status(403).json({ error: "Forbidden — insufficient permissions for this location" });
+      }
+    }
+
+    const v = validateBookingHost(req.body?.domain);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    const host = v.host;
+
+    // Reject if another tenant already claimed this host (the partial unique
+    // index also enforces this at the DB level — this is the friendly 409).
+    const taken = await db.query(
+      "SELECT id FROM tenants WHERE booking_domain = $1 AND id <> $2 LIMIT 1",
+      [host, id]
+    );
+    if (taken.rows.length > 0) {
+      return res.status(409).json({ error: "That domain is already registered to another business." });
+    }
+
+    // Call Render to attach the custom domain to the backend service.
+    const r = await renderDomains.addCustomDomain(host);
+    if (!r.ok) {
+      if (r.reason === "render_not_configured") {
+        return res.status(503).json({ error: "Domain provisioning isn't configured. Contact support." });
+      }
+      if (r.reason === "already_added") {
+        // Render already has it (e.g. a prior attempt). Re-fetch its id/status
+        // so we can still record it on our side rather than dead-end.
+        const s = await renderDomains.getDomainStatus(host);
+        if (s.ok && s.found) {
+          await db.query(
+            `UPDATE tenants SET booking_domain = $1, booking_domain_render_id = $2,
+                    booking_domain_status = 'verifying', booking_domain_verified_at = NULL,
+                    updated_at = now() WHERE id = $3`,
+            [host, s.id || null, id]
+          );
+          return res.json({ ok: true, domain: host, status: "verifying", reattached: true });
+        }
+        return res.status(409).json({ error: "That domain is already attached elsewhere in Render. Contact support." });
+      }
+      if (r.reason === "payment_required") {
+        return res.status(402).json({ error: "Adding this domain requires a billing update on the platform. Contact support." });
+      }
+      console.error("[bookingDomain] Render add failed tenant=%s host=%s reason=%s", id, host, r.reason);
+      return res.status(502).json({ error: "Could not register the domain right now. Please try again shortly." });
+    }
+
+    // Persist: store the host, Render's domain id, mark verifying.
+    await db.query(
+      `UPDATE tenants SET booking_domain = $1, booking_domain_render_id = $2,
+              booking_domain_status = 'verifying', booking_domain_verified_at = NULL,
+              updated_at = now() WHERE id = $3`,
+      [host, r.id || null, id]
+    );
+
+    await logAction({
+      tenant_id: String(id),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "booking_domain_registered",
+      entity_type: "tenant",
+      entity_id: String(id),
+      new_value: { booking_domain: host, render_id: r.id || null },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
+
+    console.log("[bookingDomain] registered tenant=%s host=%s renderId=%s", id, host, r.id || "(none)");
+
+    // The CNAME instruction the tenant must set at their registrar.
+    const cnameTarget = (process.env.BOOKING_DOMAIN_CNAME_TARGET || "ai-front-desk-backend.onrender.com");
+    return res.json({
+      ok: true,
+      domain: host,
+      status: "verifying",
+      dns_instructions: {
+        type: "CNAME",
+        host: host.split(".")[0],   // e.g. "book"
+        points_to: cnameTarget,
+        note: "Add this CNAME at your domain registrar. Verification can take a few minutes to an hour after DNS propagates.",
+      },
+    });
+  } catch (e) {
+    // Unique-index violation (race: two requests, same host) → friendly 409.
+    if (e.code === "23505") {
+      return res.status(409).json({ error: "That domain is already registered." });
+    }
+    console.error("[bookingDomain] register error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// GET /tenants/:id/booking-domain  → current status (for the Settings UI to poll)
+router.get("/tenants/:id/booking-domain", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const r = await db.query(
+      "SELECT booking_domain, booking_domain_status, booking_domain_verified_at FROM tenants WHERE id = $1",
+      [id]
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: "Tenant not found" });
+    res.json({
+      ok: true,
+      domain: r.rows[0].booking_domain,
+      status: r.rows[0].booking_domain_status || "none",
+      verified_at: r.rows[0].booking_domain_verified_at,
+    });
+  } catch (e) {
+    console.error("[bookingDomain] status error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
 module.exports = router;

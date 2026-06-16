@@ -4585,7 +4585,7 @@ Thanks!`;
           >
             <CopyIcon className="w-4 h-4" />
           </button>
-          
+          <a
             href={bookingUrl}
             target="_blank"
             rel="noopener noreferrer"

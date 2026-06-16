@@ -4522,6 +4522,89 @@ Thanks!`;
                     </p>
                   </div>
                 </div>
+                {/* Booking Page — public SSR page, AI-readable, branded-domain aware */}
+{tenant?.id && (() => {
+  // Prefer the branded domain when it's live; otherwise the /book/slug URL.
+  const bookingUrl =
+    tenant?.booking_domain && tenant?.booking_domain_status === "active"
+      ? `https://${tenant.booking_domain}/`
+      : `${import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}/book/${tenant?.slug || tenant?.id}`;
+  const isBranded = !!(tenant?.booking_domain && tenant?.booking_domain_status === "active");
+
+  return (
+    <div className="mt-8 bg-gradient-to-br from-blue-50 to-blue-50/30 border-2 border-blue-200 rounded-2xl p-6">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
+          <CalendarDays className="w-5 h-5 text-blue-600" />
+        </div>
+        <div>
+          <h4 className="font-bold text-blue-900 flex items-center gap-2 flex-wrap">
+            Your Booking Page
+            <span className="px-2 py-0.5 bg-blue-600 text-white text-[9px] font-black uppercase tracking-widest rounded-md">
+              {isBranded ? "Branded domain live" : "Live"}
+            </span>
+          </h4>
+          <p className="text-xs text-blue-800/70 font-medium">A standalone page where customers book appointments directly.</p>
+        </div>
+      </div>
+
+      <p className="text-sm text-gray-700 leading-relaxed mb-4">
+        This is your own booking page — customers pick a day and time and book in one tap, and every booking flows
+        straight into your dashboard and triggers your notifications. Link it from the <strong>"Book"</strong> or
+        <strong> "Schedule"</strong> button on your website, or send it directly to customers. Because the page is
+        built with structured business data baked in, search engines and AI assistants that browse the web can read
+        and understand what you offer — which can help customers find you.
+      </p>
+
+      {/* What it does */}
+      <div className="mb-5 p-4 bg-white/70 border border-blue-100 rounded-xl">
+        <p className="text-[10px] font-black text-blue-700 uppercase tracking-widest mb-2">What it does</p>
+        <ol className="space-y-1.5 text-xs text-blue-900">
+          <li className="flex gap-2"><span className="font-black text-blue-600">1.</span> Customer opens your booking page from your website or a link you send</li>
+          <li className="flex gap-2"><span className="font-black text-blue-600">2.</span> They pick an available day and time and enter their details</li>
+          <li className="flex gap-2"><span className="font-black text-blue-600">3.</span> The appointment books instantly and lands in your dashboard</li>
+          <li className="flex gap-2"><span className="font-black text-blue-600">4.</span> You get a text and/or email the moment it's booked</li>
+        </ol>
+      </div>
+
+      {/* The URL + copy + open */}
+      <div className="space-y-2">
+        <p className="text-[10px] font-black text-blue-700 uppercase tracking-widest">Your booking page link</p>
+        <div className="flex items-center gap-2">
+          <div className="flex-1 p-3 bg-white border border-blue-100 rounded-xl font-mono text-[11px] text-gray-800 break-all select-all">
+            {bookingUrl}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              navigator.clipboard.writeText(bookingUrl);
+              success("Booking page link copied!");
+            }}
+            className="p-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-lg shadow-blue-600/20 transition-all active:scale-95 shrink-0"
+            title="Copy link"
+          >
+            <CopyIcon className="w-4 h-4" />
+          </button>
+          
+            href={bookingUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="p-3 bg-white border border-blue-200 text-blue-600 rounded-xl hover:bg-blue-50 transition-colors shrink-0"
+            title="Open booking page"
+          >
+            <ExternalLink className="w-4 h-4" />
+          </a>
+        </div>
+        {!isBranded && (
+          <p className="text-[10px] text-gray-500 italic leading-relaxed pt-1">
+            💡 Want this on your own domain (e.g. <span className="font-mono">book.yourcompany.com</span>) instead?
+            That's available as a branded-domain upgrade — ask us to set it up.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+})()}
               </div>
       
               {/* Twilio */}

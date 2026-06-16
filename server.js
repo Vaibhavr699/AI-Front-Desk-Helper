@@ -448,6 +448,38 @@ app.use(express.json({ limit: "2mb" }));
 // Non-blocking: null for our own domain / dev / unmatched hosts.
 app.use(resolveHostnameToTenant);
 
+// ─── Booking-domain → tenant resolution (Phase 13.6, Jun 16, 2026) ────
+// Sibling to resolveHostnameToTenant. Sets req.bookingTenantFromHost when the
+// request host matches an ACTIVE booking_domain. Non-blocking: null for our
+// own domain, dev hosts, Render hosts, and any unmatched host. Skips the DB
+// hit for hosts that can't be a branded booking domain.
+const BOOKING_DEFAULT_HOSTS = new Set([
+  "aifrontdeskhelper.com", "www.aifrontdeskhelper.com",
+  "localhost", "127.0.0.1", "0.0.0.0",
+]);
+app.use(async (req, res, next) => {
+  req.bookingTenantFromHost = null;
+  try {
+    const host = (req.hostname || "").toLowerCase();
+    if (!host || BOOKING_DEFAULT_HOSTS.has(host) || host.endsWith(".onrender.com")) {
+      return next();
+    }
+    const result = await db.query(
+      `SELECT * FROM tenants
+        WHERE booking_domain = $1
+          AND booking_domain_status = 'active'
+        LIMIT 1`,
+      [host]
+    );
+    if (result.rows.length > 0) {
+      req.bookingTenantFromHost = result.rows[0];
+    }
+  } catch (e) {
+    console.error("[bookingHostResolver] DB error:", e.message);
+  }
+  next();
+});
+
 // CORS: allow frontend origin (e.g. dashboard :3089 → API :3001).
 const BASE_URL_FOR_CORS = process.env.BASE_URL || "";
 app.use(
@@ -709,7 +741,29 @@ app.use("/api/webhooks/yelp", require("./routes/yelpLeads"));
 app.use("/api/webhooks/networx", require("./routes/networxLeads"));
 app.use("/api/v1", require("./routes/v1"));
 app.use("/api/mcp", require("./routes/mcp"));
-app.use("/book", require("./routes/publicPage"));
+// Branded booking domain (Phase 13.6, Jun 16, 2026).
+// When a request arrives on an active branded booking host, serve the booking
+// page at "/" and accept the booking POST at /submit-booking — both reusing
+// publicPage's render + submit handlers so there's one code path. These must
+// sit BEFORE the /book mount, the API-root GET "/", and the SPA catch-all.
+const publicPageModule = require("./routes/publicPage");
+app.get("/", (req, res, next) => {
+  if (!req.bookingTenantFromHost) return next();  // not a branded host → normal routing
+  const proto = req.get("x-forwarded-proto") || req.protocol || "https";
+  const host = req.get("host");
+  const tenant = req.bookingTenantFromHost;
+  const html = publicPageModule.renderBookingPageForTenant(tenant, {
+    proto, host, canonicalHost: host,
+  });
+  res.status(200).type("html").send(html);
+});
+app.post("/submit-booking", express.json(), (req, res) => {
+  if (!req.bookingTenantFromHost) {
+    return res.status(404).json({ ok: false, error: "not_a_booking_host" });
+  }
+  return publicPageModule.handleBookingSubmit(req.bookingTenantFromHost, req, res);
+});
+app.use("/book", publicPageModule);
 app.use("/api/auth", authRoutes);
 // ── Phase 6 C: Rep mobile app routes ──
 // Mounted BEFORE the `/api` catch-all on L521 — /api/rep/auth/login + /totp
@@ -758,7 +812,8 @@ if (SERVE_DASHBOARD) {
   app.use(express.static(path.join(__dirname, "dashboard", "dist")));
 } else {
   const FRONTEND_URL = process.env.FRONTEND_URL || "";
-  app.get("/", (req, res) => {
+   app.get("/", (req, res, next) => {
+    if (req.bookingTenantFromHost) return next();  // branded host handled earlier
     if (FRONTEND_URL) return res.redirect(302, FRONTEND_URL);
     res.set("Content-Type", "text/plain").status(200).send(
       "AI Front Desk API. Dashboard is deployed separately. Use your frontend URL to sign in, or set FRONTEND_URL to redirect / here."

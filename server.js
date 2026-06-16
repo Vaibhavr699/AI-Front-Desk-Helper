@@ -1793,6 +1793,11 @@ function mergeLeadCapture(thread, incomingLeadCapture) {
   if (!incomingLeadCapture || typeof incomingLeadCapture !== "object") return;
   for (const field of LEAD_CAPTURE_FIELDS) {
     const value = incomingLeadCapture[field];
+    if (field === "estimated_value") {
+      const n = Number(value);
+      if (Number.isFinite(n) && n > 0) thread.leadCapture.estimated_value = n;
+      continue;
+    }
     if (typeof value === "string" && value.trim()) {
       thread.leadCapture[field] = value.trim();
     }

@@ -9,6 +9,13 @@
  *     GET  /book/:slugOrId          → the HTML page (JSON-LD baked in)
  *     POST /book/:slugOrId/submit   → server-side booking handler (no exposed key)
  *
+ * Phase 13.6 (Jun 16, 2026) — Branded booking domain support.
+ *   The render logic is now an exported function, renderBookingPageForTenant(),
+ *   so the branded-host root route in server.js (book.tenant.com/) can serve the
+ *   identical page. When a tenant's booking_domain is active, /book/:slug 301s
+ *   to the branded host so there's one canonical URL. loadTenantBySlugOrId is
+ *   also exported for server.js's booking-host resolver.
+ *
  * WHY SSR (the whole point):
  *   The page bakes schema.org JSON-LD (LocalBusiness + Service) into the INITIAL
  *   HTML, server-side. That's what makes a tenant machine-readable and ELIGIBLE
@@ -213,26 +220,38 @@ function buildJsonLd(tenant, profile, pageUrl, quoteEnabled) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /book/:slugOrId  — the SSR page
+// Render function — builds the full SSR HTML for a tenant. Callable both from
+// the /book/:slugOrId route AND from the branded-host root route in server.js
+// (book.tenant.com/ → this same page).
+//
+// opts:
+//   proto         — "https" | "http" (request protocol, for absolute URLs)
+//   host          — the request host (used for canonical/og when not branded)
+//   canonicalHost — when set (the active branded booking domain), all
+//                   crawler-facing URLs (canonical/og/JSON-LD) point at this
+//                   host and the page is served at "/", and the booking POST
+//                   goes to /submit-booking (the branded-host submit route in
+//                   server.js) instead of /book/:slug/submit.
 // ─────────────────────────────────────────────────────────────────────────────
-
-router.get("/:slugOrId", async (req, res) => {
-  const tenant = await loadTenantBySlugOrId(req.params.slugOrId);
-  if (!tenant) {
-    return res.status(404).type("html").send(
-      `<!doctype html><meta charset="utf-8"><title>Not found</title>
-       <body style="font-family:system-ui;padding:40px"><h1>Page not found</h1>
-       <p>We couldn't find that business.</p></body>`
-    );
-  }
-
+function renderBookingPageForTenant(tenant, opts = {}) {
   const profile = readProfile(tenant);
   const quoteEnabled = estimatorActive(tenant);
-  const proto = req.get("x-forwarded-proto") || req.protocol || "https";
-  const host = req.get("host");
+  const proto = opts.proto || "https";
+  const host = opts.host || "";
   const slugOrId = tenant.slug || tenant.id;
-  const pageUrl = `${proto}://${host}/book/${esc(slugOrId)}`;
-  const submitUrl = `/book/${encodeURIComponent(slugOrId)}/submit`;
+
+  // canonicalHost (the branded booking domain when active) wins for all
+  // crawler-facing URLs and changes where the form submits. Falls back to the
+  // request host + /book path otherwise.
+  const branded = Boolean(opts.canonicalHost);
+  const canonHost = opts.canonicalHost || host;
+  const pageUrl = branded
+    ? `${proto}://${canonHost}/`
+    : `${proto}://${host}/book/${esc(slugOrId)}`;
+
+  const submitUrl = branded
+    ? `/submit-booking`
+    : `/book/${encodeURIComponent(slugOrId)}/submit`;
   const availUrl = `/api/v1/availability/${encodeURIComponent(tenant.id)}`;
 
   const jsonLd = ldJson(buildJsonLd(tenant, profile, pageUrl, quoteEnabled));
@@ -249,7 +268,7 @@ router.get("/:slugOrId", async (req, res) => {
         <a class="btn btn-secondary" href="/q/${encodeURIComponent(tenant.id)}">Get an instant quote</a>
       </section>` : "";
 
-  const html = `<!doctype html>
+  return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -449,16 +468,19 @@ ${jsonLd}
 </script>
 </body>
 </html>`;
-
-  res.status(200).type("html").send(html);
-});
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /book/:slugOrId/submit  — server-side booking (no exposed key)
+// Shared booking-submit handler. Used by BOTH:
+//   POST /book/:slugOrId/submit   (path-based; resolves tenant from :slugOrId)
+//   POST /submit-booking          (branded-host; tenant resolved by server.js
+//                                  from req.bookingTenantFromHost, passed in)
+//
+// `tenant` is the already-resolved tenant row. Returns nothing; writes the
+// response directly. Keeping one handler means the booking logic, honeypot,
+// validation, engine call, and visibility row never diverge between paths.
 // ─────────────────────────────────────────────────────────────────────────────
-
-router.post("/:slugOrId/submit", async (req, res) => {
-  const tenant = await loadTenantBySlugOrId(req.params.slugOrId);
+async function handleBookingSubmit(tenant, req, res) {
   if (!tenant) return res.status(404).json({ ok: false, error: "tenant_not_found" });
 
   const b = req.body || {};
@@ -531,6 +553,53 @@ router.post("/:slugOrId/submit", async (req, res) => {
   });
 
   return res.json({ ok: true, booking_id: result.bookingId, lead_id: result.leadId });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /book/:slugOrId  — the SSR page (path-based). Redirects to the branded
+// host when this tenant has an active booking_domain (one canonical URL).
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get("/:slugOrId", async (req, res) => {
+  const tenant = await loadTenantBySlugOrId(req.params.slugOrId);
+  if (!tenant) {
+    return res.status(404).type("html").send(
+      `<!doctype html><meta charset="utf-8"><title>Not found</title>
+       <body style="font-family:system-ui;padding:40px"><h1>Page not found</h1>
+       <p>We couldn't find that business.</p></body>`
+    );
+  }
+
+  // If this tenant has a live branded booking domain, 301 to it so there's one
+  // canonical URL for SEO. Skip the redirect if we're ALREADY on that host
+  // (defensive — the server.js root route serves directly, but a stray
+  // /book/:slug hit on the branded host shouldn't loop).
+  const reqHost = (req.get("host") || "").toLowerCase();
+  if (
+    tenant.booking_domain &&
+    tenant.booking_domain_status === "active" &&
+    reqHost !== String(tenant.booking_domain).toLowerCase()
+  ) {
+    return res.redirect(301, `https://${tenant.booking_domain}/`);
+  }
+
+  const proto = req.get("x-forwarded-proto") || req.protocol || "https";
+  const host = req.get("host");
+  const html = renderBookingPageForTenant(tenant, { proto, host });
+  res.status(200).type("html").send(html);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /book/:slugOrId/submit  — server-side booking (no exposed key)
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.post("/:slugOrId/submit", async (req, res) => {
+  const tenant = await loadTenantBySlugOrId(req.params.slugOrId);
+  return handleBookingSubmit(tenant, req, res);
 });
 
 module.exports = router;
+// Exported for server.js branded-host root route + booking-host resolver.
+module.exports.renderBookingPageForTenant = renderBookingPageForTenant;
+module.exports.handleBookingSubmit = handleBookingSubmit;
+module.exports.loadTenantBySlugOrId = loadTenantBySlugOrId;

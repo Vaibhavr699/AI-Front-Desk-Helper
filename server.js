@@ -191,7 +191,7 @@ const LEAD_CAPTURE_FIELDS = [
   "project_details",
   "timeline",
   "appointment_date",
-  "appointment_time"
+  "appointment_time",
   "estimated_value"
 ];
 

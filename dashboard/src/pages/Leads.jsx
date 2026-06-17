@@ -80,7 +80,7 @@ function Pipeline({ tenantId }) {
     return counts;
   }, [leads]);
 
-  const FILTER_TABS = ['All', 'New Lead', 'FollowUp', 'Estimate Sent', 'Won', 'Lost'];
+  const FILTER_TABS = ['All', 'New Lead', 'Qualified', 'Estimate Sent', 'Won', 'Lost'];
 
   const filtered = useMemo(() => {
     let list = leads;

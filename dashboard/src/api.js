@@ -270,6 +270,14 @@ export function getCalls(tenantId, params = {}) {
   const q = new URLSearchParams(extra);
   return api(`/api/calls?${q}`);
 }
+export function getOutboundActivity(tenantId, params = {}) {
+  const extra = tenantId === "all"
+    ? { tenant_id: "all", rollup: "true", ...params }
+    : { tenant_id: tenantId, ...params };
+  Object.keys(extra).forEach((k) => extra[k] === undefined && delete extra[k]);
+  const q = new URLSearchParams(extra);
+  return api(`/api/outbound-activity?${q}`);
+}
 
 export function getCall(id) {
   return api(`/api/calls/${id}`);

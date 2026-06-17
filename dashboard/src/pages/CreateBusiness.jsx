@@ -4,12 +4,24 @@ import { createTenant, getUser } from "../api";
 
 const TENANT_STORAGE_KEY = "tenantId";
 
+const SIGNUP_INDUSTRIES = [
+  ["painting", "Painting"],
+  ["roofing", "Roofing"],
+  ["fencing", "Fencing"],
+  ["plumbing", "Plumbing"],
+  ["hvac", "HVAC"],
+  ["electrical", "Electrical"],
+  ["general_contractor", "General Contractor"],
+  ["other", "Other"],
+];
+
 export default function CreateBusiness() {
   const navigate = useNavigate();
   const user = getUser();
   const [name, setName] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [businessType, setBusinessType] = useState("standalone"); // 'standalone' or 'parent'
+  const [industry, setIndustry] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -27,6 +39,7 @@ export default function CreateBusiness() {
         name: name.trim() || companyName.trim(),
         company_name: companyName.trim() || name.trim(),
         business_type: businessType,
+        industry,
       };
 
       const data = await createTenant(payload);
@@ -41,7 +54,7 @@ export default function CreateBusiness() {
     }
   }
 
-  const canSubmit = name.trim() && companyName.trim() && !loading;
+  const canSubmit = name.trim() && companyName.trim() && industry && !loading;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-stone-50 to-stone-100 flex items-center justify-center p-4">
@@ -143,10 +156,34 @@ export default function CreateBusiness() {
                   required
                   className="w-full px-3.5 py-2.5 border border-stone-300 rounded-xl text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-transparent transition-shadow"
                 />
-                <p className="mt-1 text-xs text-stone-500">
+               
+              <p className="mt-1 text-xs text-stone-500">
                   Shown in the dashboard. Can match company name.
                 </p>
               </div>
+
+              {/* Industry / trade — required; tailors AI pricing + language */}
+              <div>
+                <label htmlFor="industry" className="block text-sm font-medium text-stone-700 mb-1.5">
+                  Your trade <span className="text-red-500">*</span>
+                </label>
+                <select
+                  id="industry"
+                  value={industry}
+                  onChange={(e) => setIndustry(e.target.value)}
+                  required
+                  className="w-full px-3.5 py-2.5 border border-stone-300 rounded-xl text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-transparent transition-shadow bg-white"
+                >
+                  <option value="">Select your trade…</option>
+                  {SIGNUP_INDUSTRIES.map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-stone-500">
+                  Tailors your AI's pricing and language to your industry.
+                </p>
+              </div>
+            </div>
             </div>
 
             {/* Info banner about numbers */}

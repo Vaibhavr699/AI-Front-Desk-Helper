@@ -4919,7 +4919,10 @@ sendToOpenAI(sessionUpdate);
         }
       }
 
-    if (data.type === "response.audio_transcription.completed") {
+    if (
+      data.type === "response.output_audio_transcript.done" ||
+      data.type === "response.audio_transcription.completed"
+    ) {
   const text = data.transcript || "";
   console.log("[AI-Desk] Assistant Transcript:", text);
   if (text) {

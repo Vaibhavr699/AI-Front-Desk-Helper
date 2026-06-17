@@ -3760,4 +3760,319 @@ router.get("/tenants/:id/booking-domain", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
+// ═════════════════════════════════════════════════════════════════════════
+// AI OUTREACH LOG (Jun 17, 2026) — paste this entire block into
+// routes/dashboard.js directly ABOVE the final `module.exports = router;`.
+//
+// One read-only endpoint powering the "AI Outreach Log" tab in the Call
+// Intelligence Center. It answers the question every alarm this session
+// reduced to: "what did the AI reach out and do — to whom, when, why, and
+// what happened?" — across BOTH channels (call + SMS) and EVERY automated
+// source (recovery, nurturing, seasonal, referral, inquiry, missed-call).
+//
+// WHY a UNION of two tables:
+//   - Outbound CALLS live in `calls` (direction='outbound'), written by
+//     lib/outboundCall.create from the recovery engine + nurturing service.
+//     They carry metadata.source ('recovery'|'nurturing'), metadata.step
+//     (e.g. 'day10_call'), and metadata.script_preview.
+//   - Outbound SMS live in `messages` (direction='outbound'), written by
+//     lib/outboundSms.send. They carry metadata.source + metadata.step or
+//     metadata.campaign_type.
+// Neither table alone is the answer; the log is the merge.
+//
+// This is deliberately SEPARATE from the /outbound Campaigns page (bulk
+// AI calling campaigns you launch + buy minutes for). That page is "what
+// I want to launch"; this is "what already happened automatically."
+//
+// Definitions (kept honest):
+//   - source: normalized from metadata.source, then campaign_type, then a
+//     step-name heuristic, then lead_source. Falls back to 'other'.
+//   - status: the call/message status mapped to a small human vocabulary
+//     (answered / voicemail / no-answer / failed / sent / delivered).
+//   - We do NOT invent rows: if a touch never wrote a calls/messages row,
+//     it won't appear (by design — the log reflects what was actually sent).
+//
+// Auth: the staff-level gate (owner/admin/manager/staff) is already applied
+// by the router.use(...) middleware above in this file, so no extra guard.
+// ═════════════════════════════════════════════════════════════════════════
+
+// Map a raw calls.status / disposition into the log's status vocabulary.
+// Twilio call statuses we see: completed, no-answer, busy, failed, canceled.
+// Recovery/nurturing calls use machineDetection, so an answered-by-machine
+// call is still 'completed' at the Twilio layer — we surface voicemail only
+// when the disposition/metadata says so, otherwise 'answered' vs 'no-answer'.
+function outreachCallStatus(row) {
+  const s = String(row.status || "").toLowerCase();
+  const disp = String(row.disposition || "").toLowerCase();
+  const meta = row.metadata || {};
+  const amd = String(meta.answered_by || meta.amd_result || "").toLowerCase();
+
+  if (disp === "voicemail" || amd.includes("machine") || amd.includes("fax")) return "voicemail";
+  if (s === "completed" || s === "answered" || disp === "answered") return "answered";
+  if (s === "no-answer" || s === "noanswer") return "no-answer";
+  if (s === "busy") return "no-answer";
+  if (s === "failed" || s === "canceled" || s === "cancelled") return "failed";
+  // Outbound call that wrote a row on dial but has no terminal status yet.
+  if (!s || s === "queued" || s === "initiated" || s === "ringing" || s === "in-progress") return "dialing";
+  return s || "unknown";
+}
+
+// Map a raw messages.status into the log's vocabulary. Most outbound SMS
+// rows are written as 'sent' by lib/outboundSms; Twilio status callbacks may
+// upgrade to 'delivered' or downgrade to 'failed'/'undelivered'.
+function outreachSmsStatus(row) {
+  const s = String(row.status || "").toLowerCase();
+  if (s === "delivered") return "delivered";
+  if (s === "failed" || s === "undelivered") return "failed";
+  if (!s || s === "sent" || s === "queued" || s === "sending") return "sent";
+  return s;
+}
+
+// Normalize the automated SOURCE of a touch into a small, stable vocabulary
+// the UI can filter on: recovery | nurturing | seasonal | referral | inquiry
+// | missed_call | other. We look in priority order because different writers
+// stamp different fields:
+//   1. metadata.source        — set by outboundCall/outboundSms ('recovery'|'nurturing')
+//   2. metadata.campaign_type  — set by nurturing ('referral_outreach','seasonal_*', etc.)
+//   3. step-name heuristic     — recovery steps look like 'day10_call','custom_day_30','inquiry_*','missed_call_*'
+//   4. lead_source             — last-ditch ('missed_call', etc.)
+function outreachSource(meta, step, leadSource) {
+  const src = String(meta.source || "").toLowerCase();
+  const camp = String(meta.campaign_type || "").toLowerCase();
+  const st = String(step || "").toLowerCase();
+  const ls = String(leadSource || "").toLowerCase();
+
+  // 1. explicit source stamp
+  if (src === "recovery") {
+    // recovery covers estimate/inquiry/missed-call sequences; refine by step.
+    if (st.startsWith("inquiry")) return "inquiry";
+    if (st.startsWith("missed_call")) return "missed_call";
+    return "recovery";
+  }
+  if (src === "nurturing") {
+    if (camp.startsWith("referral")) return "referral";
+    if (camp.startsWith("seasonal")) return "seasonal";
+    return "nurturing";
+  }
+
+  // 2. campaign_type stamp (nurturing rows sometimes only have this)
+  if (camp.startsWith("referral")) return "referral";
+  if (camp.startsWith("seasonal")) return "seasonal";
+  if (
+    camp === "post_service_followup" ||
+    camp === "maintenance_reminder" ||
+    camp === "reengagement" ||
+    camp === "no_response_phone"
+  ) return "nurturing";
+
+  // 3. step-name heuristic (recovery engine step labels)
+  if (st.startsWith("inquiry")) return "inquiry";
+  if (st.startsWith("missed_call")) return "missed_call";
+  if (
+    st.startsWith("day") ||
+    st.startsWith("custom_day_") ||
+    st === "estimate_sent" ||
+    st.startsWith("thinking") ||
+    st.startsWith("price") ||
+    st.startsWith("spouse")
+  ) return "recovery";
+
+  // 4. lead_source last-ditch
+  if (ls === "missed_call") return "missed_call";
+  if (ls === "inquiry") return "inquiry";
+
+  return "other";
+}
+
+// Human-friendly label for a step/campaign so the UI doesn't show raw enums.
+// e.g. 'day10_call' → 'Day 10 call', 'custom_day_30' → 'Day 30 (custom)',
+// 'referral_outreach' → 'Referral outreach', 'seasonal_3' → 'Seasonal (Mar)'.
+const OUTREACH_MONTHS = ["", "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function outreachStepLabel(step, meta) {
+  const st = String(step || meta.step || meta.campaign_type || "").trim();
+  if (!st) return null;
+
+  let m;
+  if ((m = /^day(\d+)_(call|checkin|value|urgency|softclose|hardclose)$/.exec(st))) {
+    const kind = m[2] === "call" ? "call" : "SMS";
+    return `Day ${m[1]} ${kind}`;
+  }
+  if ((m = /^custom_day_(\d+)$/.exec(st))) return `Day ${m[1]} (custom)`;
+  if (st === "estimate_sent") return "Estimate sent (day 0)";
+  if (st.startsWith("missed_call_")) return "Missed-call callback";
+  if (st.startsWith("inquiry")) return "Inquiry follow-up";
+  if ((m = /^seasonal_(\d+)$/.exec(st))) return `Seasonal (${OUTREACH_MONTHS[parseInt(m[1], 10)] || m[1]})`;
+  if (st === "referral_outreach") return "Referral outreach";
+  if (st === "referral_request") return "Referral request";
+  if (st === "post_service_followup") return "Post-service follow-up";
+  if (st === "maintenance_reminder") return "Maintenance reminder";
+  if (st === "reengagement") return "Re-engagement";
+  if (st === "no_response_phone") return "No-response callback";
+  // thinking/price/spouse objection steps + anything else: prettify.
+  return st.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+router.get("/outbound-activity", async (req, res) => {
+  try {
+    const tenantIds = await getTargetTenantIds(req);
+    if (!tenantIds.length) return res.status(400).json({ error: "tenant_id required" });
+
+    const limit = Math.min(parseInt(req.query.limit, 10) || 200, 500);
+    const offset = parseInt(req.query.offset, 10) || 0;
+    const search = (req.query.search || "").trim();
+    const sourceFilter = (req.query.source || "").trim().toLowerCase(); // optional
+    const channelFilter = (req.query.channel || "").trim().toLowerCase(); // optional: call|sms
+
+    // last-10-digits of the search term, if it looks like a phone number,
+    // so "(308) 539-3812" matches a stored "+13085393812".
+    const searchDigits = search.replace(/\D/g, "");
+    const searchLast10 = searchDigits.length >= 7 ? searchDigits.slice(-10) : null;
+
+    // Pull outbound CALLS and outbound MESSAGES separately (different columns),
+    // then merge + sort in JS. Each query is tenant-scoped and windowed to
+    // 90 days unless a search is active (search is global, like the Calls page).
+    // We over-fetch a bit per channel then trim after merge.
+    const windowClause = search ? "" : "AND c.created_at > now() - INTERVAL '90 days'";
+    const msgWindowClause = search ? "" : "AND m.created_at > now() - INTERVAL '90 days'";
+
+    // Build the calls query. lead join gives us a name even when the call
+    // row's metadata didn't capture one (recovery/nurturing calls usually
+    // have a lead_id but no leadCapture blob).
+    const callParams = [tenantIds];
+    let callSearch = "";
+    if (search) {
+      // match against lead name, the call's to_number, or the recovery
+      // contact name we can't see here — so name+phone via the lead join.
+      callParams.push(`%${search}%`);
+      const nameIdx = callParams.length;
+      let phoneClause = "";
+      if (searchLast10) {
+        callParams.push(`%${searchLast10}%`);
+        phoneClause = ` OR c.to_number LIKE $${callParams.length} OR c.from_number LIKE $${callParams.length}`;
+      }
+      callSearch = `AND (l.name ILIKE $${nameIdx} OR c.to_number ILIKE $${nameIdx}${phoneClause})`;
+    }
+
+    const callsRes = await db.query(
+      `SELECT c.id, c.created_at AS at, c.direction, c.status, c.disposition,
+              c.to_number, c.from_number, c.metadata, c.lead_id, c.lead_source,
+              c.duration_minutes,
+              l.name AS lead_name, l.phone AS lead_phone
+         FROM calls c
+         LEFT JOIN leads l ON l.id = c.lead_id
+        WHERE c.tenant_id = ANY($1)
+          AND c.direction = 'outbound'
+          ${windowClause}
+          ${callSearch}
+        ORDER BY c.created_at DESC
+        LIMIT 500`,
+      callParams
+    );
+
+    const msgParams = [tenantIds];
+    let msgSearch = "";
+    if (search) {
+      msgParams.push(`%${search}%`);
+      const nameIdx = msgParams.length;
+      let phoneClause = "";
+      if (searchLast10) {
+        msgParams.push(`%${searchLast10}%`);
+        phoneClause = ` OR l.phone LIKE $${msgParams.length}`;
+      }
+      msgSearch = `AND (l.name ILIKE $${nameIdx}${phoneClause})`;
+    }
+
+    const msgsRes = await db.query(
+      `SELECT m.id, m.created_at AS at, m.direction, m.status, m.channel,
+              m.body, m.metadata, m.lead_id,
+              l.name AS lead_name, l.phone AS lead_phone
+         FROM messages m
+         LEFT JOIN leads l ON l.id = m.lead_id
+        WHERE m.tenant_id = ANY($1)
+          AND m.direction = 'outbound'
+          AND COALESCE(m.metadata->>'source', '') IN ('recovery', 'nurturing')
+          ${msgWindowClause}
+          ${msgSearch}
+        ORDER BY m.created_at DESC
+        LIMIT 500`,
+      msgParams
+    );
+
+    // Shape calls into log rows.
+    const callRows = callsRes.rows.map((c) => {
+      const meta = c.metadata || {};
+      const step = meta.step || null;
+      const source = outreachSource(meta, step, c.lead_source);
+      return {
+        id: c.id,
+        type: "call",
+        channel: "call",
+        at: c.at,
+        source,
+        step: step,
+        step_label: outreachStepLabel(step, meta),
+        status: outreachCallStatus(c),
+        contact_name: c.lead_name || meta.contact_name || "Unknown",
+        contact_phone: c.lead_phone || c.to_number || null,
+        lead_id: c.lead_id || null,
+        duration_minutes: c.duration_minutes != null ? Number(c.duration_minutes) : null,
+        // what the AI was going to say — invaluable for voicemail-left calls.
+        preview: meta.script_preview || null,
+      };
+    });
+
+    // Shape messages into log rows.
+    const msgRows = msgsRes.rows.map((m) => {
+      const meta = m.metadata || {};
+      const step = meta.step || meta.campaign_type || null;
+      const source = outreachSource(meta, step, null);
+      return {
+        id: m.id,
+        type: "sms",
+        channel: m.channel || "sms",
+        at: m.at,
+        source,
+        step: step,
+        step_label: outreachStepLabel(step, meta),
+        status: outreachSmsStatus(m),
+        contact_name: m.lead_name || "Unknown",
+        contact_phone: m.lead_phone || null,
+        lead_id: m.lead_id || null,
+        duration_minutes: null,
+        preview: m.body ? String(m.body).slice(0, 200) : null,
+      };
+    });
+
+    // Merge, optional source/channel filter, sort newest-first, paginate.
+    let merged = [...callRows, ...msgRows];
+    if (sourceFilter && sourceFilter !== "all") {
+      merged = merged.filter((r) => r.source === sourceFilter);
+    }
+    if (channelFilter === "call" || channelFilter === "sms") {
+      merged = merged.filter((r) => r.channel === channelFilter || r.type === channelFilter);
+    }
+    merged.sort((a, b) => new Date(b.at) - new Date(a.at));
+
+    const total = merged.length;
+    const page = merged.slice(offset, offset + limit);
+
+    // Source counts for the filter chips (computed on the full merged set,
+    // pre-pagination, so the chips show real totals).
+    const sourceCounts = merged.reduce((acc, r) => {
+      acc[r.source] = (acc[r.source] || 0) + 1;
+      return acc;
+    }, {});
+
+    res.json({
+      activity: page,
+      pagination: { total, limit, offset },
+      source_counts: sourceCounts,
+    });
+  } catch (e) {
+    console.error("[OutreachLog] error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 module.exports = router;

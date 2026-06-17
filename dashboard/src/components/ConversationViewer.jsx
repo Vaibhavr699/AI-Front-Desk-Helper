@@ -19,7 +19,7 @@ const CHANNEL_LABELS = {
   sms:      { name: 'SMS',      icon: MessageSquare, color: 'text-green-600',  bg: 'bg-green-50',  border: 'border-green-200' },
   website:  { name: 'Website',  icon: Globe,         color: 'text-purple-600', bg: 'bg-purple-50', border: 'border-purple-200' },
   facebook: { name: 'Facebook', icon: Facebook,      color: 'text-blue-600',   bg: 'bg-blue-50',   border: 'border-blue-200' },
-  email:    { name: 'Email',    icon: Mail,          color: 'text-amber-600',  bg: 'bg-amber-50',  border: 'border-amber-200' },
+  email:    { name: 'Email',    icon: Mail,          color: 'text-amber-600',  bg: 'bg-amber-50',   border: 'border-amber-200' },
 };
 
 const ConversationViewer = ({ leadId, leadName }) => {
@@ -158,6 +158,24 @@ const ConversationViewer = ({ leadId, leadName }) => {
     }
   };
 
+  // ─────────────────────────────────────────────────────────────────────
+  // Date helpers (Jun 17, 2026) — date separators + full-date timestamps.
+  // dayKey: compare two messages for "same calendar day".
+  // dayLabel: the divider text shown between days.
+  // ─────────────────────────────────────────────────────────────────────
+  const dayKey = (dateStr) => {
+    if (!dateStr) return '';
+    return format(new Date(dateStr), 'yyyy-MM-dd');
+  };
+
+  const dayLabel = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    const now = new Date();
+    const sameYear = d.getFullYear() === now.getFullYear();
+    return format(d, sameYear ? 'EEEE, MMM d' : 'EEEE, MMM d, yyyy');
+  };
+
   if (!leadId) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-gray-500 bg-gray-50/50 rounded-xl border-2 border-dashed border-gray-200">
@@ -252,8 +270,21 @@ const ConversationViewer = ({ leadId, leadName }) => {
         ref={scrollRef}
         className="flex-1 overflow-y-auto p-6 space-y-6 bg-gray-50/30"
       >
-        {timeline.map((item) => {
+        {timeline.map((item, idx) => {
           const isOutbound  = item.direction === 'outbound';
+
+          // Date divider: render when this item's calendar day differs from
+          // the previously rendered item's day.
+          const prevItem = idx > 0 ? timeline[idx - 1] : null;
+          const showDayDivider = !prevItem || dayKey(item.at) !== dayKey(prevItem.at);
+          const dayDivider = showDayDivider ? (
+            <div className="flex items-center justify-center my-2">
+              <span className="px-3 py-1 bg-gray-100 text-gray-500 text-[10px] font-semibold uppercase tracking-wider rounded-full">
+                {dayLabel(item.at)}
+              </span>
+            </div>
+          ) : null;
+
           const isOwnerSent = isOutbound && !!item.sent_by_user_id;
           const isAiSent    = isOutbound && !item.sent_by_user_id;
           const isCall      = item.type === 'call';
@@ -261,89 +292,114 @@ const ConversationViewer = ({ leadId, leadName }) => {
           if (isCall) {
             const isExpanded = expandedCalls[item.id];
             return (
-              <div key={item.id} className="flex flex-col items-center">
-                <div className="w-full max-w-2xl bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-                  <div
-                    className="p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors"
-                    onClick={() => toggleCall(item.id)}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-blue-600">
-                        <Phone size={16} />
-                      </div>
-                      <div>
-                        <span className="text-sm font-semibold text-gray-900">AI Phone Call</span>
-                        <div className="text-[10px] text-gray-500">
-                          {format(new Date(item.at), 'MMM d, h:mm a')}
+              <React.Fragment key={item.id}>
+                {dayDivider}
+                <div className="flex flex-col items-center">
+                  <div className="w-full max-w-2xl bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+                    <div
+                      className="p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors"
+                      onClick={() => toggleCall(item.id)}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-blue-600">
+                          <Phone size={16} />
+                        </div>
+                        <div>
+                          <span className="text-sm font-semibold text-gray-900">AI Phone Call</span>
+                          <div className="text-[10px] text-gray-500">
+                            {format(new Date(item.at), 'MMM d, h:mm a')}
+                          </div>
                         </div>
                       </div>
+                      {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
                     </div>
-                    {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
-                  </div>
 
-                  {isExpanded && (
-                    <div className="p-4 border-t border-gray-50 bg-gray-50/20">
-                      <div className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed font-mono text-[11px]">
-                        {item.content || 'Voice call - transcript unavailable'}
-                      </div>
-                      {item.metadata?.leadCapture && (
-                        <div className="mt-4 pt-4 border-t border-gray-100 flex flex-wrap gap-2">
-                          {Object.entries(item.metadata.leadCapture).map(([k, v]) => v && (
-                            <span key={k} className="px-2 py-0.5 bg-blue-50 text-blue-700 text-[10px] rounded-full uppercase tracking-wider font-semibold">
-                              {k.replace('_', ' ')}: {v}
-                            </span>
-                          ))}
+                    {isExpanded && (
+                      <div className="p-4 border-t border-gray-50 bg-gray-50/20">
+                        <div className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed font-mono text-[11px]">
+                          {item.content || 'Voice call - transcript unavailable'}
                         </div>
-                      )}
-                    </div>
-                  )}
+                        {item.metadata?.leadCapture && (
+                          <div className="mt-4 pt-4 border-t border-gray-100 flex flex-wrap gap-2">
+                            {Object.entries(item.metadata.leadCapture).map(([k, v]) => v && (
+                              <span key={k} className="px-2 py-0.5 bg-blue-50 text-blue-700 text-[10px] rounded-full uppercase tracking-wider font-semibold">
+                                {k.replace('_', ' ')}: {v}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
+              </React.Fragment>
             );
           }
 
-          // ── Message bubble — three visual states ──────────────────
+          // ── Message bubble — sender states ────────────────────────
+          // A briefing is an internal message to the crew/technician, not
+          // the customer — distinguished by source="briefing" (set in
+          // services/preVisitBriefing.js via lib/outboundSms). Styled slate
+          // so internal coaching text never reads as customer-facing.
+          // NOTE: this only lights up if the timeline API returns `source`
+          // on each message. If it doesn't, briefings fall back to the
+          // normal AI bubble (same as before) — add `source` to the
+          // timeline SELECT to enable the crew label.
+          const isBriefing = item.source === 'briefing';
+          const briefingRecipient = item.metadata?.recipient_kind || item.meta?.recipient_kind;
+          const crewLabel =
+            briefingRecipient === 'technician'
+              ? 'AI → Crew (pre-visit brief)'
+              : 'AI → Internal (pre-visit brief)';
+
           let avatarBg, avatarIcon, bubbleClass, senderLabel;
-          if (isOwnerSent) {
+          if (isBriefing) {
+            avatarBg = 'bg-slate-600 text-white';
+            avatarIcon = <UserCheck size={16} />;
+            bubbleClass = 'bg-slate-100 text-slate-700 border border-slate-200 rounded-tr-none';
+            senderLabel = crewLabel;
+          } else if (isOwnerSent) {
             avatarBg = 'bg-emerald-500 text-white';
             avatarIcon = <UserCheck size={16} />;
             bubbleClass = 'bg-emerald-500 text-white rounded-tr-none';
-            senderLabel = 'Sent by you';
+            senderLabel = 'You → Customer';
           } else if (isAiSent) {
             avatarBg = 'bg-brand-500 text-white';
             avatarIcon = <Bot size={16} />;
             bubbleClass = 'bg-brand-500 text-white rounded-tr-none';
-            senderLabel = 'Sent by AI';
+            senderLabel = 'AI → Customer';
           } else {
             avatarBg = 'bg-gray-200 text-gray-600';
             avatarIcon = <User size={16} />;
             bubbleClass = 'bg-white text-gray-800 border border-gray-100 rounded-tl-none';
-            senderLabel = null;
+            senderLabel = leadName ? `${leadName} → Business` : 'Customer → Business';
           }
 
           return (
-            <div
-              key={item.id}
-              className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}
-            >
-              <div className={`flex gap-3 max-w-[80%] ${isOutbound ? 'flex-row-reverse' : ''}`}>
-                <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center ${avatarBg}`}>
-                  {avatarIcon}
-                </div>
-                <div>
-                  <div className={`p-3 rounded-2xl text-sm shadow-sm ${bubbleClass}`}>
-                    {item.content}
+            <React.Fragment key={item.id}>
+              {dayDivider}
+              <div
+                className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}
+              >
+                <div className={`flex gap-3 max-w-[80%] ${isOutbound ? 'flex-row-reverse' : ''}`}>
+                  <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center ${avatarBg}`}>
+                    {avatarIcon}
                   </div>
-                  <div className={`mt-1 flex items-center gap-1.5 text-[10px] text-gray-400 ${isOutbound ? 'justify-end' : 'justify-start'}`}>
-                    {getChannelIcon(item.channel)}
-                    {senderLabel && (
-                      <span className="font-semibold uppercase tracking-wider">{senderLabel} ·</span>
-                    )}
-                    {format(new Date(item.at), 'h:mm a')}
+                  <div>
+                    <div className={`p-3 rounded-2xl text-sm shadow-sm ${bubbleClass}`}>
+                      {item.content}
+                    </div>
+                    <div className={`mt-1 flex items-center gap-1.5 text-[10px] text-gray-400 ${isOutbound ? 'justify-end' : 'justify-start'}`}>
+                      {getChannelIcon(item.channel)}
+                      {senderLabel && (
+                        <span className="font-semibold uppercase tracking-wider">{senderLabel} ·</span>
+                      )}
+                      {format(new Date(item.at), 'MMM d, h:mm a')}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
+            </React.Fragment>
           );
         })}
       </div>

@@ -22,7 +22,30 @@ const CHANNEL_LABELS = {
   email:    { name: 'Email',    icon: Mail,          color: 'text-amber-600',  bg: 'bg-amber-50',   border: 'border-amber-200' },
 };
 
-const ConversationViewer = ({ leadId, leadName }) => {
+// ─────────────────────────────────────────────────────────────────────
+// Deep-link to a specific message (Jun 17, 2026)
+//
+// When the AI Outreach Log routes an SMS row to this conversation, it
+// passes the exact message id so we can scroll to + briefly highlight that
+// message instead of dumping the owner at the bottom of a long thread.
+//
+// The parent (ConversationsPage / Conversations route) reads `?msg=<id>`
+// from the URL and passes it down as `highlightMessageId`. This component
+// just consumes the prop — it doesn't touch the URL itself, matching how
+// it already takes `leadId` as a prop rather than reading the query string.
+//
+// Behavior:
+//   - On load (and whenever the id or timeline changes), if a message with
+//     that id is in the timeline, scroll it into view (centered) and add a
+//     temporary highlight ring that fades after a couple seconds.
+//   - If the id isn't found (e.g. message is older than the timeline window,
+//     or it's a call not a message), we fall back to the normal
+//     scroll-to-bottom behavior — no error, no dead state.
+//   - The highlight clears itself so re-selecting the same lead later
+//     doesn't re-flash a stale message.
+// ─────────────────────────────────────────────────────────────────────
+
+const ConversationViewer = ({ leadId, leadName, highlightMessageId = null }) => {
   const [timeline, setTimeline] = useState([]);
   const [lead, setLead] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -41,7 +64,13 @@ const ConversationViewer = ({ leadId, leadName }) => {
   // whenever the selected lead changes (in the leadId effect below).
   const [channelOverride, setChannelOverride] = useState(null);
 
+  // Deep-link highlight: the id currently being flashed. Cleared after the
+  // flash so it doesn't re-trigger on unrelated re-renders.
+  const [flashId, setFlashId] = useState(null);
+
   const scrollRef = useRef(null);
+  // Map of message id → DOM node, so we can scroll a specific one into view.
+  const messageRefs = useRef({});
 
   const loadAll = useCallback(async () => {
     if (!leadId) return;
@@ -69,11 +98,35 @@ const ConversationViewer = ({ leadId, leadName }) => {
     }
   }, [leadId, loadAll]);
 
+  // When a highlight target arrives, set it as the flashId so the matching
+  // bubble renders with the ring. Reset on lead change so a new thread
+  // doesn't inherit the previous thread's highlight.
   useEffect(() => {
+    setFlashId(highlightMessageId || null);
+  }, [highlightMessageId, leadId]);
+
+  // Scroll behavior, after the timeline renders:
+  //   - If we have a flashId AND that message is present, scroll it into
+  //     view (centered) and clear the flash after a beat.
+  //   - Otherwise, fall back to scroll-to-bottom (newest message).
+  useEffect(() => {
+    if (loading) return;
+
+    if (flashId && messageRefs.current[flashId]) {
+      const node = messageRefs.current[flashId];
+      // Defer to next frame so layout is settled before measuring.
+      requestAnimationFrame(() => {
+        node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+      // Clear the flash so the ring fades and it won't retrigger.
+      const t = setTimeout(() => setFlashId(null), 2600);
+      return () => clearTimeout(t);
+    }
+
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [timeline]);
+  }, [timeline, flashId, loading]);
 
   // ─────────────────────────────────────────────────────────────────────
   // Phase 8.3 — detect the channel for the owner's reply by finding the
@@ -285,6 +338,13 @@ const ConversationViewer = ({ leadId, leadName }) => {
             </div>
           ) : null;
 
+          // Is this the deep-linked message? Used to attach the ref + ring.
+          const isFlashTarget = flashId != null && item.id === flashId;
+          const registerRef = (node) => {
+            if (node) messageRefs.current[item.id] = node;
+            else delete messageRefs.current[item.id];
+          };
+
           const isOwnerSent = isOutbound && !!item.sent_by_user_id;
           const isAiSent    = isOutbound && !item.sent_by_user_id;
           const isCall      = item.type === 'call';
@@ -294,8 +354,12 @@ const ConversationViewer = ({ leadId, leadName }) => {
             return (
               <React.Fragment key={item.id}>
                 {dayDivider}
-                <div className="flex flex-col items-center">
-                  <div className="w-full max-w-2xl bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+                <div className="flex flex-col items-center" ref={registerRef}>
+                  <div
+                    className={`w-full max-w-2xl bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${
+                      isFlashTarget ? 'border-brand-400 ring-2 ring-brand-300 ring-offset-2' : 'border-gray-100'
+                    }`}
+                  >
                     <div
                       className="p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors"
                       onClick={() => toggleCall(item.id)}
@@ -383,17 +447,26 @@ const ConversationViewer = ({ leadId, leadName }) => {
             senderLabel = leadName ? `${leadName} → Business` : 'Customer → Business';
           }
 
+          // Deep-link ring: when this bubble is the flash target, wrap it in
+          // a soft ring that the highlight effect will scroll into view. The
+          // ring sits on an outer wrapper so it doesn't fight the bubble's
+          // own rounded-corner / color styling.
+          const flashWrap = isFlashTarget
+            ? 'ring-2 ring-brand-300 ring-offset-2 rounded-2xl transition-all'
+            : '';
+
           return (
             <React.Fragment key={item.id}>
               {dayDivider}
               <div
+                ref={registerRef}
                 className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}
               >
                 <div className={`flex gap-3 max-w-[80%] ${isOutbound ? 'flex-row-reverse' : ''}`}>
                   <div className={`w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center ${avatarBg}`}>
                     {avatarIcon}
                   </div>
-                  <div>
+                  <div className={flashWrap}>
                     <div className={`p-3 rounded-2xl text-sm shadow-sm ${bubbleClass}`}>
                       {item.content}
                     </div>

@@ -156,8 +156,7 @@ export default function CreateBusiness() {
                   required
                   className="w-full px-3.5 py-2.5 border border-stone-300 rounded-xl text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:border-transparent transition-shadow"
                 />
-               
-              <p className="mt-1 text-xs text-stone-500">
+                <p className="mt-1 text-xs text-stone-500">
                   Shown in the dashboard. Can match company name.
                 </p>
               </div>
@@ -183,7 +182,6 @@ export default function CreateBusiness() {
                   Tailors your AI's pricing and language to your industry.
                 </p>
               </div>
-            </div>
             </div>
 
             {/* Info banner about numbers */}

@@ -345,8 +345,16 @@ const ConversationViewer = ({ leadId, leadName }) => {
           // on each message. If it doesn't, briefings fall back to the
           // normal AI bubble (same as before) — add `source` to the
           // timeline SELECT to enable the crew label.
-          const isBriefing = item.source === 'briefing';
-          const briefingRecipient = item.metadata?.recipient_kind || item.meta?.recipient_kind;
+          // Briefing detection — robust to however the timeline serializes it.
+          // preVisitBriefing.js sends source="briefing" + meta.recipient_kind
+          // through outboundSms → saveMessage, which stores them in the
+          // message's metadata blob. Check every plausible location so the
+          // crew label works regardless of the exact column/shape, and
+          // degrades to a normal AI bubble if none are present.
+          const meta = item.metadata || item.meta || {};
+          const itemSource = item.source || meta.source || item.message_source;
+          const isBriefing = itemSource === 'briefing';
+          const briefingRecipient = meta.recipient_kind || item.recipient_kind;
           const crewLabel =
             briefingRecipient === 'technician'
               ? 'AI → Crew (pre-visit brief)'

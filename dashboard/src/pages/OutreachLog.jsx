@@ -24,6 +24,12 @@ import { useToast } from "../components/ui/Toast";
 // two Call Intelligence tabs feel like one product. The one thing made loud
 // per row: SOURCE (why it fired) + STATUS (what happened), since that's the
 // scan target.
+//
+// View routing (Jun 17): a CALL row opens /calls/:id — the call-detail page
+// with the recording player + full transcript (same target as the Inbound
+// tab's "View full transcript"). An SMS row opens /conversations?lead=ID —
+// the message thread. A call's substance is its recording, not a text body,
+// so the two channels route to different places on purpose.
 // ─────────────────────────────────────────────────────────────────────
 
 // Source → display config. Color encodes "what kind of outreach," kept
@@ -139,11 +145,16 @@ function OutreachFilterBar({ search, setSearch, source, setSource, sourceCounts,
 }
 
 // ─── One outreach row ────────────────────────────────────────────────
-function OutreachRow({ item, onOpenLead }) {
+function OutreachRow({ item, onOpen }) {
   const src = sourceCfg(item.source);
   const st = statusCfg(item.status);
   const StatusIcon = st.icon;
   const ChannelIcon = item.channel === "call" ? Phone : MessageSquare;
+
+  // A call always has its own /calls/:id detail page, so it's always
+  // viewable. An SMS is only viewable if we have a lead_id to open the
+  // thread with.
+  const canView = item.type === "call" || !!item.lead_id;
 
   return (
     <div className="px-4 py-3 flex items-center gap-3 hover:bg-stone-50 transition-colors">
@@ -175,12 +186,12 @@ function OutreachRow({ item, onOpenLead }) {
         {st.label}
       </span>
 
-      {/* Open lead */}
-      {item.lead_id ? (
+      {/* View — calls open the recording/transcript page, SMS the thread */}
+      {canView ? (
         <button
-          onClick={() => onOpenLead(item.lead_id)}
+          onClick={() => onOpen(item)}
           className="flex items-center gap-1 text-xs font-bold text-brand-600 hover:text-brand-700 shrink-0"
-          title="Open this customer's conversation"
+          title={item.type === "call" ? "Listen to recording / read transcript" : "Open this customer's conversation"}
         >
           <span className="hidden md:inline">View</span>
           <ChevronRight className="w-4 h-4" />
@@ -231,7 +242,16 @@ export default function OutreachLog({ tenantId }) {
 
   useEffect(() => { fetchActivity(); /* eslint-disable-next-line */ }, [tenantId, debouncedSearch, source]);
 
-  const openLead = (leadId) => navigate(`/conversations?lead=${leadId}`);
+  // Calls open the call-detail page (recording player + full transcript);
+  // SMS opens the conversation thread. Mirrors the Inbound tab, where a
+  // call's substance is its transcript, not a message body.
+  const openItem = (item) => {
+    if (item.type === "call") {
+      navigate(`/calls/${item.id}`);
+    } else if (item.lead_id) {
+      navigate(`/conversations?lead=${item.lead_id}`);
+    }
+  };
 
   if (!tenantId) return (
     <p className="text-stone-500 text-sm italic">Select a business to view the outreach log.</p>
@@ -293,7 +313,7 @@ export default function OutreachLog({ tenantId }) {
           </div>
         ) : (
           activity.map((item) => (
-            <OutreachRow key={`${item.type}-${item.id}`} item={item} onOpenLead={openLead} />
+            <OutreachRow key={`${item.type}-${item.id}`} item={item} onOpen={openItem} />
           ))
         )}
       </div>

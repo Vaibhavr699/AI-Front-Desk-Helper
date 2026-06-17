@@ -3822,11 +3822,12 @@ function outreachCallStatus(row) {
 // rows are written as 'sent' by lib/outboundSms; Twilio status callbacks may
 // upgrade to 'delivered' or downgrade to 'failed'/'undelivered'.
 function outreachSmsStatus(row) {
-  const s = String(row.status || "").toLowerCase();
+  const meta = row.metadata || {};
+  const s = String(row.status || meta.status || meta.delivery_status || "").toLowerCase();
   if (s === "delivered") return "delivered";
   if (s === "failed" || s === "undelivered") return "failed";
-  if (!s || s === "sent" || s === "queued" || s === "sending") return "sent";
-  return s;
+  // messages table has no status column — an outbound row that exists was sent.
+  return "sent";
 }
 
 // Normalize the automated SOURCE of a touch into a small, stable vocabulary
@@ -3985,7 +3986,7 @@ router.get("/outbound-activity", async (req, res) => {
     }
 
     const msgsRes = await db.query(
-      `SELECT m.id, m.created_at AS at, m.direction, m.status, m.channel,
+      `SELECT m.id, m.created_at AS at, m.direction, m.channel,
               m.body, m.metadata, m.lead_id,
               l.name AS lead_name, l.phone AS lead_phone
          FROM messages m

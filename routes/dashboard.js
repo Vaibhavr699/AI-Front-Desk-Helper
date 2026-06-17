@@ -37,6 +37,10 @@ function normalizePhoneInput(raw) {
   return null;
 }
 
+const VALID_INDUSTRIES = [
+  "painting", "roofing", "fencing", "plumbing",
+  "hvac", "electrical", "general_contractor", "other"
+];
 
 router.get("/plans", (_req, res) => {
   try {
@@ -1299,6 +1303,18 @@ router.post("/tenants", async (req, res) => {
       return res.status(400).json({ error: "Business name or company name is required" });
     }
 
+   // Industry is required at self-serve signup — it's the grouping key for
+    // cross-tenant analytics (the flywheel). A null here pollutes every
+    // industry-level query downstream, so enforce it at creation.
+    // Child locations (parent_id set) inherit the parent's industry instead
+    // of prompting — see the parent-inherit fallback below.
+    const industry = (body.industry || "").trim().toLowerCase();
+    if (!parentId && !VALID_INDUSTRIES.includes(industry)) {
+      return res.status(400).json({
+        error: "Please select your trade so we can tailor your AI. (painting, roofing, fencing, plumbing, hvac, electrical, general_contractor)"
+      });
+    }
+
     const byotSid = (body.twilio_account_sid || "").trim();
     const byotToken = (body.twilio_auth_token || "").trim();
     const manualPhone = body.phone || body.phone_number || "";
@@ -1352,6 +1368,7 @@ router.post("/tenants", async (req, res) => {
         business_type: businessType,
         parent_id: parentId,
         timezone: body.timezone || "America/Chicago",
+        industry: industry || null,
       },
       "id, name, slug, company_name, business_type, parent_id"
     );

@@ -565,10 +565,37 @@ async function startEstimateRecovery(tenantId, lead, options = {}) {
   let firstStepName;
   let baseDelayHours;
 
+  // ───────────────────────────────────────────────────────────────────
+  // First-step selection — custom cadence detection (FIXED Jun 17, 2026).
+  //
+  // ROOT CAUSE (Shawn Kruger / Paragon, Jun 10): creationSettings was
+  // sourced from masterGate.settings, which canSendRecovery may leave null
+  // when it short-circuits. When null, the OLD code fell through to the
+  // GHOST_SEQUENCE day-0 "estimate_sent" step with delayHours=0 — firing an
+  // immediate "your estimate is ready" SMS even though Paragon is on a
+  // CUSTOM day-30 cadence. The day-30 schedule was silently bypassed.
+  //
+  // The fallback-to-ghost-day-0 is NOT safe for a custom-cadence tenant:
+  // it sends a message they explicitly configured not to send, at day 0.
+  //
+  // FIX: do not trust the gate's side-channel settings. Read the recovery
+  // settings DIRECTLY (same call executeCustomStep already uses), so custom
+  // detection is reliable regardless of how the gate resolved. Only fall
+  // back to ghost if we genuinely have no settings AND no custom preset.
+  // ───────────────────────────────────────────────────────────────────
+  let settingsForCadence = creationSettings;
+  if (!settingsForCadence) {
+    try {
+      settingsForCadence = await require("../lib/recoverySettings").getRecoverySettings(tenantId);
+    } catch (e) {
+      console.error("[Recovery] direct getRecoverySettings failed at creation tenant=%s err=%s", tenantId, e.message);
+    }
+  }
+
   let customSteps = [];
   try {
-    if (creationSettings && creationSettings.cadence_preset === "custom") {
-      customSteps = getCustomCadenceSteps(creationSettings, null);
+    if (settingsForCadence && settingsForCadence.cadence_preset === "custom") {
+      customSteps = getCustomCadenceSteps(settingsForCadence, null);
     }
   } catch (e) {
     console.error("[Recovery] getCustomCadenceSteps failed at creation tenant=%s err=%s", tenantId, e.message);
@@ -582,6 +609,16 @@ async function startEstimateRecovery(tenantId, lead, options = {}) {
       "[Recovery] Custom cadence creation tenant=%s firstDay=%d channel=%s steps=%j",
       tenantId, firstDay, customSteps[0].channel, customSteps.map((s) => `${s.day}:${s.channel}`)
     );
+  } else if (settingsForCadence && settingsForCadence.cadence_preset === "custom") {
+    // Custom preset but the array resolved empty (misconfigured/blank). Do
+    // NOT fall back to an immediate ghost day-0 send — that's the exact bug.
+    // Decline to create the recovery; a custom cadence with no usable steps
+    // has nothing to send. Consistent with the other "nothing to do" returns.
+    console.log(
+      "[Recovery] Custom preset but no usable cadence steps tenant=%s — not creating (would have wrongly defaulted to ghost day-0)",
+      tenantId
+    );
+    return null;
   } else {
     firstStepName  = GHOST_SEQUENCE[0].step;
     baseDelayHours = GHOST_SEQUENCE[0].delayHours;

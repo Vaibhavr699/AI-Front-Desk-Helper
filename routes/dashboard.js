@@ -8,7 +8,7 @@ const { getTenantById } = require("../lib/tenant");
 const { listPlans, hasNurturingReferralAccess } = require("../lib/plans");
 const { configurePhoneWebhook, getClientForTenant, purchaseNewNumber, fetchAvailableNumbers, getOwnedUnassignedNumbers } = require("../lib/twilio");
 
-const router = express.Router();
+const router = express.Router();  
 const estimateRecovery = require("../services/estimateRecovery");
 const bookingsService = require("../services/bookings");
 const emailService = require("../services/email");
@@ -3933,9 +3933,9 @@ router.get("/outbound-activity", async (req, res) => {
     // then merge + sort in JS. Each query is tenant-scoped and windowed to
     // 90 days unless a search is active (search is global, like the Calls page).
     // We over-fetch a bit per channel then trim after merge.
-    const windowClause = search ? "" : "AND c.created_at > now() - INTERVAL '90 days'";
+    const windowClause = search ? "" : "AND c.started_at > now() - INTERVAL '90 days'";
     const msgWindowClause = search ? "" : "AND m.created_at > now() - INTERVAL '90 days'";
-
+   
     // Build the calls query. lead join gives us a name even when the call
     // row's metadata didn't capture one (recovery/nurturing calls usually
     // have a lead_id but no leadCapture blob).
@@ -3947,7 +3947,7 @@ router.get("/outbound-activity", async (req, res) => {
       callParams.push(`%${search}%`);
       const nameIdx = callParams.length;
       let phoneClause = "";
-      if (searchLast10) {
+     if (searchLast10) {
         callParams.push(`%${searchLast10}%`);
         phoneClause = ` OR c.to_number LIKE $${callParams.length} OR c.from_number LIKE $${callParams.length}`;
       }
@@ -3955,21 +3955,22 @@ router.get("/outbound-activity", async (req, res) => {
     }
 
     const callsRes = await db.query(
-      `SELECT c.id, c.created_at AS at, c.direction, c.status, c.disposition,
+      `SELECT c.id, c.started_at AS at, COALESCE(c.direction, 'inbound') AS direction,
+              c.status, c.disposition,
               c.to_number, c.from_number, c.metadata, c.lead_id, c.lead_source,
               c.duration_minutes,
               l.name AS lead_name, l.phone AS lead_phone
          FROM calls c
          LEFT JOIN leads l ON l.id = c.lead_id
         WHERE c.tenant_id = ANY($1)
-          AND c.direction = 'outbound'
+          AND COALESCE(c.direction, 'inbound') = 'outbound'
           ${windowClause}
           ${callSearch}
-        ORDER BY c.created_at DESC
+        ORDER BY c.started_at DESC
         LIMIT 500`,
       callParams
     );
-
+   
     const msgParams = [tenantIds];
     let msgSearch = "";
     if (search) {

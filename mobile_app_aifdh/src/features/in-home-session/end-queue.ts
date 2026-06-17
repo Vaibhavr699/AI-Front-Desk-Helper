@@ -10,6 +10,7 @@ type PendingEnd = {
   sessionId: string;
   outcome: string;
   queuedAt: number;
+  discProgression?: unknown;
 };
 
 let flushing = false;
@@ -36,10 +37,11 @@ async function writeQueue(items: PendingEnd[]): Promise<void> {
 export async function queueSessionEnd(
   sessionId: string,
   outcome: string,
+  discProgression?: unknown,
 ): Promise<void> {
   const items = await readQueue();
   if (items.some((i) => i.sessionId === sessionId)) return;
-  items.push({ sessionId, outcome, queuedAt: Date.now() });
+  items.push({ sessionId, outcome, queuedAt: Date.now(), discProgression });
   await writeQueue(items);
 }
 
@@ -63,7 +65,10 @@ export async function flushSessionEnds(): Promise<void> {
     const remaining: PendingEnd[] = [];
     for (const item of items) {
       try {
-        await endInHomeSession(item.sessionId, { outcome: item.outcome });
+        await endInHomeSession(item.sessionId, {
+          outcome: item.outcome,
+          disc_progression: item.discProgression,
+        });
       } catch {
         remaining.push(item);
       }

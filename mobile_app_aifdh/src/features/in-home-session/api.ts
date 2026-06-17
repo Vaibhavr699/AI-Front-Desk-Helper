@@ -6,6 +6,7 @@ import type {
   InHomeSession,
   InHomeSessionAlert,
   InHomeSessionSummary,
+  SessionComment,
   StartSessionInput,
   StartSessionResponse,
 } from "./types";
@@ -27,6 +28,7 @@ export async function endInHomeSession(
     estimate_value_cents?: number;
     customer_signals?: unknown;
     delivery_mode_used?: unknown;
+    disc_progression?: unknown;
   } = {},
 ): Promise<{ session: InHomeSession }> {
   const { data } = await api.post("/rep/in-home/end", {
@@ -38,7 +40,11 @@ export async function endInHomeSession(
 
 export async function fetchInHomeSession(
   sessionId: string,
-): Promise<{ session: InHomeSession; alerts: InHomeSessionAlert[] }> {
+): Promise<{
+  session: InHomeSession;
+  alerts: InHomeSessionAlert[];
+  comments: SessionComment[];
+}> {
   const { data } = await api.get(`/rep/in-home/sessions/${sessionId}`);
   return data;
 }

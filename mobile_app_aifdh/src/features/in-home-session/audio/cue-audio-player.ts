@@ -1,6 +1,8 @@
 import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
 import * as FileSystem from "expo-file-system/legacy";
 
+import { isAudioOutputReady, subscribeAudioRoute } from "./audio-route";
+
 let audioModeReady = false;
 
 async function ensureAudioMode(): Promise<void> {
@@ -27,10 +29,15 @@ export async function playCueMp3Base64(base64: string): Promise<void> {
 
   const player = createAudioPlayer({ uri: path });
   let done = false;
+  let routeUnsub: (() => void) | null = null;
   const cleanup = () => {
     if (done) return;
     done = true;
     if (activeStop === stop) activeStop = null;
+    if (routeUnsub) {
+      routeUnsub();
+      routeUnsub = null;
+    }
     try {
       player.remove();
     } catch {}
@@ -49,6 +56,16 @@ export async function playCueMp3Base64(base64: string): Promise<void> {
       sub.remove();
       cleanup();
     }
+  });
+
+  if (!isAudioOutputReady()) {
+    sub.remove();
+    cleanup();
+    return;
+  }
+
+  routeUnsub = subscribeAudioRoute(() => {
+    if (!isAudioOutputReady()) stop();
   });
 
   activeStop = stop;

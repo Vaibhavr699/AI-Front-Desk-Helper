@@ -27,8 +27,12 @@ export function CoachingScreen() {
   const { data, isLoading, isError, error, refetch, isRefetching } =
     useCoachingMe(30);
 
-  const goPractice = () =>
-    router.navigate("/(tabs)/coaching/roleplay" as never);
+  const goPractice = (dimension?: string) =>
+    router.navigate(
+      (dimension
+        ? `/(tabs)/coaching/roleplay?focus=${encodeURIComponent(dimension)}`
+        : "/(tabs)/coaching/roleplay") as never,
+    );
 
   return (
     <SafeAreaView className="flex-1 bg-surface-base" edges={["top"]}>

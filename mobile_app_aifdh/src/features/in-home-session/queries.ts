@@ -38,10 +38,12 @@ export function useEndInHomeSession() {
       sessionId: string;
       outcome?: string;
       estimate_value_cents?: number;
+      disc_progression?: unknown;
     }) =>
       endInHomeSession(input.sessionId, {
         outcome: input.outcome,
         estimate_value_cents: input.estimate_value_cents,
+        disc_progression: input.disc_progression,
       }),
     onSuccess: (_, { sessionId }) => {
       qc.invalidateQueries({ queryKey: inHomeKeys.session(sessionId) });

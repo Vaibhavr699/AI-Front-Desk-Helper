@@ -375,6 +375,109 @@ router.get("/summary", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// GET /api/call-coach/team-analytics
+// Cross-rep comparison: per-rep avg score + cue-type counts (incl missing_close),
+// plus a team-wide daily trend. Owner/admin only.
+// ─────────────────────────────────────────────────────────────────────────
+router.get("/team-analytics", async (req, res) => {
+  const tenantId = getTenantId(req);
+  if (!tenantId) return res.status(401).json({ error: "No tenant in session" });
+  if (!["owner", "admin"].includes(req.user?.role)) {
+    return res.status(403).json({ error: "Owner or admin only" });
+  }
+
+  const days = Math.min(parseInt(req.query.days, 10) || 30, 365);
+
+  try {
+    const perRepScoreSql = `
+      SELECT u.id AS rep_user_id,
+             u.email AS rep_email,
+             ROUND(AVG(cc.overall_score)::numeric, 1) AS avg_score,
+             COUNT(*)::int AS scored_count
+      FROM coaching_conversations cc
+      JOIN dashboard_users u ON u.id = cc.rep_user_id
+      WHERE cc.tenant_id = $1
+        AND cc.rep_user_id IS NOT NULL
+        AND cc.scored_at IS NOT NULL
+        AND cc.scoring_skip_reason IS NULL
+        AND cc.scored_at > now() - INTERVAL '${days} days'
+      GROUP BY u.id, u.email
+      ORDER BY avg_score DESC NULLS LAST
+    `;
+    const perRepCueSql = `
+      SELECT s.user_id AS rep_user_id,
+             COALESCE(a.cue_type, a.alert_type) AS cue_type,
+             COUNT(*)::int AS count
+      FROM in_home_alerts a
+      JOIN in_home_sessions s ON s.id = a.session_id
+      WHERE s.tenant_id = $1
+        AND s.user_id IS NOT NULL
+        AND a.fired_at > now() - INTERVAL '${days} days'
+        AND COALESCE(a.cue_type, a.alert_type) IS NOT NULL
+      GROUP BY s.user_id, COALESCE(a.cue_type, a.alert_type)
+    `;
+    const trendSql = `
+      SELECT date_trunc('day', cc.scored_at)::date AS day,
+             ROUND(AVG(cc.overall_score)::numeric, 1) AS avg_score,
+             COUNT(*)::int AS count
+      FROM coaching_conversations cc
+      WHERE cc.tenant_id = $1
+        AND cc.scored_at IS NOT NULL
+        AND cc.scoring_skip_reason IS NULL
+        AND cc.scored_at > now() - INTERVAL '${days} days'
+      GROUP BY day ORDER BY day ASC
+    `;
+
+    const [scores, cues, trend] = await Promise.all([
+      db.query(perRepScoreSql, [tenantId]),
+      db.query(perRepCueSql, [tenantId]),
+      db.query(trendSql, [tenantId]),
+    ]);
+
+    const repsById = new Map();
+    for (const row of scores.rows) {
+      repsById.set(row.rep_user_id, {
+        rep_user_id: row.rep_user_id,
+        rep_email: row.rep_email,
+        avg_score: row.avg_score != null ? Number(row.avg_score) : null,
+        scored_count: row.scored_count,
+        cues: {},
+        total_cues: 0,
+      });
+    }
+    for (const row of cues.rows) {
+      let rep = repsById.get(row.rep_user_id);
+      if (!rep) {
+        rep = {
+          rep_user_id: row.rep_user_id,
+          rep_email: null,
+          avg_score: null,
+          scored_count: 0,
+          cues: {},
+          total_cues: 0,
+        };
+        repsById.set(row.rep_user_id, rep);
+      }
+      rep.cues[row.cue_type] = row.count;
+      rep.total_cues += row.count;
+    }
+
+    res.json({
+      window_days: days,
+      reps: Array.from(repsById.values()),
+      trend: trend.rows.map((t) => ({
+        day: t.day,
+        avg_score: t.avg_score != null ? Number(t.avg_score) : null,
+        count: t.count,
+      })),
+    });
+  } catch (err) {
+    console.error("[callCoach] team-analytics error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // POST /api/call-coach/conversations/:id/feedback   (B0)
 // ─────────────────────────────────────────────────────────────────────────
 router.post("/conversations/:id/feedback", async (req, res) => {
@@ -733,7 +836,7 @@ router.get("/in-home/sessions/:id", async (req, res) => {
     const tenantId = getTenantId(req);
     if (!tenantId) return res.status(401).json({ error: "No tenant" });
 
-    const [sessionR, alertsR] = await Promise.all([
+    const [sessionR, alertsR, commentsR] = await Promise.all([
       db.query(
         `SELECT s.*, u.email AS rep_email, l.customer_name AS lead_name
            FROM in_home_sessions s
@@ -750,6 +853,15 @@ router.get("/in-home/sessions/:id", async (req, res) => {
           WHERE session_id = $1
           ORDER BY fired_at ASC`,
         [req.params.id],
+      ),
+      db.query(
+        `SELECT c.id, c.turn_index, c.flag, c.text, c.created_at,
+                c.manager_id, u.email AS manager_email
+           FROM session_comments c
+           LEFT JOIN dashboard_users u ON u.id = c.manager_id
+          WHERE c.session_id = $1 AND c.tenant_id = $2
+          ORDER BY c.turn_index ASC, c.created_at ASC`,
+        [req.params.id, tenantId],
       ),
     ]);
 
@@ -772,9 +884,71 @@ router.get("/in-home/sessions/:id", async (req, res) => {
       }
     }
 
-    res.json({ session, alerts: alertsR.rows, recording });
+    res.json({ session, alerts: alertsR.rows, recording, comments: commentsR.rows });
   } catch (err) {
     console.error("[callCoach] in-home session detail error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/in-home/sessions/:id/comments", async (req, res) => {
+  const tenantId = getTenantId(req);
+  if (!tenantId) return res.status(401).json({ error: "No tenant" });
+  if (!["owner", "admin"].includes(req.user?.role)) {
+    return res.status(403).json({ error: "Owner or admin only" });
+  }
+  try {
+    const turnIndex = Number(req.body?.turn_index);
+    const flag = req.body?.flag;
+    const text = typeof req.body?.text === "string" ? req.body.text.trim() : null;
+
+    if (!Number.isInteger(turnIndex) || turnIndex < 0) {
+      return res.status(400).json({ error: "turn_index must be a non-negative integer" });
+    }
+    if (!["good", "improve"].includes(flag)) {
+      return res.status(400).json({ error: "flag must be 'good' or 'improve'" });
+    }
+    if (text && text.length > 2000) {
+      return res.status(400).json({ error: "text must be 2000 characters or fewer" });
+    }
+
+    const sessionR = await db.query(
+      `SELECT id FROM in_home_sessions WHERE id = $1 AND tenant_id = $2`,
+      [req.params.id, tenantId],
+    );
+    if (!sessionR.rows[0]) return res.status(404).json({ error: "Session not found" });
+
+    const r = await db.query(
+      `INSERT INTO session_comments (session_id, tenant_id, manager_id, turn_index, flag, text)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, turn_index, flag, text, created_at, manager_id`,
+      [req.params.id, tenantId, req.user?.id || null, turnIndex, flag, text || null],
+    );
+    const comment = { ...r.rows[0], manager_email: req.user?.email || null };
+    res.status(201).json({ comment });
+  } catch (err) {
+    console.error("[callCoach] create comment error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete("/in-home/sessions/:id/comments/:commentId", async (req, res) => {
+  const tenantId = getTenantId(req);
+  if (!tenantId) return res.status(401).json({ error: "No tenant" });
+  if (!["owner", "admin"].includes(req.user?.role)) {
+    return res.status(403).json({ error: "Owner or admin only" });
+  }
+  try {
+    const r = await db.query(
+      `DELETE FROM session_comments
+        WHERE id = $1 AND session_id = $2 AND tenant_id = $3
+        RETURNING id`,
+      [req.params.commentId, req.params.id, tenantId],
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: "Comment not found" });
+    res.json({ ok: true, id: r.rows[0].id });
+  } catch (err) {
+    console.error("[callCoach] delete comment error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { get } from "../api";
+import { get, getUser } from "../api";
 import InHomeCuesTab from "../components/CallCoach/InHomeCuesTab";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -175,11 +175,29 @@ export default function CallCoach({ tenantId }) {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">AI Coaching</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          AI-scored voice and SMS conversations across 8 dimensions, with persona detection and rationale-backed feedback.
-        </p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">AI Coaching</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            AI-scored voice and SMS conversations across 8 dimensions, with persona detection and rationale-backed feedback.
+          </p>
+        </div>
+        {["owner", "admin"].includes(getUser()?.role) && (
+          <div className="flex shrink-0 gap-2">
+            <Link
+              to="/call-coach/settings"
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+            >
+              Coaching settings
+            </Link>
+            <Link
+              to="/call-coach/team-analytics"
+              className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700"
+            >
+              Team Analytics
+            </Link>
+          </div>
+        )}
       </div>
 
       <div className="mb-6 flex gap-0 border-b border-gray-200">

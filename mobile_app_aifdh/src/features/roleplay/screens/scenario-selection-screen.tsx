@@ -146,7 +146,7 @@ export function ScenarioSelectionScreen({ scenarioId }: Props) {
               </View>
               <Text className="text-sm leading-relaxed text-ink-secondary">
                 The AI plays this customer. You respond as the rep. When you
-                end the session, you'll be scored on the same 8 dimensions as
+                end the session, you'll be scored on the same dimensions as
                 your real calls.
               </Text>
             </View>

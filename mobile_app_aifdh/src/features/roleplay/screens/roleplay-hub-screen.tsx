@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { formatDimensionLabel } from "@/src/features/coaching/lib/format";
 import { useResponsive } from "@/src/shared/hooks/use-responsive";
 import { colors } from "@/src/shared/theme/tokens";
 
@@ -19,14 +20,34 @@ import { ScenarioCard } from "../components/scenario-card";
 import { useScenarios } from "../queries";
 import type { RoleplayScenario } from "../types";
 
-export function RoleplayHubScreen() {
+type Props = {
+  focusDimension?: string;
+};
+
+export function RoleplayHubScreen({ focusDimension }: Props) {
   const router = useRouter();
   const { isTablet } = useResponsive();
   const { data, isLoading, isError, error, refetch, isRefetching } =
     useScenarios();
   const [showCustom, setShowCustom] = useState(false);
 
-  const scenarios = data?.scenarios ?? [];
+  const allScenarios = data?.scenarios ?? [];
+
+  const { scenarios, focusMatchCount } = useMemo(() => {
+    if (!focusDimension) {
+      return { scenarios: allScenarios, focusMatchCount: 0 };
+    }
+    const matches = allScenarios.filter((s) =>
+      s.skills_trained?.includes(focusDimension),
+    );
+    const rest = allScenarios.filter(
+      (s) => !s.skills_trained?.includes(focusDimension),
+    );
+    return {
+      scenarios: [...matches, ...rest],
+      focusMatchCount: matches.length,
+    };
+  }, [allScenarios, focusDimension]);
 
   const handleScenarioPress = useCallback(
     (scenario: RoleplayScenario) => {
@@ -68,11 +89,27 @@ export function RoleplayHubScreen() {
           }
           ListHeaderComponent={
             <View className="mb-4 gap-3">
-              <Text className="text-sm leading-relaxed text-ink-secondary">
-                Practice in-home conversations with an AI customer before you
-                walk into the real visit. Pick a scenario that tests where
-                you're weakest.
-              </Text>
+              {focusDimension ? (
+                <View className="gap-1 rounded-sm border border-brand-100 bg-brand-50 p-3.5">
+                  <View className="flex-row items-center gap-1.5">
+                    <Ionicons name="flag" size={13} color={colors.brand[600]} />
+                    <Text className="text-xs font-semibold uppercase tracking-wider text-brand-700">
+                      Focused practice
+                    </Text>
+                  </View>
+                  <Text className="text-sm leading-relaxed text-ink-secondary">
+                    {focusMatchCount > 0
+                      ? `These scenarios train ${formatDimensionLabel(focusDimension)} — your lowest-scoring skill. Pick one to practice it directly.`
+                      : `No scenario trains ${formatDimensionLabel(focusDimension)} yet. Try a related scenario below, or create a custom one focused on it.`}
+                  </Text>
+                </View>
+              ) : (
+                <Text className="text-sm leading-relaxed text-ink-secondary">
+                  Practice in-home conversations with an AI customer before you
+                  walk into the real visit. Pick a scenario that tests where
+                  you're weakest.
+                </Text>
+              )}
               <View className="flex-row gap-2">
                 <CtaPill
                   icon="add-circle"

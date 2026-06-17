@@ -13,7 +13,7 @@ import type { CoachingDimensionAverage } from "../types";
 
 type Props = {
   weakest: CoachingDimensionAverage | null;
-  onPractice: () => void;
+  onPractice: (dimension?: string) => void;
 };
 
 function iconColorFor(score: number): string {
@@ -70,7 +70,7 @@ export function FocusCard({ weakest, onPractice }: Props) {
       ) : null}
 
       <Pressable
-        onPress={onPractice}
+        onPress={() => onPractice(weakest.dimension)}
         accessibilityRole="button"
         accessibilityLabel={`Practice ${label} with a roleplay`}
         className="h-12 flex-row items-center justify-center gap-2 rounded-sm bg-brand-600 active:bg-brand-700"

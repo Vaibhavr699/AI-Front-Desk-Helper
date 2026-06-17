@@ -20,15 +20,23 @@ const WPM_THRESHOLD = 180;
 const WPM_SAMPLE_SECONDS = 10;
 
 const CUE_TYPES = {
-  ask_discovery: { watch: "ASK", urgency: "yellow", vibration: "single_tap" },
-  listen: { watch: "LISTEN", urgency: "yellow", vibration: "single_tap" },
-  disc_reframe: { watch: "DISC", urgency: "orange", vibration: "double_tap" },
-  missing_close: { watch: "CLOSE", urgency: "orange", vibration: "double_tap" },
-  address_objection: { watch: "OBJECT", urgency: "orange", vibration: "double_tap" },
-  slow_down: { watch: "SLOW", urgency: "red", vibration: "long_buzz" },
-  build_rapport: { watch: "RAPPORT", urgency: "yellow", vibration: "single_tap" },
-  confirm_next_step: { watch: "CONFIRM", urgency: "green", vibration: "single_tap" },
+  ask_discovery: { watch: "ASK", urgency: "yellow", vibration: "single_tap", dimension: "discovery" },
+  listen: { watch: "LISTEN", urgency: "yellow", vibration: "single_tap", dimension: "listening" },
+  disc_reframe: { watch: "DISC", urgency: "orange", vibration: "double_tap", dimension: "rapport" },
+  missing_close: { watch: "CLOSE", urgency: "orange", vibration: "double_tap", dimension: "close" },
+  address_objection: { watch: "OBJECT", urgency: "orange", vibration: "double_tap", dimension: "objection_handling" },
+  slow_down: { watch: "SLOW", urgency: "red", vibration: "long_buzz", dimension: "professionalism" },
+  build_rapport: { watch: "RAPPORT", urgency: "yellow", vibration: "single_tap", dimension: "rapport" },
+  confirm_next_step: { watch: "CONFIRM", urgency: "green", vibration: "single_tap", dimension: "next_steps" },
 };
+
+const CUE_DIMENSION_MAP = Object.fromEntries(
+  Object.entries(CUE_TYPES).map(([cue, meta]) => [cue, meta.dimension]),
+);
+
+function cueToDimension(cueType) {
+  return CUE_DIMENSION_MAP[cueType] || null;
+}
 
 const SYSTEM_PROMPT = `You are a real-time sales coaching engine for home services reps. You receive a rolling transcript window from a live in-home customer conversation. Your job is to decide if the rep needs a coaching cue RIGHT NOW.
 
@@ -271,4 +279,4 @@ class LiveCueEngine {
   }
 }
 
-module.exports = { LiveCueEngine, CUE_TYPES, WINDOW_SECONDS };
+module.exports = { LiveCueEngine, CUE_TYPES, CUE_DIMENSION_MAP, cueToDimension, WINDOW_SECONDS };

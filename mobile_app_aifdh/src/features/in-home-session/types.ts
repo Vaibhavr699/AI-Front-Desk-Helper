@@ -29,7 +29,7 @@ export type InHomeSession = {
   outcome: string | null;
   estimate_value_cents: number | null;
   rep_satisfaction: number | null;
-  disc_progression: unknown;
+  disc_progression: DiscProgression | null;
   coaching_alerts: unknown;
   walkthrough_checklist_completed: unknown;
   customer_signals: unknown;
@@ -49,6 +49,15 @@ export type InHomeSessionAlert = {
   alert_color: string | null;
   alert_urgency: "green" | "yellow" | "orange" | "red" | null;
   fired_at: string;
+};
+
+export type SessionComment = {
+  id: string;
+  turn_index: number;
+  flag: "good" | "improve";
+  text: string | null;
+  created_at: string;
+  manager_email: string | null;
 };
 
 export type InHomeSessionSummary = {
@@ -108,6 +117,12 @@ export type DiscReading = {
   primary: DiscLetter | "unknown";
   secondary: DiscLetter | null;
   confidence: number;
+};
+
+export type DiscProgression = {
+  final: DiscReading;
+  shifts: { primary: DiscLetter; at: number }[];
+  captured_at: string;
 };
 
 export type WalkthroughItem = {

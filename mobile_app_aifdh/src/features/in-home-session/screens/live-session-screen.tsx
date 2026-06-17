@@ -18,8 +18,10 @@ import { useAudioStream } from "../hooks/use-audio-stream";
 import { useWatchCue } from "../hooks/use-watch-cue";
 import { useCueAudio } from "../hooks/use-cue-audio";
 import { useEndInHomeSession, useInHomeSession } from "../queries";
+import type { DiscLetter } from "@/src/features/appointments/types";
 import type {
   CoachingAlert,
+  DiscProgression,
   DiscReading,
   WalkthroughItem,
   WsServerMessage,
@@ -51,6 +53,7 @@ export function LiveSessionScreen({ sessionId }: Props) {
   const [alerts, setAlerts] = useState<CoachingAlert[]>([]);
   const [activeCue, setActiveCue] = useState<CoachingAlert | null>(null);
   const [disc, setDisc] = useState<DiscReading | null>(null);
+  const discShiftsRef = useRef<{ primary: DiscLetter; at: number }[]>([]);
   const [walkthrough, setWalkthrough] = useState<WalkthroughItem[]>(
     INITIAL_WALKTHROUGH,
   );
@@ -108,9 +111,18 @@ export function LiveSessionScreen({ sessionId }: Props) {
           }
           break;
         }
-        case "disc_update":
+        case "disc_update": {
           setDisc(msg.reading);
+          const primary = msg.reading.primary;
+          if (primary !== "unknown") {
+            const shifts = discShiftsRef.current;
+            const last = shifts[shifts.length - 1];
+            if (!last || last.primary !== primary) {
+              shifts.push({ primary, at: Date.now() });
+            }
+          }
           break;
+        }
         case "checklist_update":
           setWalkthrough((prev) =>
             prev.map((item) =>
@@ -159,11 +171,11 @@ export function LiveSessionScreen({ sessionId }: Props) {
     const cue: CoachingAlert = {
       id: "consent-on-tape",
       type: "warning",
-      urgency: "red",
-      headline: "Read the consent script now",
+      urgency: "green",
+      headline: "Open warm — weave in your consent line",
       full_text:
-        "Recording has started. Read your consent line to the customer now so their agreement is captured on the recording.",
-      vibration: "double_tap",
+        'Lead with the relationship, then mention the recording naturally: "I use AI tools to capture every detail of today\'s visit — all good with you?" Once they say yes, you\'re set.',
+      vibration: "single_tap",
       fired_at: new Date().toISOString(),
     };
     setAlerts((prev) => [cue, ...prev]);
@@ -207,10 +219,22 @@ export function LiveSessionScreen({ sessionId }: Props) {
             await stopStreaming();
             await flushUnacked();
             clearWatch();
+            const discProgression: DiscProgression | undefined =
+              disc && disc.primary !== "unknown"
+                ? {
+                    final: disc,
+                    shifts: discShiftsRef.current,
+                    captured_at: new Date().toISOString(),
+                  }
+                : undefined;
             try {
-              await end.mutateAsync({ sessionId, outcome: "completed" });
+              await end.mutateAsync({
+                sessionId,
+                outcome: "completed",
+                disc_progression: discProgression,
+              });
             } catch {
-              await queueSessionEnd(sessionId, "completed");
+              await queueSessionEnd(sessionId, "completed", discProgression);
               Alert.alert(
                 "Saved — will sync later",
                 "You’re offline, so we saved this session locally. It’ll finish syncing automatically once you’re back online.",
@@ -231,6 +255,9 @@ export function LiveSessionScreen({ sessionId }: Props) {
     const s = (elapsed % 60).toString().padStart(2, "0");
     return `${m}:${s}`;
   }, [elapsed]);
+
+  const discReframing =
+    (activeCue?.cue_type ?? activeCue?.type) === "disc_reframe";
 
   return (
     <SafeAreaView className="flex-1 bg-surface-base" edges={["top"]}>
@@ -274,7 +301,7 @@ export function LiveSessionScreen({ sessionId }: Props) {
             </View>
             <View className="w-[360px] border-l border-surface-divider bg-white">
               <View className="items-center gap-3 border-b border-surface-divider p-5">
-                <DiscLiveBadge reading={disc} size="xl" />
+                <DiscLiveBadge reading={disc} size="xl" reframing={discReframing} />
               </View>
               <ScrollView contentContainerClassName="gap-3 p-4">
                 <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
@@ -291,7 +318,7 @@ export function LiveSessionScreen({ sessionId }: Props) {
             </View>
           </View>
         ) : (
-          <PhoneLayout alerts={alerts} disc={disc} />
+          <PhoneLayout alerts={alerts} disc={disc} reframing={discReframing} />
         )}
       </View>
       <WalkthroughStrip items={walkthrough} />
@@ -388,9 +415,11 @@ function Header({
 function PhoneLayout({
   alerts,
   disc,
+  reframing,
 }: {
   alerts: CoachingAlert[];
   disc: DiscReading | null;
+  reframing: boolean;
 }) {
   const top = alerts[0] ?? null;
   return (
@@ -399,7 +428,7 @@ function PhoneLayout({
         <Text className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
           Live coaching
         </Text>
-        <DiscLiveBadge reading={disc} size="lg" />
+        <DiscLiveBadge reading={disc} size="lg" reframing={reframing} />
       </View>
 
       {top ? (

@@ -29,3 +29,5 @@ export { default as Welcome } from "./Welcome";
 export { default as RollupV5 } from "./RollupV5";
 export { default as CallCoach } from "./CallCoach";
 export { default as CallCoachDetail } from "./CallCoachDetail";
+export { default as TeamAnalytics } from "./TeamAnalytics";
+export { default as CoachingSettings } from "./CoachingSettings";

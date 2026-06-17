@@ -12,8 +12,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLeadDetail } from "@/src/features/leads/queries";
 import { colors } from "@/src/shared/theme/tokens";
 
+import { DiscReviewCard } from "../components/disc-review-card";
 import { useInHomeSession } from "../queries";
-import type { InHomeSessionAlert, TranscriptEntry } from "../types";
+import type {
+  InHomeSessionAlert,
+  SessionComment,
+  TranscriptEntry,
+} from "../types";
 
 const OUTCOME_LABEL: Record<string, string> = {
   closed: "Closed",
@@ -99,6 +104,15 @@ export function SessionReviewScreen({ sessionId }: Props) {
   const transcript: TranscriptEntry[] = session.transcript ?? [];
   const dur = durationMin(session.started_at, session.ended_at);
 
+  const comments: SessionComment[] = data.comments ?? [];
+  const commentsByTurn = new Map<number, SessionComment[]>();
+  for (const c of comments) {
+    const list = commentsByTurn.get(c.turn_index) ?? [];
+    list.push(c);
+    commentsByTurn.set(c.turn_index, list);
+  }
+  const managerNoteCount = comments.length;
+
   return (
     <SafeAreaView className="flex-1 bg-surface-base" edges={["top"]}>
       <View className="flex-row items-center gap-3 border-b border-surface-divider px-4 py-3 md:px-8">
@@ -144,6 +158,8 @@ export function SessionReviewScreen({ sessionId }: Props) {
             </View>
           </View>
 
+          <DiscReviewCard progression={session.disc_progression} />
+
           {alerts.length > 0 ? (
             <View className="gap-3 rounded-sm bg-white p-4">
               <Text className="text-sm font-semibold text-ink-secondary">
@@ -168,9 +184,19 @@ export function SessionReviewScreen({ sessionId }: Props) {
           ) : null}
 
           <View className="gap-2 rounded-sm bg-white p-4">
-            <Text className="text-sm font-semibold text-ink-secondary">
-              Conversation
-            </Text>
+            <View className="flex-row items-center gap-2">
+              <Text className="text-sm font-semibold text-ink-secondary">
+                Conversation
+              </Text>
+              {managerNoteCount > 0 ? (
+                <View className="rounded-full bg-brand-50 px-2 py-0.5">
+                  <Text className="text-[10px] font-semibold text-brand-700">
+                    {managerNoteCount} manager{" "}
+                    {managerNoteCount === 1 ? "note" : "notes"}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
             {transcript.length === 0 ? (
               <Text className="py-6 text-center text-sm text-ink-muted">
                 No transcript was captured for this session.
@@ -178,7 +204,11 @@ export function SessionReviewScreen({ sessionId }: Props) {
             ) : (
               <View className="gap-2 pt-1">
                 {transcript.map((turn, i) => (
-                  <TurnBubble key={`${turn.speaker}-${i}`} turn={turn} />
+                  <TurnBubble
+                    key={`${turn.speaker}-${i}`}
+                    turn={turn}
+                    comments={commentsByTurn.get(i) ?? []}
+                  />
                 ))}
               </View>
             )}
@@ -197,10 +227,21 @@ function Chip({ label }: { label: string }) {
   );
 }
 
-function TurnBubble({ turn }: { turn: TranscriptEntry }) {
+const COMMENT_FLAG_STYLE = {
+  good: { container: "border-emerald-200 bg-emerald-50", label: "text-emerald-700", tag: "Good" },
+  improve: { container: "border-amber-200 bg-amber-50", label: "text-amber-700", tag: "Work on" },
+} as const;
+
+function TurnBubble({
+  turn,
+  comments,
+}: {
+  turn: TranscriptEntry;
+  comments: SessionComment[];
+}) {
   const isRep = turn.speaker === "rep";
   return (
-    <View className={`w-full flex-row ${isRep ? "justify-end" : "justify-start"}`}>
+    <View className={`w-full ${isRep ? "items-end" : "items-start"}`}>
       <View
         className={
           isRep
@@ -219,6 +260,25 @@ function TurnBubble({ turn }: { turn: TranscriptEntry }) {
           {turn.text}
         </Text>
       </View>
+
+      {comments.map((c) => {
+        const style = COMMENT_FLAG_STYLE[c.flag] ?? COMMENT_FLAG_STYLE.improve;
+        return (
+          <View
+            key={c.id}
+            className={`mt-1 max-w-[82%] rounded-sm border px-3 py-2 ${style.container}`}
+          >
+            <Text className={`text-[10px] font-semibold uppercase tracking-wider ${style.label}`}>
+              {style.tag} · {c.manager_email ?? "Manager"}
+            </Text>
+            {c.text ? (
+              <Text className="mt-0.5 text-sm leading-relaxed text-ink-primary">
+                {c.text}
+              </Text>
+            ) : null}
+          </View>
+        );
+      })}
     </View>
   );
 }

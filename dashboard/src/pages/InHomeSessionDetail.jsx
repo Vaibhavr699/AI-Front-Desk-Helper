@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { get } from "../api";
+import { get, getUser, post, del } from "../api";
 import FeedbackModal from "../components/CallCoach/FeedbackModal";
+import TranscriptTurn from "../components/CallCoach/TranscriptTurn";
 
 const CUE_META = {
   ask_discovery: { label: "Ask Discovery", color: "bg-amber-100 text-amber-800", dot: "bg-amber-500" },
@@ -41,9 +42,12 @@ export default function InHomeSessionDetail({ tenantId }) {
   const [session, setSession] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [recording, setRecording] = useState(null);
+  const [comments, setComments] = useState([]);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  const canComment = ["owner", "admin"].includes(getUser()?.role);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,6 +59,7 @@ export default function InHomeSessionDetail({ tenantId }) {
           setSession(json.session);
           setAlerts(json.alerts || []);
           setRecording(json.recording || null);
+          setComments(json.comments || []);
         }
       } catch (err) {
         if (!cancelled) setError(err.message);
@@ -88,6 +93,24 @@ export default function InHomeSessionDetail({ tenantId }) {
   for (const a of alerts) {
     const key = a.cue_type || a.alert_type;
     cueSummary[key] = (cueSummary[key] || 0) + 1;
+  }
+
+  const commentsByTurn = {};
+  for (const c of comments) {
+    (commentsByTurn[c.turn_index] = commentsByTurn[c.turn_index] || []).push(c);
+  }
+
+  async function handleAddComment(turnIndex, flag, text) {
+    const { comment } = await post(
+      `/api/call-coach/in-home/sessions/${id}/comments`,
+      { turn_index: turnIndex, flag, text },
+    );
+    setComments((prev) => [...prev, comment]);
+  }
+
+  async function handleDeleteComment(commentId) {
+    await del(`/api/call-coach/in-home/sessions/${id}/comments/${commentId}`);
+    setComments((prev) => prev.filter((c) => c.id !== commentId));
   }
 
   return (
@@ -246,21 +269,16 @@ export default function InHomeSessionDetail({ tenantId }) {
             ) : (
               <div className="max-h-[600px] overflow-y-auto divide-y divide-gray-100">
                 {transcript.map((entry, i) => (
-                  <div key={i} className="px-4 py-2.5">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className={`text-[10px] font-bold uppercase ${
-                        entry.speaker === "rep" ? "text-brand-600" :
-                        entry.speaker === "customer" ? "text-emerald-600" :
-                        "text-gray-400"
-                      }`}>
-                        {entry.speaker}
-                      </span>
-                      <span className="text-[10px] text-gray-300 font-mono">
-                        {formatTime(entry.at, session.started_at)}
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-800">{entry.text}</p>
-                  </div>
+                  <TranscriptTurn
+                    key={i}
+                    entry={entry}
+                    turnIndex={i}
+                    timestamp={formatTime(entry.at, session.started_at)}
+                    comments={commentsByTurn[i] || []}
+                    canComment={canComment}
+                    onAdd={handleAddComment}
+                    onDelete={handleDeleteComment}
+                  />
                 ))}
               </div>
             )}

@@ -332,7 +332,7 @@ router.post("/end", ...repAuthChain, async (req, res) => {
 
     let scoring;
     try {
-      scoring = await scoreRoleplay(scenarioForAi, row.transcript || []);
+      scoring = await scoreRoleplay(scenarioForAi, row.transcript || [], req.rep.tenant_id);
     } catch (err) {
       console.error("[rep/roleplay/end] scoring failed:", err.message);
       return res.status(502).json({ error: "Couldn't score this session. Try again." });

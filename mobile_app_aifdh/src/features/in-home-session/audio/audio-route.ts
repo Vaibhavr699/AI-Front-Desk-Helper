@@ -39,6 +39,10 @@ export function setAudioTestOverride(value: boolean): void {
   emit();
 }
 
+export function subscribeAudioRoute(listener: () => void): () => void {
+  return subscribe(listener);
+}
+
 function subscribe(listener: () => void): () => void {
   listeners.add(listener);
   if (!nativeSubscription) {

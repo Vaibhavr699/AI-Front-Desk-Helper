@@ -209,6 +209,7 @@ router.post("/end", ...repAuthChain, async (req, res) => {
       estimate_value_cents,
       customer_signals,
       delivery_mode_used,
+      disc_progression,
     } = req.body || {};
     if (!session_id) {
       return res.status(400).json({ error: "session_id required" });
@@ -231,8 +232,9 @@ router.post("/end", ...repAuthChain, async (req, res) => {
               outcome             = COALESCE($1, outcome),
               estimate_value_cents = COALESCE($2, estimate_value_cents),
               customer_signals    = COALESCE($3::jsonb, customer_signals),
-              delivery_mode_used  = COALESCE($4::jsonb, delivery_mode_used)
-        WHERE id = $5
+              delivery_mode_used  = COALESCE($4::jsonb, delivery_mode_used),
+              disc_progression    = COALESCE($5::jsonb, disc_progression)
+        WHERE id = $6
         RETURNING *`,
       [
         outcome || null,
@@ -241,6 +243,7 @@ router.post("/end", ...repAuthChain, async (req, res) => {
           : null,
         customer_signals ? JSON.stringify(customer_signals) : null,
         delivery_mode_used ? JSON.stringify(delivery_mode_used) : null,
+        disc_progression ? JSON.stringify(disc_progression) : null,
         session_id,
       ],
     );
@@ -296,7 +299,7 @@ router.get("/sessions", ...repAuthChain, async (req, res) => {
 
 router.get("/sessions/:id", ...repAuthChain, async (req, res) => {
   try {
-    const [sessionRes, alertsRes] = await Promise.all([
+    const [sessionRes, alertsRes, commentsRes] = await Promise.all([
       db.query(
         `SELECT * FROM in_home_sessions
           WHERE id = $1 AND user_id = $2 AND tenant_id = $3`,
@@ -308,12 +311,22 @@ router.get("/sessions/:id", ...repAuthChain, async (req, res) => {
           ORDER BY fired_at ASC`,
         [req.params.id],
       ),
+      db.query(
+        `SELECT c.id, c.turn_index, c.flag, c.text, c.created_at,
+                u.email AS manager_email
+           FROM session_comments c
+           LEFT JOIN dashboard_users u ON u.id = c.manager_id
+          WHERE c.session_id = $1 AND c.tenant_id = $2
+          ORDER BY c.turn_index ASC, c.created_at ASC`,
+        [req.params.id, req.rep.tenant_id],
+      ),
     ]);
     const session = sessionRes.rows[0];
     if (!session) return res.status(404).json({ error: "Session not found" });
     res.json({
       session: shapeSession(session),
       alerts: alertsRes.rows.map(shapeAlert),
+      comments: commentsRes.rows,
     });
   } catch (e) {
     console.error("[rep/in-home/sessions/:id]", e);

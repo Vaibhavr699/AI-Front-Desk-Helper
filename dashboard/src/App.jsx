@@ -5,7 +5,7 @@ import { DashboardLayout } from "./layouts";
 import SmsTerms from "./pages/SmsTerms";
 import SmsConsent from "./pages/SmsConsent";
 import Contact from "./pages/Contact";
-import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, Outbound, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy, Team, SharingRisks, Locations, FranchiseeInvite, Welcome, RollupV5, CallCoach, CallCoachDetail } from "./pages";
+import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, Outbound, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy, Team, SharingRisks, Locations, FranchiseeInvite, Welcome, RollupV5, CallCoach, CallCoachDetail, TeamAnalytics, CoachingSettings } from "./pages";
 import InHomeSessionDetail from "./pages/InHomeSessionDetail";
 import FranchisePaywall from "./pages/FranchisePaywall";
 import HqLocations from "./pages/HqLocations";
@@ -181,6 +181,8 @@ export default function App() {
             <Route path="/tenants" element={<Tenants />} />
             <Route path="/rollup-v5" element={<RollupV5WithContext />} />
             <Route path="/call-coach" element={<CallCoachWithContext />} />
+            <Route path="/call-coach/team-analytics" element={<TeamAnalyticsWithContext />} />
+            <Route path="/call-coach/settings" element={<CoachingSettings />} />
             <Route path="/call-coach/:id" element={<CallCoachDetailWithContext />} />
             <Route path="/call-coach/in-home/:id" element={<InHomeSessionDetailWithContext />} />
             <Route path="/hq-locations" element={<HqLocations />} />
@@ -292,6 +294,11 @@ function CallCoachWithContext() {
 function CallCoachDetailWithContext() {
   const { tenantId } = useOutletContext();
   return <CallCoachDetail tenantId={tenantId} />;
+}
+
+function TeamAnalyticsWithContext() {
+  const { tenantId } = useOutletContext();
+  return <TeamAnalytics tenantId={tenantId} />;
 }
 
 function InHomeSessionDetailWithContext() {

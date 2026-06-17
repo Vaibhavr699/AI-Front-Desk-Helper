@@ -13,6 +13,7 @@ import { ToastProvider } from "./components/ui/Toast";
 import { HostnameBrandingProvider } from "./contexts/HostnameBrandingContext";
 import "./App.css";
 import Reviews from "./pages/Reviews";
+import OutreachLog from "./pages/OutreachLog";
 
 // ── Phase 2 WL Reseller Account Type (Apr 20, 2026) ────────────────────────
 import Reseller from "./pages/Reseller";
@@ -167,6 +168,7 @@ export default function App() {
             <Route path="/dashboard" element={<DashboardWithContext />} />
             <Route path="/create-business" element={<CreateBusiness />} />
             <Route path="/calls" element={<CallsWithContext />} />
+           <Route path="/outreach-log" element={<OutreachLogWithContext />} />
             <Route path="/calls/:id" element={<CallDetail />} />
             <Route path="/outbound" element={<OutboundWithContext />} />
             <Route path="/leads" element={<LeadsWithContext />} />
@@ -213,6 +215,11 @@ function DashboardWithContext() {
 function CallsWithContext() {
   const { tenantId } = useOutletContext();
   return <Calls tenantId={tenantId} />;
+}
+
+function OutreachLogWithContext() {
+  const { tenantId } = useOutletContext();
+  return <OutreachLog tenantId={tenantId} />;
 }
 
 function OutboundWithContext() {

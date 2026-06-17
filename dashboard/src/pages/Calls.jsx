@@ -433,8 +433,7 @@ export default function Calls({ tenantId }) {
         <p className="text-stone-500 text-sm mt-1">Review, analyze, and action calls processed by your AI receptionist.</p>
       </header>
 
-     {/* Tab bar */}
-      {/*
+      {/* Tab bar */}
       <div className="flex gap-2 border-b border-stone-200">
         <button className="px-4 py-2.5 text-sm font-bold border-b-2 border-brand-600 text-brand-600 -mb-px transition-all">
           Inbound Calls
@@ -446,7 +445,6 @@ export default function Calls({ tenantId }) {
           AI Outreach Log
         </button>
       </div>
-      */}
 
       {/* Filter bar */}
       <FilterBar
@@ -455,7 +453,7 @@ export default function Calls({ tenantId }) {
         totalCount={calls.length}
         filteredCount={filteredCalls.length}
       />
-      
+
       {/* Calls list — compact rows that expand on click */}
       <div className="bg-white rounded-xl border border-stone-200 overflow-hidden divide-y divide-stone-100">
         {loading && calls.length === 0 ? (

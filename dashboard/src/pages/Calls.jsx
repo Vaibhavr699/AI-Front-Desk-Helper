@@ -434,17 +434,17 @@ export default function Calls({ tenantId }) {
       </header>
 
       {/* Tab bar */}
-      <div className="flex gap-2 border-b border-stone-200">
-        <button className="px-4 py-2.5 text-sm font-bold border-b-2 border-brand-600 text-brand-600 -mb-px transition-all">
-          Inbound Calls
-        </button>
-        <button
-          onClick={() => navigate("/outbound")}
-          className="px-4 py-2.5 text-sm font-bold border-b-2 border-transparent text-stone-500 hover:text-stone-700 -mb-px transition-all"
-        >
-          Outbound
-        </button>
-      </div>
+       <div className="flex gap-2 border-b border-stone-200">
+//     <button className="px-4 py-2.5 text-sm font-bold border-b-2 border-brand-600 text-brand-600 -mb-px transition-all">
+//       Inbound Calls
+//     </button>
+//     <button
+//       onClick={() => navigate("/outreach-log")}
+//       className="px-4 py-2.5 text-sm font-bold border-b-2 border-transparent text-stone-500 hover:text-stone-700 -mb-px transition-all"
+//     >
+//       AI Outreach Log
+//     </button>
+//   </div>
 
       {/* Filter bar */}
       <FilterBar

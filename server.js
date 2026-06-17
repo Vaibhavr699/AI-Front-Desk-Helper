@@ -4782,17 +4782,21 @@ if (DEPRECATED_REALTIME_MODELS.has(model)) {
         type: "session.update",
         session: {
           type: "realtime",
-          audio: {
-            input: {
-              format: { type: "audio/pcmu" },
-              transcription: { model: "whisper-1" },
-              turn_detection: {
-                type: "server_vad",
-                threshold: vadThreshold,
-                prefix_padding_ms: 500,
-                silence_duration_ms: silenceMs,
-              },
-            },
+         audio: {
+  input: {
+    format: { type: "audio/pcmu" },
+    transcription: {
+      model: "gpt-4o-transcribe",
+      language: "en",
+      prompt: "Caller is speaking to Gladiators Painting. The AI receptionist is named Alex. The owner is Drew. Common topics: interior painting, exterior painting, cabinets, deck, fence, estimate, appointment.",
+    },
+    turn_detection: {
+      type: "server_vad",
+      threshold: vadThreshold,
+      prefix_padding_ms: 500,
+      silence_duration_ms: silenceMs,
+    },
+  },
             output: {
               format: { type: "audio/pcmu" },
               voice: aiConfig.voice,

@@ -2229,11 +2229,11 @@ router.get("/conversations/:id/timeline", async (req, res) => {
   try {
     const leadId = req.params.id;
     const result = await db.query(`
-      SELECT 'message' as type, id, channel, direction, body as content, created_at as at, metadata
+      SELECT 'message' as type, id, channel, direction, body as content, created_at as at, metadata, sent_by_user_id
        FROM messages
        WHERE lead_id = $1
        UNION ALL
-       SELECT 'call' as type, id, 'voice' as channel, 'inbound' as direction, transcript as content, started_at as at, metadata
+       SELECT 'call' as type, id, 'voice' as channel, COALESCE(direction, 'inbound') as direction, transcript as content, started_at as at, metadata, NULL as sent_by_user_id
        FROM calls
        WHERE lead_id = $1
        ORDER BY at ASC`,

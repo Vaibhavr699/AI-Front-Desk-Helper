@@ -3810,7 +3810,7 @@ function outreachCallStatus(row) {
 
   if (disp === "voicemail" || amd.includes("machine") || amd.includes("fax")) return "voicemail";
   if (s === "completed" || s === "answered" || disp === "answered") return "answered";
-  if (s === "no-answer" || s === "noanswer") return "no-answer";
+  if (s === "no-answer" || s === "noanswer" || s === "no_answer") return "no-answer";
   if (s === "busy") return "no-answer";
   if (s === "failed" || s === "canceled" || s === "cancelled") return "failed";
   // Outbound call that wrote a row on dial but has no terminal status yet.

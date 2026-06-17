@@ -439,6 +439,12 @@ export default function Calls({ tenantId }) {
           Inbound Calls
         </button>
         <button
+          onClick={() => navigate("/outbound")}
+          className="px-4 py-2.5 text-sm font-bold border-b-2 border-transparent text-stone-500 hover:text-stone-700 -mb-px transition-all"
+        >
+          Outbound Campaigns
+        </button>
+        <button
           onClick={() => navigate("/outreach-log")}
           className="px-4 py-2.5 text-sm font-bold border-b-2 border-transparent text-stone-500 hover:text-stone-700 -mb-px transition-all"
         >

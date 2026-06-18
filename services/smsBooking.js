@@ -81,6 +81,27 @@ function formatDayLabel(isoDate, timezone) {
   }
 }
 
+// Picker-path revenue estimate (Jun 18, 2026).
+// The numbered slot-picker bypasses the AI orchestrator, so the AI's
+// "REVENUE ESTIMATION" rule never runs and thread.leadCapture.estimated_value
+// is almost always empty here — that's the real cause of the $0 picker
+// bookings (the Jun-15 lead), NOT a missing estimatedValue arg. When no AI
+// estimate exists, derive one from project_type using the SAME mapping the
+// SMS prompt uses (Room 500 / Interior 2500 / Exterior 5000) so picker
+// bookings carry a non-zero estimate consistent with the free-text path.
+// Returns a dollar number or null. Dollars, not cents — bookingEngine.book()
+// takes the same dollar value the AI/voice paths pass.
+function estimateValueFromProjectType(projectType) {
+  const p = String(projectType || "").toLowerCase();
+  if (!p) return null;
+  if (p.includes("exterior")) return 5000;
+  if (p.includes("interior")) return 2500;
+  if (p.includes("cabinet")) return 2500;
+  if (p.includes("deck") || p.includes("fence")) return 2500;
+  if (p.includes("room")) return 500;
+  return null;
+}
+
 function todayIsoInTz(timezone) {
   return new Intl.DateTimeFormat("en-CA", {
     year: "numeric", month: "2-digit", day: "2-digit",
@@ -423,7 +444,9 @@ async function finalizeSmsBooking(thread, tenant) {
       // it the booking row lands with no estimated revenue (the Jun-15 $0
       // lead). The A2 resume path also finalizes through this function, so
       // one fix covers both entry points.
-      estimatedValue: thread.leadCapture?.estimated_value ?? null,
+     estimatedValue:
+        thread.leadCapture?.estimated_value ??
+        estimateValueFromProjectType(thread.leadCapture?.project_type),
     });
   } catch (e) {
     console.error("[SMS Booking] engine.book threw tenant=%s: %s", tenant.id, e.message);

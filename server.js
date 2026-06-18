@@ -48,6 +48,7 @@ const bookingEngine = require("./lib/bookingEngine");
 const messagesService = require("./services/messages");
 const emailService = require("./services/email");
 const smsBookingService = require("./services/smsBooking");
+const facebookLeadgen = require("./services/facebookLeadgen");
 const conversationState = require("./lib/conversationState");
 const { buildLeadHistoryBlock } = require("./lib/leadHistory");
 const { getAIConfig, REALTIME_TOOLS, RECOVERY_TOOLS, CAPTURE_SERVICE_ZIP_TOOL } = require("./lib/orchestrator");
@@ -56,6 +57,15 @@ const { buildCoachingPromptInjection } = require("./lib/coachingPromptInjection"
 const crmWebhookPayload = require("./lib/crmWebhookPayload");
 const { getLast10Digits, normalizeE164Phone } = require("./lib/phone");
 const franchiseRouter = require("./lib/franchiseRouter");
+facebookLeadgen.init({
+  getTenantByFacebookPageId,
+  leadsService,
+  db,
+  notificationsService,
+  emailService,
+  normalizeE164Phone,
+  fetch,
+});
 
 const _resetBase = (process.env.DASHBOARD_URL || process.env.BASE_URL || "").replace(/\/$/, "");
 console.log("[Startup] Password reset: Resend=" + (process.env.RESEND_API_KEY && process.env.EMAIL_FROM ? "yes" : "no") + ", ResetLinkBase=" + (_resetBase || "NOT SET – set DASHBOARD_URL or BASE_URL"));
@@ -6299,6 +6309,19 @@ app.post("/facebook-webhook", async (req, res) => {
     console.log("[Facebook Webhook] Raw Payload:", JSON.stringify(req.body, null, 2));
 
     const entry = req.body.entry?.[0];
+
+    // ── Facebook Lead Ads (leadgen) branch — Phase A4 ──────────────────────
+    // Lead Ads arrive as entry.changes with field "leadgen" (NOT entry.messaging).
+    // Ack immediately, then handle async so we never block the webhook.
+    const leadgenChange = entry?.changes?.find((c) => c.field === "leadgen");
+    if (leadgenChange) {
+      res.sendStatus(200);
+      facebookLeadgen
+        .handleFacebookLeadgen(leadgenChange.value)
+        .catch((e) => console.error("[FB Leadgen] async handler error:", e.message));
+      return;
+    }
+
     const messaging = entry?.messaging?.[0];
     const pageId = entry?.id || messaging?.recipient?.id; // The Page ID receiving the message
 

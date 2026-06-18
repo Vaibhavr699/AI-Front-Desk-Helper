@@ -24,6 +24,7 @@ router.get("/", ...repAuthChain, async (req, res) => {
     const r = await db.query(
       `SELECT u.id, u.email, u.role, u.tenant_id, u.phone, u.home_state,
               u.rep_seat_tier, u.rep_seat_activated_at,
+              u.seat_type, u.rep_coach_account_type, u.trial_ends_at,
               u.coaching_delivery_prefs, u.preferred_earbud_device,
               u.expo_push_token IS NOT NULL AS push_registered,
               u.last_app_open_at, u.trusted_devices,
@@ -67,6 +68,9 @@ router.get("/", ...repAuthChain, async (req, res) => {
       seat: {
         tier: u.rep_seat_tier || "standard",
         activated_at: u.rep_seat_activated_at,
+        seat_type: u.seat_type || null,
+        account_type: u.rep_coach_account_type || null,
+        trial_ends_at: u.trial_ends_at || null,
       },
       coaching_delivery_prefs: u.coaching_delivery_prefs || {},
       preferred_earbud_device: u.preferred_earbud_device,

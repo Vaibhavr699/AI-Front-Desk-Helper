@@ -57,15 +57,6 @@ const { buildCoachingPromptInjection } = require("./lib/coachingPromptInjection"
 const crmWebhookPayload = require("./lib/crmWebhookPayload");
 const { getLast10Digits, normalizeE164Phone } = require("./lib/phone");
 const franchiseRouter = require("./lib/franchiseRouter");
-facebookLeadgen.init({
-  getTenantByFacebookPageId,
-  leadsService,
-  db,
-  notificationsService,
-  emailService,
-  normalizeE164Phone,
-  fetch,
-});
 
 const _resetBase = (process.env.DASHBOARD_URL || process.env.BASE_URL || "").replace(/\/$/, "");
 console.log("[Startup] Password reset: Resend=" + (process.env.RESEND_API_KEY && process.env.EMAIL_FROM ? "yes" : "no") + ", ResetLinkBase=" + (_resetBase || "NOT SET – set DASHBOARD_URL or BASE_URL"));
@@ -81,6 +72,17 @@ const { startResellerUsageReporter } = require("./services/reportResellerUsage")
 const { startAutoPauseCron } = require("./services/sentimentAutoPause");
 const { authMiddleware, requireSuperAdmin } = require("./lib/auth");
 const notificationsService = require("./services/notifications");
+
+facebookLeadgen.init({
+  getTenantByFacebookPageId,
+  leadsService,
+  db,
+  notificationsService,
+  emailService,
+  normalizeE164Phone,
+  fetch,
+});
+
 const metricAlerts = require("./services/metricAlerts");
 
 // Phase 6 A2 — coaching scorer (every 5 minutes)

@@ -97,7 +97,9 @@ function getNavItems(activeTenant) {
   // just HQ parents (Jun 18, 2026). Resellers never reach here (they return
   // early with their own nav above).
   items.push({ to: "/team",               label: "Team",          icon: TeamIcon });
-  items.push({ to: "/team/sharing-risks", label: "Sharing Risks", icon: TeamIcon });
+ if (activeTenant?.rep_coach_enabled) {
+      items.push({ to: "/team/sharing-risks", label: "Sharing Risks", icon: TeamIcon });
+    }
 
   // Businesses + Rollup stay HQ-only — they're multi-location aggregation,
   // not people management.

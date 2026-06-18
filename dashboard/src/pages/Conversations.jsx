@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { getConversations } from '../api';
 import ConversationViewer from '../components/ConversationViewer';
 import { Search, Filter, Phone, MessageSquare, Globe, Facebook, CheckCircle2, Clock, AlertCircle, Mail } from 'lucide-react';
@@ -12,6 +13,31 @@ const Conversations = ({ tenantId }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterChannel, setFilterChannel] = useState('all');
 
+  // ─────────────────────────────────────────────────────────────────────
+  // Deep-link support (Jun 18, 2026)
+  //
+  // The AI Outreach Log routes an SMS row to /conversations?lead=<id>&msg=<id>.
+  //   - ?lead=<id>  → which conversation to open (auto-select on load)
+  //   - ?msg=<id>   → which message to scroll to + flash inside that thread
+  //                   (passed down to ConversationViewer as highlightMessageId)
+  //
+  // Without ?lead, behavior is unchanged: default to the first conversation.
+  // The deep-link only steers the initial selection; once the user clicks
+  // another thread, normal selection takes over.
+  // ─────────────────────────────────────────────────────────────────────
+  const [searchParams] = useSearchParams();
+  const deepLinkLeadId = searchParams.get('lead');
+  const deepLinkMsgId = searchParams.get('msg');
+
+  // The highlight is only meaningful while we're viewing the lead the deep
+  // link pointed at. Once the user navigates to a different conversation,
+  // stop forwarding the highlight so an unrelated thread doesn't flash a
+  // message id that isn't in it.
+  const highlightMessageId =
+    deepLinkMsgId && selectedId && String(selectedId) === String(deepLinkLeadId)
+      ? deepLinkMsgId
+      : null;
+
   const loadConversations = useCallback(async () => {
     if (!tenantId) return;
     setLoading(true);
@@ -21,7 +47,16 @@ const Conversations = ({ tenantId }) => {
       setConversations(list);
       setError("");
       if (list.length > 0) {
-        setSelectedId((prev) => (list.some((c) => c.id === prev) ? prev : list[0].id));
+        // Deep-link wins: if ?lead= points at a conversation we loaded,
+        // select it. Otherwise keep the current selection if still valid,
+        // else fall back to the first conversation (original behavior).
+        setSelectedId((prev) => {
+          if (deepLinkLeadId && list.some((c) => String(c.id) === String(deepLinkLeadId))) {
+            return deepLinkLeadId;
+          }
+          if (list.some((c) => c.id === prev)) return prev;
+          return list[0].id;
+        });
       } else {
         setSelectedId(null);
       }
@@ -33,7 +68,7 @@ const Conversations = ({ tenantId }) => {
     } finally {
       setLoading(false);
     }
-  }, [tenantId]);
+  }, [tenantId, deepLinkLeadId]);
 
   useEffect(() => {
     if (tenantId) {
@@ -41,6 +76,18 @@ const Conversations = ({ tenantId }) => {
       loadConversations();
     }
   }, [tenantId, loadConversations]);
+
+  // If the deep-link lead arrives/changes after the list is already loaded
+  // (e.g. user clicks a second Outreach Log row without a full remount),
+  // honor the new ?lead= by selecting it.
+  useEffect(() => {
+    if (
+      deepLinkLeadId &&
+      conversations.some((c) => String(c.id) === String(deepLinkLeadId))
+    ) {
+      setSelectedId(deepLinkLeadId);
+    }
+  }, [deepLinkLeadId, conversations]);
 
   const filtered = useMemo(() => {
     return conversations.filter(c => {
@@ -177,7 +224,11 @@ const Conversations = ({ tenantId }) => {
 
       {/* Viewer Main Area */}
       <div className="flex-1 overflow-hidden">
-        <ConversationViewer leadId={selectedId} leadName={selectedLead?.name || selectedLead?.phone} />
+        <ConversationViewer
+          leadId={selectedId}
+          leadName={selectedLead?.name || selectedLead?.phone}
+          highlightMessageId={highlightMessageId}
+        />
       </div>
     </div>
   );

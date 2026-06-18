@@ -249,7 +249,7 @@ export default function OutreachLog({ tenantId }) {
     if (item.type === "call") {
       navigate(`/calls/${item.id}`);
     } else if (item.lead_id) {
-      navigate(`/conversations?lead=${item.lead_id}`);
+      navigate(`/conversations?lead=${item.lead_id}&msg=${item.id}`);
     }
   };
 

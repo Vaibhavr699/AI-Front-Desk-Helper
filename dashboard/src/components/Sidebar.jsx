@@ -89,8 +89,6 @@ function getNavItems(activeTenant) {
 
   const items = [...baseNavItems];
 
-  const items = [...baseNavItems];
-
   if (showLocations) {
     items.push({ to: "/locations", label: "Locations", icon: LocationsIcon });
   }

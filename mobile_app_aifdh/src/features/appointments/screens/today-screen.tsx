@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useTenantFlags } from "@/src/features/auth/store";
+import { useSeatCapability } from "@/src/features/settings/use-seat-capability";
 import { useResponsive } from "@/src/shared/hooks/use-responsive";
 import { colors } from "@/src/shared/theme/tokens";
 
@@ -28,6 +29,7 @@ export function TodayScreen() {
   const { isTablet } = useResponsive();
   const { rep_coach_enabled, aifdh_enabled } = useTenantFlags();
   const repCoachOnly = rep_coach_enabled && !aifdh_enabled;
+  const { canRecord } = useSeatCapability();
   const { data, isLoading, isError, error, refetch, isRefetching } =
     useTodayAppointments();
 
@@ -150,16 +152,18 @@ export function TodayScreen() {
           renderItem={renderPhoneItem}
         />
       )}
-      <View className="absolute bottom-6 left-0 right-0 items-center">
-        <Pressable
-          onPress={startQuickSession}
-          className="flex-row items-center gap-2.5 rounded-full bg-brand-600 px-7 py-4 shadow-lg active:bg-brand-700"
-          style={{ shadowColor: colors.brand[600], shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 12, elevation: 8 }}
-        >
-          <Ionicons name="radio" size={20} color="#fff" />
-          <Text className="text-[15px] font-semibold text-white">Start Live Session</Text>
-        </Pressable>
-      </View>
+      {canRecord ? (
+        <View className="absolute bottom-6 left-0 right-0 items-center">
+          <Pressable
+            onPress={startQuickSession}
+            className="flex-row items-center gap-2.5 rounded-full bg-brand-600 px-7 py-4 shadow-lg active:bg-brand-700"
+            style={{ shadowColor: colors.brand[600], shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 12, elevation: 8 }}
+          >
+            <Ionicons name="radio" size={20} color="#fff" />
+            <Text className="text-[15px] font-semibold text-white">Start Live Session</Text>
+          </Pressable>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }

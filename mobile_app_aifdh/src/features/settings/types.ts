@@ -32,6 +32,9 @@ export type RepProfile = {
   seat: {
     tier: SeatTier;
     activated_at: string | null;
+    seat_type: "rep" | "manager" | null;
+    account_type: "standalone" | "manager_provisioned" | null;
+    trial_ends_at: string | null;
   };
   coaching_delivery_prefs: CoachingDeliveryPrefs;
   preferred_earbud_device: string | null;

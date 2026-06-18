@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Linking, Pressable, Text, View } from "react-native";
 
 import { useTenantFlags } from "@/src/features/auth/store";
+import { useSeatCapability } from "@/src/features/settings/use-seat-capability";
 import { colors } from "@/src/shared/theme/tokens";
 
 import type { LeadDetail } from "../types";
@@ -18,6 +19,7 @@ type Props = {
 export function LeadActionBar({ lead }: Props) {
   const router = useRouter();
   const { rep_coach_enabled } = useTenantFlags();
+  const { canRecord } = useSeatCapability();
   const [modal, setModal] = useState<"note" | "quote" | null>(null);
 
   function call() {
@@ -39,7 +41,7 @@ export function LeadActionBar({ lead }: Props) {
 
   return (
     <View className="gap-2">
-      {rep_coach_enabled && (
+      {rep_coach_enabled && canRecord && (
         <Pressable
           onPress={recordVisit}
           className="h-12 flex-row items-center justify-center gap-2 rounded-sm bg-brand-600 active:bg-brand-700"
@@ -48,13 +50,15 @@ export function LeadActionBar({ lead }: Props) {
           <Text className="text-sm font-semibold text-white">Record visit</Text>
         </Pressable>
       )}
-      <Pressable
-        onPress={startInHome}
-        className="h-12 flex-row items-center justify-center gap-2 rounded-sm border border-brand-200 bg-brand-50 active:bg-brand-100"
-      >
-        <Ionicons name="radio" size={18} color={colors.brand[600]} />
-        <Text className="text-sm font-semibold text-brand-700">Start live session</Text>
-      </Pressable>
+      {canRecord && (
+        <Pressable
+          onPress={startInHome}
+          className="h-12 flex-row items-center justify-center gap-2 rounded-sm border border-brand-200 bg-brand-50 active:bg-brand-100"
+        >
+          <Ionicons name="radio" size={18} color={colors.brand[600]} />
+          <Text className="text-sm font-semibold text-brand-700">Start live session</Text>
+        </Pressable>
+      )}
       <View className="flex-row gap-2">
         <ActionButton icon="call" label="Call" onPress={call} disabled={!lead.phone} />
         <ActionButton icon="chatbox-ellipses" label="SMS" onPress={sms} disabled={!lead.phone} />

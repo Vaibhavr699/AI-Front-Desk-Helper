@@ -5,7 +5,7 @@ const fs = require("fs");
 const multer = require("multer");
 const db = require("../../lib/db");
 const repAuth = require("../../lib/repAuth");
-const { repAuthChain } = require("../../lib/requireRep");
+const { repAuthChain, requireRepSeat } = require("../../lib/requireRep");
 const { stitchSession, cleanupWorkDir } = require("../../services/inHomeStitch");
 const { clearSession, chunkPath, sessionDir } = require("../../lib/inHomeChunkStore");
 const {
@@ -126,7 +126,7 @@ function shapeAlert(row) {
   };
 }
 
-router.post("/start", ...repAuthChain, async (req, res) => {
+router.post("/start", ...repAuthChain, requireRepSeat, async (req, res) => {
   try {
     const {
       lead_id,

@@ -30,10 +30,18 @@ export function WelcomeScreen() {
 
         <View className="mx-auto w-full max-w-md gap-3">
           <Pressable
-            onPress={() => router.push("/(auth)/login")}
+            onPress={() => router.push("/(auth)/signup" as never)}
             className="h-14 items-center justify-center rounded-sm bg-brand-600 active:bg-brand-700"
           >
-            <Text className="text-base font-semibold text-white">Log in</Text>
+            <Text className="text-base font-semibold text-white">
+              Start 14-day free trial
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => router.push("/(auth)/login")}
+            className="h-14 items-center justify-center rounded-sm border border-surface-border bg-white active:bg-surface-raised"
+          >
+            <Text className="text-base font-semibold text-ink-primary">Log in</Text>
           </Pressable>
           <Text className="text-center text-xs text-ink-dim">
             Field-sales coaching for tablets and phones.

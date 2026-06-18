@@ -8,6 +8,15 @@ import type {
   ResendOtpRequest,
 } from "./types";
 
+export async function startStandaloneSignup(
+  email: string,
+): Promise<{ checkout_url: string }> {
+  const { data } = await api.post<{ checkout_url: string }>("/rep/signup/checkout", {
+    email,
+  });
+  return data;
+}
+
 export async function login(body: LoginRequest): Promise<LoginResponse> {
   const { data } = await api.post<LoginResponse>("/rep/auth/login", body);
   return data;

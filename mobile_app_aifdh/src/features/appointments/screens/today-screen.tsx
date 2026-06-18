@@ -14,6 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useTenantFlags } from "@/src/features/auth/store";
 import { useSeatCapability } from "@/src/features/settings/use-seat-capability";
+import { TrialBanner } from "@/src/features/settings/components/trial-banner";
 import { useResponsive } from "@/src/shared/hooks/use-responsive";
 import { colors } from "@/src/shared/theme/tokens";
 
@@ -101,6 +102,9 @@ export function TodayScreen() {
   return (
     <SafeAreaView className="flex-1 bg-surface-base" edges={["top"]}>
       <Header />
+      <View className="px-4 md:px-8">
+        <TrialBanner />
+      </View>
       {isLoading ? (
         <LoadingState />
       ) : isError ? (

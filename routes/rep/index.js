@@ -9,6 +9,7 @@ const express = require("express");
 const router = express.Router();
 
 router.use("/auth", require("./auth"));
+router.use("/signup", require("./signup"));
 router.use("/events", require("./events"));
 router.use("/push-token", require("./device"));
 router.use("/profile", require("./profile"));

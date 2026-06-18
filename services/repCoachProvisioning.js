@@ -7,6 +7,28 @@ const { sendEmail, REP_COACH_FROM } = require("./email");
 const APP_STORE_URL = process.env.REP_COACH_APP_STORE_URL || "https://apps.apple.com";
 const PLAY_STORE_URL = process.env.REP_COACH_PLAY_STORE_URL || "https://play.google.com";
 const DASHBOARD_URL = process.env.DASHBOARD_URL || process.env.BASE_URL || "";
+const REP_COACH_URL = process.env.REP_COACH_URL || "https://airepcoach.com";
+
+const SET_PASSWORD_TTL_HOURS = 24;
+
+// One-time set-password link (Drew's locked decision: no temp passwords).
+// Reuses the magic_links table with a dedicated purpose. Returns the URL or ""
+// if the link couldn't be created (caller degrades gracefully).
+async function createSetPasswordLink(email) {
+  try {
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + SET_PASSWORD_TTL_HOURS * 3600 * 1000);
+    await db.query(
+      `INSERT INTO magic_links (email, token, purpose, expires_at)
+       VALUES ($1, $2, 'rep_coach_set_password', $3)`,
+      [email.trim().toLowerCase(), token, expiresAt],
+    );
+    return `${REP_COACH_URL}/set-password?token=${token}`;
+  } catch (err) {
+    console.error("[repCoachProvisioning] set-password link failed:", err.message);
+    return "";
+  }
+}
 
 async function provisionFromCheckout(session, opts = {}) {
   const seatTier = ["standard", "pro", "elite"].includes(opts.tier) ? opts.tier : "standard";
@@ -51,6 +73,8 @@ async function provisionFromCheckout(session, opts = {}) {
       `UPDATE dashboard_users
           SET rep_seat_active = true,
               rep_seat_tier = $1,
+              seat_type = COALESCE(seat_type, 'rep'),
+              rep_coach_account_type = COALESCE(rep_coach_account_type, 'manager_provisioned'),
               rep_seat_activated_at = COALESCE(rep_seat_activated_at, now()),
               updated_at = now()
         WHERE id = $2`,
@@ -60,37 +84,50 @@ async function provisionFromCheckout(session, opts = {}) {
     return;
   }
 
-  const tempPassword = crypto.randomBytes(6).toString("base64url");
-  const bcrypt = require("bcrypt");
-  const hashedPassword = await bcrypt.hash(tempPassword, 10);
+  // No temp password (Drew's locked decision). The account is created without a
+  // usable password; the welcome email carries a one-time set-password link.
+  const placeholderHash = await require("bcrypt").hash(
+    crypto.randomBytes(24).toString("hex"),
+    10,
+  );
 
   const companyName = email.split("@")[1]?.split(".")[0] || "My Company";
   const slugBase =
     companyName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "company";
   const slug = `${slugBase}-${crypto.randomBytes(3).toString("hex")}`;
 
+  // GUESSED DEFAULT (flag for Drew): standalone trial accounts start in
+  // 'trialing' until Stripe charges at trial end. trial_ends_at mirrors the
+  // subscription's trial_end if present.
+  const isTrial = opts.isTrial === true || Boolean(opts.trialEnd);
+  const subscriptionStatus = isTrial ? "trialing" : "active";
+  const trialEndsAt = opts.trialEnd ? new Date(opts.trialEnd * 1000) : null;
+
   const tenantResult = await db.query(
     `INSERT INTO tenants (name, company_name, slug, plan, subscription_status, stripe_subscription_id, stripe_customer_id, rep_coach_enabled, aifdh_enabled)
-     VALUES ($1, $1, $2, 'basic', 'active', $3, $4, true, false)
+     VALUES ($1, $1, $2, 'basic', $5, $3, $4, true, false)
      RETURNING id`,
     [
       companyName,
       slug,
       session.subscription || null,
       session.customer || null,
+      subscriptionStatus,
     ],
   );
   const tenantId = tenantResult.rows[0].id;
 
   await db.query(
-    `INSERT INTO dashboard_users (tenant_id, email, password_hash, role, rep_seat_active, rep_seat_tier)
-     VALUES ($1, $2, $3, 'admin', true, $4)`,
-    [tenantId, email, hashedPassword, seatTier],
+    `INSERT INTO dashboard_users
+       (tenant_id, email, password_hash, role, rep_seat_active, rep_seat_tier,
+        seat_type, rep_coach_account_type, trial_ends_at)
+     VALUES ($1, $2, $3, 'admin', true, $4, 'rep', 'standalone', $5)`,
+    [tenantId, email, placeholderHash, seatTier, trialEndsAt],
   );
 
-  console.log("[repCoachProvisioning] created tenant=%s user=%s", tenantId, email);
+  console.log("[repCoachProvisioning] created standalone tenant=%s user=%s trial=%s", tenantId, email, isTrial);
 
-  const loginUrl = DASHBOARD_URL ? `${DASHBOARD_URL}/login` : "";
+  const setPasswordUrl = await createSetPasswordLink(email);
 
   await sendEmail({
     from: REP_COACH_FROM,
@@ -109,12 +146,12 @@ async function provisionFromCheckout(session, opts = {}) {
           <p style="margin: 0 0 8px; font-size: 13px; color: #888; font-weight: 600;">YOUR LOGIN</p>
           <p style="margin: 0; font-size: 15px; color: #000;">
             <strong>Email:</strong> ${email}<br />
-            <strong>Temporary password:</strong> ${tempPassword}
+            Set your password using the secure link below — it expires in 24 hours.
           </p>
         </div>
 
-        ${loginUrl ? `<a href="${loginUrl}" style="display: inline-block; background: #000; color: #facc15; font-size: 15px; font-weight: 600; padding: 14px 32px; border-radius: 9999px; text-decoration: none; margin-bottom: 24px;">
-          Log in to Dashboard →
+        ${setPasswordUrl ? `<a href="${setPasswordUrl}" style="display: inline-block; background: #000; color: #facc15; font-size: 15px; font-weight: 600; padding: 14px 32px; border-radius: 9999px; text-decoration: none; margin-bottom: 24px;">
+          Set your password →
         </a>` : ""}
 
         <h2 style="font-size: 18px; font-weight: 700; color: #000; margin: 32px 0 12px;">

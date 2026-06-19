@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Link, useSearchParams, useNavigate } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
+import BrandHeader from '../components/BrandHeader'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 const ACCENT = '#FACC15'
@@ -50,11 +51,7 @@ export default function SetPassword() {
 
   return (
     <div style={{ backgroundColor: '#000', color: '#fff', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <header style={{ padding: '24px 32px' }}>
-        <Link to="/" style={{ textDecoration: 'none' }}>
-          <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: 2, color: ACCENT }}>AI REP COACH</span>
-        </Link>
-      </header>
+      <BrandHeader />
 
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 24px' }}>
         <div style={{ width: '100%', maxWidth: 380 }}>

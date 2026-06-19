@@ -35,7 +35,7 @@ export default function CTA() {
   }
 
   return (
-    <section style={{ backgroundColor: '#facc15', paddingTop: 120, paddingBottom: 120 }}>
+    <section id="trial" style={{ backgroundColor: '#facc15', paddingTop: 120, paddingBottom: 120 }}>
       <div style={{ maxWidth: 800, margin: '0 auto', padding: '0 24px', textAlign: 'center' }}>
         <motion.div
           initial={{ opacity: 0, y: 40 }}

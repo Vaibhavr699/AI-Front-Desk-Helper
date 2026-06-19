@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Menu, X } from 'lucide-react'
 
 const DEMO_URL = import.meta.env.VITE_DEMO_URL || '#demo'
-const TRIAL_URL = import.meta.env.VITE_TRIAL_URL || '#trial'
+const TRIAL_URL = '#trial'
 
 const NAV_LINKS = [
   { label: 'Features', href: '#features' },

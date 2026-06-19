@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 
 const DEMO_URL = import.meta.env.VITE_DEMO_URL || '#demo'
-const TRIAL_URL = import.meta.env.VITE_TRIAL_URL || '#trial'
+const TRIAL_URL = '#trial'
 
 const PHOTOS = [
   'https://images.unsplash.com/photo-1581578731548-c64695cc6952?w=500&h=350&fit=crop',

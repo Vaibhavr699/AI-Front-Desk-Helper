@@ -6,20 +6,22 @@ const auth = require("../lib/auth");
 const { sendEmail, REP_COACH_FROM } = require("./email");
 
 const DASHBOARD_URL = process.env.DASHBOARD_URL || process.env.BASE_URL || "";
+const REP_COACH_URL = process.env.REP_COACH_URL || "https://airepcoach.com";
 
 const SET_PASSWORD_TTL_HOURS = 24;
 
 // One-time set-password link (Drew's locked decision: no temp passwords).
 // Reuses the EXISTING, battle-tested reset-token flow (lib/auth saveResetToken +
 // the /api/auth/reset-password handler) — no new endpoint. The link lands on the
-// dashboard's /reset-password page, which clears the token after use.
+// Rep Coach site's /set-password page (branded for Rep Coach, not the AIFDH
+// dashboard), which posts the new password to /api/auth/reset-password.
 async function createSetPasswordLink(email) {
   try {
     const token = auth.generateResetToken();
     const expires = new Date(Date.now() + SET_PASSWORD_TTL_HOURS * 3600 * 1000);
     await auth.saveResetToken(email.trim().toLowerCase(), token, expires);
-    const base = DASHBOARD_URL.replace(/\/$/, "");
-    return base ? `${base}/reset-password?token=${token}` : "";
+    const base = REP_COACH_URL.replace(/\/$/, "");
+    return base ? `${base}/set-password?token=${token}` : "";
   } catch (err) {
     console.error("[repCoachProvisioning] set-password link failed:", err.message);
     return "";

@@ -336,6 +336,14 @@ export function updateRepCoachEnabled(enabled, tenantId = null) {
   return patch(`/api/team/rep-coach`, { enabled, tenant_id: tenantId });
 }
 
+export function getRepSeatSummary(tenantId = null) {
+  const url =
+    tenantId && tenantId !== "all"
+      ? `/api/team/rep-seat-summary?tenant_id=${tenantId}`
+      : "/api/team/rep-seat-summary";
+  return api(url);
+}
+
 export function getTechnicians(tenantId = null) {
   const url = tenantId ? `/api/technicians?tenant_id=${tenantId}` : "/api/technicians";
   return api(url);

@@ -1,17 +1,17 @@
 import { useState, useEffect } from "react";
 import {
-  getTeam, inviteTeamMember, removeTeamMember, updateRepSeat, updateRepCoachEnabled, getTenants, getUser, get,
+  getTeam, inviteTeamMember, removeTeamMember, updateRepSeat, updateRepCoachEnabled, getTenants, getUser, get, getRepSeatSummary,
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import {
   Users, Crown, MapPin, Trash2, Mail, Plus, AlertCircle, Building2,
-  Shield, User, History, Smartphone,
+  Shield, User, History, Smartphone, TrendingDown,
 } from "lucide-react";
 
 const REP_TIER_OPTIONS = [
-  { value: "standard", label: "Standard · $119/mo" },
-  { value: "pro",      label: "Pro · $199/mo" },
-  { value: "elite",    label: "Elite · $249/mo" },
+  { value: "standard", label: "Standard" },
+  { value: "pro",      label: "Pro" },
+  { value: "elite",    label: "Elite" },
 ];
 
 function RepSeatControl({ user, onChange }) {
@@ -64,6 +64,64 @@ function RepSeatControl({ user, onChange }) {
         </select>
       )}
       {error && <span className="text-[10px] text-red-600">{error}</span>}
+    </div>
+  );
+}
+
+function SeatUsageMeter({ summary }) {
+  if (!summary) return null;
+  const { active_seats, seat_limit, bracket, next_bracket, monthly_total } = summary;
+  const hasCap = typeof seat_limit === "number";
+  const pct = hasCap && seat_limit > 0 ? Math.min(100, Math.round((active_seats / seat_limit) * 100)) : 0;
+  const nearCap = hasCap && active_seats >= seat_limit;
+
+  return (
+    <div className="mb-6 rounded-2xl border border-stone-200 bg-white px-5 py-4 shadow-sm">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">Rep seats in use</p>
+          <p className="mt-1 text-2xl font-black text-stone-900">
+            {active_seats}
+            {hasCap && <span className="text-base font-bold text-stone-400"> / {seat_limit}</span>}
+          </p>
+        </div>
+        <div className="text-right">
+          {bracket ? (
+            <>
+              <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">Current rate</p>
+              <p className="mt-1 text-2xl font-black text-stone-900">
+                ${bracket.price_per_seat}
+                <span className="text-sm font-semibold text-stone-400">/seat</span>
+              </p>
+              <p className="text-[11px] text-stone-500">{bracket.label} · ${monthly_total}/mo total</p>
+            </>
+          ) : (
+            <p className="text-sm text-stone-400">No active seats yet</p>
+          )}
+        </div>
+      </div>
+
+      {hasCap && (
+        <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-stone-100">
+          <div
+            className={`h-full rounded-full transition-all ${nearCap ? "bg-amber-500" : "bg-stone-900"}`}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      )}
+
+      {next_bracket && (
+        <div className="mt-3 flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">
+          <TrendingDown size={14} />
+          Add {next_bracket.at_seats - active_seats} more {next_bracket.at_seats - active_seats === 1 ? "seat" : "seats"} to drop to ${next_bracket.price_per_seat}/seat ({next_bracket.label})
+        </div>
+      )}
+
+      {nearCap && (
+        <p className="mt-2 text-xs font-medium text-amber-600">
+          Seat limit reached. Deactivate a seat or raise the limit to add more reps.
+        </p>
+      )}
     </div>
   );
 }
@@ -302,6 +360,7 @@ export default function Team() {
   const [team, setTeam] = useState([]);
   const [repCoachEnabled, setRepCoachEnabled] = useState(false);
   const [repCoachBusy, setRepCoachBusy] = useState(false);
+  const [seatSummary, setSeatSummary] = useState(null);
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -318,6 +377,15 @@ export default function Team() {
 
   useEffect(() => { fetchData(); }, [activeTenantId]);
 
+  const refreshSeatSummary = async () => {
+    try {
+      const s = await getRepSeatSummary(activeTenantId);
+      setSeatSummary(s);
+    } catch {
+      setSeatSummary(null);
+    }
+  };
+
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -328,6 +396,7 @@ export default function Team() {
       setTeam(teamRes.team || []);
       setRepCoachEnabled(teamRes.rep_coach_enabled === true);
       setLocations(tenantsRes.tenants || []);
+      refreshSeatSummary();
       if (activeTenantId && activeTenantId !== "all") {
         setInviteLocation(activeTenantId);
       } else if (tenantsRes.tenants?.length > 0) {
@@ -439,6 +508,10 @@ export default function Team() {
         </div>
       )}
 
+      {activeTab === "members" && repCoachEnabled && (
+        <SeatUsageMeter summary={seatSummary} />
+      )}
+
       {error && (
         <div className="mb-6 bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl flex items-center gap-3 text-sm">
           <AlertCircle size={18} /> {error}
@@ -529,15 +602,16 @@ export default function Team() {
                         <td className="px-6 py-4">
                           <RepSeatControl
                             user={user}
-                            onChange={(updated) =>
+                            onChange={(updated) => {
                               setTeam((prev) =>
                                 prev.map((u) =>
                                   u.id === updated.id
                                     ? { ...u, rep_seat_active: updated.rep_seat_active, rep_seat_tier: updated.rep_seat_tier, rep_seat_activated_at: updated.rep_seat_activated_at }
                                     : u
                                 )
-                              )
-                            }
+                              );
+                              refreshSeatSummary();
+                            }}
                           />
                         </td>
                         <td className="px-6 py-4 text-right">

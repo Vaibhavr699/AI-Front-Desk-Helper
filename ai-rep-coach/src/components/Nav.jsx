@@ -1,7 +1,8 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Menu, X } from 'lucide-react'
 
-const DEMO_URL = import.meta.env.VITE_DEMO_URL || '#demo'
+const DEMO_URL = import.meta.env.VITE_DEMO_URL || 'mailto:support@airepcoach.com?subject=AI%20Rep%20Coach%20Demo%20Request'
 const TRIAL_URL = '#trial'
 
 const NAV_LINKS = [
@@ -45,9 +46,9 @@ export default function Nav({ visible }) {
         </div>
 
         <div className="hidden md:flex items-center" style={{ gap: 24 }}>
-          <a href="#" style={{ fontSize: 15, color: '#aaa' }} className="hover:text-brand-700 transition-colors">
+          <Link to="/login" style={{ fontSize: 15, color: '#aaa' }} className="hover:text-brand-700 transition-colors">
             Login
-          </a>
+          </Link>
           <a href={TRIAL_URL} style={{ fontSize: 15, color: '#aaa' }} className="hover:text-brand-700 transition-colors">
             Free trial
           </a>
@@ -82,7 +83,7 @@ export default function Nav({ visible }) {
               {l.label}
             </a>
           ))}
-          <a href="#" className="block" style={{ padding: '14px 0', fontSize: 15, color: '#aaa' }}>Login</a>
+          <Link to="/login" onClick={() => setOpen(false)} className="block" style={{ padding: '14px 0', fontSize: 15, color: '#aaa' }}>Login</Link>
           <a href={TRIAL_URL} className="block" style={{ padding: '14px 0', fontSize: 15, color: '#aaa' }}>Free trial</a>
           <a
             href={DEMO_URL}

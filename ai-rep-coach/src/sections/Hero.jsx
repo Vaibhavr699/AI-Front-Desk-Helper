@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 
-const DEMO_URL = import.meta.env.VITE_DEMO_URL || '#demo'
+const DEMO_URL = import.meta.env.VITE_DEMO_URL || 'mailto:support@airepcoach.com?subject=AI%20Rep%20Coach%20Demo%20Request'
 const TRIAL_URL = '#trial'
 
 const PHOTOS = [

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
-const DEMO_URL = import.meta.env.VITE_DEMO_URL || '#demo'
+const DEMO_URL = import.meta.env.VITE_DEMO_URL || 'mailto:support@airepcoach.com?subject=AI%20Rep%20Coach%20Demo%20Request'
 
 export default function CTA() {
   const [email, setEmail] = useState('')

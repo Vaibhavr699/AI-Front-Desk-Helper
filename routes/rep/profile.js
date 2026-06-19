@@ -11,13 +11,24 @@
 // ────────────────────────────────────────────────────────────────────────────
 
 const express = require("express");
+const multer = require("multer");
 const db = require("../../lib/db");
 const repAuth = require("../../lib/repAuth");
 const { repAuthChain } = require("../../lib/requireRep");
 const { normalizeE164Phone } = require("../../lib/phone");
 const { isValidUsState } = require("../../lib/usStates");
+const { uploadAvatarToS3, avatarSignedUrl, isConfigured } = require("../../services/avatar");
 
 const router = express.Router();
+
+const ALLOWED_AVATAR_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
+const avatarUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    cb(null, ALLOWED_AVATAR_TYPES.includes(file.mimetype));
+  },
+});
 
 router.get("/", ...repAuthChain, async (req, res) => {
   try {
@@ -27,6 +38,7 @@ router.get("/", ...repAuthChain, async (req, res) => {
               u.seat_type, u.rep_coach_account_type, u.trial_ends_at,
               u.coaching_delivery_prefs, u.preferred_earbud_device,
               u.expo_push_token IS NOT NULL AS push_registered,
+              u.avatar_s3_key,
               u.last_app_open_at, u.trusted_devices,
               t.name AS tenant_name, t.business_type AS tenant_business_type,
               t.timezone AS tenant_timezone,
@@ -51,12 +63,15 @@ router.get("/", ...repAuthChain, async (req, res) => {
           }))
       : [];
 
+    const avatarUrl = await avatarSignedUrl(u.avatar_s3_key).catch(() => null);
+
     res.json({
       id: u.id,
       email: u.email,
       phone: u.phone || null,
       home_state: u.home_state || null,
       role: u.role,
+      avatar_url: avatarUrl,
       tenant: {
         id: u.tenant_id,
         name: u.tenant_name,
@@ -157,6 +172,52 @@ router.patch("/", ...repAuthChain, async (req, res) => {
     res.json({ status: "ok" });
   } catch (e) {
     console.error("[rep/profile PATCH]", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.post("/avatar", ...repAuthChain, avatarUpload.single("avatar"), async (req, res) => {
+  try {
+    if (!isConfigured()) {
+      return res.status(503).json({ error: "Image uploads are temporarily unavailable" });
+    }
+    if (!req.file || !req.file.buffer?.length) {
+      return res.status(400).json({ error: "No image provided", code: "NO_FILE" });
+    }
+
+    const s3Key = await uploadAvatarToS3(req.rep.id, req.file.buffer, req.file.mimetype);
+    if (!s3Key) {
+      return res.status(502).json({ error: "Upload failed. Please try again." });
+    }
+
+    await db.query(
+      "UPDATE dashboard_users SET avatar_s3_key = $1, updated_at = now() WHERE id = $2",
+      [s3Key, req.rep.id],
+    );
+    await repAuth.logRepEvent(req, {
+      user_id: req.rep.id,
+      tenant_id: req.rep.tenant_id,
+      event_type: "rep_avatar_updated",
+      metadata: {},
+    });
+
+    const avatarUrl = await avatarSignedUrl(s3Key).catch(() => null);
+    res.json({ status: "ok", avatar_url: avatarUrl });
+  } catch (e) {
+    console.error("[rep/profile/avatar POST]", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.delete("/avatar", ...repAuthChain, async (req, res) => {
+  try {
+    await db.query(
+      "UPDATE dashboard_users SET avatar_s3_key = NULL, updated_at = now() WHERE id = $1",
+      [req.rep.id],
+    );
+    res.json({ status: "ok" });
+  } catch (e) {
+    console.error("[rep/profile/avatar DELETE]", e);
     res.status(500).json({ error: "Server error" });
   }
 });

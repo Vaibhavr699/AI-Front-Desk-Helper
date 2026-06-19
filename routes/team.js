@@ -150,6 +150,66 @@ router.get("/", requireTeamManager, async (req, res) => {
   }
 });
 
+// Volume pricing display (mirrors lib/repCoachBilling BRACKETS — price/seat drops
+// as the team's total active rep-seat count rises). Dollar amounts are display-only;
+// the actual charge runs off the Stripe price IDs keyed per bracket.
+const REP_SEAT_BRACKETS = [
+  { min: 1, max: 2, pricePerSeat: 149, label: "1–2 reps" },
+  { min: 3, max: 9, pricePerSeat: 129, label: "3–9 reps" },
+  { min: 10, max: 24, pricePerSeat: 109, label: "10–24 reps" },
+  { min: 25, max: null, pricePerSeat: 89, label: "25+ reps" },
+];
+
+function bracketForSeatCount(count) {
+  if (!count || count < 1) return null;
+  return (
+    REP_SEAT_BRACKETS.find(
+      (b) => count >= b.min && (b.max == null || count <= b.max),
+    ) || null
+  );
+}
+
+// GET /api/team/rep-seat-summary — active rep-seat count, per-tenant cap, and the
+// current volume-pricing bracket, so the dashboard can show a seat-usage meter.
+router.get("/rep-seat-summary", requireTeamManager, async (req, res) => {
+  try {
+    const requested = req.query.tenant_id;
+    const isParentAdmin = req.user?.tenant_business_type === "parent";
+    const tenantId =
+      isParentAdmin && requested && requested !== "all"
+        ? requested
+        : req.user.tenant_id;
+
+    const active = await repSeats.countActiveRepSeats(tenantId);
+    const limit = await repSeats.getTenantRepSeatLimit(tenantId);
+    const bracket = bracketForSeatCount(active);
+    const nextBracket = REP_SEAT_BRACKETS.find((b) => b.min > active) || null;
+
+    res.json({
+      active_seats: active,
+      seat_limit: limit,
+      bracket: bracket
+        ? { label: bracket.label, price_per_seat: bracket.pricePerSeat }
+        : null,
+      next_bracket: nextBracket
+        ? {
+            at_seats: nextBracket.min,
+            price_per_seat: nextBracket.pricePerSeat,
+            label: nextBracket.label,
+          }
+        : null,
+      monthly_total: bracket ? bracket.pricePerSeat * active : 0,
+      tiers: REP_SEAT_BRACKETS.map((b) => ({
+        label: b.label,
+        price_per_seat: b.pricePerSeat,
+      })),
+    });
+  } catch (err) {
+    console.error("GET /api/team/rep-seat-summary error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 /**
  * POST /api/team/invite
  */
@@ -320,14 +380,20 @@ router.patch("/:id/rep-seat", requireTeamManager, async (req, res) => {
     }
 
     const finalTier = active ? (tier || before.rep_seat_tier || "standard") : before.rep_seat_tier;
+    // When activating, tag the rep into the Rep Coach account model so the app and
+    // reporting can tell a manager-assigned rep from a standalone signup. COALESCE
+    // keeps any pre-existing tag (e.g. a standalone account) from being clobbered.
     const result = await db.query(
       `UPDATE dashboard_users
           SET rep_seat_active = $1,
               rep_seat_tier = $2,
               rep_seat_activated_at = CASE WHEN $1 AND rep_seat_activated_at IS NULL THEN now() ELSE rep_seat_activated_at END,
+              seat_type = CASE WHEN $1 THEN COALESCE(seat_type, 'rep') ELSE seat_type END,
+              rep_coach_account_type = CASE WHEN $1 THEN COALESCE(rep_coach_account_type, 'manager_provisioned') ELSE rep_coach_account_type END,
               updated_at = now()
         WHERE id = $3
-        RETURNING id, email, rep_seat_active, rep_seat_tier, rep_seat_activated_at`,
+        RETURNING id, email, rep_seat_active, rep_seat_tier, rep_seat_activated_at,
+                  seat_type, rep_coach_account_type`,
       [active, finalTier, targetUserId],
     );
 

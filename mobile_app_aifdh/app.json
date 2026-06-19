@@ -19,7 +19,9 @@
         "UIBackgroundModes": [
           "audio"
         ],
-        "NSLocationWhenInUseUsageDescription": "AI Rep Coach uses your location only to suggest the correct visit state for recording-consent rules. You can always change it manually."
+        "NSLocationWhenInUseUsageDescription": "AI Rep Coach uses your location only to suggest the correct visit state for recording-consent rules. You can always change it manually.",
+        "NSCameraUsageDescription": "AI Rep Coach uses the camera so you can take a profile picture.",
+        "NSPhotoLibraryUsageDescription": "AI Rep Coach accesses your photos so you can choose a profile picture."
       }
     },
     "android": {
@@ -86,6 +88,13 @@
       ],
       "@bacons/apple-targets",
       "expo-asset",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "AI Rep Coach accesses your photos so you can choose a profile picture.",
+          "cameraPermission": "AI Rep Coach uses the camera so you can take a profile picture."
+        }
+      ],
       "./plugins/withOptionalGps"
     ],
     "experiments": {

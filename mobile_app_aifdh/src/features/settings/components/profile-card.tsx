@@ -4,6 +4,7 @@ import { Text, View } from "react-native";
 import { colors } from "@/src/shared/theme/tokens";
 
 import type { RepProfile } from "../types";
+import { AvatarPicker } from "./avatar-picker";
 
 type Props = {
   profile: RepProfile;
@@ -31,29 +32,42 @@ function formatLastSeen(iso: string | null): string {
   return new Date(iso).toLocaleDateString();
 }
 
-const TIER_LABELS: Record<string, { label: string; price: string; bg: string; text: string }> = {
-  standard: { label: "Standard", price: "$119", bg: "bg-slate-100", text: "text-slate-700" },
-  pro: { label: "Pro", price: "$199", bg: "bg-brand-100", text: "text-brand-700" },
-  elite: { label: "Elite", price: "$249", bg: "bg-amber-100", text: "text-amber-700" },
+const TIER_LABELS: Record<string, { label: string; bg: string; text: string }> = {
+  standard: { label: "Standard", bg: "bg-slate-100", text: "text-slate-700" },
+  pro: { label: "Pro", bg: "bg-brand-100", text: "text-brand-700" },
+  elite: { label: "Elite", bg: "bg-amber-100", text: "text-amber-700" },
 };
+
+function roleLabel(role: string): string {
+  if (role === "admin") return "Account owner";
+  if (role === "manager") return "Manager";
+  return "Sales rep";
+}
+
+function trialDaysLeft(iso: string | null): number | null {
+  if (!iso) return null;
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return 0;
+  return Math.ceil(ms / 86_400_000);
+}
 
 export function ProfileCard({ profile }: Props) {
   const tier = TIER_LABELS[profile.seat.tier] ?? TIER_LABELS.standard;
+  const isStandalone = profile.seat.account_type === "standalone";
+  const company =
+    !isStandalone && profile.tenant.name ? profile.tenant.name : null;
+  const daysLeft = trialDaysLeft(profile.seat.trial_ends_at);
+
   return (
     <View className="gap-4 rounded-sm border border-surface-border bg-white p-5">
       <View className="flex-row items-center gap-4">
-        <View className="h-16 w-16 items-center justify-center rounded-full bg-brand-100">
-          <Text className="text-xl font-bold text-brand-700">
-            {initials(profile.email)}
-          </Text>
-        </View>
+        <AvatarPicker avatarUrl={profile.avatar_url} initials={initials(profile.email)} />
         <View className="flex-1 gap-1">
           <Text className="text-base font-semibold text-ink-primary" numberOfLines={1}>
             {profile.email}
           </Text>
-          <Text className="text-sm capitalize text-ink-muted">
-            {profile.role}
-            {profile.tenant.name ? ` · ${profile.tenant.name}` : ""}
+          <Text className="text-sm text-ink-muted" numberOfLines={1}>
+            {company ? `${roleLabel(profile.role)} · ${company}` : roleLabel(profile.role)}
           </Text>
         </View>
       </View>
@@ -62,13 +76,14 @@ export function ProfileCard({ profile }: Props) {
         <View className={`flex-row items-center gap-1.5 rounded-full px-3 py-1.5 ${tier.bg}`}>
           <Ionicons name="ribbon" size={12} color={colors.brand[700]} />
           <Text className={`text-xs font-semibold ${tier.text}`}>
-            {tier.label} seat · {tier.price}/mo
+            {tier.label} plan
           </Text>
         </View>
-        {profile.tenant.business_type ? (
-          <View className="rounded-full bg-slate-100 px-3 py-1.5">
-            <Text className="text-xs font-medium text-slate-700">
-              {profile.tenant.business_type}
+        {daysLeft !== null ? (
+          <View className="flex-row items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5">
+            <Ionicons name="time-outline" size={12} color="#047857" />
+            <Text className="text-xs font-semibold text-emerald-700">
+              {daysLeft > 0 ? `${daysLeft}-day trial` : "Trial ended"}
             </Text>
           </View>
         ) : null}

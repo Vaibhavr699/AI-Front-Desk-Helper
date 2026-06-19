@@ -2,10 +2,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   fetchProfile,
+  removeAvatar,
   revokeTrustedDevice,
   updateCoachingDeliveryPrefs,
   updateRepHomeState,
   updateRepPhone,
+  uploadAvatar,
 } from "./api";
 import type { CoachingDeliveryPrefs } from "./types";
 
@@ -47,6 +49,27 @@ export function useUpdateRepHomeState() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (home_state: string | null) => updateRepHomeState(home_state),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.profile() });
+    },
+  });
+}
+
+export function useUploadAvatar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (asset: { uri: string; mimeType?: string | null; fileName?: string | null }) =>
+      uploadAvatar(asset),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsKeys.profile() });
+    },
+  });
+}
+
+export function useRemoveAvatar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => removeAvatar(),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: settingsKeys.profile() });
     },

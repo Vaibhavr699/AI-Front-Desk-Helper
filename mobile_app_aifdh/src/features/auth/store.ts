@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { STORAGE_KEYS } from "@/src/config/constants";
 import { api, authTokenHolder } from "@/src/shared/api/client";
 import { isApiError } from "@/src/shared/api/errors";
+import { queryClient } from "@/src/shared/api/query-client";
 import { secureStorage } from "@/src/shared/storage/secure-store";
 import type { RepUser } from "@/src/shared/types/api";
 
@@ -162,6 +163,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
       if (response.status === "ok") {
         await persistSession(response.token, response.user);
+        queryClient.clear();
         set({
           status: "authenticated",
           user: response.user,
@@ -209,6 +211,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
       await persistSession(response.token, response.user);
       await persistTrustedDevice(response.trusted_device);
+      queryClient.clear();
       set({
         status: "authenticated",
         user: response.user,
@@ -263,6 +266,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         await authApi.logout(fingerprint);
       } catch {}
       await clearSession();
+      queryClient.clear();
       set({
         status: "unauthenticated",
         user: null,

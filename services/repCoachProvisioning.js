@@ -5,8 +5,6 @@ const db = require("../lib/db");
 const auth = require("../lib/auth");
 const { sendEmail, REP_COACH_FROM } = require("./email");
 
-const APP_STORE_URL = process.env.REP_COACH_APP_STORE_URL || "https://apps.apple.com";
-const PLAY_STORE_URL = process.env.REP_COACH_PLAY_STORE_URL || "https://play.google.com";
 const DASHBOARD_URL = process.env.DASHBOARD_URL || process.env.BASE_URL || "";
 
 const SET_PASSWORD_TTL_HOURS = 24;
@@ -127,58 +125,71 @@ async function provisionFromCheckout(session, opts = {}) {
 
   const setPasswordUrl = await createSetPasswordLink(email);
 
+  const trialLine = isTrial && trialEndsAt
+    ? `Your 14-day free trial is active until <strong>${trialEndsAt.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</strong>. You won't be charged until then — cancel anytime before.`
+    : `Your subscription is active.`;
+
   await sendEmail({
     from: REP_COACH_FROM,
     to: email,
-    subject: "Welcome to AI Rep Coach — Your account is ready",
+    subject: "Welcome to AI Rep Coach — set your password to get started",
     html: `
-      <div style="font-family: system-ui, sans-serif; max-width: 520px; margin: 0 auto; padding: 40px 24px;">
-        <h1 style="font-size: 24px; font-weight: 800; color: #000; margin: 0 0 16px;">
-          You're in! Welcome to AI Rep Coach.
-        </h1>
-        <p style="font-size: 15px; color: #444; line-height: 1.6; margin: 0 0 24px;">
-          Your account has been created. Here's how to get started:
-        </p>
-
-        <div style="background: #f5f5f5; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
-          <p style="margin: 0 0 8px; font-size: 13px; color: #888; font-weight: 600;">YOUR LOGIN</p>
-          <p style="margin: 0; font-size: 15px; color: #000;">
-            <strong>Email:</strong> ${email}<br />
-            Set your password using the secure link below — it expires in 24 hours.
-          </p>
+      <div style="font-family: -apple-system, system-ui, sans-serif; max-width: 520px; margin: 0 auto; background: #ffffff;">
+        <div style="background: #000; padding: 28px 32px;">
+          <span style="font-size: 13px; font-weight: 700; letter-spacing: 2px; color: #facc15;">AI REP COACH</span>
         </div>
 
-        ${setPasswordUrl ? `<a href="${setPasswordUrl}" style="display: inline-block; background: #000; color: #facc15; font-size: 15px; font-weight: 600; padding: 14px 32px; border-radius: 9999px; text-decoration: none; margin-bottom: 24px;">
-          Set your password →
-        </a>` : ""}
+        <div style="padding: 36px 32px;">
+          <h1 style="font-size: 24px; font-weight: 800; color: #000; margin: 0 0 12px;">
+            You're in. Let's get you set up.
+          </h1>
+          <p style="font-size: 15px; color: #444; line-height: 1.6; margin: 0 0 8px;">
+            Your account for <strong>${email}</strong> is ready.
+          </p>
+          <p style="font-size: 14px; color: #666; line-height: 1.6; margin: 0 0 28px;">
+            ${trialLine}
+          </p>
 
-        <h2 style="font-size: 18px; font-weight: 700; color: #000; margin: 32px 0 12px;">
-          Download the mobile app
-        </h2>
-        <p style="font-size: 14px; color: #444; line-height: 1.6; margin: 0 0 16px;">
-          Your reps use the mobile app during in-home visits to receive real-time coaching cues.
-        </p>
-        <p style="font-size: 14px;">
-          <a href="${APP_STORE_URL}" style="color: #2563eb; font-weight: 600;">App Store (iOS)</a>
-          &nbsp;&nbsp;|&nbsp;&nbsp;
-          <a href="${PLAY_STORE_URL}" style="color: #2563eb; font-weight: 600;">Play Store (Android)</a>
-        </p>
+          <div style="background: #f8f8f8; border-radius: 12px; padding: 24px; margin-bottom: 28px; text-align: center;">
+            <p style="margin: 0 0 16px; font-size: 14px; color: #444;">
+              First, set your password — this secure link expires in 24 hours.
+            </p>
+            ${setPasswordUrl
+              ? `<a href="${setPasswordUrl}" style="display: inline-block; background: #000; color: #facc15; font-size: 15px; font-weight: 700; padding: 14px 36px; border-radius: 9999px; text-decoration: none;">
+                   Set your password →
+                 </a>`
+              : `<p style="font-size: 13px; color: #991b1b; margin: 0;">We couldn't generate your set-password link — reply to this email and we'll sort it out.</p>`}
+          </div>
 
-        <h2 style="font-size: 18px; font-weight: 700; color: #000; margin: 32px 0 12px;">
-          Next steps
-        </h2>
-        <ol style="font-size: 14px; color: #444; line-height: 1.8; padding-left: 20px; margin: 0;">
-          <li>Log in to the dashboard and change your password</li>
-          <li>Invite your reps from the Team page</li>
-          <li>Have reps download the app and log in</li>
-          <li>Start an in-home session — AI coaching cues will fire automatically</li>
-        </ol>
+          <h2 style="font-size: 16px; font-weight: 700; color: #000; margin: 0 0 10px;">
+            Get the mobile app
+          </h2>
+          <p style="font-size: 14px; color: #444; line-height: 1.6; margin: 0 0 8px;">
+            Reps use the AI Rep Coach app during in-home visits for real-time coaching cues.
+          </p>
+          <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 14px 16px; margin-bottom: 28px;">
+            <p style="font-size: 13px; color: #92400e; margin: 0; font-weight: 600;">
+              📱 App download coming soon — we'll email you the install link as soon as it's live.
+            </p>
+          </div>
 
-        <hr style="border: none; border-top: 1px solid #eee; margin: 32px 0;" />
-        <p style="font-size: 12px; color: #bbb;">
-          AI Rep Coach · Real-time coaching for in-home sales<br />
-          <a href="mailto:support@airepcoach.com" style="color: #bbb;">support@airepcoach.com</a>
-        </p>
+          <h2 style="font-size: 16px; font-weight: 700; color: #000; margin: 0 0 10px;">
+            What's next
+          </h2>
+          <ol style="font-size: 14px; color: #444; line-height: 1.8; padding-left: 20px; margin: 0 0 8px;">
+            <li>Set your password using the button above</li>
+            <li>Log in and explore your coaching dashboard</li>
+            <li>Install the app (link coming soon) and start an in-home session</li>
+            <li>AI coaching cues fire automatically during the visit</li>
+          </ol>
+        </div>
+
+        <div style="padding: 24px 32px; border-top: 1px solid #eee;">
+          <p style="font-size: 12px; color: #999; margin: 0; line-height: 1.6;">
+            AI Rep Coach · Real-time coaching for in-home sales<br />
+            Need help? <a href="mailto:support@airepcoach.com" style="color: #999;">support@airepcoach.com</a>
+          </p>
+        </div>
       </div>
     `,
   });

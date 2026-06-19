@@ -45,7 +45,7 @@ router.post("/checkout", async (req, res) => {
       email,
       magicToken: token,
       successUrl: `${REP_COACH_URL}/signup/success`,
-      cancelUrl: `${REP_COACH_URL}/signup`,
+      cancelUrl: `${REP_COACH_URL}/`,
     });
 
     res.json({ checkout_url: url });

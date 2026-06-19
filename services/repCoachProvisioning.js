@@ -2,28 +2,26 @@
 
 const crypto = require("crypto");
 const db = require("../lib/db");
+const auth = require("../lib/auth");
 const { sendEmail, REP_COACH_FROM } = require("./email");
 
 const APP_STORE_URL = process.env.REP_COACH_APP_STORE_URL || "https://apps.apple.com";
 const PLAY_STORE_URL = process.env.REP_COACH_PLAY_STORE_URL || "https://play.google.com";
 const DASHBOARD_URL = process.env.DASHBOARD_URL || process.env.BASE_URL || "";
-const REP_COACH_URL = process.env.REP_COACH_URL || "https://airepcoach.com";
 
 const SET_PASSWORD_TTL_HOURS = 24;
 
 // One-time set-password link (Drew's locked decision: no temp passwords).
-// Reuses the magic_links table with a dedicated purpose. Returns the URL or ""
-// if the link couldn't be created (caller degrades gracefully).
+// Reuses the EXISTING, battle-tested reset-token flow (lib/auth saveResetToken +
+// the /api/auth/reset-password handler) — no new endpoint. The link lands on the
+// dashboard's /reset-password page, which clears the token after use.
 async function createSetPasswordLink(email) {
   try {
-    const token = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + SET_PASSWORD_TTL_HOURS * 3600 * 1000);
-    await db.query(
-      `INSERT INTO magic_links (email, token, purpose, expires_at)
-       VALUES ($1, $2, 'rep_coach_set_password', $3)`,
-      [email.trim().toLowerCase(), token, expiresAt],
-    );
-    return `${REP_COACH_URL}/set-password?token=${token}`;
+    const token = auth.generateResetToken();
+    const expires = new Date(Date.now() + SET_PASSWORD_TTL_HOURS * 3600 * 1000);
+    await auth.saveResetToken(email.trim().toLowerCase(), token, expires);
+    const base = DASHBOARD_URL.replace(/\/$/, "");
+    return base ? `${base}/reset-password?token=${token}` : "";
   } catch (err) {
     console.error("[repCoachProvisioning] set-password link failed:", err.message);
     return "";

@@ -1,13 +1,11 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { CheckCircle2 } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 const DEMO_URL = import.meta.env.VITE_DEMO_URL || '#demo'
 
 export default function CTA() {
   const [email, setEmail] = useState('')
-  const [sent, setSent] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -17,14 +15,18 @@ export default function CTA() {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch(`${API_URL}/api/public/magic-link/request`, {
+      const res = await fetch(`${API_URL}/api/rep/signup/checkout`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Something went wrong')
-      setSent(true)
+      if (data.checkout_url) {
+        window.location.href = data.checkout_url
+        return
+      }
+      throw new Error('Could not start checkout. Please try again.')
     } catch (err) {
       setError(err.message)
     } finally {
@@ -67,52 +69,39 @@ export default function CTA() {
 
           <div style={{ marginTop: 40, paddingTop: 32, borderTop: '1px solid rgba(0,0,0,0.12)', maxWidth: 460, marginLeft: 'auto', marginRight: 'auto' }}>
             <p style={{ fontSize: 14, fontWeight: 600, color: '#333', marginBottom: 16 }}>
-              Or start a 14-day free trial — no credit card required
+              Or start a 14-day free trial — card required, cancel anytime before day 14
             </p>
-            {sent ? (
+            <form onSubmit={handleSubmit}>
               <div
                 style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 10,
-                  backgroundColor: '#000', color: '#facc15', fontSize: 14, fontWeight: 600,
-                  padding: '14px 28px', borderRadius: 9999,
+                  display: 'flex', alignItems: 'center',
+                  backgroundColor: '#fff', borderRadius: 9999, padding: 5,
+                  border: '1px solid rgba(0,0,0,0.1)',
                 }}
               >
-                <CheckCircle2 size={18} />
-                Check your email to get started!
-              </div>
-            ) : (
-              <form onSubmit={handleSubmit}>
-                <div
+                <input
+                  type="email"
+                  required
+                  placeholder="you@company.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="outline-none"
+                  style={{ flex: 1, minWidth: 0, backgroundColor: 'transparent', padding: '11px 18px', fontSize: 14, color: '#000' }}
+                />
+                <button
+                  type="submit"
                   style={{
-                    display: 'flex', alignItems: 'center',
-                    backgroundColor: '#fff', borderRadius: 9999, padding: 5,
-                    border: '1px solid rgba(0,0,0,0.1)',
+                    flexShrink: 0, backgroundColor: 'rgba(0,0,0,0.08)', color: '#000',
+                    fontSize: 13, fontWeight: 600, padding: '11px 22px', borderRadius: 9999, border: 'none', cursor: 'pointer',
                   }}
                 >
-                  <input
-                    type="email"
-                    required
-                    placeholder="you@company.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="outline-none"
-                    style={{ flex: 1, minWidth: 0, backgroundColor: 'transparent', padding: '11px 18px', fontSize: 14, color: '#000' }}
-                  />
-                  <button
-                    type="submit"
-                    style={{
-                      flexShrink: 0, backgroundColor: 'rgba(0,0,0,0.08)', color: '#000',
-                      fontSize: 13, fontWeight: 600, padding: '11px 22px', borderRadius: 9999, border: 'none', cursor: 'pointer',
-                    }}
-                  >
-                    {loading ? 'Sending…' : 'Start trial'}
-                  </button>
-                </div>
-                {error && (
-                  <p style={{ marginTop: 12, fontSize: 13, color: '#991b1b' }}>{error}</p>
-                )}
-              </form>
-            )}
+                  {loading ? 'Starting…' : 'Start trial'}
+                </button>
+              </div>
+              {error && (
+                <p style={{ marginTop: 12, fontSize: 13, color: '#991b1b' }}>{error}</p>
+              )}
+            </form>
           </div>
         </motion.div>
       </div>

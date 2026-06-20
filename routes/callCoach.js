@@ -812,7 +812,7 @@ router.get("/in-home/sessions", async (req, res) => {
               s.outcome, s.estimate_value_cents, s.total_cues_fired,
               s.consent_state, s.rep_satisfaction,
               u.email AS rep_email,
-              l.customer_name AS lead_name,
+              l.name AS lead_name,
               (SELECT count(*) FROM in_home_alerts a WHERE a.session_id = s.id) AS alert_count
          FROM in_home_sessions s
          LEFT JOIN dashboard_users u ON u.id = s.user_id
@@ -838,7 +838,7 @@ router.get("/in-home/sessions/:id", async (req, res) => {
 
     const [sessionR, alertsR, commentsR] = await Promise.all([
       db.query(
-        `SELECT s.*, u.email AS rep_email, l.customer_name AS lead_name
+        `SELECT s.*, u.email AS rep_email, l.name AS lead_name
            FROM in_home_sessions s
            LEFT JOIN dashboard_users u ON u.id = s.user_id
            LEFT JOIN leads l ON l.id = s.lead_id

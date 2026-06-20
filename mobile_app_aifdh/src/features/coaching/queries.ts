@@ -4,6 +4,7 @@ import {
   fetchCoachingHistory,
   fetchCoachingMe,
   fetchConversationReview,
+  fetchManagerComments,
 } from "./api";
 
 export const coachingKeys = {
@@ -12,6 +13,8 @@ export const coachingKeys = {
   history: (days: number) => [...coachingKeys.all, "history", days] as const,
   conversation: (id: string) =>
     [...coachingKeys.all, "conversation", id] as const,
+  managerComments: (id: string) =>
+    [...coachingKeys.all, "manager-comments", id] as const,
 };
 
 export function useCoachingMe(days = 30) {
@@ -38,6 +41,15 @@ export function useConversationReview(id: string | null) {
   return useQuery({
     queryKey: coachingKeys.conversation(id ?? "none"),
     queryFn: () => fetchConversationReview(id as string),
+    enabled: !!id,
+    staleTime: 2 * 60_000,
+  });
+}
+
+export function useManagerComments(id: string | null) {
+  return useQuery({
+    queryKey: coachingKeys.managerComments(id ?? "none"),
+    queryFn: () => fetchManagerComments(id as string),
     enabled: !!id,
     staleTime: 2 * 60_000,
   });

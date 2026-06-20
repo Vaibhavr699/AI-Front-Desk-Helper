@@ -310,6 +310,33 @@ export function getConversations(tenantId) {
   return api(`/api/conversations?tenant_id=${tenantId}`);
 }
 
+export function getInHomeSessions(params = {}) {
+  return get("/api/call-coach/in-home/sessions", params);
+}
+
+// Updates the signed-in user's own display name (shown above their coaching
+// comments in the rep app). Mirrors the new name back into the cached `user`
+// so the change is reflected without a re-login.
+export async function updateMyProfile(body) {
+  const data = await api("/api/auth/me", {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+  try {
+    const cached = JSON.parse(localStorage.getItem("user")) || {};
+    if (data?.user?.full_name !== undefined) {
+      localStorage.setItem(
+        "user",
+        JSON.stringify({ ...cached, full_name: data.user.full_name }),
+      );
+    }
+  } catch (err) {
+    // non-fatal — cache refresh is best-effort
+    console.debug("[updateMyProfile] cache refresh skipped", err);
+  }
+  return data;
+}
+
 export function getTeam(tenantId = null) {
   const url = tenantId ? `/api/team?tenant_id=${tenantId}` : "/api/team";
   return api(url);

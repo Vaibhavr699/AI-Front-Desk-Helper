@@ -366,6 +366,23 @@ router.patch("/:id/rep-seat", requireTeamManager, async (req, res) => {
     }
     const before = rCheck.rows[0];
 
+    // Seats can only be granted once Rep Coach is switched on for the tenant.
+    // The cap below limits how many seats; this gates whether any may exist at
+    // all. Without it a manager could assign a seat that the rep can never use
+    // (the app blocks until rep_coach_enabled), producing a silent dead seat.
+    if (active && !before.rep_seat_active) {
+      const flagRes = await db.query(
+        "SELECT rep_coach_enabled FROM tenants WHERE id = $1",
+        [before.tenant_id],
+      );
+      if (flagRes.rows[0]?.rep_coach_enabled !== true) {
+        return res.status(409).json({
+          error: "Turn on AI Rep Coach for this company before assigning seats.",
+          code: "REP_COACH_NOT_ENABLED",
+        });
+      }
+    }
+
     // Enforce the per-tenant rep seat cap when newly activating a seat.
     if (active && !before.rep_seat_active) {
       const seatCheck = await repSeats.canActivateRepSeat(before.tenant_id, targetUserId);

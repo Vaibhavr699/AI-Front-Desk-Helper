@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
 import {
-  getTeam, inviteTeamMember, removeTeamMember, updateRepSeat, updateRepCoachEnabled, getTenants, getUser, get, getRepSeatSummary,
+  getTeam, inviteTeamMember, removeTeamMember, updateRepSeat, updateRepCoachEnabled, getTenants, getUser, get, getRepSeatSummary, updateMyProfile,
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import {
   Users, Crown, MapPin, Trash2, Mail, Plus, AlertCircle, Building2,
-  Shield, User, History, Smartphone, TrendingDown,
+  Shield, User, History, Smartphone, TrendingDown, Check,
 } from "lucide-react";
 
 const REP_TIER_OPTIONS = [
@@ -64,6 +64,71 @@ function RepSeatControl({ user, onChange }) {
         </select>
       )}
       {error && <span className="text-[10px] text-red-600">{error}</span>}
+    </div>
+  );
+}
+
+// Lets the signed-in manager set the display name shown above their coaching
+// comments in the rep's mobile app. Until set, reps see the email's prefix.
+function ProfileNameCard() {
+  const current = getUser();
+  const [name, setName] = useState(current?.full_name || "");
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+
+  const dirty = name.trim() !== (current?.full_name || "");
+
+  async function save() {
+    if (busy || !dirty) return;
+    setBusy(true);
+    setError("");
+    setSaved(false);
+    try {
+      await updateMyProfile({ full_name: name.trim() });
+      setSaved(true);
+    } catch (err) {
+      setError(err.message || "Failed to save");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mb-6 rounded-2xl border border-stone-200 bg-white px-5 py-4 shadow-sm">
+      <div className="flex items-start gap-3">
+        <User className="mt-0.5 text-stone-500" size={20} />
+        <div className="flex-1">
+          <p className="text-sm font-bold text-stone-900">Your name</p>
+          <p className="text-xs text-stone-500 mt-0.5">
+            Shown above your coaching feedback in the rep's app. Reps see your email if left blank.
+          </p>
+          <div className="mt-3 flex items-center gap-2">
+            <input
+              type="text"
+              value={name}
+              maxLength={120}
+              placeholder="e.g. Drew Koch"
+              onChange={(e) => { setName(e.target.value); setSaved(false); }}
+              className="flex-1 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-800 focus:outline-none focus:ring-2 focus:ring-stone-400"
+            />
+            <button
+              type="button"
+              onClick={save}
+              disabled={busy || !dirty}
+              className="px-4 py-2 rounded-lg bg-stone-900 text-white text-sm font-bold hover:bg-stone-800 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            >
+              {busy ? "Saving…" : "Save"}
+            </button>
+          </div>
+          {error && <p className="text-xs text-red-600 mt-2">{error}</p>}
+          {saved && !error && (
+            <p className="text-xs text-emerald-600 mt-2 inline-flex items-center gap-1">
+              <Check size={12} /> Saved
+            </p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -475,6 +540,8 @@ export default function Team() {
           </button>
         )}
       </div>
+
+      {activeTab === "members" && <ProfileNameCard />}
 
       {activeTab === "members" && (
         <div className="mb-6 flex items-center justify-between gap-4 rounded-2xl border border-stone-200 bg-white px-5 py-4 shadow-sm">

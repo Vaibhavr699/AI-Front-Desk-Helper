@@ -12,8 +12,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { colors } from "@/src/shared/theme/tokens";
 
 import { DIMENSION_ICONS, formatDimensionLabel, scoreToColor } from "../lib/format";
-import { useConversationReview } from "../queries";
-import type { CoachingDimensionDetail } from "../types";
+import { useConversationReview, useManagerComments } from "../queries";
+import type { CoachingDimensionDetail, ManagerComment } from "../types";
 
 type Props = { id: string };
 
@@ -70,6 +70,37 @@ function DimensionFeedback({
   );
 }
 
+function ManagerFeedback({ comment }: { comment: ManagerComment }) {
+  const accent =
+    comment.flag === "good"
+      ? { bg: "bg-emerald-50", chip: "bg-emerald-100", icon: "#047857", label: "Good", labelText: "text-emerald-700" }
+      : { bg: "bg-amber-50", chip: "bg-amber-100", icon: "#b45309", label: "Improve", labelText: "text-amber-700" };
+  const name = comment.manager_name || comment.manager_email || "Manager";
+  return (
+    <View className={`gap-2 rounded-sm p-4 ${accent.bg}`}>
+      <View className="flex-row items-center gap-2">
+        <View className={`h-7 w-7 items-center justify-center rounded-full ${accent.chip}`}>
+          <Ionicons name="person" size={14} color={accent.icon} />
+        </View>
+        <View className="flex-1">
+          <Text className="text-sm font-semibold text-ink-primary">{name}</Text>
+          <Text className="text-xs text-ink-muted">Manager</Text>
+        </View>
+        <View className={`rounded-sm ${accent.chip} px-2 py-0.5`}>
+          <Text className={`text-xs font-semibold ${accent.labelText}`}>{accent.label}</Text>
+        </View>
+      </View>
+      {comment.text ? (
+        <Text className="text-sm leading-relaxed text-ink-secondary">{comment.text}</Text>
+      ) : (
+        <Text className="text-sm italic text-ink-muted">
+          Flagged this moment as {accent.label.toLowerCase()}.
+        </Text>
+      )}
+    </View>
+  );
+}
+
 function DimensionRow({ item }: { item: CoachingDimensionDetail }) {
   const swatch = scoreToColor(item.score);
   const pct = Math.max(0, Math.min(100, (item.score / 10) * 100));
@@ -93,6 +124,8 @@ function DimensionRow({ item }: { item: CoachingDimensionDetail }) {
 export function ConversationReviewScreen({ id }: Props) {
   const router = useRouter();
   const { data, isLoading, isError, error, refetch } = useConversationReview(id);
+  const { data: managerComments } = useManagerComments(id);
+  const comments = managerComments?.comments ?? [];
 
   return (
     <SafeAreaView className="flex-1 bg-surface-base" edges={["top"]}>
@@ -212,6 +245,20 @@ export function ConversationReviewScreen({ id }: Props) {
                     </Text>
                     {data.dimensions.map((d) => (
                       <DimensionRow key={d.dimension} item={d} />
+                    ))}
+                  </View>
+                )}
+
+                {comments.length > 0 && (
+                  <View className="gap-3">
+                    <View className="flex-row items-center gap-2">
+                      <Ionicons name="chatbubble-ellipses-outline" size={16} color={colors.brand[600]} />
+                      <Text className="text-sm font-semibold text-ink-secondary">
+                        Manager feedback
+                      </Text>
+                    </View>
+                    {comments.map((comment) => (
+                      <ManagerFeedback key={comment.id} comment={comment} />
                     ))}
                   </View>
                 )}

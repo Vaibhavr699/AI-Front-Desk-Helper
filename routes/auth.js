@@ -2,6 +2,7 @@
 
 const express = require("express");
 const auth = require("../lib/auth");
+const { authMiddleware } = require("../lib/auth");
 const { logAction } = require("../lib/auditLogger");
 const db = require("../lib/db");
 
@@ -178,6 +179,39 @@ router.post("/reset-password", async (req, res) => {
     res.json({ message: "Password updated successfully" });
   } catch (e) {
     console.error("Reset password error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// PATCH /me — update the signed-in user's own profile. Currently just the
+// display name (shown above their coaching comments in the rep app). Self-scoped:
+// a user can only edit their own row, keyed by the JWT's user id.
+router.patch("/me", authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+    const raw = req.body?.full_name;
+    if (typeof raw !== "string") {
+      return res.status(400).json({ error: "full_name (string) required" });
+    }
+    const fullName = raw.trim();
+    if (fullName.length > 120) {
+      return res.status(400).json({ error: "full_name must be 120 characters or fewer" });
+    }
+
+    const r = await db.query(
+      `UPDATE dashboard_users
+          SET full_name = $1, updated_at = now()
+        WHERE id = $2
+        RETURNING id, email, role, full_name`,
+      [fullName || null, userId],
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: "User not found" });
+
+    res.json({ user: r.rows[0] });
+  } catch (e) {
+    console.error("Update profile error:", e);
     res.status(500).json({ error: "Server error" });
   }
 });

@@ -7,6 +7,7 @@ import type {
   CoachingRecentConversation,
   CoachingTrendPoint,
   ConversationReview,
+  ManagerCommentsResponse,
 } from "./types";
 
 function toNum(value: unknown): number {
@@ -110,6 +111,20 @@ export async function fetchConversationReview(
     improvements: (data.improvements ?? []).map((d) => ({
       ...d,
       score: toNum(d.score),
+    })),
+  };
+}
+
+export async function fetchManagerComments(
+  id: string,
+): Promise<ManagerCommentsResponse> {
+  const { data } = await api.get<ManagerCommentsResponse>(
+    `/rep/coaching/conversations/${id}/manager-comments`,
+  );
+  return {
+    comments: (data.comments ?? []).map((c) => ({
+      ...c,
+      turn_index: toNum(c.turn_index),
     })),
   };
 }

@@ -57,12 +57,28 @@ function getNavItems(activeTenant) {
     return [{ to: "/bookings", label: "Bookings", icon: BookingsIcon }];
   }
 
+  // 2b. Rep-Coach-only tenant (bought Rep Coach standalone, no AIFDH). There's
+  // no receptionist product to operate, so suppress the AIFDH operational tabs
+  // (Calls/Leads/Bookings/Metrics/Reviews) and show only the coaching surface:
+  // review reps' sessions, manage the team/seats, and settings.
+  if (activeTenant && activeTenant.aifdh_enabled === false && activeTenant.rep_coach_enabled) {
+    return [
+      { to: "/call-coach",            label: "AI Coaching",    icon: CallCoachIcon },
+      { to: "/call-coach/in-home",    label: "In-Home Sessions", icon: SessionsIcon },
+      { to: "/team",                  label: "Team",           icon: TeamIcon },
+      { to: "/team/sharing-risks",    label: "Sharing Risks",  icon: TeamIcon },
+      { to: "/settings",              label: "Settings",       icon: SettingsIcon },
+    ];
+  }
+
   // 3. Manager — base items + Settings
   if (role === "manager") {
-    return [
-      ...baseNavItems,
-      { to: "/settings", label: "Settings", icon: SettingsIcon },
-    ];
+    const items = [...baseNavItems];
+    if (activeTenant?.rep_coach_enabled) {
+      items.push({ to: "/call-coach/in-home", label: "In-Home Sessions", icon: SessionsIcon });
+    }
+    items.push({ to: "/settings", label: "Settings", icon: SettingsIcon });
+    return items;
   }
 
   // 4. Owner / Admin
@@ -97,9 +113,10 @@ function getNavItems(activeTenant) {
   // just HQ parents (Jun 18, 2026). Resellers never reach here (they return
   // early with their own nav above).
   items.push({ to: "/team",               label: "Team",          icon: TeamIcon });
- if (activeTenant?.rep_coach_enabled) {
-      items.push({ to: "/team/sharing-risks", label: "Sharing Risks", icon: TeamIcon });
-    }
+  if (activeTenant?.rep_coach_enabled) {
+    items.push({ to: "/call-coach/in-home", label: "In-Home Sessions", icon: SessionsIcon });
+    items.push({ to: "/team/sharing-risks", label: "Sharing Risks", icon: TeamIcon });
+  }
 
   // Businesses + Rollup stay HQ-only — they're multi-location aggregation,
   // not people management.
@@ -163,6 +180,15 @@ function CallCoachIcon({ className }) {
     <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5z" />
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" />
+    </svg>
+  );
+}
+
+// ── In-Home Sessions icon — clipboard/document with checkmark (recorded visits) ──
+function SessionsIcon({ className }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
     </svg>
   );
 }

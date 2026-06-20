@@ -7,6 +7,7 @@ import SmsConsent from "./pages/SmsConsent";
 import Contact from "./pages/Contact";
 import { Home, Login, ForgotPassword, ResetPassword, CreateBusiness, Dashboard, Calls, Outbound, CallDetail, Bookings, FollowUps, Metrics, Settings, Tenants, Plans, Leads, LeadDetail, Conversations, Billing, Admin, PrivacyPolicy, TermsOfService, CookiePolicy, Team, SharingRisks, Locations, FranchiseeInvite, Welcome, RollupV5, CallCoach, CallCoachDetail, TeamAnalytics, CoachingSettings } from "./pages";
 import InHomeSessionDetail from "./pages/InHomeSessionDetail";
+import InHomeSessions from "./pages/InHomeSessions";
 import FranchisePaywall from "./pages/FranchisePaywall";
 import HqLocations from "./pages/HqLocations";
 import { ToastProvider } from "./components/ui/Toast";
@@ -185,8 +186,9 @@ export default function App() {
             <Route path="/call-coach" element={<CallCoachWithContext />} />
             <Route path="/call-coach/team-analytics" element={<TeamAnalyticsWithContext />} />
             <Route path="/call-coach/settings" element={<CoachingSettings />} />
-            <Route path="/call-coach/:id" element={<CallCoachDetailWithContext />} />
+            <Route path="/call-coach/in-home" element={<InHomeSessionsWithContext />} />
             <Route path="/call-coach/in-home/:id" element={<InHomeSessionDetailWithContext />} />
+            <Route path="/call-coach/:id" element={<CallCoachDetailWithContext />} />
             <Route path="/hq-locations" element={<HqLocations />} />
             <Route path="/admin" element={<Navigate to="/admin/tenants" replace />} />
             <Route path="/admin/tenants" element={<AdminWithContext view="tenants" />} />
@@ -306,6 +308,11 @@ function CallCoachDetailWithContext() {
 function TeamAnalyticsWithContext() {
   const { tenantId } = useOutletContext();
   return <TeamAnalytics tenantId={tenantId} />;
+}
+
+function InHomeSessionsWithContext() {
+  const { tenantId } = useOutletContext();
+  return <InHomeSessions tenantId={tenantId} />;
 }
 
 function InHomeSessionDetailWithContext() {

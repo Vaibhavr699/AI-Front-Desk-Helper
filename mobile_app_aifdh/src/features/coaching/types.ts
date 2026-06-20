@@ -75,6 +75,21 @@ export type ConversationReview = {
   improvements: CoachingDimensionDetail[];
 };
 
+export type ManagerComment = {
+  id: string;
+  turn_index: number;
+  flag: "good" | "improve";
+  text: string | null;
+  created_at: string;
+  manager_id: string | null;
+  manager_name: string | null;
+  manager_email: string | null;
+};
+
+export type ManagerCommentsResponse = {
+  comments: ManagerComment[];
+};
+
 export type CoachingMeResponse = {
   window_days: number;
   overall: {

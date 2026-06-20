@@ -856,7 +856,8 @@ router.get("/in-home/sessions/:id", async (req, res) => {
       ),
       db.query(
         `SELECT c.id, c.turn_index, c.flag, c.text, c.created_at,
-                c.manager_id, u.email AS manager_email
+                c.manager_id, u.email AS manager_email,
+                COALESCE(NULLIF(u.full_name, ''), split_part(u.email, '@', 1)) AS manager_name
            FROM session_comments c
            LEFT JOIN dashboard_users u ON u.id = c.manager_id
           WHERE c.session_id = $1 AND c.tenant_id = $2
@@ -918,14 +919,23 @@ router.post("/in-home/sessions/:id/comments", async (req, res) => {
     );
     if (!sessionR.rows[0]) return res.status(404).json({ error: "Session not found" });
 
+    // Resolve the manager's display name from the DB (the JWT carries email but
+    // not full_name), using the same fallback as the GET query so the optimistic
+    // comment matches what a later refresh shows.
     const r = await db.query(
-      `INSERT INTO session_comments (session_id, tenant_id, manager_id, turn_index, flag, text)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, turn_index, flag, text, created_at, manager_id`,
+      `WITH inserted AS (
+         INSERT INTO session_comments (session_id, tenant_id, manager_id, turn_index, flag, text)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id, turn_index, flag, text, created_at, manager_id
+       )
+       SELECT i.id, i.turn_index, i.flag, i.text, i.created_at, i.manager_id,
+              u.email AS manager_email,
+              COALESCE(NULLIF(u.full_name, ''), split_part(u.email, '@', 1)) AS manager_name
+         FROM inserted i
+         LEFT JOIN dashboard_users u ON u.id = i.manager_id`,
       [req.params.id, tenantId, req.user?.id || null, turnIndex, flag, text || null],
     );
-    const comment = { ...r.rows[0], manager_email: req.user?.email || null };
-    res.status(201).json({ comment });
+    res.status(201).json({ comment: r.rows[0] });
   } catch (err) {
     console.error("[callCoach] create comment error:", err.message);
     res.status(500).json({ error: err.message });

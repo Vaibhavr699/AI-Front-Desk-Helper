@@ -261,4 +261,56 @@ router.get("/conversations/:id", ...repAuthChain, async (req, res) => {
   }
 });
 
+// GET /conversations/:id/manager-comments — coaching notes a manager left on
+//   this recording from the dashboard. The rep app holds a coaching_conversation
+//   id; comments are keyed by in_home_sessions.id, so we join through the
+//   session link (migration 096). Tenant- and rep-scoped: a rep only ever sees
+//   comments on their OWN recording. manager_name prefers dashboard_users.full_name
+//   and falls back to the email's local-part so the app always has a label.
+router.get("/conversations/:id/manager-comments", ...repAuthChain, async (req, res) => {
+  try {
+    const convId = req.params.id;
+
+    // Confirm the recording belongs to this rep before exposing any comments.
+    const ownR = await db.query(
+      `SELECT 1
+         FROM coaching_conversations
+        WHERE id = $1 AND tenant_id = $2 AND rep_user_id = $3`,
+      [convId, req.rep.tenant_id, req.rep.id]
+    );
+    if (!ownR.rows[0]) return res.status(404).json({ error: "Conversation not found" });
+
+    const cR = await db.query(
+      `SELECT sc.id, sc.turn_index, sc.flag, sc.text, sc.created_at,
+              sc.manager_id,
+              u.email AS manager_email,
+              COALESCE(NULLIF(u.full_name, ''), split_part(u.email, '@', 1)) AS manager_name
+         FROM session_comments sc
+         JOIN in_home_sessions s
+           ON s.id = sc.session_id AND s.tenant_id = sc.tenant_id
+         LEFT JOIN dashboard_users u ON u.id = sc.manager_id
+        WHERE s.coaching_conversation_id = $1
+          AND sc.tenant_id = $2
+        ORDER BY sc.created_at ASC`,
+      [convId, req.rep.tenant_id]
+    );
+
+    res.json({
+      comments: cR.rows.map((c) => ({
+        id: c.id,
+        turn_index: Number(c.turn_index),
+        flag: c.flag,
+        text: c.text,
+        created_at: c.created_at,
+        manager_id: c.manager_id,
+        manager_name: c.manager_name,
+        manager_email: c.manager_email,
+      })),
+    });
+  } catch (e) {
+    console.error("[rep/coaching/conversations/:id/manager-comments]", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 module.exports = router;

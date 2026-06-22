@@ -76,6 +76,13 @@ export default function GoogleBusinessProfile({ tenantId }) {
   const [attachingUrl, setAttachingUrl] = useState(null);
   const [uploadingId, setUploadingId] = useState(null);
 
+  // schedule + image pool (G4)
+  const [schedule, setSchedule] = useState(null);
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [pool, setPool] = useState([]);
+  const [poolLoading, setPoolLoading] = useState(false);
+  const [poolUploading, setPoolUploading] = useState(false);
+
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3200);
@@ -151,6 +158,26 @@ export default function GoogleBusinessProfile({ tenantId }) {
     }
   }, [tenantId]);
 
+  const loadSchedule = useCallback(async () => {
+    if (!tenantId) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/gbp/schedule?tenant_id=${tenantId}${cacheBust()}`, NO_CACHE);
+      const data = await res.json();
+      setSchedule(data.schedule || null);
+    } catch { setSchedule(null); }
+  }, [tenantId]);
+
+  const loadPool = useCallback(async () => {
+    if (!tenantId) return;
+    setPoolLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/gbp/pool?tenant_id=${tenantId}${cacheBust()}`, NO_CACHE);
+      const data = await res.json();
+      setPool(data.images || []);
+    } catch { setPool([]); }
+    finally { setPoolLoading(false); }
+  }, [tenantId]);
+
   useEffect(() => { loadStatus(); loadTenantPlan(); }, [loadStatus, loadTenantPlan]);
 
   // Load the right data when the connected user switches sub-tabs.
@@ -160,7 +187,8 @@ export default function GoogleBusinessProfile({ tenantId }) {
     if (subTab === "health") loadAudit();
     else if (subTab === "drafts") loadPosts("draft");
     else if (subTab === "published") loadPosts("published");
-  }, [status, subTab, loadAudit, loadPosts]);
+    else if (subTab === "schedule") { loadSchedule(); loadPool(); }
+  }, [status, subTab, loadAudit, loadPosts, loadSchedule, loadPool]);
 
   // ── Actions ───────────────────────────────────────────────────────────────
   async function handleConnect() {
@@ -290,6 +318,46 @@ export default function GoogleBusinessProfile({ tenantId }) {
     finally { setPublishingId(null); }
   }
 
+  // ── Schedule + pool actions (G4) ───────────────────────────────────────────
+  async function saveSchedule(patch) {
+    setScheduleSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/gbp/schedule?tenant_id=${tenantId}`, {
+        method: "PATCH", headers: hdrs(), body: JSON.stringify(patch),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Save failed");
+      setSchedule(data.schedule);
+      showToast("Schedule updated");
+    } catch (e) { showToast(e.message || "Save failed", "error"); }
+    finally { setScheduleSaving(false); }
+  }
+
+  async function uploadToPool(file) {
+    if (!file) return;
+    setPoolUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("image", file);
+      const res = await fetch(`${API_BASE}/api/gbp/pool?tenant_id=${tenantId}`, {
+        method: "POST", headers: { Authorization: `Bearer ${token()}` }, body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.error || "Upload failed");
+      await loadPool();
+      showToast(data.durable === false ? "Added (note: not durable until storage configured)" : "Image added to pool ✓");
+    } catch (e) { showToast(e.message || "Upload failed", "error"); }
+    finally { setPoolUploading(false); }
+  }
+
+  async function deleteFromPool(id) {
+    try {
+      await fetch(`${API_BASE}/api/gbp/pool/${id}?tenant_id=${tenantId}`, { method: "DELETE", headers: hdrs() });
+      await loadPool();
+      showToast("Removed from pool");
+    } catch { showToast("Remove failed", "error"); }
+  }
+
   // ── Styles (mirrors Reviews.jsx) ───────────────────────────────────────────
   const s = {
     page: { background: "#F5F4F0", minHeight: "100vh", fontFamily: "'DM Sans', sans-serif", padding: "0 0 60px" },
@@ -390,6 +458,7 @@ export default function GoogleBusinessProfile({ tenantId }) {
             { key: "health", label: "Health" },
             { key: "drafts", label: "Drafts" },
             { key: "published", label: "Published" },
+            { key: "schedule", label: "Schedule" },
           ].map(t => (
             <button key={t.key} style={s.filterBtn(subTab === t.key)} onClick={() => setSubTab(t.key)}>{t.label}</button>
           ))}
@@ -546,7 +615,141 @@ export default function GoogleBusinessProfile({ tenantId }) {
         )}
       </div>
 
-      {/* ── Image picker modal ── */}
+      {/* ── SCHEDULE (G4) ── */}
+      {subTab === "schedule" && (
+        <div style={{ ...s.wrap, paddingTop: 0 }}>
+          {!schedule ? (
+            <div style={{ textAlign: "center", padding: 40, color: "#bbb", fontSize: 13 }}>Loading schedule…</div>
+          ) : (
+            <>
+              {/* Mode selector */}
+              <div style={{ ...s.card, padding: 20, marginBottom: 12 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a", marginBottom: 4 }}>Auto-posting</div>
+                <div style={{ fontSize: 12, color: "#888", marginBottom: 16 }}>
+                  Keep your profile active automatically. Recent posts lift local ranking and feed AI search engines.
+                </div>
+                <div style={{ display: "grid", gap: 10 }}>
+                  {[
+                    { key: "off", title: "Off", desc: "No automatic posts. You create and publish manually.", color: "#888" },
+                    { key: "draft", title: "Draft only (recommended)", desc: "We generate posts on your schedule and leave them in Drafts for you to approve. Nothing goes live without your click.", color: "#E8600A" },
+                    { key: "auto", title: "Full auto", desc: "We generate AND publish posts on your schedule, using images from your pool (or your existing profile photos). Posts go live with no review.", color: "#16a34a" },
+                  ].map(opt => {
+                    const active = schedule.mode === opt.key;
+                    return (
+                      <div key={opt.key}
+                        onClick={() => { if (opt.key === "auto" && !active) { if (!confirm("Full auto publishes to your live Google profile with no review. Continue?")) return; } saveSchedule({ mode: opt.key }); }}
+                        style={{ border: active ? `1.5px solid ${opt.color}` : "1px solid #e8e6e0", background: active ? `${opt.color}0d` : "#fff", borderRadius: 10, padding: "12px 14px", cursor: "pointer", display: "flex", gap: 12, alignItems: "flex-start" }}>
+                        <div style={{ width: 16, height: 16, borderRadius: "50%", border: `2px solid ${active ? opt.color : "#ccc"}`, marginTop: 2, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          {active && <div style={{ width: 8, height: 8, borderRadius: "50%", background: opt.color }} />}
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a1a" }}>{opt.title}</div>
+                          <div style={{ fontSize: 12, color: "#666", lineHeight: 1.5, marginTop: 2 }}>{opt.desc}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Cadence — only relevant when not Off */}
+              {schedule.mode !== "off" && (
+                <div style={{ ...s.card, padding: 20, marginBottom: 12 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a", marginBottom: 16 }}>Cadence</div>
+
+                  <div style={{ marginBottom: 18 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "#444", marginBottom: 8 }}>Posts per week</div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {[1, 2, 3, 4, 5].map(n => (
+                        <button key={n} onClick={() => saveSchedule({ posts_per_week: n })}
+                          style={s.filterBtn(schedule.posts_per_week === n)}>{n}</button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: 18 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "#444", marginBottom: 8 }}>Preferred days</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d, i) => {
+                        const days = schedule.preferred_days || [];
+                        const on = days.includes(i);
+                        return (
+                          <button key={i}
+                            onClick={() => {
+                              const next = on ? days.filter(x => x !== i) : [...days, i].sort((a, b) => a - b);
+                              if (next.length === 0) { showToast("Pick at least one day", "error"); return; }
+                              saveSchedule({ preferred_days: next });
+                            }}
+                            style={s.filterBtn(on)}>{d}</button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "#444", marginBottom: 8 }}>Preferred hour</div>
+                    <select value={schedule.preferred_hour ?? 10}
+                      onChange={e => saveSchedule({ preferred_hour: parseInt(e.target.value, 10) })}
+                      style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #e8e6e0", fontSize: 12, fontFamily: "'DM Sans', sans-serif", background: "#fff", cursor: "pointer" }}>
+                      {Array.from({ length: 24 }, (_, h) => (
+                        <option key={h} value={h}>{h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`}</option>
+                      ))}
+                    </select>
+                    <span style={{ fontSize: 11, color: "#888", marginLeft: 10 }}>{scheduleSaving ? "Saving…" : ""}</span>
+                  </div>
+
+                  {schedule.last_run_note && (
+                    <div style={{ marginTop: 16, fontSize: 11, color: "#888", background: "#fafaf9", border: "1px solid #e8e6e0", borderRadius: 8, padding: "8px 12px" }}>
+                      Last auto-run: {schedule.last_run_note}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Image pool — only relevant for Full auto */}
+              {schedule.mode === "auto" && (
+                <div style={{ ...s.card, padding: 20 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a", marginBottom: 4 }}>Image pool</div>
+                  <div style={{ fontSize: 12, color: "#888", marginBottom: 16 }}>
+                    Full-auto posts need an image. Add photos here and we'll rotate through them. If the pool is empty, we'll fall back to your existing Google profile photos.
+                  </div>
+
+                  <div style={{ marginBottom: 16 }}>
+                    <button onClick={() => document.getElementById("pool-up").click()} disabled={poolUploading} style={s.btn()}>
+                      {poolUploading ? "Uploading…" : "+ Add photo"}
+                    </button>
+                    <input id="pool-up" type="file" accept="image/png,image/jpeg" style={{ display: "none" }}
+                      onChange={e => uploadToPool(e.target.files?.[0])} />
+                  </div>
+
+                  {poolLoading ? (
+                    <div style={{ textAlign: "center", padding: 24, color: "#bbb", fontSize: 13 }}>Loading…</div>
+                  ) : pool.length === 0 ? (
+                    <div style={{ fontSize: 12, color: "#888", padding: "12px 0" }}>
+                      No images in your pool yet. Auto-posts will use your existing profile photos until you add some.
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 10 }}>
+                      {pool.map(img => (
+                        <div key={img.id} style={{ position: "relative", borderRadius: 8, overflow: "hidden", border: "1px solid #e8e6e0", aspectRatio: "1", background: "#f5f4f0" }}>
+                          <img src={img.image_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                          <button onClick={() => deleteFromPool(img.id)}
+                            style={{ position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: "50%", border: "none", background: "rgba(0,0,0,0.55)", color: "#fff", fontSize: 14, cursor: "pointer", lineHeight: 1 }}>×</button>
+                          {img.use_count > 0 && (
+                            <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,0.5)", color: "#fff", fontSize: 9, padding: "2px 4px", textAlign: "center" }}>
+                              used {img.use_count}×
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
       {pickerForPost && (
         <div onClick={() => setPickerForPost(null)} style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, maxWidth: 720, width: "100%", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column" }}>

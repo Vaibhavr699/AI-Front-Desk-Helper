@@ -14,6 +14,7 @@ import { ToastProvider } from "./components/ui/Toast";
 import { HostnameBrandingProvider } from "./contexts/HostnameBrandingContext";
 import "./App.css";
 import Reviews from "./pages/Reviews";
+import GoogleBusinessProfile from "./pages/GoogleBusinessProfile";
 import OutreachLog from "./pages/OutreachLog";
 
 // ── Phase 2 WL Reseller Account Type (Apr 20, 2026) ────────────────────────
@@ -197,6 +198,7 @@ export default function App() {
             <Route path="/team" element={<Team />} />
             <Route path="/team/sharing-risks" element={<SharingRisks />} />
             <Route path="/reviews" element={<ReviewsWithContext />} />
+            <Route path="/google-business" element={<GoogleBusinessWithContext />} />
             {/* Reseller (authenticated) — Phase 2 WL */}
             <Route path="/reseller" element={<Reseller />} />
             <Route path="/reseller/plans" element={<ResellerPlans />} />
@@ -283,6 +285,11 @@ function AdminWithContext({ view }) {
 function ReviewsWithContext() {
   const { tenantId } = useOutletContext();
   return <Reviews tenantId={tenantId} />;
+}
+
+function GoogleBusinessWithContext() {
+  const { tenantId } = useOutletContext();
+  return <GoogleBusinessProfile tenantId={tenantId} />;
 }
 
 function LocationsWithContext() {

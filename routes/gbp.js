@@ -8,11 +8,13 @@
  * via lib/addonAccess.js) so the billing boundary is one source of truth.
  *
  * Phases covered here:
- *   G1 — audit:   GET /status, GET /audit, POST /audit/run
- *   G2 — drafts:  GET /posts, POST /posts/generate, PATCH /posts/:id, DELETE /posts/:id
- *   G2 — images:  POST /posts/:id/image (upload), GET /media (pick existing),
- *                 POST /posts/:id/image-from-google (re-host a picked photo)
- *   G3 — publish: POST /posts/:id/approve   (live publish, image-required)
+ *   G1 — audit:       GET /status, GET /audit, POST /audit/run
+ *   G2 — drafts:      GET /posts, POST /posts/generate, PATCH /posts/:id, DELETE /posts/:id
+ *   G2 — images:      POST /posts/:id/image (upload), GET /media (pick existing),
+ *                     POST /posts/:id/image-from-google (re-host a picked photo)
+ *   G3 — publish:     POST /posts/:id/approve   (live publish, image-required)
+ *   G4 — schedule:    GET/PATCH /schedule, GET/POST/DELETE /pool   (auto-posting)
+ *   G5 — performance: GET /performance, POST /performance/run
  *
  * Tenant resolution mirrors routes/reviews.js: getTenantIdFromQuery(req).
  * Mounted WITH authMiddleware in server.js (Option B) — getTenantIdFromQuery
@@ -44,6 +46,7 @@ const { hasReviewsAccess } = require("../lib/addonAccess");
 const gbpAudit   = require("../services/gbpAudit");
 const gbpPosting = require("../services/gbpPosting");
 const gbpImageStore = require("../lib/gbpImageStore");
+const gbpPerformance = require("../services/gbpPerformance");
 
 async function getTenantWithGoogle(tenantId) {
   const res = await db.query(
@@ -427,10 +430,6 @@ router.delete("/posts/:id", async (req, res) => {
 
 // ════════════════════════════════════════════════════════════════════════════
 // G4 — auto-posting schedule + image pool
-// Insert this block into routes/gbp.js BEFORE `module.exports = router;`
-// Also add this require near the top with the other requires:
-//     const gbpImagePool = require("../lib/gbpImagePool");
-// (gbpImageStore + multer `upload` are already imported in the file.)
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── GET /api/gbp/schedule ───────────────────────────────────────────────────
@@ -575,6 +574,56 @@ router.delete("/pool/:id", async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error("DELETE /api/gbp/pool/:id error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// G5 — performance metrics
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── GET /api/gbp/performance ────────────────────────────────────────────────
+// Returns the stored daily time series + range totals. range=7|30|90 (days).
+router.get("/performance", async (req, res) => {
+  try {
+    const gated = await gateTenant(req, res);
+    if (!gated) return;
+    const { tenantId } = gated;
+
+    const range = Math.min(90, Math.max(7, parseInt(req.query.range, 10) || 30));
+    const data = await gbpPerformance.getSeries(tenantId, { range });
+    res.json({ ok: true, range, ...data });
+  } catch (err) {
+    console.error("GET /api/gbp/performance error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ── POST /api/gbp/performance/run ───────────────────────────────────────────
+// On-demand fetch from Google (trailing 30 days) so the owner can refresh
+// without waiting for the nightly cron. Surfaces the "API not enabled" case
+// distinctly so the fix is obvious.
+router.post("/performance/run", async (req, res) => {
+  try {
+    const gated = await gateTenant(req, res);
+    if (!gated) return;
+    const { tenant, tenantId } = gated;
+
+    if (!(tenant.google_access_token && tenant.google_location_id)) {
+      return res.status(400).json({ error: "Google Business Profile not connected" });
+    }
+
+    const result = await gbpPerformance.fetchForTenant(tenantId, { days: 30 });
+    if (!result.ok) {
+      const status = result.reason === "not_connected" ? 400
+        : result.reason === "api_not_enabled" ? 503
+        : 502;
+      return res.status(status).json({ error: result.reason, detail: result.message || null });
+    }
+    const data = await gbpPerformance.getSeries(tenantId, { range: 30 });
+    res.json({ ok: true, fetched_days: result.days, ...data });
+  } catch (err) {
+    console.error("POST /api/gbp/performance/run error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });

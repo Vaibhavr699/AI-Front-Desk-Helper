@@ -164,7 +164,91 @@ function clampCallHour(hour) {
 }
 
 async function callVolumeHeatmapHandler(req, res) {
-  ... (rest of the handler, with getTenantIdFromQuery) ...
+  try {
+    const tenantId = getTenantIdFromQuery(req);
+    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+
+    const days = Math.min(Math.max(parseInt(req.query.days, 10) || 90, 7), 365);
+
+    const { rows } = await db.query(
+      `SELECT
+         EXTRACT(DOW  FROM started_at) AS dow,
+         EXTRACT(HOUR FROM started_at) AS hour,
+         COUNT(*)                      AS calls
+       FROM calls
+       WHERE tenant_id = $1
+         AND started_at IS NOT NULL
+         AND started_at > now() - ($2 || ' days')::interval
+       GROUP BY dow, hour`,
+      [tenantId, String(days)]
+    );
+
+    const hours = [];
+    for (let h = CALL_HEATMAP_START_HOUR; h <= CALL_HEATMAP_END_HOUR; h++) hours.push(h);
+
+    const grid = {};
+    for (let d = 0; d <= 6; d++) {
+      grid[d] = {};
+      for (const h of hours) grid[d][h] = 0;
+    }
+
+    let total = 0;
+    const hourlyMap = {};
+    const dowTotals = {};
+    for (const r of rows) {
+      const dow = Number(r.dow);
+      const h = clampCallHour(r.hour);
+      const n = Number(r.calls) || 0;
+      grid[dow][h] += n;
+      total += n;
+      hourlyMap[h] = (hourlyMap[h] || 0) + n;
+      dowTotals[dow] = (dowTotals[dow] || 0) + n;
+    }
+
+    const order = [1, 2, 3, 4, 5, 6, 0];
+    const daysOut = [];
+    for (const d of order) {
+      const dayTotal = dowTotals[d] || 0;
+      if (dayTotal === 0) continue;
+      daysOut.push({
+        dow: d,
+        label: CALL_DOW_LABELS[d],
+        total: dayTotal,
+        cells: hours.map((h) => ({ hour: h, count: grid[d][h] })),
+      });
+    }
+
+    const hourly = hours.map((h) => ({ hour: h, count: hourlyMap[h] || 0 }));
+
+    const nonEmpty = [];
+    for (let d = 0; d <= 6; d++) {
+      for (const h of hours) {
+        if (grid[d][h] > 0) nonEmpty.push(grid[d][h]);
+      }
+    }
+    const stats = {
+      min: nonEmpty.length ? Math.min(...nonEmpty) : 0,
+      max: nonEmpty.length ? Math.max(...nonEmpty) : 0,
+      avg: nonEmpty.length
+        ? Math.round(nonEmpty.reduce((s, n) => s + n, 0) / nonEmpty.length)
+        : 0,
+    };
+
+    const maxCount = nonEmpty.length ? Math.max(...nonEmpty) : 1;
+
+    res.json({
+      hours,
+      days: daysOut,
+      hourly,
+      stats,
+      total,
+      maxCount,
+      window_days: days,
+    });
+  } catch (err) {
+    console.error("GET /api/metrics/call-heatmap error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
 }
 
 /** Normalize a US phone to E.164 (+1XXXXXXXXXX). Returns null if invalid. */

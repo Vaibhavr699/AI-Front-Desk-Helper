@@ -74,7 +74,7 @@ const GHOST_SEQUENCE = [
     script:
       "Hi {{first_name}}, this is the AI assistant from {{company_name}}. I'm just calling to follow up on the estimate we sent over. Did you have a chance to look at it, or do you have any questions I can help with? We'd love to get your project on the schedule.",
     voicemail:
-      "Hi {{first_name}}, this is {{company_name}} calling about your recent estimate. We wanted to make sure you had a chance to review it and answer any questions. Give us a call back or just reply to our last text whenever you're ready. We look forward to hearing from you!",
+      "Hi {{first_name}}, it's {{company_name}} following up on the estimate we sent over. I wanted to make sure it came through okay and see if you had any questions. The easiest thing is to just reply to our text thread — I'll pick it right up. Talk soon!",
     next: "day7_urgency",
   },
   {
@@ -92,7 +92,7 @@ const GHOST_SEQUENCE = [
     script:
       "Hi {{first_name}}, this is {{company_name}} reaching out again about your project estimate. I wanted to personally make sure you had everything you need to feel comfortable moving forward. Is there anything holding you back or any questions I can answer?",
     voicemail:
-      "Hi {{first_name}}, calling again from {{company_name}} about your estimate. Our schedule is filling up and we want to make sure you don't lose your spot. Please give us a call back or just reply to our text. We're here to help — hope to hear from you soon!",
+     "Hi {{first_name}}, {{company_name}} again about your estimate. We're starting to book out a few weeks, so I wanted to check in before those slots fill. If you want to grab a spot or have any questions, just reply to our text — happy to help.",
     next: "day14_softclose",
   },
   {
@@ -110,7 +110,7 @@ const GHOST_SEQUENCE = [
     script:
       "Hi {{first_name}}, this is {{company_name}} with one final follow-up on your project estimate. We want to make sure we haven't missed you. If now isn't the right time, no worries at all — we just want to make sure you're taken care of whenever you're ready.",
     voicemail:
-      "Hi {{first_name}}, this is {{company_name}} with one last message about your estimate. We completely understand if the timing isn't right. Whenever you're ready to move forward — even months from now — just reach out and we'll be happy to help. Have a great day!",
+      "Hi {{first_name}}, it's {{company_name}} with one last check-in on your estimate. If the timing's not right, no problem at all — but if you're still thinking about it, just reply to our text and let me know, even a quick yes or no helps. Thanks!",
     next: "day21_hardclose",
   },
   {
@@ -150,7 +150,7 @@ const THINKING_SEQUENCE = [
     script:
       "Just wanted to see where this sits for you so I can plan our schedule properly.",
     voicemail:
-      "Hi {{first_name}}, just calling to check in — still here whenever you're ready to talk through the project. Give us a call back or just reply to our text. Talk soon!",
+       "Hi {{first_name}}, just checking in on your project — no rush at all. Whenever you've got a minute, reply to our text and let me know where your head's at. Talk soon!",
     next: null,
   },
 ];
@@ -182,7 +182,7 @@ const PRICE_SEQUENCE = [
     script:
       "If there's a budget target you're trying to hit, I can see if there's any flexibility.",
     voicemail:
-      "Hi {{first_name}}, calling about your estimate — if budget is a concern we may have some flexibility. Give us a call back and let's talk through it. Thanks!",
+       "Hi {{first_name}}, {{company_name}} about your estimate — if the number's a concern, we may have some flexibility. Reply to our text and let's see what we can do.",
     next: null,
   },
 ];
@@ -214,7 +214,7 @@ const SPOUSE_SEQUENCE = [
     script:
       "I just wanted to follow up — are we moving forward or should I release this spot?",
     voicemail:
-      "Hi {{first_name}}, just following up to see if you and your partner had a chance to discuss the project. Give us a call back when you're ready — we're happy to answer any questions for both of you!",
+       "Hi {{first_name}}, just following up to see if you and your partner had a chance to talk it over. No pressure — just reply to our text whenever you're ready and I'll help from there.",
     next: null,
   },
 ];
@@ -238,7 +238,7 @@ const INQUIRY_SEQUENCE = [
     script:
       "Hi {{first_name}}, this is the AI assistant from {{company_name}}. I'm calling back to see if you were still interested in that painting project you called about? We have a few openings this week.",
     voicemail:
-      "Hi {{first_name}}, this is {{company_name}} calling back about your recent inquiry. We'd love to help with your project — give us a call back or just text us anytime. We have openings this week!",
+       "Hi {{first_name}}, it's {{company_name}} returning your call about your painting project. We've got a couple of openings this week for free estimates — if you'd like one, just reply to this text with a day that works and I'll get you on the calendar.",
     next: null,
   },
 ];
@@ -263,7 +263,7 @@ const MISSED_CALL_SEQUENCE = [
     script:
       "Hi {{first_name}}, this is the AI assistant calling back from {{company_name}}. I noticed we missed your call a little while ago and wanted to reach out right away. What can I help you with today?",
     voicemail:
-      "Hi, this is {{company_name}} calling you back — sorry we missed your call earlier! We'd love to help with your project. Just give us a call back or reply to our text anytime. Thanks!",
+       "Hi, it's {{company_name}} — sorry we missed you a few minutes ago! I'd love to help with whatever you called about. Just reply to this text and tell me what you need — I'll get right back to you.",
     next: "missed_call_24h",
   },
   {
@@ -273,7 +273,7 @@ const MISSED_CALL_SEQUENCE = [
     script:
       "Hi {{first_name}}, this is {{company_name}} following up on the call we missed yesterday. I just wanted to personally make sure we didn't leave you hanging. Were you looking for a painting estimate, or is there something specific I can help you with?",
     voicemail:
-      "Hi, this is {{company_name}} calling you back about the call we missed yesterday. If you're still interested in a painting estimate, we'd love to help. Give us a call back or reply to our text — thanks!",
+     "Hi, it's {{company_name}} following up on the call we missed yesterday. Still happy to help with your project — just reply to this text with what you're looking for and I'll take care of you from there.",
     next: null, // → DORMANT → seasonal campaigns
   },
 ];

@@ -72,6 +72,7 @@ async function bookingHeatmapHandler(req, res) {
 
     let total = 0;
     let wonTotal = 0;
+    const hourlyMap = {}; // hour(int) -> count
     for (const r of rows) {
       const dow = Number(r.dow);
       const bucket = heatmapHourToBucket(r.hour);
@@ -81,8 +82,37 @@ async function bookingHeatmapHandler(req, res) {
       grid[dow][bucket].revenue_cents += Number(r.revenue_cents) || 0;
       total += n;
       wonTotal += Number(r.won) || 0;
+
+      const h = Number(r.hour);
+      hourlyMap[h] = (hourlyMap[h] || 0) + n;
     }
 
+    // Build a dense hourly array spanning only the hours that actually
+    // appear (min..max), so the bar chart is sized to real business hours
+    // instead of a generic 0–23. Falls back to 8–17 if somehow empty.
+    const usedHours = Object.keys(hourlyMap).map(Number).sort((a, b) => a - b);
+    const minHour = usedHours.length ? usedHours[0] : 8;
+    const maxHour = usedHours.length ? usedHours[usedHours.length - 1] : 17;
+    const hourly = [];
+    for (let h = minHour; h <= maxHour; h++) {
+      hourly.push({ hour: h, count: hourlyMap[h] || 0 });
+    }
+
+    // Min/avg/max across the NON-EMPTY heat-map cells (matches what the
+    // rail visually summarizes — the busiest, slowest, and typical cell).
+    const allCellCounts = [];
+    for (let d = 0; d <= 6; d++) {
+      for (const b of HEATMAP_BUCKET_ORDER) {
+        const c = grid[d][b].count;
+        if (c > 0) allCellCounts.push(c);
+      }
+    }
+    const cellMin = allCellCounts.length ? Math.min(...allCellCounts) : 0;
+    const cellMax = allCellCounts.length ? Math.max(...allCellCounts) : 0;
+    const cellAvg = allCellCounts.length
+      ? Math.round(allCellCounts.reduce((s, n) => s + n, 0) / allCellCounts.length)
+      : 0;
+   
     const days = [];
     const order = [1, 2, 3, 4, 5, 6, 0];
     for (const d of order) {
@@ -109,6 +139,8 @@ async function bookingHeatmapHandler(req, res) {
       days,
       total,
       maxCount,
+     hourly,
+      stats: { min: cellMin, avg: cellAvg, max: cellMax },
       hasOutcomeData: wonTotal >= 15,
       wonTotal,
     });

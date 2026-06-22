@@ -29,6 +29,7 @@ import { OutcomeBar } from "../components/metrics/OutcomeBar";
 import { InsightBar } from "../components/metrics/InsightBar";
 import { AnalysisCard } from "../components/metrics/AnalysisCard";
 import GoalSetting from "../components/coaching/GoalSetting";
+import BookingHeatmap from "../components/BookingHeatmap";
 
 // Global Helpers
 const formatPrice = (c) => `$${Math.round(c/100).toLocaleString()}`;
@@ -165,7 +166,7 @@ export default function Metrics({ tenantId }) {
               <AlertCircle /> <div><h3 className="font-bold uppercase text-xs tracking-widest">Failed to load data</h3><p className="text-sm opacity-80">{error}</p></div>
             </div>
           )}
-          {!loading && !error && metrics && <PerformanceView metrics={metrics} timeRange={timeRange} />}
+          {!loading && !error && metrics && <PerformanceView metrics={metrics} timeRange={timeRange} tenantId={tenantId} />}
         </>
       )}
 
@@ -173,7 +174,7 @@ export default function Metrics({ tenantId }) {
   );
 }
 
-function PerformanceView({ metrics, timeRange }) {
+function PerformanceView({ metrics, timeRange, tenantId }) {
   const ai = metrics.ai || {};
   const aiPrev = metrics.aiPrev || {};
   const pipeline = metrics.pipeline || {};
@@ -411,6 +412,7 @@ function PerformanceView({ metrics, timeRange }) {
           counts are too small for a 30d window to be meaningful).
           ══════════════════════════════════════════════════════════════════ */}
       <CustomerIntelSection customerIntel={metrics.customer_intel} />
+      <BookingHeatmap tenantId={tenantId} />
 
       {/* Net Revenue Flow */}
       <div className="pt-8 border-t border-gray-100">

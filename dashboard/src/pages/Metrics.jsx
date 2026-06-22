@@ -32,6 +32,7 @@ import GoalSetting from "../components/coaching/GoalSetting";
 import BookingHeatmap from "../components/BookingHeatmap";
 import CallFunnelSankey from "../components/CallFunnelSankey";
 import CallVolumeHeatmap from "../components/CallVolumeHeatmap";
+import GbpPerformanceSection from "../components/metrics/GbpPerformanceSection";
 
 // Global Helpers
 const formatPrice = (c) => `$${Math.round(c/100).toLocaleString()}`;
@@ -415,6 +416,7 @@ function PerformanceView({ metrics, timeRange, tenantId }) {
           ══════════════════════════════════════════════════════════════════ */}
       <CallFunnelSankey ai={metrics.ai} />
       <CallVolumeHeatmap tenantId={tenantId} />
+      <GbpPerformanceSection tenantId={tenantId} timeRange={timeRange} />
       <CustomerIntelSection customerIntel={metrics.customer_intel} />
       <BookingHeatmap tenantId={tenantId} />
 

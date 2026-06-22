@@ -72,6 +72,24 @@ const { startResellerUsageReporter } = require("./services/reportResellerUsage")
 const { startAutoPauseCron } = require("./services/sentimentAutoPause");
 const { authMiddleware, requireSuperAdmin } = require("./lib/auth");
 const notificationsService = require("./services/notifications");
+// ════════════════════════════════════════════════════════════════════════════
+// GBP AUTO-POSTER CRON (G4) — add near the other cron registrations in server.js
+// (e.g. alongside the coachingScorer / preVisitBriefing cron blocks).
+//
+// Runs hourly. The scheduler service decides which enabled tenants are DUE this
+// hour based on preferred_days / preferred_hour / posts_per_week, then in
+// draft-only mode generates a draft, or in full-auto mode generates + attaches
+// an image (pool round-robin → existing GBP photos fallback) + publishes.
+// ════════════════════════════════════════════════════════════════════════════
+const { runScheduledPosts } = require("./services/gbpScheduler");
+require("node-cron").schedule("0 * * * *", async () => {
+  try {
+    await runScheduledPosts();
+  } catch (err) {
+    console.error("[gbpScheduler] cron tick error:", err.message);
+  }
+});
+console.log("[startup] gbpScheduler cron scheduled (0 * * * *)");
 
 facebookLeadgen.init({
   getTenantByFacebookPageId,

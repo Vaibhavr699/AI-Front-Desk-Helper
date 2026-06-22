@@ -1223,6 +1223,8 @@ router.get("/metrics", async (req, res) => {
   }
 });
 
+router.get("/metrics/booking-heatmap", bookingHeatmapHandler);
+
 router.get("/activity-feed", async (req, res) => {
   try {
     const tenantIds = await getTargetTenantIds(req);

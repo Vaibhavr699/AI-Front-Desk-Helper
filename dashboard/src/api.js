@@ -300,6 +300,11 @@ export function getBookingHeatmap(tenantId) {
   return api(`/api/metrics/booking-heatmap?${query}`);
 }
 
+export function getCallHeatmap(tenantId) {
+  const query = tenantId === 'all' ? 'tenant_id=all&rollup=true' : `tenant_id=${tenantId}`;
+  return api(`/api/metrics/call-heatmap?${query}`);
+}
+
 export function getUsage(tenantId) {
   return api(`/api/billing/usage?tenant_id=${tenantId}`);
 }

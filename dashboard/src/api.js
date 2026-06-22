@@ -51,6 +51,10 @@ export function get(path, params = {}) {
   return api(fullPath, { method: "GET" });
 }
 
+export function getGbpPerformance(tenantId, range = 30) {
+  return api(`/api/gbp/performance?tenant_id=${tenantId}&range=${range}`);
+}
+
 export function post(path, body = {}) {
   return api(path, {
     method: "POST",

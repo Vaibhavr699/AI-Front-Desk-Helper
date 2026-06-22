@@ -433,6 +433,7 @@ app.get("/dashboard/chat-widget.js", (req, res) => {
   res.sendFile(path.join(__dirname, "dashboard", "public", "chat-widget.js"));
 });
 
+app.use("/gbp-media", express.static(process.env.GBP_MEDIA_DIR || path.join(__dirname, "gbp-media")));
 app.use(express.static(path.join(__dirname, "public")));
 // Compliance pages — served as static HTML so Twilio reviewers + crawlers
 // can read them without executing JavaScript. Apr 25 fix for 30896 rejection.

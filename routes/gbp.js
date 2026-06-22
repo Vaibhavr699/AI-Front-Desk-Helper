@@ -10,16 +10,27 @@
  * Phases covered here:
  *   G1 — audit:   GET /status, GET /audit, POST /audit/run
  *   G2 — drafts:  GET /posts, POST /posts/generate, PATCH /posts/:id, DELETE /posts/:id
- *   G3 — publish: POST /posts/:id/approve   (added in G3)
- *   G5 — perf:    GET /performance          (added in G5)
+ *   G2 — images:  POST /posts/:id/image (upload), GET /media (pick existing),
+ *                 POST /posts/:id/image-from-google (re-host a picked photo)
+ *   G3 — publish: POST /posts/:id/approve   (live publish, image-required)
  *
- * Tenant resolution mirrors routes/reviews.js: getTenantIdFromQuery(req),
- * same google-column select, same connected/access gates. Mounted without
- * authMiddleware (like reviews) — see server.js mount note at bottom.
+ * Tenant resolution mirrors routes/reviews.js: getTenantIdFromQuery(req).
+ * Mounted WITH authMiddleware in server.js (Option B) — getTenantIdFromQuery
+ * falls back to req.user.tenant_id, so the query param is optional for
+ * logged-in users and still works for superadmin impersonation.
  */
 
 const express = require("express");
+const multer  = require("multer");
 const router  = express.Router();
+
+// In-memory multipart parsing, scoped to the image-upload route only so it
+// never touches the rest of the app's body parsing. 10MB cap matches the
+// image store's MAX_BYTES.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
 router.use((req, res, next) => {
   console.log("[GBP Router] HIT:", req.method, req.path);
@@ -31,8 +42,8 @@ const { getTenantIdFromQuery } = require("../lib/auth");
 const { hasReviewsAccess } = require("../lib/addonAccess");
 const gbpAudit   = require("../services/gbpAudit");
 const gbpPosting = require("../services/gbpPosting");
+const gbpImageStore = require("../lib/gbpImageStore");
 
-// Pull tenant with the columns the gate + connection check need.
 async function getTenantWithGoogle(tenantId) {
   const res = await db.query(
     `SELECT id, name, company_name, plan, plan_overrides,
@@ -43,10 +54,6 @@ async function getTenantWithGoogle(tenantId) {
   return res.rows[0] || null;
 }
 
-/**
- * Resolve tenant + enforce the add-on gate in one step.
- * Returns { tenant } on success, or sends the error response and returns null.
- */
 async function gateTenant(req, res) {
   const tenantId = getTenantIdFromQuery(req);
   if (!tenantId) { res.status(400).json({ error: "tenant_id required" }); return null; }
@@ -59,6 +66,11 @@ async function gateTenant(req, res) {
     return null;
   }
   return { tenant, tenantId };
+}
+
+// Resolve the dashboard user id if authMiddleware attached one (for approved_by).
+function approverId(req) {
+  return req.user?.id || req.user?.user_id || null;
 }
 
 // ── GET /api/gbp/status ─────────────────────────────────────────────────────
@@ -99,7 +111,6 @@ router.get("/status", async (req, res) => {
 });
 
 // ── GET /api/gbp/audit ──────────────────────────────────────────────────────
-// Cached snapshot, no Google call.
 router.get("/audit", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -128,7 +139,6 @@ router.get("/audit", async (req, res) => {
 });
 
 // ── POST /api/gbp/audit/run ─────────────────────────────────────────────────
-// Live read-only audit against Google; upserts + returns the snapshot.
 router.post("/audit/run", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -153,7 +163,6 @@ router.post("/audit/run", async (req, res) => {
 });
 
 // ── GET /api/gbp/posts ──────────────────────────────────────────────────────
-// List posts by status (default 'draft'). Statuses: draft|approved|published|failed|archived
 router.get("/posts", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -187,7 +196,6 @@ router.get("/posts", async (req, res) => {
 });
 
 // ── POST /api/gbp/posts/generate ────────────────────────────────────────────
-// Generate N AI drafts (default 1). Does NOT publish — writes status='draft'.
 router.post("/posts/generate", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -209,8 +217,110 @@ router.post("/posts/generate", async (req, res) => {
   }
 });
 
+// ── GET /api/gbp/media ──────────────────────────────────────────────────────
+// List existing GBP photos so the owner can pick one as a post image.
+router.get("/media", async (req, res) => {
+  try {
+    const gated = await gateTenant(req, res);
+    if (!gated) return;
+    const { tenantId } = gated;
+
+    const result = await gbpPosting.listLocationPhotos(tenantId, { limit: 24 });
+    if (!result.ok) {
+      const status = result.reason === "not_connected" ? 400 : 502;
+      return res.status(status).json({ error: result.reason, detail: result.message || null });
+    }
+    res.json({ ok: true, photos: result.photos });
+  } catch (err) {
+    console.error("GET /api/gbp/media error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ── POST /api/gbp/posts/:id/image ───────────────────────────────────────────
+// Owner uploads an image (multipart, field name 'image'). Re-hosts to public
+// URL, saves media_url on the draft.
+router.post("/posts/:id/image", upload.single("image"), async (req, res) => {
+  try {
+    const gated = await gateTenant(req, res);
+    if (!gated) return;
+    const { tenantId } = gated;
+    const { id } = req.params;
+
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ error: "No image uploaded (field name must be 'image')" });
+    }
+
+    // Confirm the post exists, belongs to tenant, and is still editable.
+    const existing = await db.query(
+      "SELECT status FROM gbp_posts WHERE id = $1 AND tenant_id = $2",
+      [id, tenantId]
+    );
+    if (!existing.rows[0]) return res.status(404).json({ error: "Post not found" });
+    if (!["draft", "approved", "failed"].includes(existing.rows[0].status)) {
+      return res.status(400).json({ error: "Only draft/approved posts can have their image set" });
+    }
+
+    const stored = gbpImageStore.storeBuffer(req.file.buffer, req.file.mimetype);
+    if (!stored.ok) {
+      return res.status(400).json({ error: stored.reason, detail: stored.message || null });
+    }
+
+    const updated = await db.query(
+      `UPDATE gbp_posts SET media_url = $3, updated_at = now()
+        WHERE id = $1 AND tenant_id = $2
+        RETURNING id, media_url, status`,
+      [id, tenantId, stored.url]
+    );
+    res.json({ ok: true, post: updated.rows[0] });
+  } catch (err) {
+    console.error("POST /api/gbp/posts/:id/image error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ── POST /api/gbp/posts/:id/image-from-google ───────────────────────────────
+// Owner picked an existing GBP photo (from GET /media). Body: { source_url }.
+// We re-host its bytes (Google's own URLs aren't reliable as a post sourceUrl)
+// and save the re-hosted media_url on the draft.
+router.post("/posts/:id/image-from-google", async (req, res) => {
+  try {
+    const gated = await gateTenant(req, res);
+    if (!gated) return;
+    const { tenantId } = gated;
+    const { id } = req.params;
+    const sourceUrl = req.body?.source_url;
+
+    if (!sourceUrl) return res.status(400).json({ error: "source_url required" });
+
+    const existing = await db.query(
+      "SELECT status FROM gbp_posts WHERE id = $1 AND tenant_id = $2",
+      [id, tenantId]
+    );
+    if (!existing.rows[0]) return res.status(404).json({ error: "Post not found" });
+    if (!["draft", "approved", "failed"].includes(existing.rows[0].status)) {
+      return res.status(400).json({ error: "Only draft/approved posts can have their image set" });
+    }
+
+    const stored = await gbpImageStore.storeFromUrl(sourceUrl);
+    if (!stored.ok) {
+      return res.status(400).json({ error: stored.reason, detail: stored.message || null });
+    }
+
+    const updated = await db.query(
+      `UPDATE gbp_posts SET media_url = $3, updated_at = now()
+        WHERE id = $1 AND tenant_id = $2
+        RETURNING id, media_url, status`,
+      [id, tenantId, stored.url]
+    );
+    res.json({ ok: true, post: updated.rows[0] });
+  } catch (err) {
+    console.error("POST /api/gbp/posts/:id/image-from-google error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 // ── PATCH /api/gbp/posts/:id ────────────────────────────────────────────────
-// Owner edits a draft's text / cta before approving. Only draft|approved editable.
 router.patch("/posts/:id", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -251,8 +361,48 @@ router.patch("/posts/:id", async (req, res) => {
   }
 });
 
+// ── POST /api/gbp/posts/:id/approve ─────────────────────────────────────────
+// The gated LIVE publish. Requires an image (enforced in publishPost too).
+// Calls localPosts.create via reviewsHelper.authedRequest. This is the first
+// thing that writes to the public profile — owner-action only.
+router.post("/posts/:id/approve", async (req, res) => {
+  try {
+    const gated = await gateTenant(req, res);
+    if (!gated) return;
+    const { tenant, tenantId } = gated;
+    const { id } = req.params;
+
+    if (!(tenant.google_access_token && tenant.google_location_id && tenant.google_account_id)) {
+      return res.status(400).json({ error: "Google Business Profile not connected" });
+    }
+
+    // Pre-check image so we return a clean 400 (not a publish attempt) when missing.
+    const pre = await db.query(
+      "SELECT media_url, status FROM gbp_posts WHERE id = $1 AND tenant_id = $2",
+      [id, tenantId]
+    );
+    if (!pre.rows[0]) return res.status(404).json({ error: "Post not found" });
+    if (!pre.rows[0].media_url) {
+      return res.status(400).json({ error: "image_required", detail: "Add an image before publishing." });
+    }
+
+    const result = await gbpPosting.publishPost(tenantId, id, { approvedBy: approverId(req) });
+    if (!result.ok) {
+      const status =
+        result.reason === "post_not_found" ? 404 :
+        result.reason === "image_required" ? 400 :
+        result.reason === "not_publishable" ? 400 :
+        result.reason === "not_connected" ? 400 : 502;
+      return res.status(status).json({ error: result.reason, detail: result.message || null });
+    }
+    res.json({ ok: true, post: result.post });
+  } catch (err) {
+    console.error("POST /api/gbp/posts/:id/approve error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 // ── DELETE /api/gbp/posts/:id ───────────────────────────────────────────────
-// Soft-archive a draft (never hard-delete — keep for the flywheel/audit trail).
 router.delete("/posts/:id", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -275,10 +425,3 @@ router.delete("/posts/:id", async (req, res) => {
 });
 
 module.exports = router;
-
-/*
- * ── SERVER.JS MOUNT (add next to the reviews mount) ─────────────────────────
- *   app.use("/api/gbp", require("./routes/gbp"));
- * Resolves tenant via getTenantIdFromQuery (query param), like reviews, so no
- * authMiddleware wrapper. Must sit before the SPA catch-all.
- */

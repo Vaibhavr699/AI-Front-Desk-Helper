@@ -27,6 +27,97 @@ const {
 const crypto = require("crypto");
 const { getTenantIdFromQuery, getTargetTenantIds, requireRole, ROLES } = require("../lib/auth");
 
+// ── Booking heat map helpers (Jun 22, 2026) ──
+const HEATMAP_BUCKET_LABELS = { morning: "8–11a", midday: "11a–1p", afternoon: "1–3p" };
+const HEATMAP_BUCKET_ORDER = ["morning", "midday", "afternoon"];
+const HEATMAP_DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function heatmapHourToBucket(hour) {
+  const h = Number(hour);
+  if (h < 11) return "morning";
+  if (h < 13) return "midday";
+  return "afternoon";
+}
+
+async function bookingHeatmapHandler(req, res) {
+  try {
+    const tenantId = getTenantIdFromQuery(req);
+    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+
+    const { rows } = await db.query(
+      `SELECT
+         EXTRACT(DOW  FROM preferred_date)    AS dow,
+         EXTRACT(HOUR FROM appointment_time)  AS hour,
+         COUNT(*)                             AS bookings,
+         COUNT(*) FILTER (
+           WHERE status = 'Completed' AND COALESCE(actual_revenue_cents,0) > 0
+         )                                    AS won,
+         COALESCE(SUM(actual_revenue_cents) FILTER (
+           WHERE status = 'Completed'
+         ), 0)                                AS revenue_cents
+       FROM bookings
+       WHERE tenant_id = $1
+         AND preferred_date   IS NOT NULL
+         AND appointment_time IS NOT NULL
+         AND COALESCE(status,'') <> 'Cancelled'
+       GROUP BY dow, hour`,
+      [tenantId]
+    );
+
+    const grid = {};
+    for (let d = 0; d <= 6; d++) {
+      grid[d] = {};
+      for (const b of HEATMAP_BUCKET_ORDER) grid[d][b] = { count: 0, won: 0, revenue_cents: 0 };
+    }
+
+    let total = 0;
+    let wonTotal = 0;
+    for (const r of rows) {
+      const dow = Number(r.dow);
+      const bucket = heatmapHourToBucket(r.hour);
+      const n = Number(r.bookings) || 0;
+      grid[dow][bucket].count += n;
+      grid[dow][bucket].won += Number(r.won) || 0;
+      grid[dow][bucket].revenue_cents += Number(r.revenue_cents) || 0;
+      total += n;
+      wonTotal += Number(r.won) || 0;
+    }
+
+    const days = [];
+    const order = [1, 2, 3, 4, 5, 6, 0];
+    for (const d of order) {
+      const dayTotal = HEATMAP_BUCKET_ORDER.reduce((s, b) => s + grid[d][b].count, 0);
+      if (dayTotal === 0 && d === 0) continue;
+      days.push({
+        dow: d,
+        label: HEATMAP_DOW_LABELS[d],
+        total: dayTotal,
+        cells: HEATMAP_BUCKET_ORDER.map((b) => ({
+          bucket: b,
+          count: grid[d][b].count,
+          won: grid[d][b].won,
+          revenue_cents: grid[d][b].revenue_cents,
+        })),
+      });
+    }
+
+    const maxCount = Math.max(1, ...days.flatMap((d) => d.cells.map((c) => c.count)));
+
+    res.json({
+      buckets: HEATMAP_BUCKET_ORDER,
+      bucketLabels: HEATMAP_BUCKET_LABELS,
+      days,
+      total,
+      maxCount,
+      hasOutcomeData: wonTotal >= 15,
+      wonTotal,
+    });
+  } catch (err) {
+    console.error("GET /api/metrics/booking-heatmap error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+}
+
 /** Normalize a US phone to E.164 (+1XXXXXXXXXX). Returns null if invalid. */
 function normalizePhoneInput(raw) {
   if (!raw || typeof raw !== "string") return null;

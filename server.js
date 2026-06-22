@@ -101,6 +101,24 @@ facebookLeadgen.init({
   fetch,
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// GBP PERFORMANCE SWEEP CRON (G5) — add near the other cron registrations.
+//
+// Runs nightly at 04:30 UTC. Google's performance data lags ~2-3 days, so the
+// service re-fetches a trailing 10-day window per tenant (late data overwrites
+// prior rows via the (tenant_id, metric_date) upsert). Cheap; one Google call
+// per connected tenant per night.
+// ════════════════════════════════════════════════════════════════════════════
+const { runPerformanceSweep } = require("./services/gbpPerformance");
+require("node-cron").schedule("30 4 * * *", async () => {
+  try {
+    await runPerformanceSweep();
+  } catch (err) {
+    console.error("[gbpPerformance] cron tick error:", err.message);
+  }
+});
+console.log("[startup] gbpPerformance cron scheduled (30 4 * * *)");
+
 const metricAlerts = require("./services/metricAlerts");
 
 // Phase 6 A2 — coaching scorer (every 5 minutes)

@@ -30,6 +30,7 @@ import { InsightBar } from "../components/metrics/InsightBar";
 import { AnalysisCard } from "../components/metrics/AnalysisCard";
 import GoalSetting from "../components/coaching/GoalSetting";
 import BookingHeatmap from "../components/BookingHeatmap";
+import CallFunnelSankey from "../components/CallFunnelSankey";
 
 // Global Helpers
 const formatPrice = (c) => `$${Math.round(c/100).toLocaleString()}`;
@@ -411,6 +412,7 @@ function PerformanceView({ metrics, timeRange, tenantId }) {
           timeRange selector is intentionally ignored — settled-outcome
           counts are too small for a 30d window to be meaningful).
           ══════════════════════════════════════════════════════════════════ */}
+      <CallFunnelSankey ai={metrics.ai} />
       <CustomerIntelSection customerIntel={metrics.customer_intel} />
       <BookingHeatmap tenantId={tenantId} />
 

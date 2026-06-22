@@ -295,6 +295,11 @@ export function getMetrics(tenantId, period = '30d') {
   return api(`/api/metrics?${query}`);
 }
 
+export function getBookingHeatmap(tenantId) {
+  const query = tenantId === 'all' ? 'tenant_id=all&rollup=true' : `tenant_id=${tenantId}`;
+  return api(`/api/metrics/booking-heatmap?${query}`);
+}
+
 export function getUsage(tenantId) {
   return api(`/api/billing/usage?tenant_id=${tenantId}`);
 }

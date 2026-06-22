@@ -31,6 +31,7 @@ import { AnalysisCard } from "../components/metrics/AnalysisCard";
 import GoalSetting from "../components/coaching/GoalSetting";
 import BookingHeatmap from "../components/BookingHeatmap";
 import CallFunnelSankey from "../components/CallFunnelSankey";
+import CallVolumeHeatmap from "../components/CallVolumeHeatmap";
 
 // Global Helpers
 const formatPrice = (c) => `$${Math.round(c/100).toLocaleString()}`;
@@ -413,6 +414,7 @@ function PerformanceView({ metrics, timeRange, tenantId }) {
           counts are too small for a 30d window to be meaningful).
           ══════════════════════════════════════════════════════════════════ */}
       <CallFunnelSankey ai={metrics.ai} />
+      <CallVolumeHeatmap tenantId={tenantId} />
       <CustomerIntelSection customerIntel={metrics.customer_intel} />
       <BookingHeatmap tenantId={tenantId} />
 

@@ -150,6 +150,23 @@ async function bookingHeatmapHandler(req, res) {
   }
 }
 
+// ── Call volume heat map helpers (Jun 22, 2026) ──
+const CALL_HEATMAP_START_HOUR = 7;
+const CALL_HEATMAP_END_HOUR = 21;
+const CALL_DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function clampCallHour(hour) {
+  const h = Number(hour);
+  if (Number.isNaN(h)) return CALL_HEATMAP_START_HOUR;
+  if (h < CALL_HEATMAP_START_HOUR) return CALL_HEATMAP_START_HOUR;
+  if (h > CALL_HEATMAP_END_HOUR) return CALL_HEATMAP_END_HOUR;
+  return h;
+}
+
+async function callVolumeHeatmapHandler(req, res) {
+  ... (rest of the handler, with getTenantIdFromQuery) ...
+}
+
 /** Normalize a US phone to E.164 (+1XXXXXXXXXX). Returns null if invalid. */
 function normalizePhoneInput(raw) {
   if (!raw || typeof raw !== "string") return null;
@@ -1256,6 +1273,7 @@ router.get("/metrics", async (req, res) => {
 });
 
 router.get("/metrics/booking-heatmap", bookingHeatmapHandler);
+router.get("/metrics/call-heatmap", callVolumeHeatmapHandler);
 
 router.get("/activity-feed", async (req, res) => {
   try {

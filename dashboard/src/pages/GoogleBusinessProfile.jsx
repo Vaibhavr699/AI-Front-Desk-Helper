@@ -50,6 +50,51 @@ const SEV_STYLE = {
   low:    { bg: "#fafaf9", border: "#e8e6e0", dot: "#888",    label: "Low" },
 };
 
+// ── Dependency-free SVG trend chart (matches the Jun 22 Sankey/heatmap style) ─
+function TrendChart({ series, metricKey, color }) {
+  const W = 820, H = 180, padL = 36, padR = 12, padT = 14, padB = 24;
+  if (!series || series.length === 0) {
+    return <div style={{ padding: 30, textAlign: "center", color: "#bbb", fontSize: 12 }}>No data in this range yet.</div>;
+  }
+  const vals = series.map(d => d[metricKey] || 0);
+  const max = Math.max(1, ...vals);
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const n = series.length;
+  const barW = Math.max(2, (innerW / n) - 2);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+      {/* y gridlines */}
+      {[0, 0.5, 1].map((f, i) => {
+        const y = padT + innerH * (1 - f);
+        return (
+          <g key={i}>
+            <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="#eee" strokeWidth={1} />
+            <text x={padL - 6} y={y + 3} textAnchor="end" fontSize={9} fill="#bbb">{Math.round(max * f)}</text>
+          </g>
+        );
+      })}
+      {/* bars */}
+      {series.map((d, i) => {
+        const v = d[metricKey] || 0;
+        const h = (v / max) * innerH;
+        const x = padL + (innerW / n) * i + 1;
+        const y = padT + innerH - h;
+        return <rect key={i} x={x} y={y} width={barW} height={h} rx={1.5} fill={color} opacity={0.85} />;
+      })}
+      {/* x labels: first, middle, last */}
+      {[0, Math.floor(n / 2), n - 1].map((idx, i) => {
+        const d = series[idx];
+        if (!d) return null;
+        const x = padL + (innerW / n) * idx + barW / 2;
+        const label = new Date(d.date).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+        return <text key={i} x={x} y={H - 6} textAnchor="middle" fontSize={9} fill="#999">{label}</text>;
+      })}
+    </svg>
+  );
+}
+
 export default function GoogleBusinessProfile({ tenantId }) {
   const [status, setStatus] = useState(null);
   const [tenantPlan, setTenantPlan] = useState("basic");
@@ -82,6 +127,12 @@ export default function GoogleBusinessProfile({ tenantId }) {
   const [pool, setPool] = useState([]);
   const [poolLoading, setPoolLoading] = useState(false);
   const [poolUploading, setPoolUploading] = useState(false);
+
+  // performance (G5)
+  const [perf, setPerf] = useState(null);
+  const [perfLoading, setPerfLoading] = useState(false);
+  const [perfRange, setPerfRange] = useState(30);
+  const [perfMetric, setPerfMetric] = useState("calls");
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -178,6 +229,17 @@ export default function GoogleBusinessProfile({ tenantId }) {
     finally { setPoolLoading(false); }
   }, [tenantId]);
 
+  const loadPerf = useCallback(async (range) => {
+    if (!tenantId) return;
+    setPerfLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/gbp/performance?tenant_id=${tenantId}&range=${range}${cacheBust()}`, NO_CACHE);
+      const data = await res.json();
+      setPerf(res.ok ? data : null);
+    } catch { setPerf(null); }
+    finally { setPerfLoading(false); }
+  }, [tenantId]);
+
   useEffect(() => { loadStatus(); loadTenantPlan(); }, [loadStatus, loadTenantPlan]);
 
   // Load the right data when the connected user switches sub-tabs.
@@ -188,7 +250,8 @@ export default function GoogleBusinessProfile({ tenantId }) {
     else if (subTab === "drafts") loadPosts("draft");
     else if (subTab === "published") loadPosts("published");
     else if (subTab === "schedule") { loadSchedule(); loadPool(); }
-  }, [status, subTab, loadAudit, loadPosts, loadSchedule, loadPool]);
+    else if (subTab === "performance") loadPerf(perfRange);
+  }, [status, subTab, loadAudit, loadPosts, loadSchedule, loadPool, loadPerf, perfRange]);
 
   // ── Actions ───────────────────────────────────────────────────────────────
   async function handleConnect() {
@@ -358,6 +421,27 @@ export default function GoogleBusinessProfile({ tenantId }) {
     } catch { showToast("Remove failed", "error"); }
   }
 
+  async function refreshPerf() {
+    setPerfLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/gbp/performance/run?tenant_id=${tenantId}`, {
+        method: "POST", headers: hdrs(),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.error === "api_not_enabled") {
+          showToast("Enable the Business Profile Performance API in Google Cloud, then retry", "error");
+        } else {
+          throw new Error(data.detail || data.error || "Refresh failed");
+        }
+      } else {
+        setPerf(data);
+        showToast(`Refreshed · ${data.fetched_days || 0} days from Google ✓`);
+      }
+    } catch (e) { showToast(e.message || "Refresh failed", "error"); }
+    finally { setPerfLoading(false); }
+  }
+
   // ── Styles (mirrors Reviews.jsx) ───────────────────────────────────────────
   const s = {
     page: { background: "#F5F4F0", minHeight: "100vh", fontFamily: "'DM Sans', sans-serif", padding: "0 0 60px" },
@@ -450,6 +534,11 @@ export default function GoogleBusinessProfile({ tenantId }) {
             {auditLoading ? "Auditing…" : "Run audit"}
           </button>
         )}
+        {subTab === "performance" && (
+          <button onClick={refreshPerf} disabled={perfLoading} style={s.btn("#2563eb", "rgba(37,99,235,0.08)")}>
+            {perfLoading ? "Refreshing…" : "Refresh from Google"}
+          </button>
+        )}
       </div>
 
       <div style={s.wrap}>
@@ -459,6 +548,7 @@ export default function GoogleBusinessProfile({ tenantId }) {
             { key: "drafts", label: "Drafts" },
             { key: "published", label: "Published" },
             { key: "schedule", label: "Schedule" },
+            { key: "performance", label: "Performance" },
           ].map(t => (
             <button key={t.key} style={s.filterBtn(subTab === t.key)} onClick={() => setSubTab(t.key)}>{t.label}</button>
           ))}
@@ -750,6 +840,73 @@ export default function GoogleBusinessProfile({ tenantId }) {
           )}
         </div>
       )}
+
+      {/* ── PERFORMANCE (G5) ── */}
+      {subTab === "performance" && (
+        <div style={{ ...s.wrap, paddingTop: 0 }}>
+          {perfLoading && !perf ? (
+            <div style={{ textAlign: "center", padding: 40, color: "#bbb", fontSize: 13 }}>Loading…</div>
+          ) : (
+            <>
+              {/* range selector */}
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                {[7, 30, 90].map(r => (
+                  <button key={r} style={s.filterBtn(perfRange === r)} onClick={() => { setPerfRange(r); }}>
+                    {r} days
+                  </button>
+                ))}
+              </div>
+
+              {/* action-first summary tiles */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 12 }}>
+                {[
+                  { key: "calls", label: "Calls", color: "#16a34a", val: perf?.totals?.calls },
+                  { key: "website", label: "Website clicks", color: "#2563eb", val: perf?.totals?.website },
+                  { key: "directions", label: "Directions", color: "#E8600A", val: perf?.totals?.directions },
+                  { key: "impressions", label: "Impressions", color: "#888", val: perf?.totals?.impressions },
+                ].map(tile => {
+                  const active = perfMetric === tile.key;
+                  return (
+                    <div key={tile.key} onClick={() => setPerfMetric(tile.key)}
+                      style={{ ...s.card, marginBottom: 0, padding: "14px 16px", cursor: "pointer", border: active ? `1.5px solid ${tile.color}` : "1px solid #e8e6e0", background: active ? `${tile.color}0d` : "#fff" }}>
+                      <div style={{ fontSize: 10, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{tile.label}</div>
+                      <div style={{ fontSize: 26, fontWeight: 800, color: tile.color, lineHeight: 1 }}>{(tile.val ?? 0).toLocaleString()}</div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* trend chart for the selected metric */}
+              <div style={{ ...s.card, padding: 18 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#1a1a1a" }}>
+                    {({ calls: "Calls", website: "Website clicks", directions: "Direction requests", impressions: "Impressions" })[perfMetric]} · last {perfRange} days
+                  </div>
+                </div>
+                {(!perf || !perf.series || perf.series.length === 0) ? (
+                  <div style={{ padding: "30px 20px", textAlign: "center" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a1a", marginBottom: 6 }}>No performance data yet</div>
+                    <div style={{ fontSize: 12, color: "#888", lineHeight: 1.6, maxWidth: 460, margin: "0 auto" }}>
+                      Metrics populate as your profile gets traffic. Google's data also lags 2–3 days. Click <strong>Refresh from Google</strong> above to pull the latest, or check back after the nightly sync.
+                    </div>
+                  </div>
+                ) : (
+                  <TrendChart
+                    series={perf.series}
+                    metricKey={perfMetric}
+                    color={({ calls: "#16a34a", website: "#2563eb", directions: "#E8600A", impressions: "#999" })[perfMetric]}
+                  />
+                )}
+              </div>
+
+              <div style={{ fontSize: 11, color: "#aaa", textAlign: "center", marginTop: 12 }}>
+                Source: Google Business Profile Performance · synced nightly · data lags 2–3 days
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {pickerForPost && (
         <div onClick={() => setPickerForPost(null)} style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, maxWidth: 720, width: "100%", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column" }}>

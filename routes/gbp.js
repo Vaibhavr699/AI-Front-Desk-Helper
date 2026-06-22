@@ -22,6 +22,7 @@
 
 const express = require("express");
 const multer  = require("multer");
+const gbpImagePool = require("../lib/gbpImagePool");
 const router  = express.Router();
 
 // In-memory multipart parsing, scoped to the image-upload route only so it
@@ -420,6 +421,160 @@ router.delete("/posts/:id", async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error("DELETE /api/gbp/posts/:id error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// G4 — auto-posting schedule + image pool
+// Insert this block into routes/gbp.js BEFORE `module.exports = router;`
+// Also add this require near the top with the other requires:
+//     const gbpImagePool = require("../lib/gbpImagePool");
+// (gbpImageStore + multer `upload` are already imported in the file.)
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── GET /api/gbp/schedule ───────────────────────────────────────────────────
+// Returns the tenant's schedule row (creating a default Off row if none exists)
+// so the UI always has something to render.
+router.get("/schedule", async (req, res) => {
+  try {
+    const gated = await gateTenant(req, res);
+    if (!gated) return;
+    const { tenantId } = gated;
+
+    let row = await db.query("SELECT * FROM gbp_post_schedule WHERE tenant_id = $1", [tenantId]);
+    if (!row.rows[0]) {
+      await db.query(
+        `INSERT INTO gbp_post_schedule (tenant_id, enabled, auto_publish, posts_per_week, preferred_days, preferred_hour)
+         VALUES ($1, false, false, 2, '{2,4}', 10)
+         ON CONFLICT (tenant_id) DO NOTHING`,
+        [tenantId]
+      );
+      row = await db.query("SELECT * FROM gbp_post_schedule WHERE tenant_id = $1", [tenantId]);
+    }
+    const s = row.rows[0];
+    // Derive the friendly mode for the UI.
+    const mode = !s.enabled ? "off" : s.auto_publish ? "auto" : "draft";
+    res.json({ schedule: { ...s, mode } });
+  } catch (err) {
+    console.error("GET /api/gbp/schedule error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ── PATCH /api/gbp/schedule ─────────────────────────────────────────────────
+// Body may include: mode ('off'|'draft'|'auto'), posts_per_week (1-7),
+// preferred_days (int[]), preferred_hour (0-23). `mode` is translated into the
+// enabled + auto_publish booleans.
+router.patch("/schedule", async (req, res) => {
+  try {
+    const gated = await gateTenant(req, res);
+    if (!gated) return;
+    const { tenantId } = gated;
+
+    // Ensure a row exists.
+    await db.query(
+      `INSERT INTO gbp_post_schedule (tenant_id) VALUES ($1) ON CONFLICT (tenant_id) DO NOTHING`,
+      [tenantId]
+    );
+
+    const fields = [];
+    const params = [tenantId];
+    const set = (col, val) => { params.push(val); fields.push(`${col} = $${params.length}`); };
+
+    if (typeof req.body?.mode === "string") {
+      const m = req.body.mode;
+      if (!["off", "draft", "auto"].includes(m)) return res.status(400).json({ error: "Invalid mode" });
+      set("enabled", m !== "off");
+      set("auto_publish", m === "auto");
+    }
+    if (req.body?.posts_per_week != null) {
+      const n = parseInt(req.body.posts_per_week, 10);
+      if (!(n >= 1 && n <= 7)) return res.status(400).json({ error: "posts_per_week must be 1-7" });
+      set("posts_per_week", n);
+    }
+    if (Array.isArray(req.body?.preferred_days)) {
+      const days = req.body.preferred_days.map(Number).filter(d => d >= 0 && d <= 6);
+      set("preferred_days", `{${days.join(",")}}`);
+    }
+    if (req.body?.preferred_hour != null) {
+      const h = parseInt(req.body.preferred_hour, 10);
+      if (!(h >= 0 && h <= 23)) return res.status(400).json({ error: "preferred_hour must be 0-23" });
+      set("preferred_hour", h);
+    }
+    if (fields.length === 0) return res.status(400).json({ error: "No editable fields provided" });
+    fields.push("updated_at = now()");
+
+    const result = await db.query(
+      `UPDATE gbp_post_schedule SET ${fields.join(", ")} WHERE tenant_id = $1 RETURNING *`,
+      params
+    );
+    const s = result.rows[0];
+    const mode = !s.enabled ? "off" : s.auto_publish ? "auto" : "draft";
+    res.json({ ok: true, schedule: { ...s, mode } });
+  } catch (err) {
+    console.error("PATCH /api/gbp/schedule error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ── GET /api/gbp/pool ───────────────────────────────────────────────────────
+router.get("/pool", async (req, res) => {
+  try {
+    const gated = await gateTenant(req, res);
+    if (!gated) return;
+    const { tenantId } = gated;
+    const images = await gbpImagePool.listPool(tenantId);
+    res.json({ ok: true, images });
+  } catch (err) {
+    console.error("GET /api/gbp/pool error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ── POST /api/gbp/pool ──────────────────────────────────────────────────────
+// Multipart upload (field 'image') OR JSON { source_url } to add an existing
+// GBP photo to the durable pool.
+router.post("/pool", upload.single("image"), async (req, res) => {
+  try {
+    const gated = await gateTenant(req, res);
+    if (!gated) return;
+    const { tenantId } = gated;
+
+    let stored;
+    if (req.file && req.file.buffer) {
+      stored = await gbpImagePool.uploadToPool(tenantId, req.file.buffer, req.file.mimetype);
+    } else if (req.body?.source_url) {
+      stored = await gbpImagePool.addFromUrl(tenantId, req.body.source_url);
+    } else {
+      return res.status(400).json({ error: "Provide an image file or source_url" });
+    }
+    if (!stored.ok) return res.status(400).json({ error: stored.reason, detail: stored.message || null });
+
+    const row = await gbpImagePool.recordPoolImage(tenantId, {
+      imageUrl: stored.url,
+      storageKey: stored.storageKey,
+      source: req.body?.source_url ? "gbp_photo" : "upload",
+      label: req.body?.label || null,
+    });
+    res.json({ ok: true, image: row, durable: stored.durable !== false });
+  } catch (err) {
+    console.error("POST /api/gbp/pool error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ── DELETE /api/gbp/pool/:id ────────────────────────────────────────────────
+router.delete("/pool/:id", async (req, res) => {
+  try {
+    const gated = await gateTenant(req, res);
+    if (!gated) return;
+    const { tenantId } = gated;
+    const result = await gbpImagePool.deletePoolImage(tenantId, req.params.id);
+    if (!result.ok) return res.status(404).json({ error: result.reason || "not_found" });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /api/gbp/pool/:id error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });

@@ -1,0 +1,580 @@
+import { useState, useEffect, useCallback } from "react";
+
+const API_BASE = import.meta.env.VITE_API_URL || "";
+const token = () => localStorage.getItem("token");
+const hdrs = () => ({
+  Authorization: `Bearer ${token()}`,
+  "Content-Type": "application/json",
+});
+const NO_CACHE = { headers: hdrs(), cache: "no-store" };
+const cacheBust = () => `&_t=${Date.now()}`;
+
+async function fetchWithTimeout(url, opts = {}, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...opts, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── Health score ring ──────────────────────────────────────────────────────
+function ScoreRing({ score }) {
+  const s = Math.max(0, Math.min(100, score ?? 0));
+  const radius = 52;
+  const circ = 2 * Math.PI * radius;
+  const offset = circ * (1 - s / 100);
+  const color = s >= 85 ? "#16a34a" : s >= 60 ? "#E8600A" : "#dc2626";
+  return (
+    <div style={{ position: "relative", width: 130, height: 130, flexShrink: 0 }}>
+      <svg width={130} height={130} style={{ transform: "rotate(-90deg)" }}>
+        <circle cx={65} cy={65} r={radius} fill="none" stroke="#eee" strokeWidth={11} />
+        <circle
+          cx={65} cy={65} r={radius} fill="none" stroke={color} strokeWidth={11}
+          strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
+          style={{ transition: "stroke-dashoffset 0.8s ease" }}
+        />
+      </svg>
+      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ fontSize: 32, fontWeight: 800, color, lineHeight: 1 }}>{s}</div>
+        <div style={{ fontSize: 10, color: "#888", textTransform: "uppercase", letterSpacing: "0.06em", marginTop: 2 }}>Health</div>
+      </div>
+    </div>
+  );
+}
+
+const SEV_STYLE = {
+  high:   { bg: "#fef2f2", border: "#fecaca", dot: "#dc2626", label: "High" },
+  medium: { bg: "#fff7ed", border: "#fed7aa", dot: "#E8600A", label: "Medium" },
+  low:    { bg: "#fafaf9", border: "#e8e6e0", dot: "#888",    label: "Low" },
+};
+
+export default function GoogleBusinessProfile({ tenantId }) {
+  const [status, setStatus] = useState(null);
+  const [tenantPlan, setTenantPlan] = useState("basic");
+  const [subTab, setSubTab] = useState("health"); // health | drafts | published
+  const [toast, setToast] = useState(null);
+
+  // health
+  const [audit, setAudit] = useState(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+
+  // drafts / published
+  const [posts, setPosts] = useState([]);
+  const [postsLoading, setPostsLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [editText, setEditText] = useState("");
+  const [savingId, setSavingId] = useState(null);
+  const [publishingId, setPublishingId] = useState(null);
+
+  // image picker modal
+  const [pickerForPost, setPickerForPost] = useState(null);
+  const [photos, setPhotos] = useState([]);
+  const [photosLoading, setPhotosLoading] = useState(false);
+  const [attachingUrl, setAttachingUrl] = useState(null);
+  const [uploadingId, setUploadingId] = useState(null);
+
+  const showToast = (msg, type = "success") => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3200);
+  };
+
+  // OAuth redirect feedback (shared connect flow with Reviews)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("connected") === "true") {
+      showToast("Google Business Profile connected ✓");
+      window.history.replaceState({}, "", "/google-business");
+    }
+    if (params.get("error") === "oauth_failed") {
+      showToast("Google connection failed. Please try again.", "error");
+      window.history.replaceState({}, "", "/google-business");
+    }
+  }, []);
+
+  const loadStatus = useCallback(async () => {
+    if (!tenantId) return;
+    let data = null;
+    try {
+      const res = await fetchWithTimeout(
+        `${API_BASE}/api/gbp/status?tenant_id=${tenantId}${cacheBust()}`,
+        NO_CACHE, 10000
+      );
+      data = await res.json();
+    } catch (e) {
+      data = { connected: false };
+    }
+    setStatus(data);
+  }, [tenantId]);
+
+  const loadTenantPlan = useCallback(async () => {
+    if (!tenantId) return;
+    try {
+      const res = await fetchWithTimeout(
+        `${API_BASE}/api/dashboard/tenant?tenant_id=${tenantId}${cacheBust()}`,
+        NO_CACHE, 8000
+      );
+      const data = await res.json();
+      setTenantPlan(data?.plan || "basic");
+    } catch {
+      setTenantPlan("basic");
+    }
+  }, [tenantId]);
+
+  const loadAudit = useCallback(async () => {
+    if (!tenantId) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/gbp/audit?tenant_id=${tenantId}${cacheBust()}`, NO_CACHE);
+      const data = await res.json();
+      setAudit(data.has_audit ? data : null);
+    } catch {
+      setAudit(null);
+    }
+  }, [tenantId]);
+
+  const loadPosts = useCallback(async (statusFilter) => {
+    if (!tenantId) return;
+    setPostsLoading(true);
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/gbp/posts?tenant_id=${tenantId}&status=${statusFilter}${cacheBust()}`,
+        NO_CACHE
+      );
+      const data = await res.json();
+      setPosts(data.posts || []);
+    } catch {
+      setPosts([]);
+    } finally {
+      setPostsLoading(false);
+    }
+  }, [tenantId]);
+
+  useEffect(() => { loadStatus(); loadTenantPlan(); }, [loadStatus, loadTenantPlan]);
+
+  // Load the right data when the connected user switches sub-tabs.
+  useEffect(() => {
+    if (status === null) return;
+    if (!status.connected) return;
+    if (subTab === "health") loadAudit();
+    else if (subTab === "drafts") loadPosts("draft");
+    else if (subTab === "published") loadPosts("published");
+  }, [status, subTab, loadAudit, loadPosts]);
+
+  // ── Actions ───────────────────────────────────────────────────────────────
+  async function handleConnect() {
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/reviews/oauth/url?tenant_id=${tenantId}${cacheBust()}`,
+        NO_CACHE
+      );
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+      else showToast(data.error || "Failed to get OAuth URL", "error");
+    } catch { showToast("Failed to connect Google", "error"); }
+  }
+
+  async function runAudit() {
+    setAuditLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/gbp/audit/run?tenant_id=${tenantId}`, {
+        method: "POST", headers: hdrs(),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.error || "Audit failed");
+      showToast("Audit complete ✓");
+      await loadAudit();
+    } catch (e) { showToast(e.message || "Audit failed", "error"); }
+    finally { setAuditLoading(false); }
+  }
+
+  async function handleGenerate() {
+    setGenerating(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/gbp/posts/generate?tenant_id=${tenantId}`, {
+        method: "POST", headers: hdrs(), body: JSON.stringify({ count: 1 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Generation failed");
+      showToast("Draft generated ✓");
+      await loadPosts("draft");
+    } catch (e) { showToast(e.message || "Generation failed", "error"); }
+    finally { setGenerating(false); }
+  }
+
+  async function handleSaveEdit(post) {
+    setSavingId(post.id);
+    try {
+      const res = await fetch(`${API_BASE}/api/gbp/posts/${post.id}?tenant_id=${tenantId}`, {
+        method: "PATCH", headers: hdrs(), body: JSON.stringify({ summary: editText }),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || "Save failed"); }
+      setEditId(null); setEditText("");
+      await loadPosts("draft");
+      showToast("Draft updated");
+    } catch (e) { showToast(e.message || "Save failed", "error"); }
+    finally { setSavingId(null); }
+  }
+
+  async function handleArchive(id) {
+    if (!confirm("Archive this draft?")) return;
+    try {
+      await fetch(`${API_BASE}/api/gbp/posts/${id}?tenant_id=${tenantId}`, { method: "DELETE", headers: hdrs() });
+      await loadPosts("draft");
+      showToast("Draft archived");
+    } catch { showToast("Archive failed", "error"); }
+  }
+
+  async function handleUpload(post, file) {
+    if (!file) return;
+    setUploadingId(post.id);
+    try {
+      const fd = new FormData();
+      fd.append("image", file);
+      const res = await fetch(`${API_BASE}/api/gbp/posts/${post.id}/image?tenant_id=${tenantId}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token()}` }, // no Content-Type — browser sets multipart boundary
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.error || "Upload failed");
+      await loadPosts("draft");
+      showToast("Image attached ✓");
+    } catch (e) { showToast(e.message || "Upload failed", "error"); }
+    finally { setUploadingId(null); }
+  }
+
+  async function openPicker(post) {
+    setPickerForPost(post);
+    setPhotosLoading(true);
+    setPhotos([]);
+    try {
+      const res = await fetch(`${API_BASE}/api/gbp/media?tenant_id=${tenantId}${cacheBust()}`, NO_CACHE);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.error || "Could not load photos");
+      setPhotos(data.photos || []);
+    } catch (e) { showToast(e.message || "Could not load photos", "error"); setPickerForPost(null); }
+    finally { setPhotosLoading(false); }
+  }
+
+  async function pickPhoto(photo) {
+    if (!pickerForPost) return;
+    setAttachingUrl(photo.url);
+    try {
+      const res = await fetch(`${API_BASE}/api/gbp/posts/${pickerForPost.id}/image-from-google?tenant_id=${tenantId}`, {
+        method: "POST", headers: hdrs(), body: JSON.stringify({ source_url: photo.url }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.error || "Could not attach photo");
+      setPickerForPost(null);
+      await loadPosts("draft");
+      showToast("Image attached ✓");
+    } catch (e) { showToast(e.message || "Could not attach photo", "error"); }
+    finally { setAttachingUrl(null); }
+  }
+
+  async function handlePublish(post) {
+    if (!post.media_url) { showToast("Add an image before publishing", "error"); return; }
+    if (!confirm("Publish this post to your live Google Business Profile?")) return;
+    setPublishingId(post.id);
+    try {
+      const res = await fetch(`${API_BASE}/api/gbp/posts/${post.id}/approve?tenant_id=${tenantId}`, {
+        method: "POST", headers: hdrs(),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.error || "Publish failed");
+      showToast("Published to Google ✓");
+      await loadPosts("draft");
+    } catch (e) { showToast(e.message || "Publish failed", "error"); }
+    finally { setPublishingId(null); }
+  }
+
+  // ── Styles (mirrors Reviews.jsx) ───────────────────────────────────────────
+  const s = {
+    page: { background: "#F5F4F0", minHeight: "100vh", fontFamily: "'DM Sans', sans-serif", padding: "0 0 60px" },
+    topbar: { background: "#fff", borderBottom: "1px solid #e5e5e5", padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 },
+    wrap: { maxWidth: 900, margin: "0 auto", padding: "0 20px" },
+    card: { background: "#fff", borderRadius: 14, border: "1px solid #e8e6e0", overflow: "hidden", marginBottom: 12 },
+    btn: (color = "#E8600A", bg = "rgba(232,96,10,0.1)") => ({ padding: "8px 16px", borderRadius: 8, border: `1px solid ${color}`, background: bg, color, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }),
+    filterBtn: (active) => ({ padding: "7px 16px", borderRadius: 8, border: active ? "1.5px solid #E8600A" : "1px solid #e8e6e0", background: active ? "rgba(232,96,10,0.08)" : "#fff", color: active ? "#E8600A" : "#888", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }),
+  };
+
+  const Toast = () => toast ? (
+    <div style={{ position: "fixed", top: 20, right: 20, zIndex: 200, background: toast.type === "error" ? "#fef2f2" : "#f0fdf4", border: `1px solid ${toast.type === "error" ? "#fecaca" : "#bbf7d0"}`, borderRadius: 10, padding: "10px 18px", fontSize: 12, fontWeight: 600, color: toast.type === "error" ? "#dc2626" : "#16a34a", boxShadow: "0 4px 12px rgba(0,0,0,0.08)" }}>
+      {toast.msg}
+    </div>
+  ) : null;
+
+  // ── Loading ────────────────────────────────────────────────────────────────
+  if (status === null) {
+    return (
+      <div style={s.page}>
+        <div style={s.topbar}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#1a1a1a" }}>Google Business Profile</div>
+            <div style={{ fontSize: 11, color: "#888" }}>Loading...</div>
+          </div>
+        </div>
+        <div style={{ ...s.wrap, textAlign: "center", padding: 40, color: "#bbb", fontSize: 13 }}>Loading…</div>
+      </div>
+    );
+  }
+
+  // ── Not connected → reuse the shared Google connect flow ───────────────────
+  if (!status.connected) {
+    return (
+      <div style={s.page}>
+        <Toast />
+        <div style={s.topbar}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#1a1a1a" }}>Google Business Profile</div>
+            <div style={{ fontSize: 11, color: "#888" }}>Profile audit, AI posting & performance</div>
+          </div>
+        </div>
+        <div style={s.wrap}>
+          <div style={{ ...s.card, padding: 40, textAlign: "center" }}>
+            <div style={{ fontSize: 40, marginBottom: 16 }}>📍</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: "#1a1a1a", marginBottom: 8 }}>Connect Google Business Profile</div>
+            <div style={{ fontSize: 13, color: "#888", maxWidth: 440, margin: "0 auto 28px", lineHeight: 1.7 }}>
+              Connect your Google Business account to audit your profile, generate AI posts tuned for local & AI search, and publish them with one click.
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12, maxWidth: 520, margin: "0 auto 32px" }}>
+              {[
+                { icon: "🔎", title: "Profile audit", desc: "Health score + prioritized gaps" },
+                { icon: "✍️", title: "AI posts", desc: "SEO & AI-search optimized" },
+                { icon: "📤", title: "One-click publish", desc: "Straight to your live profile" },
+              ].map((f, i) => (
+                <div key={i} style={{ background: "#fafaf9", border: "1px solid #e8e6e0", borderRadius: 10, padding: "14px 12px" }}>
+                  <div style={{ fontSize: 22, marginBottom: 6 }}>{f.icon}</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#1a1a1a", marginBottom: 3 }}>{f.title}</div>
+                  <div style={{ fontSize: 11, color: "#888", lineHeight: 1.5 }}>{f.desc}</div>
+                </div>
+              ))}
+            </div>
+            <button onClick={handleConnect} style={{ ...s.btn(), padding: "12px 32px", fontSize: 14 }}>Connect Google Account →</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Connected ───────────────────────────────────────────────────────────────
+  return (
+    <div style={s.page}>
+      <Toast />
+
+      <div style={s.topbar}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: "#1a1a1a" }}>Google Business Profile</div>
+          <div style={{ fontSize: 11, color: "#16a34a", display: "flex", alignItems: "center", gap: 4 }}>
+            <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#16a34a" }} />
+            {status.location_name || "Connected to Google Business"}
+          </div>
+        </div>
+        {subTab === "drafts" && (
+          <button onClick={handleGenerate} disabled={generating} style={s.btn()}>
+            {generating ? "Generating…" : "+ Generate draft"}
+          </button>
+        )}
+        {subTab === "health" && (
+          <button onClick={runAudit} disabled={auditLoading} style={s.btn("#2563eb", "rgba(37,99,235,0.08)")}>
+            {auditLoading ? "Auditing…" : "Run audit"}
+          </button>
+        )}
+      </div>
+
+      <div style={s.wrap}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          {[
+            { key: "health", label: "Health" },
+            { key: "drafts", label: "Drafts" },
+            { key: "published", label: "Published" },
+          ].map(t => (
+            <button key={t.key} style={s.filterBtn(subTab === t.key)} onClick={() => setSubTab(t.key)}>{t.label}</button>
+          ))}
+        </div>
+
+        {/* ── HEALTH ── */}
+        {subTab === "health" && (
+          !audit ? (
+            <div style={{ ...s.card, padding: 40, textAlign: "center" }}>
+              <div style={{ fontSize: 32, marginBottom: 12 }}>🔎</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a", marginBottom: 6 }}>No audit yet</div>
+              <div style={{ fontSize: 12, color: "#888", marginBottom: 18 }}>Run an audit to score your profile and find growth gaps.</div>
+              <button onClick={runAudit} disabled={auditLoading} style={s.btn()}>{auditLoading ? "Auditing…" : "Run audit"}</button>
+            </div>
+          ) : (
+            <>
+              <div style={{ ...s.card, padding: 24, display: "flex", alignItems: "center", gap: 28 }}>
+                <ScoreRing score={audit.health_score} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a", marginBottom: 4 }}>
+                    {audit.profile_snapshot?.title || status.location_name || "Your profile"}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>
+                    {audit.gaps?.length ? `${audit.gaps.length} opportunit${audit.gaps.length === 1 ? "y" : "ies"} to improve` : "No gaps found — profile is in great shape"}
+                    {audit.generated_at ? ` · audited ${new Date(audit.generated_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {[
+                      ["Posts", audit.profile_snapshot?.days_since_last_post == null ? "none" : `${audit.profile_snapshot.days_since_last_post}d ago`],
+                      ["Photos", `${audit.profile_snapshot?.photo_count ?? 0}${audit.profile_snapshot?.newest_photo_days != null ? ` · newest ${audit.profile_snapshot.newest_photo_days}d` : ""}`],
+                      ["Reviews", `${audit.profile_snapshot?.review_response_rate ?? 0}% answered`],
+                      ["Category", audit.profile_snapshot?.primary_category || "—"],
+                    ].map(([k, v], i) => (
+                      <div key={i} style={{ background: "#fafaf9", border: "1px solid #e8e6e0", borderRadius: 8, padding: "6px 10px" }}>
+                        <span style={{ fontSize: 10, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em" }}>{k}: </span>
+                        <span style={{ fontSize: 12, color: "#1a1a1a", fontWeight: 600 }}>{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {(audit.gaps || []).map((g, i) => {
+                const sev = SEV_STYLE[g.severity] || SEV_STYLE.low;
+                return (
+                  <div key={i} style={{ ...s.card, padding: "14px 18px", display: "flex", gap: 12, alignItems: "flex-start" }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: sev.dot, marginTop: 5, flexShrink: 0 }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: "#1a1a1a" }}>{g.label}</span>
+                        <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 20, background: sev.bg, color: sev.dot, border: `1px solid ${sev.border}`, textTransform: "uppercase" }}>{sev.label}</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: "#666", lineHeight: 1.6 }}>{g.advice}</div>
+                      {g.key === "post_recency" && (
+                        <button onClick={() => setSubTab("drafts")} style={{ ...s.btn(), marginTop: 8, padding: "5px 12px" }}>Create a post →</button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )
+        )}
+
+        {/* ── DRAFTS ── */}
+        {subTab === "drafts" && (
+          postsLoading ? (
+            <div style={{ textAlign: "center", padding: 40, color: "#bbb", fontSize: 13 }}>Loading drafts…</div>
+          ) : posts.length === 0 ? (
+            <div style={{ ...s.card, padding: 40, textAlign: "center" }}>
+              <div style={{ fontSize: 32, marginBottom: 12 }}>✍️</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a", marginBottom: 6 }}>No drafts yet</div>
+              <div style={{ fontSize: 12, color: "#888", marginBottom: 18 }}>Generate an AI post tuned for local & AI search.</div>
+              <button onClick={handleGenerate} disabled={generating} style={s.btn()}>{generating ? "Generating…" : "+ Generate draft"}</button>
+            </div>
+          ) : (
+            posts.map(post => (
+              <div key={post.id} style={s.card}>
+                {post.media_url ? (
+                  <img src={post.media_url} alt="" style={{ width: "100%", maxHeight: 260, objectFit: "cover", display: "block", background: "#f5f4f0" }} />
+                ) : (
+                  <div style={{ padding: "18px", background: "#fafaf9", borderBottom: "1px solid #f5f5f5", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                    <span style={{ fontSize: 12, color: "#dc2626", fontWeight: 600 }}>⚠ Image required to publish</span>
+                    <button onClick={() => document.getElementById(`up-${post.id}`).click()} disabled={uploadingId === post.id} style={s.btn("#888", "transparent")}>
+                      {uploadingId === post.id ? "Uploading…" : "Upload"}
+                    </button>
+                    <button onClick={() => openPicker(post)} style={s.btn("#2563eb", "rgba(37,99,235,0.08)")}>Choose from Google</button>
+                    <input id={`up-${post.id}`} type="file" accept="image/png,image/jpeg" style={{ display: "none" }}
+                      onChange={e => handleUpload(post, e.target.files?.[0])} />
+                  </div>
+                )}
+
+                <div style={{ padding: "14px 18px" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#E8600A", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>AI Draft</div>
+                  {editId === post.id ? (
+                    <textarea value={editText} onChange={e => setEditText(e.target.value)} style={{ width: "100%", minHeight: 120, background: "#fafaf9", border: "1.5px solid #E8600A", borderRadius: 8, padding: "10px 12px", fontSize: 13, color: "#1a1a1a", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.7, outline: "none", resize: "vertical", boxSizing: "border-box" }} />
+                  ) : (
+                    <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7, background: "#fafaf9", border: "1px solid #e8e6e0", borderRadius: 8, padding: "10px 12px", whiteSpace: "pre-wrap" }}>{post.summary}</div>
+                  )}
+                  {post.media_url && (
+                    <div style={{ marginTop: 8 }}>
+                      <button onClick={() => document.getElementById(`up-${post.id}`).click()} disabled={uploadingId === post.id} style={{ ...s.btn("#888", "transparent"), fontSize: 11, padding: "5px 10px" }}>
+                        {uploadingId === post.id ? "Uploading…" : "Replace image"}
+                      </button>
+                      <button onClick={() => openPicker(post)} style={{ ...s.btn("#2563eb", "rgba(37,99,235,0.08)"), fontSize: 11, padding: "5px 10px", marginLeft: 6 }}>Choose from Google</button>
+                      <input id={`up-${post.id}`} type="file" accept="image/png,image/jpeg" style={{ display: "none" }} onChange={e => handleUpload(post, e.target.files?.[0])} />
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ padding: "12px 18px", display: "flex", gap: 8, borderTop: "1px solid #f5f5f5", background: "#fafaf9", flexWrap: "wrap" }}>
+                  <button onClick={() => handlePublish(post)} disabled={publishingId === post.id || !post.media_url}
+                    title={!post.media_url ? "Add an image first" : ""}
+                    style={{ ...s.btn("#16a34a", "rgba(22,163,74,0.1)"), flex: 1, opacity: post.media_url ? 1 : 0.5, cursor: post.media_url ? "pointer" : "not-allowed" }}>
+                    {publishingId === post.id ? "Publishing…" : "✓ Approve & Publish to Google"}
+                  </button>
+                  {editId === post.id ? (
+                    <button onClick={() => handleSaveEdit(post)} disabled={savingId === post.id} style={s.btn("#E8600A", "rgba(232,96,10,0.1)")}>
+                      {savingId === post.id ? "Saving…" : "Save"}
+                    </button>
+                  ) : (
+                    <button onClick={() => { setEditId(post.id); setEditText(post.summary || ""); }} style={s.btn("#888", "transparent")}>✏ Edit</button>
+                  )}
+                  <button onClick={() => handleArchive(post.id)} style={s.btn("#888", "transparent")}>Archive</button>
+                </div>
+              </div>
+            ))
+          )
+        )}
+
+        {/* ── PUBLISHED ── */}
+        {subTab === "published" && (
+          postsLoading ? (
+            <div style={{ textAlign: "center", padding: 40, color: "#bbb", fontSize: 13 }}>Loading…</div>
+          ) : posts.length === 0 ? (
+            <div style={{ ...s.card, padding: 40, textAlign: "center" }}>
+              <div style={{ fontSize: 32, marginBottom: 12 }}>📤</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a", marginBottom: 6 }}>Nothing published yet</div>
+              <div style={{ fontSize: 12, color: "#888" }}>Approved posts will appear here once they're live on Google.</div>
+            </div>
+          ) : (
+            posts.map(post => (
+              <div key={post.id} style={s.card}>
+                {post.media_url && <img src={post.media_url} alt="" style={{ width: "100%", maxHeight: 260, objectFit: "cover", display: "block", background: "#f5f4f0" }} />}
+                <div style={{ padding: "14px 18px" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#16a34a", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
+                    Published{post.published_at ? ` · ${new Date(post.published_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}
+                  </div>
+                  <div style={{ fontSize: 13, color: "#444", lineHeight: 1.7, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "10px 12px", whiteSpace: "pre-wrap" }}>{post.summary}</div>
+                </div>
+              </div>
+            ))
+          )
+        )}
+      </div>
+
+      {/* ── Image picker modal ── */}
+      {pickerForPost && (
+        <div onClick={() => setPickerForPost(null)} style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, maxWidth: 720, width: "100%", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid #eee", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>Choose a photo from your profile</div>
+              <button onClick={() => setPickerForPost(null)} style={{ background: "none", border: "none", fontSize: 20, color: "#888", cursor: "pointer" }}>×</button>
+            </div>
+            <div style={{ padding: 16, overflowY: "auto" }}>
+              {photosLoading ? (
+                <div style={{ textAlign: "center", padding: 40, color: "#bbb", fontSize: 13 }}>Loading photos…</div>
+              ) : photos.length === 0 ? (
+                <div style={{ textAlign: "center", padding: 40, color: "#bbb", fontSize: 13 }}>No photos found on your profile.</div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10 }}>
+                  {photos.map((p, i) => (
+                    <div key={i} onClick={() => !attachingUrl && pickPhoto(p)} style={{ position: "relative", cursor: attachingUrl ? "wait" : "pointer", borderRadius: 8, overflow: "hidden", border: "1px solid #e8e6e0", aspectRatio: "1", background: "#f5f4f0" }}>
+                      <img src={p.thumbnail || p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", opacity: attachingUrl === p.url ? 0.4 : 1 }} />
+                      {attachingUrl === p.url && (
+                        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 600, color: "#E8600A" }}>Attaching…</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

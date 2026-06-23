@@ -191,6 +191,22 @@ router.post("/crm/job-won", async (req, res) => {
     await schedulePostServiceCampaigns(tenantId, { lead_id: lead.id, preferred_date: new Date().toISOString() });
     await db.query("UPDATE leads SET last_service_date = CURRENT_DATE WHERE id = $1", [lead.id]);
 
+    // Review-request drip (Jun 23, 2026): enroll the completed-job customer.
+    // No-ops if the tenant hasn't enabled review requests or set a review link.
+    try {
+      const reviewCampaign = require("../services/reviewCampaign");
+      reviewCampaign.startReviewCampaign(tenantId, {
+        leadId: lead.id,
+        name:   lead.name,
+        phone:  lead.phone,
+        email:  lead.email || contact_email || null,
+      }, { source: "job_completed" }).catch((e) =>
+        console.error("[Webhooks] startReviewCampaign failed:", e.message)
+      );
+    } catch (e) {
+      console.error("[Webhooks] reviewCampaign require failed:", e.message);
+    }
+
     // 💰 Revenue recovered notification (non-blocking)
     if (updates.actual_revenue_cents) {
       notificationService.notifyRevenueRecovered(tenantId, {

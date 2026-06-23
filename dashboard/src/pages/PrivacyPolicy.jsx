@@ -11,7 +11,7 @@ export default function PrivacyPolicy() {
             <h1 className="font-serif text-3xl sm:text-4xl font-bold text-stone-900 tracking-tight">
               AIFrontDeskHelper Messaging, Privacy &amp; Communication Policy
             </h1>
-            <p className="mt-3 text-stone-500 text-sm">Effective Date: March 30, 2026</p>
+            <p className="mt-3 text-stone-500 text-sm">Effective Date: June 23, 2026</p>
           </header>
 
           <div className="font-sans text-stone-700 leading-relaxed space-y-10">
@@ -227,7 +227,178 @@ export default function PrivacyPolicy() {
 
             <section>
               <h2 className="font-serif text-xl font-semibold text-stone-900 mb-4">
-                7. Use of AI Technology
+                7. Google User Data and Business Profile Integration
+              </h2>
+              <p className="mb-4">
+                AIFrontDeskHelper helps businesses manage their own Google Business Profile.
+                This section describes how our application accesses, uses, stores, and shares
+                data obtained through Google API Services, and how that handling complies with
+                Google&rsquo;s policies.
+              </p>
+              <p className="mb-6">
+                AIFrontDeskHelper&rsquo;s use and transfer to any other app of information
+                received from Google APIs will adhere to the{" "}
+                <a
+                  href="https://developers.google.com/terms/api-services-user-data-policy"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-orange-600 underline hover:text-orange-700"
+                >
+                  Google API Services User Data Policy
+                </a>
+                , including the Limited Use requirements.
+              </p>
+
+              <h3 className="font-serif text-lg font-semibold text-stone-800 mt-6 mb-3">
+                Who Is Requesting Access
+              </h3>
+              <p className="mb-6">
+                The application requesting access is AIFrontDeskHelper, operated by AI Front
+                Desk Helper LLC. When you connect your Google Business Profile, you authorize
+                our application&mdash;and only our application&mdash;to act on your behalf for
+                the features described below. We never request access on behalf of any other
+                party, and we do not allow other businesses or agencies to route their own API
+                access through our application.
+              </p>
+
+              <h3 className="font-serif text-lg font-semibold text-stone-800 mt-6 mb-3">
+                What Data We Access, and Why
+              </h3>
+              <p className="mb-4">
+                When you choose to connect your Google account, we request a single Google
+                permission scope (<span className="font-mono text-sm">business.manage</span>).
+                We request this only after you click &ldquo;Connect&rdquo; inside our dashboard,
+                and only to power features you can see and use in our product. Specifically, we
+                use this access to:
+              </p>
+              <ul className="list-disc pl-6 space-y-2 mb-4">
+                <li>
+                  <strong>Read your business profile information</strong> (such as your business
+                  name, categories, hours, description, service areas, and existing photos) so
+                  we can show you a profile health audit and identify improvement opportunities.
+                </li>
+                <li>
+                  <strong>Read your Google reviews and post owner responses</strong> to them,
+                  when you approve a response.
+                </li>
+                <li>
+                  <strong>Create posts (updates) on your Business Profile</strong>, when you
+                  create or approve them&mdash;either individually, or on a posting schedule you
+                  explicitly enable.
+                </li>
+                <li>
+                  <strong>Read performance metrics for your profile</strong> (such as calls,
+                  website clicks, direction requests, and impressions) so we can show you how
+                  your profile is performing over time.
+                </li>
+              </ul>
+              <p className="mb-6">
+                We request only this scope because it is the access necessary to provide these
+                features. We do not request access to data we do not need, and we do not request
+                access to features that do not yet exist.
+              </p>
+
+              <h3 className="font-serif text-lg font-semibold text-stone-800 mt-6 mb-3">
+                How We Use the Data &mdash; Limited Use
+              </h3>
+              <p className="mb-4">
+                Consistent with the Limited Use requirements of the Google API Services User
+                Data Policy, AIFrontDeskHelper affirms that information received from Google APIs
+                is:
+              </p>
+              <ul className="list-disc pl-6 space-y-2 mb-6">
+                <li>
+                  Used only to provide and improve the user-facing features described above,
+                  which are prominent in our application&rsquo;s interface;
+                </li>
+                <li>
+                  Not used or transferred for serving advertisements, including retargeted,
+                  personalized, or interest-based advertising;
+                </li>
+                <li>
+                  Not used or transferred to determine creditworthiness or for lending purposes;
+                </li>
+                <li>
+                  Not sold or transferred to data brokers, information resellers, or other
+                  parties for independent commercial purposes;
+                </li>
+                <li>
+                  Not used to train, fine-tune, or improve generalized artificial intelligence
+                  or machine-learning models. Where our features use AI to draft content (such
+                  as a suggested review response or post), your Google data is processed only to
+                  produce that specific output for you and is not used to train generalized
+                  models;
+                </li>
+                <li>
+                  Not read by humans, except (a) with your explicit consent (for example, when
+                  you request support), (b) for security purposes such as investigating abuse,
+                  (c) to comply with applicable law, or (d) where the data is aggregated and used
+                  for internal operations in accordance with applicable privacy and legal
+                  requirements.
+                </li>
+              </ul>
+
+              <h3 className="font-serif text-lg font-semibold text-stone-800 mt-6 mb-3">
+                Automated Actions and Consent
+              </h3>
+              <p className="mb-6">
+                We do not create posts, publish review responses, or make any change to your
+                Business Profile without your prior, specific, and express consent. By default,
+                content we generate is held for your review and is only published when you
+                approve it. If you choose to enable automatic posting on a schedule, you do so
+                through an explicit opt-in control in our dashboard that clearly states posts
+                will be published to your live profile automatically; you can turn this off at
+                any time.
+              </p>
+
+              <h3 className="font-serif text-lg font-semibold text-stone-800 mt-6 mb-3">
+                How We Store and Protect the Data
+              </h3>
+              <p className="mb-6">
+                We store the Google authorization tokens and the profile, review, post, and
+                performance data necessary to provide the features above. This data is stored on
+                our infrastructure providers acting as our processors under confidentiality
+                obligations. We treat all such data securely in transit and at rest and take
+                reasonable and appropriate measures to protect it against unauthorized access,
+                use, loss, or disclosure. Access by our personnel is limited to what is needed to
+                operate, support, and secure the service.
+              </p>
+
+              <h3 className="font-serif text-lg font-semibold text-stone-800 mt-6 mb-3">
+                Revoking Access and Deleting Your Data
+              </h3>
+              <p className="mb-6">
+                You may disconnect your Google Business Profile from AIFrontDeskHelper at any
+                time from within our dashboard, which stops all further access. You may also
+                revoke our access directly from your Google Account at{" "}
+                <a
+                  href="https://myaccount.google.com/permissions"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-orange-600 underline hover:text-orange-700"
+                >
+                  myaccount.google.com/permissions
+                </a>
+                . On disconnection or on request, we delete the Google authorization tokens and,
+                on request, the associated Google-derived data we hold for your account, except
+                where retention is required by law.
+              </p>
+
+              <h3 className="font-serif text-lg font-semibold text-stone-800 mt-6 mb-3">
+                Sharing
+              </h3>
+              <p>
+                We do not sell, rent, or share data obtained from Google APIs with any third
+                party for advertising or other independent commercial purposes. We share it only
+                with infrastructure sub-processors that host and operate our service on our
+                behalf, under obligations consistent with this disclosure, and where required by
+                law.
+              </p>
+            </section>
+
+            <section>
+              <h2 className="font-serif text-xl font-semibold text-stone-900 mb-4">
+                8. Use of AI Technology
               </h2>
               <p>
                 AIFrontDeskHelper utilizes artificial intelligence technology to assist
@@ -239,7 +410,7 @@ export default function PrivacyPolicy() {
 
             <section>
               <h2 className="font-serif text-xl font-semibold text-stone-900 mb-4">
-                8. Business Responsibility
+                9. Business Responsibility
               </h2>
               <p>
                 AIFrontDeskHelper provides communication technology used by independent
@@ -251,7 +422,7 @@ export default function PrivacyPolicy() {
 
             <section>
               <h2 className="font-serif text-xl font-semibold text-stone-900 mb-4">
-                9. Policy Updates
+                10. Policy Updates
               </h2>
               <p>
                 This policy may be updated periodically to reflect changes in legal
@@ -262,7 +433,7 @@ export default function PrivacyPolicy() {
 
             <section>
               <h2 className="font-serif text-xl font-semibold text-stone-900 mb-4">
-                10. Contact Information
+                11. Contact Information
               </h2>
               <p className="mb-4">
                 For questions regarding this policy or AIFrontDeskHelper services, please

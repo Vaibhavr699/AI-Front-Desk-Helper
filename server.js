@@ -133,6 +133,19 @@ require("node-cron").schedule("*/5 * * * *", async () => {
 });
 console.log("[startup] coachingScorer cron scheduled (*/5 * * * *)");
 
+const cron = require("node-cron"); // if not already imported
+const reviewCampaign = require("./services/reviewCampaign"); // adjust path
+
+// Review-request drip — every 30 minutes.
+cron.schedule("*/30 * * * *", async () => {
+  try {
+    await reviewCampaign.processDueReviewCampaigns();
+  } catch (e) {
+    console.error("[ReviewCampaign] cron failed:", e.message);
+  }
+});
+console.log("[ReviewCampaign] drip processor scheduled — every 30 min.");
+
 // Phase 6 B1 — coaching rule extractor (every 5 minutes)
 const { runCoachingRuleExtractor } = require("./services/coachingRuleExtractor");
 require("node-cron").schedule("*/5 * * * *", async () => {

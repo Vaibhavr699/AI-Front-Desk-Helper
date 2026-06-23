@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import GbpBookingLinkSection from "./GbpBookingLinkSection";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 const token = () => localStorage.getItem("token");
@@ -549,6 +550,7 @@ export default function GoogleBusinessProfile({ tenantId }) {
             { key: "published", label: "Published" },
             { key: "schedule", label: "Schedule" },
             { key: "performance", label: "Performance" },
+            { key: "booking", label: "Booking Link" },
           ].map(t => (
             <button key={t.key} style={s.filterBtn(subTab === t.key)} onClick={() => setSubTab(t.key)}>{t.label}</button>
           ))}
@@ -907,6 +909,13 @@ export default function GoogleBusinessProfile({ tenantId }) {
         </div>
       )}
 
+      {/* ── BOOKING LINK (G6) ── */}
+      {subTab === "booking" && (
+        <div style={{ ...s.wrap, paddingTop: 0 }}>
+          <GbpBookingLinkSection tenantId={tenantId} s={s} showToast={showToast} />
+        </div>
+      )}
+      
       {pickerForPost && (
         <div onClick={() => setPickerForPost(null)} style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, maxWidth: 720, width: "100%", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column" }}>

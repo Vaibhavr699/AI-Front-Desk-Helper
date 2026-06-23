@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from "react";
-import { getGbpBookingLink, setGbpBookingLink } from "../api";
 
 /**
  * GbpBookingLinkSection (G6)
@@ -8,19 +7,30 @@ import { getGbpBookingLink, setGbpBookingLink } from "../api";
  * Points the tenant's Google "Appointments" link at their own booking page
  * (book.<domain>) instead of a leaking CRM/provider URL.
  *
- * Conventions match the parent page: tenantId comes in as a prop, styling is
- * passed down via the `s` style object, and user feedback goes through the
- * parent's showToast. It calls the shared api.js helpers (which return the raw
- * service shapes; expected states like not_connected / api_not_enabled come
- * back as 200 with ok:false, so we branch on `reason` rather than catching).
+ * Self-contained with raw fetch to match the sibling pages (Reviews.jsx,
+ * GoogleBusinessProfile.jsx) -- no api.js import, so there is no relative
+ * path to get wrong. tenantId, the shared style object `s`, and showToast
+ * are passed in as props from the parent page.
  *
- *   GET  -> { ok, connected, currentUri, isProvider, isEditable, isOurs,
- *            ourBookingUrl, links:[...] }
- *   POST -> { ok, action:"created"|"updated", uri, providerStillPresent }
+ * Backend returns raw service shapes. Expected states (not_connected,
+ * api_not_enabled, permission_denied) come back as HTTP 200 with ok:false,
+ * so we branch on `reason` rather than treating them as errors.
  *
- * After a successful POST we re-fetch GET (the POST shape lacks the full
- * status fields the view renders).
+ *   GET  /api/gbp/booking-link ->
+ *     { ok, connected, currentUri, isProvider, isEditable, isOurs,
+ *       ourBookingUrl, links:[...] }
+ *   POST /api/gbp/booking-link (body { url? }) ->
+ *     { ok, action:"created"|"updated", uri, providerStillPresent }
+ *
+ * After a successful POST we re-fetch GET (POST lacks the full status fields).
  */
+
+const API_BASE = import.meta.env.VITE_API_URL || "";
+const token = () => localStorage.getItem("token");
+const hdrs = () => ({
+  Authorization: `Bearer ${token()}`,
+  "Content-Type": "application/json",
+});
 
 // Strip protocol + trailing slash for clean display.
 function pretty(u) {
@@ -38,10 +48,14 @@ export default function GbpBookingLinkSection({ tenantId, s, showToast }) {
     if (!tenantId) return;
     setLoading(true);
     try {
-      const res = await getGbpBookingLink(tenantId);
-      setData(res);
+      const res = await fetch(
+        `${API_BASE}/api/gbp/booking-link?tenant_id=${tenantId}`,
+        { headers: hdrs() }
+      );
+      const json = await res.json();
+      setData(json);
     } catch (e) {
-      // Only thrown on 500 / network -- expected states are 200 ok:false.
+      // Only hit on network failure -- expected states are 200 ok:false.
       setData({ ok: false, reason: "server_error", message: e.message });
     } finally {
       setLoading(false);
@@ -53,12 +67,16 @@ export default function GbpBookingLinkSection({ tenantId, s, showToast }) {
   async function pointToOurs() {
     setSaving(true);
     try {
-      const res = await setGbpBookingLink(tenantId); // no url -> backend resolves
-      if (res?.ok) {
+      const res = await fetch(
+        `${API_BASE}/api/gbp/booking-link?tenant_id=${tenantId}`,
+        { method: "POST", headers: hdrs(), body: JSON.stringify({}) }
+      );
+      const json = await res.json();
+      if (json?.ok) {
         showToast("Appointment link updated ✓");
         await load();
       } else {
-        showToast(reasonMsg(res?.reason), "error");
+        showToast(reasonMsg(json?.reason), "error");
       }
     } catch (e) {
       showToast(e.message || "Update failed", "error");
@@ -75,7 +93,6 @@ export default function GbpBookingLinkSection({ tenantId, s, showToast }) {
     } catch { /* clipboard blocked -- non-fatal */ }
   }
 
-  // -- Loading --------------------------------------------------------------
   if (loading) {
     return <div style={{ textAlign: "center", padding: 40, color: "#bbb", fontSize: 13 }}>Loading…</div>;
   }
@@ -91,7 +108,6 @@ export default function GbpBookingLinkSection({ tenantId, s, showToast }) {
     </div>
   );
 
-  // -- Branch on payload ----------------------------------------------------
   let body;
 
   if (data?.ok === false && (data.reason === "not_connected" || data.connected === false)) {
@@ -114,7 +130,6 @@ export default function GbpBookingLinkSection({ tenantId, s, showToast }) {
       </div>
     );
   } else if (data?.isOurs) {
-    // Good state -- already ours.
     body = (
       <div style={{ ...s.card, padding: 24 }}>
         <Pill tone="good" label="Pointing to your booking page" />
@@ -125,7 +140,6 @@ export default function GbpBookingLinkSection({ tenantId, s, showToast }) {
       </div>
     );
   } else if (data?.currentUri) {
-    // Leaking -- connected, has a link, but not ours.
     const blocked = data.isEditable === false;
     body = (
       <div style={{ ...s.card, padding: 24 }}>
@@ -150,7 +164,6 @@ export default function GbpBookingLinkSection({ tenantId, s, showToast }) {
       </div>
     );
   } else {
-    // Connected, no appointment link at all.
     body = (
       <div style={{ ...s.card, padding: 24 }}>
         <Pill tone="neutral" label="No appointment link set" />
@@ -170,8 +183,6 @@ export default function GbpBookingLinkSection({ tenantId, s, showToast }) {
 
   return <>{intro}{body}</>;
 }
-
-// -- Bits -------------------------------------------------------------------
 
 function Pill({ tone, label }) {
   const map = {
@@ -199,7 +210,7 @@ function ManualFallback({ s, reason, url, copied, onCopy, embedded }) {
     <>
       <div style={{ fontSize: 13, color: "#444", lineHeight: 1.6 }}>{intro}</div>
       <ol style={{ margin: "12px 0", paddingLeft: 18, fontSize: 13, color: "#666", lineHeight: 1.9 }}>
-        <li>Open your profile -> <strong>Edit profile -> Booking</strong>.</li>
+        <li>Open your profile, then <strong>Edit profile, then Booking</strong>.</li>
         <li>Paste your booking page as the appointment link.</li>
         <li>Save, and remove any other appointment link still listed.</li>
       </ol>

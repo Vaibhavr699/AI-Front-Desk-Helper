@@ -66,7 +66,7 @@ const PHOTO_DEAD_DAYS  = 180;
 
 // Description quality thresholds (chars). Google hard limit is 750.
 const DESC_MIN_OK    = 80;    // below this = "thin", presence point lost
-const DESC_STRONG    = 600;   // at/above this = using the space well
+const DESC_STRONG    = 730;   // at/above this = using the full ~750 space well
 const DESC_MAX       = 750;   // Google hard limit
 
 function daysSince(iso) {
@@ -262,10 +262,16 @@ function buildAuditFromReads(location, photos, posts, reviewResp) {
       const reasons = [];
       if (!isStrong) reasons.push(`it's using ${descriptionLength} of ${DESC_MAX} characters`);
       if (!isLocal)  reasons.push("it doesn't clearly name your city or service area");
+      // Severity reflects HOW weak: a present, local description that's just
+      // short of the full space is polish (low). Missing local signal is a
+      // real ranking miss (medium). This keeps a strong-but-not-maxed profile
+      // from showing a loud gap that sorts above genuine issues, while still
+      // surfacing the "Rewrite with AI" action.
+      const qualitySeverity = isLocal ? "low" : "medium";
       gaps.push({
         key: "description_quality",
-        severity: "medium",
-        label: "Description could rank harder",
+        severity: qualitySeverity,
+        label: isLocal ? "Description could use the full space" : "Description could rank harder",
         advice: `Your description is fine, but ${reasons.join(" and ")}. A rewrite that uses the full space with your services, service-area cities, and a booking call-to-action ranks better in local and AI search. Use “Rewrite with AI”.`,
         current_description: description,
         description_length: descriptionLength,

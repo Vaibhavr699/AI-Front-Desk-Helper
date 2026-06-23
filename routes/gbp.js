@@ -17,6 +17,8 @@
  *   G5 — performance: GET /performance, POST /performance/run
  *   G6 — booking link: GET/POST/DELETE /booking-link  (point GBP appt link at
  *                      the tenant's own booking page)
+ *   G7 — strength:    POST /description/generate, POST /description/push,
+ *                     GET /services/suggest   (Strength Engine fixes)
  *
  * Tenant resolution mirrors routes/reviews.js: getTenantIdFromQuery(req).
  * Mounted WITH authMiddleware in server.js (Option B) — getTenantIdFromQuery
@@ -50,6 +52,8 @@ const gbpPosting = require("../services/gbpPosting");
 const gbpImageStore = require("../lib/gbpImageStore");
 const gbpPerformance = require("../services/gbpPerformance");
 const gbpBookingLink = require("../services/gbpBookingLink");
+const gbpDescription = require("../services/gbpDescription");
+const gbpServices = require("../services/gbpServices");
 
 async function getTenantWithGoogle(tenantId) {
   const res = await db.query(
@@ -225,7 +229,6 @@ router.post("/posts/generate", async (req, res) => {
 });
 
 // ── GET /api/gbp/media ──────────────────────────────────────────────────────
-// List existing GBP photos so the owner can pick one as a post image.
 router.get("/media", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -245,8 +248,6 @@ router.get("/media", async (req, res) => {
 });
 
 // ── POST /api/gbp/posts/:id/image ───────────────────────────────────────────
-// Owner uploads an image (multipart, field name 'image'). Re-hosts to public
-// URL, saves media_url on the draft.
 router.post("/posts/:id/image", upload.single("image"), async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -258,7 +259,6 @@ router.post("/posts/:id/image", upload.single("image"), async (req, res) => {
       return res.status(400).json({ error: "No image uploaded (field name must be 'image')" });
     }
 
-    // Confirm the post exists, belongs to tenant, and is still editable.
     const existing = await db.query(
       "SELECT status FROM gbp_posts WHERE id = $1 AND tenant_id = $2",
       [id, tenantId]
@@ -287,9 +287,6 @@ router.post("/posts/:id/image", upload.single("image"), async (req, res) => {
 });
 
 // ── POST /api/gbp/posts/:id/image-from-google ───────────────────────────────
-// Owner picked an existing GBP photo (from GET /media). Body: { source_url }.
-// We re-host its bytes (Google's own URLs aren't reliable as a post sourceUrl)
-// and save the re-hosted media_url on the draft.
 router.post("/posts/:id/image-from-google", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -369,9 +366,6 @@ router.patch("/posts/:id", async (req, res) => {
 });
 
 // ── POST /api/gbp/posts/:id/approve ─────────────────────────────────────────
-// The gated LIVE publish. Requires an image (enforced in publishPost too).
-// Calls localPosts.create via reviewsHelper.authedRequest. This is the first
-// thing that writes to the public profile — owner-action only.
 router.post("/posts/:id/approve", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -383,7 +377,6 @@ router.post("/posts/:id/approve", async (req, res) => {
       return res.status(400).json({ error: "Google Business Profile not connected" });
     }
 
-    // Pre-check image so we return a clean 400 (not a publish attempt) when missing.
     const pre = await db.query(
       "SELECT media_url, status FROM gbp_posts WHERE id = $1 AND tenant_id = $2",
       [id, tenantId]
@@ -435,9 +428,6 @@ router.delete("/posts/:id", async (req, res) => {
 // G4 — auto-posting schedule + image pool
 // ════════════════════════════════════════════════════════════════════════════
 
-// ── GET /api/gbp/schedule ───────────────────────────────────────────────────
-// Returns the tenant's schedule row (creating a default Off row if none exists)
-// so the UI always has something to render.
 router.get("/schedule", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -455,7 +445,6 @@ router.get("/schedule", async (req, res) => {
       row = await db.query("SELECT * FROM gbp_post_schedule WHERE tenant_id = $1", [tenantId]);
     }
     const s = row.rows[0];
-    // Derive the friendly mode for the UI.
     const mode = !s.enabled ? "off" : s.auto_publish ? "auto" : "draft";
     res.json({ schedule: { ...s, mode } });
   } catch (err) {
@@ -464,17 +453,12 @@ router.get("/schedule", async (req, res) => {
   }
 });
 
-// ── PATCH /api/gbp/schedule ─────────────────────────────────────────────────
-// Body may include: mode ('off'|'draft'|'auto'), posts_per_week (1-7),
-// preferred_days (int[]), preferred_hour (0-23). `mode` is translated into the
-// enabled + auto_publish booleans.
 router.patch("/schedule", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
     if (!gated) return;
     const { tenantId } = gated;
 
-    // Ensure a row exists.
     await db.query(
       `INSERT INTO gbp_post_schedule (tenant_id) VALUES ($1) ON CONFLICT (tenant_id) DO NOTHING`,
       [tenantId]
@@ -520,7 +504,6 @@ router.patch("/schedule", async (req, res) => {
   }
 });
 
-// ── GET /api/gbp/pool ───────────────────────────────────────────────────────
 router.get("/pool", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -534,9 +517,6 @@ router.get("/pool", async (req, res) => {
   }
 });
 
-// ── POST /api/gbp/pool ──────────────────────────────────────────────────────
-// Multipart upload (field 'image') OR JSON { source_url } to add an existing
-// GBP photo to the durable pool.
 router.post("/pool", upload.single("image"), async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -566,7 +546,6 @@ router.post("/pool", upload.single("image"), async (req, res) => {
   }
 });
 
-// ── DELETE /api/gbp/pool/:id ────────────────────────────────────────────────
 router.delete("/pool/:id", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -585,8 +564,6 @@ router.delete("/pool/:id", async (req, res) => {
 // G5 — performance metrics
 // ════════════════════════════════════════════════════════════════════════════
 
-// ── GET /api/gbp/performance ────────────────────────────────────────────────
-// Returns the stored daily time series + range totals. range=7|30|90 (days).
 router.get("/performance", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -602,10 +579,6 @@ router.get("/performance", async (req, res) => {
   }
 });
 
-// ── POST /api/gbp/performance/run ───────────────────────────────────────────
-// On-demand fetch from Google (trailing 30 days) so the owner can refresh
-// without waiting for the nightly cron. Surfaces the "API not enabled" case
-// distinctly so the fix is obvious.
 router.post("/performance/run", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -632,20 +605,9 @@ router.post("/performance/run", async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// G6 — booking link (point the GBP "Appointments" link at the tenant's own
-// booking page instead of a generic CRM/provider URL). Reuses the same
-// gateTenant + hasReviewsAccess boundary. Service: services/gbpBookingLink.js,
-// which does its own full tenant-context query (incl. booking_domain + tokens),
-// so the route only needs the gated tenantId.
-//
-// Expected-state results (not_connected, api_not_enabled, permission_denied)
-// are returned as 200-with-reason so the UI can branch to the right fallback
-// (e.g. show the manual copy-paste guide) rather than treating them as errors.
+// G6 — booking link
 // ════════════════════════════════════════════════════════════════════════════
 
-// ── GET /api/gbp/booking-link ───────────────────────────────────────────────
-// Current status of the GBP appointment link: what it points to, whether it's
-// provider-set / editable, and whether it already matches the tenant's page.
 router.get("/booking-link", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -660,11 +622,6 @@ router.get("/booking-link", async (req, res) => {
   }
 });
 
-// ── POST /api/gbp/booking-link ──────────────────────────────────────────────
-// Point the appointment link at the tenant's booking page. Body: { url? }
-// (optional override; defaults to the tenant's resolved booking URL).
-// Returns { ok, action:"created"|"updated", uri, providerStillPresent } or a
-// { ok:false, reason } the UI can branch on.
 router.post("/booking-link", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -679,9 +636,6 @@ router.post("/booking-link", async (req, res) => {
   }
 });
 
-// ── DELETE /api/gbp/booking-link ────────────────────────────────────────────
-// Remove a specific appointment link by resource name (from the status
-// `links[].name`). Body or query: { name }. Used to clear a stale self-link.
 router.delete("/booking-link", async (req, res) => {
   try {
     const gated = await gateTenant(req, res);
@@ -695,6 +649,72 @@ router.delete("/booking-link", async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error("DELETE /api/gbp/booking-link error:", err);
+    res.status(500).json({ ok: false, reason: "server_error", message: err.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// G7 — STRENGTH ENGINE: description SEO rewrite (writable) + services guide.
+//
+// Description rewrite is a strict generate -> approve -> push flow:
+//   POST /description/generate  -> returns { current, proposed } (NO write)
+//   POST /description/push      -> writes owner-approved text to the profile
+// Services is guide-only (no write):
+//   GET  /services/suggest      -> returns current vs. suggested-to-add
+//
+// Expected-state reasons (not_connected, api_not_enabled, permission_denied,
+// generation_failed, suggest_failed) are returned as 200-with-reason so the
+// dashboard branches in-place rather than treating them as hard errors.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── POST /api/gbp/description/generate ──────────────────────────────────────
+// Body: { angle? } — one of balanced|margin|geo|commercial|trust|speed.
+// Returns { ok, current, proposed, length, max, angle, over_limit }.
+router.post("/description/generate", async (req, res) => {
+  try {
+    const gated = await gateTenant(req, res);
+    if (!gated) return;
+    const { tenantId } = gated;
+
+    const result = await gbpDescription.generateDescription(tenantId, { angle: req.body?.angle });
+    res.json(result);
+  } catch (err) {
+    console.error("POST /api/gbp/description/generate error:", err);
+    res.status(500).json({ ok: false, reason: "server_error", message: err.message });
+  }
+});
+
+// ── POST /api/gbp/description/push ──────────────────────────────────────────
+// Body: { text } — the owner-approved description. Validated (<=750) then
+// PATCHed to profile.description. Returns { ok, description } or
+// { ok:false, reason }.
+router.post("/description/push", async (req, res) => {
+  try {
+    const gated = await gateTenant(req, res);
+    if (!gated) return;
+    const { tenantId } = gated;
+
+    const result = await gbpDescription.pushDescription(tenantId, req.body?.text);
+    res.json(result);
+  } catch (err) {
+    console.error("POST /api/gbp/description/push error:", err);
+    res.status(500).json({ ok: false, reason: "server_error", message: err.message });
+  }
+});
+
+// ── GET /api/gbp/services/suggest ───────────────────────────────────────────
+// Guide-only. Returns { ok, category, current, suggested_to_add, copy_block,
+// note }. NEVER writes to Google.
+router.get("/services/suggest", async (req, res) => {
+  try {
+    const gated = await gateTenant(req, res);
+    if (!gated) return;
+    const { tenantId } = gated;
+
+    const result = await gbpServices.suggestServices(tenantId);
+    res.json(result);
+  } catch (err) {
+    console.error("GET /api/gbp/services/suggest error:", err);
     res.status(500).json({ ok: false, reason: "server_error", message: err.message });
   }
 });

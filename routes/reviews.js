@@ -3,9 +3,12 @@
 /**
  * routes/reviews.js
  *
- * Google Reviews endpoints. The manual "Check for new reviews" poll
- * and the nightly scheduler both use fetchReviewsForTenant() from
+ * Google Reviews + GBP connect endpoints. The manual "Check for new reviews"
+ * poll and the nightly scheduler both use fetchReviewsForTenant() from
  * services/reviewScheduler.js — one shared function, zero duplication.
+ *
+ * Multi-location: GET /locations + POST /select-location power the connect-time
+ * picker for Google accounts that manage more than one Business Profile.
  */
 
 const express  = require("express");
@@ -41,7 +44,8 @@ function hasReviewsAccess(tenant) {
 }
 
 // ── GET /api/reviews/status ────────────────────────────────────────────────
-// Returns: { connected, addon_active, location_name, pending_count }
+// Returns: { connected, addon_active, needs_location_selection,
+//            location_name, pending_count }
 router.get("/status", async (req, res) => {
   try {
     const tenantId = getTenantIdFromQuery(req);
@@ -50,8 +54,13 @@ router.get("/status", async (req, res) => {
     const tenant = await getTenantWithGoogle(tenantId);
     if (!tenant) return res.status(404).json({ error: "Tenant not found" });
 
-    const connected   = !!(tenant.google_access_token && tenant.google_location_id);
+    const hasToken    = !!tenant.google_access_token;
+    const hasLocation = !!tenant.google_location_id;
+    const connected   = hasToken && hasLocation;
     const addonActive = hasReviewsAccess(tenant);
+
+    // Connected to Google but no location chosen yet → UI shows the picker.
+    const needsLocationSelection = hasToken && !hasLocation;
 
     let pendingCount = 0;
     if (connected && addonActive) {
@@ -65,6 +74,7 @@ router.get("/status", async (req, res) => {
     res.json({
       connected,
       addon_active: addonActive,
+      needs_location_selection: needsLocationSelection,
       pending_count: pendingCount,
       location_name: tenant.company_name || tenant.name || null,
     });
@@ -100,7 +110,6 @@ router.get("/", async (req, res) => {
       [tenantId, status]
     );
 
-    // Also return total pending count for badge
     const pc = await db.query(
       "SELECT COUNT(*) FROM google_reviews WHERE tenant_id = $1 AND status = 'pending'",
       [tenantId]
@@ -131,7 +140,6 @@ router.post("/poll", async (req, res) => {
       return res.status(400).json({ error: "Google not connected" });
     }
 
-    // Reuse the same function the nightly scheduler calls
     const result = await fetchReviewsForTenant(tenantId);
 
     res.json({
@@ -167,11 +175,9 @@ router.post("/:id/approve", async (req, res) => {
     const responseText = custom_response || review.ai_draft;
     if (!responseText) return res.status(400).json({ error: "No response text available" });
 
-    // Post to Google via helper
     const helper = require("../lib/reviewsHelper");
     await helper.postReplyToGoogle(tenant, review.google_review_id, responseText);
 
-    // Mark as posted
     await db.query(
       `UPDATE google_reviews
        SET status = 'posted', posted_at = now(), ai_draft = $1, updated_at = now()
@@ -259,24 +265,93 @@ router.get("/oauth/url", async (req, res) => {
 });
 
 // ── GET /api/reviews/oauth/callback ───────────────────────────────────────
-// Google redirects here after OAuth consent
+// Google redirects here after OAuth consent. handleOAuthCallback resolves
+// location(s); the frontend then calls /status to decide what to show. We
+// pass a hint on the redirect so the UI can react without a flash.
 router.get("/oauth/callback", async (req, res) => {
   try {
     const { code, state: tenantId } = req.query;
     if (!code || !tenantId) return res.status(400).send("Missing code or state");
 
     const helper = require("../lib/reviewsHelper");
-    await helper.handleOAuthCallback(tenantId, code);
+    const result = await helper.handleOAuthCallback(tenantId, code);
 
-    // Trigger an immediate first fetch so reviews appear right away
-    fetchReviewsForTenant(tenantId).catch(err =>
-      console.warn("[Reviews] Initial fetch after OAuth failed:", err.message)
-    );
+    // Kick an initial fetch only if a location got auto-selected.
+    if (result?.status === "connected") {
+      fetchReviewsForTenant(tenantId).catch(err =>
+        console.warn("[Reviews] Initial fetch after OAuth failed:", err.message)
+      );
+    }
 
-    res.redirect(`${process.env.FRONTEND_URL || ""}/reviews?connected=true`);
+    const qs =
+      result?.status === "needs_selection" ? "select_location=true"
+    : result?.status === "no_locations"    ? "error=no_locations"
+    : result?.status === "discovery_failed"? "error=discovery_failed"
+    : "connected=true";
+
+    res.redirect(`${process.env.FRONTEND_URL || ""}/reviews?${qs}`);
   } catch (err) {
     console.error("GET /api/reviews/oauth/callback error:", err);
     res.redirect(`${process.env.FRONTEND_URL || ""}/reviews?error=oauth_failed`);
+  }
+});
+
+// ── GET /api/reviews/locations ──────────────────────────────────────────────
+// Lists every GBP location the tenant's connected Google account can manage,
+// for the connect-time picker. Returns:
+//   { locations: [{ account_id, location_id, title, address }] }
+router.get("/locations", async (req, res) => {
+  try {
+    const tenantId = getTenantIdFromQuery(req);
+    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+
+    const tenant = await getTenantWithGoogle(tenantId);
+    if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+    if (!tenant.google_access_token && !tenant.google_refresh_token) {
+      return res.status(400).json({ error: "Google not connected" });
+    }
+
+    const helper = require("../lib/reviewsHelper");
+    const list   = await helper.listConnectableLocations(tenant);
+
+    res.json({
+      locations: list.map((l) => ({
+        account_id:  l.accountName,
+        location_id: l.locationName,
+        title:       l.title,
+        address:     l.address,
+      })),
+    });
+  } catch (err) {
+    console.error("GET /api/reviews/locations error:", err);
+    res.status(500).json({ error: err.message || "Server error" });
+  }
+});
+
+// ── POST /api/reviews/select-location ───────────────────────────────────────
+// Body: { account_id, location_id }
+// Persists the chosen location, then kicks an initial review fetch.
+router.post("/select-location", async (req, res) => {
+  try {
+    const tenantId = getTenantIdFromQuery(req);
+    if (!tenantId) return res.status(400).json({ error: "tenant_id required" });
+
+    const { account_id, location_id } = req.body || {};
+    if (!account_id || !location_id) {
+      return res.status(400).json({ error: "account_id and location_id required" });
+    }
+
+    const helper = require("../lib/reviewsHelper");
+    const result = await helper.setTenantLocation(tenantId, account_id, location_id);
+
+    fetchReviewsForTenant(tenantId).catch((err) =>
+      console.warn("[Reviews] Initial fetch after location select failed:", err.message)
+    );
+
+    res.json({ success: true, location: result.location });
+  } catch (err) {
+    console.error("POST /api/reviews/select-location error:", err);
+    res.status(400).json({ error: err.message || "Server error" });
   }
 });
 

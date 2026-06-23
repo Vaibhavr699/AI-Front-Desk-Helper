@@ -94,6 +94,189 @@ function PaywallCard({ tenantId, plan }) {
   );
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// Review Requests section (Jun 23, 2026)
+//
+// Tenant-facing controls for the automated review-request drip. Lives in the
+// CONNECTED view of the Reviews tab. Review-link field + on/off toggle + the
+// live list of active campaigns each with a Stop button. Backed by
+// /api/review-campaigns (config, list, :id/stop). Matches the page's inline
+// style conventions (#E8600A, s.card pattern, toast). showToast + sBtn are
+// passed in as props; API_BASE + hdrs are module-level.
+// ════════════════════════════════════════════════════════════════════════════
+function ReviewRequestsSection({ tenantId, showToast, sBtn }) {
+  const [open, setOpen] = useState(false);
+  const [config, setConfig] = useState(null); // { enabled, review_link, steps }
+  const [campaigns, setCampaigns] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [linkDraft, setLinkDraft] = useState("");
+
+  const loadConfig = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/review-campaigns/config?tenant_id=${tenantId}`, { headers: hdrs() });
+      const data = await res.json();
+      if (res.ok) {
+        setConfig(data);
+        setLinkDraft(data.review_link || "");
+      }
+    } catch { /* non-fatal */ }
+  }, [tenantId]);
+
+  const loadCampaigns = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/review-campaigns?tenant_id=${tenantId}&status=active`, { headers: hdrs() });
+      const data = await res.json();
+      if (res.ok) setCampaigns(data.campaigns || []);
+    } catch { /* non-fatal */ }
+  }, [tenantId]);
+
+  useEffect(() => { loadConfig(); loadCampaigns(); }, [loadConfig, loadCampaigns]);
+
+  async function patchConfig(patch) {
+    setSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/review-campaigns/config?tenant_id=${tenantId}`, {
+        method: "PATCH", headers: hdrs(), body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || "Save failed");
+      }
+      await loadConfig();
+      showToast("Saved");
+    } catch (e) { showToast(e.message || "Save failed", "error"); }
+    finally { setSaving(false); }
+  }
+
+  async function toggleEnabled() {
+    if (!config) return;
+    if (!config.enabled && !config.review_link) {
+      showToast("Add your Google review link first", "error");
+      return;
+    }
+    await patchConfig({ enabled: !config.enabled });
+  }
+
+  async function saveLink() {
+    await patchConfig({ review_link: linkDraft });
+  }
+
+  async function stopCampaign(id) {
+    try {
+      const res = await fetch(`${API_BASE}/api/review-campaigns/${id}/stop?tenant_id=${tenantId}`, {
+        method: "POST", headers: hdrs(),
+      });
+      if (!res.ok) throw new Error("Stop failed");
+      showToast("Request stopped");
+      loadCampaigns();
+    } catch (e) { showToast(e.message || "Stop failed", "error"); }
+  }
+
+  const card = {
+    background: "#fff", borderRadius: 14, border: "1px solid #e8e6e0",
+    overflow: "hidden", marginBottom: 16,
+  };
+
+  if (!config) return null;
+
+  return (
+    <div style={card}>
+      {/* Header row */}
+      <div
+        onClick={() => setOpen((o) => !o)}
+        style={{ padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", borderBottom: open ? "1px solid #f5f5f5" : "none" }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 16 }}>📣</span>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>Review Requests</div>
+            <div style={{ fontSize: 11, color: "#888" }}>
+              Automatically ask happy customers for a Google review after a completed job
+            </div>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 20, textTransform: "uppercase", letterSpacing: "0.06em",
+            background: config.enabled ? "#dcfce7" : "#f5f4f0",
+            color: config.enabled ? "#16a34a" : "#888",
+            border: `1px solid ${config.enabled ? "#bbf7d0" : "#e8e6e0"}` }}>
+            {config.enabled ? "On" : "Off"}
+          </span>
+          <span style={{ fontSize: 12, color: "#bbb" }}>{open ? "▲" : "▼"}</span>
+        </div>
+      </div>
+
+      {open && (
+        <div style={{ padding: "16px 18px" }}>
+          {/* Review link */}
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
+              Google review link
+            </div>
+            <div style={{ fontSize: 11, color: "#aaa", marginBottom: 8, lineHeight: 1.5 }}>
+              From your Google Business Profile → "Ask for reviews" → copy link. This is sent to customers.
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                value={linkDraft}
+                onChange={(e) => setLinkDraft(e.target.value)}
+                placeholder="https://g.page/r/..."
+                style={{ flex: 1, padding: "9px 12px", border: "1px solid #e8e6e0", borderRadius: 8, fontSize: 12, fontFamily: "'DM Sans', sans-serif", outline: "none" }}
+              />
+              <button onClick={saveLink} disabled={saving} style={sBtn("#2563eb", "rgba(37,99,235,0.08)")}>
+                {saving ? "Saving..." : "Save link"}
+              </button>
+            </div>
+          </div>
+
+          {/* Enable toggle */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px", background: "#fafaf9", border: "1px solid #e8e6e0", borderRadius: 10, marginBottom: 18 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a1a" }}>Automatic review requests</div>
+              <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>
+                Default: text on day 1, day 3, then email on day 7 (3rd text if no email). Stops when they leave a review.
+              </div>
+            </div>
+            <button
+              onClick={toggleEnabled}
+              disabled={saving}
+              style={{ ...sBtn(config.enabled ? "#888" : "#16a34a", config.enabled ? "transparent" : "rgba(22,163,74,0.1)"), minWidth: 80 }}
+            >
+              {config.enabled ? "Turn off" : "Turn on"}
+            </button>
+          </div>
+
+          {/* Active campaigns + Stop buttons */}
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
+              In progress ({campaigns.length})
+            </div>
+            {campaigns.length === 0 ? (
+              <div style={{ fontSize: 12, color: "#aaa", padding: "12px 0" }}>
+                No active review requests. They start automatically when a job is marked complete.
+              </div>
+            ) : (
+              campaigns.map((c) => (
+                <div key={c.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", border: "1px solid #f0eeea", borderRadius: 8, marginBottom: 6 }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a1a" }}>{c.contact_name || c.contact_phone || "Customer"}</div>
+                    <div style={{ fontSize: 11, color: "#aaa" }}>
+                      Step {(c.current_step ?? 0) + 1} · next {c.next_send_at ? new Date(c.next_send_at).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
+                    </div>
+                  </div>
+                  <button onClick={() => stopCampaign(c.id)} style={sBtn("#dc2626", "rgba(220,38,38,0.06)")}>
+                    Stop
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Reviews({ tenantId }) {
   const [status, setStatus] = useState(null);
   const [reviews, setReviews] = useState([]);
@@ -442,6 +625,8 @@ export default function Reviews({ tenantId }) {
       </div>
 
       <div style={s.wrap}>
+        <ReviewRequestsSection tenantId={tenantId} showToast={showToast} sBtn={s.btn} />
+
         <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
           {[
             { key: "pending", label: `Pending${pendingCount > 0 ? ` (${pendingCount})` : ""}` },

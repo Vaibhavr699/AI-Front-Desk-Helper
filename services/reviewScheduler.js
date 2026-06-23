@@ -3,13 +3,17 @@
 /**
  * services/reviewScheduler.js
  *
- * Nightly cron job — runs at 2:00 AM every day.
+ * Nightly cron job — runs every 6 hours.
  * For every tenant with Google Reviews connected, fetches new reviews,
  * generates AI draft responses, and fires a dashboard notification
  * for any reviews needing approval.
  *
  * Also exports fetchReviewsForTenant() so routes/reviews.js can reuse
  * the same logic for the manual "Check for new reviews" button.
+ *
+ * Jun 23, 2026 — REVIEW CAMPAIGN EXIT HOOK: when a NEW review is detected,
+ * call reviewCampaign.completeCampaignsForReview() so any active
+ * review-request drip for that customer stops (best-effort first-name match).
  */
 
 const cron       = require("node-cron");
@@ -89,6 +93,21 @@ async function fetchReviewsForTenant(tenantId) {
       ]
     );
     newCount++;
+
+    // ── Review-request drip exit hook (Jun 23, 2026) ───────────────────────
+    // If this new review matches an active review-request campaign for the
+    // same customer (best-effort first-name match), complete that campaign so
+    // no further requests go out. Heuristic — Google doesn't expose the
+    // reviewer's phone/email — and the engine's day-cap covers anyone missed.
+    // Fire-and-forget; never blocks the review insert.
+    try {
+      const reviewCampaign = require("./reviewCampaign");
+      reviewCampaign
+        .completeCampaignsForReview(tenantId, review.reviewer?.displayName || null)
+        .catch(() => {});
+    } catch (_) {
+      /* non-fatal — reviewCampaign service not present / load error */
+    }
   }
 
   // 4. Fire notification if any new reviews need approval
@@ -160,7 +179,7 @@ async function runScheduledFetch() {
 
 // ── Register the cron job ──────────────────────────────────────────────────
 function startReviewScheduler() {
-  // Run at 2:00 AM every day (server local time)
+  // Run every 6 hours
   cron.schedule("0 */6 * * *", async () => {
     try {
       await runScheduledFetch();

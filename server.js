@@ -133,7 +133,6 @@ require("node-cron").schedule("*/5 * * * *", async () => {
 });
 console.log("[startup] coachingScorer cron scheduled (*/5 * * * *)");
 
-const cron = require("node-cron"); // if not already imported
 const reviewCampaign = require("./services/reviewCampaign"); // adjust path
 
 // Review-request drip — every 30 minutes.

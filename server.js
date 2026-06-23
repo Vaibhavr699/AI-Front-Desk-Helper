@@ -6780,6 +6780,27 @@ app.post("/webhooks/crm/job-completed", async (req, res) => {
       }).catch((e) => console.error("[CRM Webhook] notifyRevenueRecovered failed:", e.message));
     }
 
+    // ⭐ Review-request drip (Jun 23, 2026) — enroll the paying customer.
+// Revenue-gated (inside hasRevenue) so $0 warranty/touch-up/refund
+// completions never trigger a review ask. No-ops if the tenant hasn't
+// enabled review requests or set a review link. Fire-and-forget; never
+// blocks the webhook response.
+if (hasRevenue) {
+  try {
+    const reviewCampaign = require("./services/reviewCampaign");
+    reviewCampaign.startReviewCampaign(tenantId, {
+      leadId: lead.id,
+      name:   lead.name || contactName,
+      phone:  phone,
+      email:  req.body?.email || req.body?.contact_email || null,
+    }, { source: "job_completed" }).catch((e) =>
+      console.error("[CRM Webhook] startReviewCampaign failed:", e.message)
+    );
+  } catch (e) {
+    console.error("[CRM Webhook] reviewCampaign require failed:", e.message);
+  }
+}
+
     // 📅 New booking notification — only when we auto-created a booking here
     if (hasRevenue && booking && bookingResult.rows.length === 0) {
       notificationsService.notifyNewBooking(tenantId, {

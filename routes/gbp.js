@@ -15,6 +15,8 @@
  *   G3 — publish:     POST /posts/:id/approve   (live publish, image-required)
  *   G4 — schedule:    GET/PATCH /schedule, GET/POST/DELETE /pool   (auto-posting)
  *   G5 — performance: GET /performance, POST /performance/run
+ *   G6 — booking link: GET/POST/DELETE /booking-link  (point GBP appt link at
+ *                      the tenant's own booking page)
  *
  * Tenant resolution mirrors routes/reviews.js: getTenantIdFromQuery(req).
  * Mounted WITH authMiddleware in server.js (Option B) — getTenantIdFromQuery
@@ -47,6 +49,7 @@ const gbpAudit   = require("../services/gbpAudit");
 const gbpPosting = require("../services/gbpPosting");
 const gbpImageStore = require("../lib/gbpImageStore");
 const gbpPerformance = require("../services/gbpPerformance");
+const gbpBookingLink = require("../services/gbpBookingLink");
 
 async function getTenantWithGoogle(tenantId) {
   const res = await db.query(
@@ -625,6 +628,74 @@ router.post("/performance/run", async (req, res) => {
   } catch (err) {
     console.error("POST /api/gbp/performance/run error:", err);
     res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// G6 — booking link (point the GBP "Appointments" link at the tenant's own
+// booking page instead of a generic CRM/provider URL). Reuses the same
+// gateTenant + hasReviewsAccess boundary. Service: services/gbpBookingLink.js,
+// which does its own full tenant-context query (incl. booking_domain + tokens),
+// so the route only needs the gated tenantId.
+//
+// Expected-state results (not_connected, api_not_enabled, permission_denied)
+// are returned as 200-with-reason so the UI can branch to the right fallback
+// (e.g. show the manual copy-paste guide) rather than treating them as errors.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── GET /api/gbp/booking-link ───────────────────────────────────────────────
+// Current status of the GBP appointment link: what it points to, whether it's
+// provider-set / editable, and whether it already matches the tenant's page.
+router.get("/booking-link", async (req, res) => {
+  try {
+    const gated = await gateTenant(req, res);
+    if (!gated) return;
+    const { tenantId } = gated;
+
+    const status = await gbpBookingLink.getBookingLinkStatus(tenantId);
+    res.json(status);
+  } catch (err) {
+    console.error("GET /api/gbp/booking-link error:", err);
+    res.status(500).json({ ok: false, reason: "server_error", message: err.message });
+  }
+});
+
+// ── POST /api/gbp/booking-link ──────────────────────────────────────────────
+// Point the appointment link at the tenant's booking page. Body: { url? }
+// (optional override; defaults to the tenant's resolved booking URL).
+// Returns { ok, action:"created"|"updated", uri, providerStillPresent } or a
+// { ok:false, reason } the UI can branch on.
+router.post("/booking-link", async (req, res) => {
+  try {
+    const gated = await gateTenant(req, res);
+    if (!gated) return;
+    const { tenantId } = gated;
+
+    const result = await gbpBookingLink.setBookingLink(tenantId, { url: req.body?.url });
+    res.json(result);
+  } catch (err) {
+    console.error("POST /api/gbp/booking-link error:", err);
+    res.status(500).json({ ok: false, reason: "server_error", message: err.message });
+  }
+});
+
+// ── DELETE /api/gbp/booking-link ────────────────────────────────────────────
+// Remove a specific appointment link by resource name (from the status
+// `links[].name`). Body or query: { name }. Used to clear a stale self-link.
+router.delete("/booking-link", async (req, res) => {
+  try {
+    const gated = await gateTenant(req, res);
+    if (!gated) return;
+    const { tenantId } = gated;
+
+    const name = req.body?.name || req.query.name;
+    if (!name) return res.status(400).json({ error: "link resource name required" });
+
+    const result = await gbpBookingLink.deleteBookingLink(tenantId, name);
+    res.json(result);
+  } catch (err) {
+    console.error("DELETE /api/gbp/booking-link error:", err);
+    res.status(500).json({ ok: false, reason: "server_error", message: err.message });
   }
 });
 

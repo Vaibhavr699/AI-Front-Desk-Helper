@@ -55,6 +55,33 @@ export function getGbpPerformance(tenantId, range = 30) {
   return api(`/api/gbp/performance?tenant_id=${tenantId}&range=${range}`);
 }
 
+// ── GBP Booking-Link (G6, Jun 23 2026) ────────────────────────────────────
+// Point the tenant's Google "Appointments" link at their own book.<domain>
+// page instead of a leaking CRM/provider URL. Backend: routes/gbp.js.
+// GET/POST return raw service shapes; expected states (not_connected,
+// api_not_enabled, permission_denied) come back as 200 with ok:false, so the
+// api() helper resolves and the component branches on `reason`.
+export function getGbpBookingLink(tenantId) {
+  return api(`/api/gbp/booking-link?tenant_id=${tenantId}`);
+}
+
+// Omit url to let the backend resolve the tenant's own booking URL.
+export function setGbpBookingLink(tenantId, url) {
+  return api(`/api/gbp/booking-link?tenant_id=${tenantId}`, {
+    method: "POST",
+    body: JSON.stringify(url ? { url } : {}),
+  });
+}
+
+// linkName = a links[].name from the GET status payload. DELETE route reads
+// `name` (body or query), so send { name }.
+export function deleteGbpBookingLink(tenantId, linkName) {
+  return api(`/api/gbp/booking-link?tenant_id=${tenantId}`, {
+    method: "DELETE",
+    body: JSON.stringify({ name: linkName }),
+  });
+}
+
 export function post(path, body = {}) {
   return api(path, {
     method: "POST",

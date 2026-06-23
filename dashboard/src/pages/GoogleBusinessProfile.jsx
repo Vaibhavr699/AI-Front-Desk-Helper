@@ -51,6 +51,16 @@ const SEV_STYLE = {
   low:    { bg: "#fafaf9", border: "#e8e6e0", dot: "#888",    label: "Low" },
 };
 
+// ── Description angle picker options (must match gbpDescription.js ANGLES) ───
+const ANGLE_OPTIONS = [
+  { key: "balanced",   icon: "⚖️", title: "Just optimize it",       desc: "Balanced local-SEO rewrite — keywords, your cities, and a booking call-to-action." },
+  { key: "margin",     icon: "💰", title: "More of my best work",   desc: "Lead with your highest-value service to attract more premium jobs." },
+  { key: "geo",        icon: "📍", title: "Wider service area",     desc: "Rank across all your towns, not just your home city." },
+  { key: "commercial", icon: "🏢", title: "Commercial clients",     desc: "Tilt toward larger commercial & property-management work." },
+  { key: "trust",      icon: "🛡️", title: "Build trust",            desc: "Lead with credibility — licensed, insured, warranty, reviews." },
+  { key: "speed",      icon: "⚡", title: "Fast booking",           desc: "Emphasize instant quotes and easy scheduling to convert now-buyers." },
+];
+
 // ── Dependency-free SVG trend chart (matches the Jun 22 Sankey/heatmap style) ─
 function TrendChart({ series, metricKey, color }) {
   const W = 820, H = 180, padL = 36, padR = 12, padT = 14, padB = 24;
@@ -134,6 +144,23 @@ export default function GoogleBusinessProfile({ tenantId }) {
   const [perfLoading, setPerfLoading] = useState(false);
   const [perfRange, setPerfRange] = useState(30);
   const [perfMetric, setPerfMetric] = useState("calls");
+
+  // ── Strength Engine (G7) ───────────────────────────────────────────────────
+  // Description rewrite modal: step = "angle" → pick a focus, then
+  // "review" → see current vs. proposed, edit, and push.
+  const [descModalOpen, setDescModalOpen] = useState(false);
+  const [descStep, setDescStep] = useState("angle"); // angle | review
+  const [descAngle, setDescAngle] = useState("balanced");
+  const [descGenerating, setDescGenerating] = useState(false);
+  const [descPushing, setDescPushing] = useState(false);
+  const [descCurrent, setDescCurrent] = useState("");
+  const [descProposed, setDescProposed] = useState("");
+  const DESC_MAX = 750;
+
+  // Services suggestion modal (guide-only, no write).
+  const [svcModalOpen, setSvcModalOpen] = useState(false);
+  const [svcLoading, setSvcLoading] = useState(false);
+  const [svcData, setSvcData] = useState(null);
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -382,6 +409,109 @@ export default function GoogleBusinessProfile({ tenantId }) {
     finally { setPublishingId(null); }
   }
 
+  // ── Strength Engine: description rewrite (G7) ──────────────────────────────
+  function openDescModal(gap) {
+    // Seed the "current" text from the gap if the audit carried it; the
+    // generate call returns the authoritative current text anyway.
+    setDescCurrent(gap?.current_description || "");
+    setDescProposed("");
+    setDescAngle("balanced");
+    setDescStep("angle");
+    setDescModalOpen(true);
+  }
+
+  function closeDescModal() {
+    if (descGenerating || descPushing) return;
+    setDescModalOpen(false);
+  }
+
+  async function generateDescription(angle) {
+    setDescAngle(angle);
+    setDescGenerating(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/gbp/description/generate?tenant_id=${tenantId}`, {
+        method: "POST", headers: hdrs(), body: JSON.stringify({ angle }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        const reasonMsg = {
+          not_connected: "Connect your Google Business Profile first.",
+          fetch_failed: "Couldn't read your profile from Google. Try again.",
+          generation_failed: "The AI writer hit an error. Try again.",
+          tenant_not_found: "Account not found.",
+        }[data.reason] || data.message || "Couldn't generate a description.";
+        throw new Error(reasonMsg);
+      }
+      setDescCurrent(data.current || "");
+      setDescProposed(data.proposed || "");
+      setDescStep("review");
+      if (data.over_limit) showToast("Draft was trimmed to fit Google's 750-character limit.", "error");
+    } catch (e) { showToast(e.message || "Generation failed", "error"); }
+    finally { setDescGenerating(false); }
+  }
+
+  async function pushDescription() {
+    const text = descProposed.trim();
+    if (!text) { showToast("Description is empty", "error"); return; }
+    if (text.length > DESC_MAX) { showToast(`Too long — ${text.length}/${DESC_MAX} characters`, "error"); return; }
+    if (!confirm("Publish this description to your live Google Business Profile?")) return;
+    setDescPushing(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/gbp/description/push?tenant_id=${tenantId}`, {
+        method: "POST", headers: hdrs(), body: JSON.stringify({ text }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        const reasonMsg = {
+          permission_denied: "Google denied the edit. Reconnect your account with edit permission.",
+          api_not_enabled: "The Business Information API isn't enabled on your Google project.",
+          too_long: data.message || "Description is over the 750-character limit.",
+          not_connected: "Connect your Google Business Profile first.",
+          empty: "Description is empty.",
+        }[data.reason] || data.message || "Couldn't publish the description.";
+        throw new Error(reasonMsg);
+      }
+      showToast("Description updated on Google ✓");
+      setDescModalOpen(false);
+      await runAudit(); // re-score now that the description is fixed
+    } catch (e) { showToast(e.message || "Publish failed", "error"); }
+    finally { setDescPushing(false); }
+  }
+
+  // ── Strength Engine: services suggestions (G7, guide-only) ─────────────────
+  async function openServicesModal() {
+    setSvcModalOpen(true);
+    setSvcLoading(true);
+    setSvcData(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/gbp/services/suggest?tenant_id=${tenantId}${cacheBust()}`, NO_CACHE);
+      const data = await res.json();
+      if (!data.ok) {
+        const reasonMsg = {
+          not_connected: "Connect your Google Business Profile first.",
+          fetch_failed: "Couldn't read your profile from Google. Try again.",
+          suggest_failed: "The AI suggester hit an error. Try again.",
+        }[data.reason] || data.message || "Couldn't load service suggestions.";
+        throw new Error(reasonMsg);
+      }
+      setSvcData(data);
+    } catch (e) {
+      showToast(e.message || "Couldn't load suggestions", "error");
+      setSvcModalOpen(false);
+    } finally { setSvcLoading(false); }
+  }
+
+  async function copyServices() {
+    const block = svcData?.copy_block || "";
+    if (!block) return;
+    try {
+      await navigator.clipboard.writeText(block);
+      showToast("Copied — paste into Google → Edit profile → Services");
+    } catch {
+      showToast("Couldn't copy automatically — select and copy manually", "error");
+    }
+  }
+
   // ── Schedule + pool actions (G4) ───────────────────────────────────────────
   async function saveSchedule(patch) {
     setScheduleSaving(true);
@@ -604,6 +734,14 @@ export default function GoogleBusinessProfile({ tenantId }) {
                         <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 20, background: sev.bg, color: sev.dot, border: `1px solid ${sev.border}`, textTransform: "uppercase" }}>{sev.label}</span>
                       </div>
                       <div style={{ fontSize: 12, color: "#666", lineHeight: 1.6 }}>{g.advice}</div>
+
+                      {/* Strength Engine actions — mirror the post_recency button pattern */}
+                      {g.actionable === "rewrite_description" && (
+                        <button onClick={() => openDescModal(g)} style={{ ...s.btn(), marginTop: 8, padding: "5px 12px" }}>✨ Rewrite with AI →</button>
+                      )}
+                      {g.actionable === "suggest_services" && (
+                        <button onClick={openServicesModal} style={{ ...s.btn("#2563eb", "rgba(37,99,235,0.08)"), marginTop: 8, padding: "5px 12px" }}>See suggested services →</button>
+                      )}
                       {g.key === "post_recency" && (
                         <button onClick={() => setSubTab("drafts")} style={{ ...s.btn(), marginTop: 8, padding: "5px 12px" }}>Create a post →</button>
                       )}
@@ -915,7 +1053,8 @@ export default function GoogleBusinessProfile({ tenantId }) {
           <GbpBookingLinkSection tenantId={tenantId} s={s} showToast={showToast} />
         </div>
       )}
-      
+
+      {/* ── Image picker modal ── */}
       {pickerForPost && (
         <div onClick={() => setPickerForPost(null)} style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, maxWidth: 720, width: "100%", maxHeight: "80vh", overflow: "hidden", display: "flex", flexDirection: "column" }}>
@@ -941,6 +1080,154 @@ export default function GoogleBusinessProfile({ tenantId }) {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Description rewrite modal (G7 Strength Engine) ── */}
+      {descModalOpen && (
+        <div onClick={closeDescModal} style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, maxWidth: 680, width: "100%", maxHeight: "86vh", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid #eee", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>Rewrite your business description</div>
+                <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>
+                  {descStep === "angle" ? "Pick what you want this to attract" : "Review, edit, and publish to Google"}
+                </div>
+              </div>
+              <button onClick={closeDescModal} disabled={descGenerating || descPushing} style={{ background: "none", border: "none", fontSize: 20, color: "#888", cursor: (descGenerating || descPushing) ? "not-allowed" : "pointer" }}>×</button>
+            </div>
+
+            <div style={{ padding: 20, overflowY: "auto" }}>
+              {/* Step 1: angle picker */}
+              {descStep === "angle" && (
+                <>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {ANGLE_OPTIONS.map(opt => (
+                      <button key={opt.key} disabled={descGenerating}
+                        onClick={() => generateDescription(opt.key)}
+                        style={{ textAlign: "left", border: "1px solid #e8e6e0", background: "#fff", borderRadius: 10, padding: "12px 14px", cursor: descGenerating ? "wait" : "pointer", display: "flex", gap: 12, alignItems: "flex-start", fontFamily: "'DM Sans', sans-serif" }}>
+                        <div style={{ fontSize: 20, lineHeight: 1, marginTop: 1 }}>{opt.icon}</div>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: "#1a1a1a" }}>{opt.title}</div>
+                          <div style={{ fontSize: 12, color: "#666", lineHeight: 1.5, marginTop: 2 }}>{opt.desc}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  {descGenerating && (
+                    <div style={{ textAlign: "center", padding: "16px 0 4px", color: "#E8600A", fontSize: 12, fontWeight: 600 }}>Writing your description…</div>
+                  )}
+                </>
+              )}
+
+              {/* Step 2: review current vs. proposed */}
+              {descStep === "review" && (
+                <>
+                  {descCurrent ? (
+                    <div style={{ marginBottom: 16 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Current</div>
+                      <div style={{ fontSize: 12, color: "#777", lineHeight: 1.6, background: "#fafaf9", border: "1px solid #e8e6e0", borderRadius: 8, padding: "10px 12px", whiteSpace: "pre-wrap" }}>{descCurrent}</div>
+                    </div>
+                  ) : (
+                    <div style={{ marginBottom: 16, fontSize: 12, color: "#888", fontStyle: "italic" }}>Your profile has no description yet.</div>
+                  )}
+
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#E8600A", textTransform: "uppercase", letterSpacing: "0.06em" }}>Proposed (AI)</div>
+                      <div style={{ fontSize: 11, color: descProposed.length > DESC_MAX ? "#dc2626" : "#888", fontWeight: 600 }}>{descProposed.length}/{DESC_MAX}</div>
+                    </div>
+                    <textarea value={descProposed} onChange={e => setDescProposed(e.target.value)}
+                      style={{ width: "100%", minHeight: 180, background: "#fff", border: "1.5px solid #E8600A", borderRadius: 8, padding: "10px 12px", fontSize: 13, color: "#1a1a1a", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.7, outline: "none", resize: "vertical", boxSizing: "border-box" }} />
+                    <div style={{ fontSize: 11, color: "#888", marginTop: 6, lineHeight: 1.5 }}>
+                      Edit anything you like before publishing. Nothing changes on Google until you click Publish.
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {descStep === "review" && (
+              <div style={{ padding: "12px 20px", borderTop: "1px solid #eee", background: "#fafaf9", display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button onClick={() => setDescStep("angle")} disabled={descPushing} style={s.btn("#888", "transparent")}>← Try a different focus</button>
+                <button onClick={() => generateDescription(descAngle)} disabled={descGenerating || descPushing} style={s.btn("#2563eb", "rgba(37,99,235,0.08)")}>
+                  {descGenerating ? "Regenerating…" : "↻ Regenerate"}
+                </button>
+                <button onClick={pushDescription} disabled={descPushing || descGenerating || !descProposed.trim() || descProposed.length > DESC_MAX}
+                  style={{ ...s.btn("#16a34a", "rgba(22,163,74,0.1)"), flex: 1, opacity: (descProposed.trim() && descProposed.length <= DESC_MAX) ? 1 : 0.5 }}>
+                  {descPushing ? "Publishing…" : "✓ Publish to Google"}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Services suggestion modal (G7 Strength Engine, guide-only) ── */}
+      {svcModalOpen && (
+        <div onClick={() => setSvcModalOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, maxWidth: 620, width: "100%", maxHeight: "84vh", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid #eee", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>Suggested services</div>
+                <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>
+                  {svcData?.category ? `For ${svcData.category}` : "Services to add to your profile"}
+                </div>
+              </div>
+              <button onClick={() => setSvcModalOpen(false)} style={{ background: "none", border: "none", fontSize: 20, color: "#888", cursor: "pointer" }}>×</button>
+            </div>
+
+            <div style={{ padding: 20, overflowY: "auto" }}>
+              {svcLoading ? (
+                <div style={{ textAlign: "center", padding: 40, color: "#bbb", fontSize: 13 }}>Finding services for your trade…</div>
+              ) : !svcData ? (
+                <div style={{ textAlign: "center", padding: 40, color: "#bbb", fontSize: 13 }}>No suggestions available.</div>
+              ) : (
+                <>
+                  {svcData.current?.length > 0 && (
+                    <div style={{ marginBottom: 18 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#16a34a", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Already listed</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {svcData.current.map((name, i) => (
+                          <span key={i} style={{ fontSize: 12, color: "#16a34a", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 20, padding: "4px 12px" }}>✓ {name}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#E8600A", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
+                      Suggested to add{svcData.suggested_to_add?.length ? ` (${svcData.suggested_to_add.length})` : ""}
+                    </div>
+                    {svcData.suggested_to_add?.length > 0 ? (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {svcData.suggested_to_add.map((name, i) => (
+                          <span key={i} style={{ fontSize: 12, color: "#E8600A", background: "rgba(232,96,10,0.07)", border: "1px solid #fed7aa", borderRadius: 20, padding: "4px 12px" }}>+ {name}</span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 12, color: "#16a34a", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "12px 14px" }}>
+                        Nice — your services list already covers the standard ones for your trade.
+                      </div>
+                    )}
+                  </div>
+
+                  {svcData.note && (
+                    <div style={{ marginTop: 18, fontSize: 11, color: "#888", lineHeight: 1.6, background: "#fafaf9", border: "1px solid #e8e6e0", borderRadius: 8, padding: "10px 12px" }}>
+                      {svcData.note}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {svcData?.suggested_to_add?.length > 0 && (
+              <div style={{ padding: "12px 20px", borderTop: "1px solid #eee", background: "#fafaf9", display: "flex", gap: 8 }}>
+                <button onClick={copyServices} style={{ ...s.btn(), flex: 1 }}>Copy list to clipboard</button>
+                <a href="https://business.google.com/" target="_blank" rel="noreferrer" style={{ ...s.btn("#2563eb", "rgba(37,99,235,0.08)"), textDecoration: "none", display: "inline-flex", alignItems: "center" }}>Open Google →</a>
+              </div>
+            )}
           </div>
         </div>
       )}

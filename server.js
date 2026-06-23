@@ -849,6 +849,7 @@ app.use('/api/reseller-public', require('./routes/reseller-public'));
 app.use('/api/reseller/usage', authMiddleware, require('./routes/resellerUsage'));
 app.use("/api/churn-public", require("./routes/churn-public"));
 app.use("/api/reviews", require("./routes/reviews"));
+app.use("/api/review-campaigns", authMiddleware, require("./routes/reviewCampaigns"));
 app.use("/api/gbp", authMiddleware, require("./routes/gbp"));
 app.use("/", require("./routes/estimateLink"))
 app.use("/api/tenants", authMiddleware, require("./routes/serviceArea"));

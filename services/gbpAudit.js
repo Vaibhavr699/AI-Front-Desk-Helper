@@ -3,7 +3,8 @@
 /**
  * services/gbpAudit.js
  *
- * GBP Traction — G1: read-only profile audit + health score.
+ * GBP Traction — G1 profile audit + health score, now feeding the
+ * STRENGTH ENGINE (Jun 2026).
  *
  * Reads the tenant's live Google Business Profile via the Business
  * Information API (profile fields), the legacy v4 media endpoint (photos),
@@ -11,24 +12,30 @@
  * Computes a 0-100 health score and a prioritized list of gaps, then upserts
  * one row per tenant into gbp_audit (mig 107).
  *
- * ── Scoring philosophy (Path A, Jun 2026) ──────────────────────────────────
+ * ── Scoring philosophy (Path A) ────────────────────────────────────────────
  * Presence alone is not health. A profile can have hours, phone, website,
- * a category, and a description and still rank poorly because it is STALE —
- * no recent posts, old photos, unanswered reviews. The 2026 local algorithm
- * (and the LLM answer engines that read the GBP feed) weight *activity and
- * freshness*, not just completeness. So the score blends:
- *
+ * a category, and a description and still rank poorly because it is STALE.
+ * The score blends:
  *   Presence   (50 pts) — the static fields that must exist
  *   Freshness  (50 pts) — post recency, photo recency, review-response rate
  *
- * This is deliberate: it lets the audit look at an otherwise-perfect profile
- * (e.g. Gladiators, complete on every static field) and still say
- * "you haven't posted in 30 days" — which is exactly the gap the posting
- * feature (G2) closes. The audit is the on-ramp to posting.
+ * ── Strength Engine additions ──────────────────────────────────────────────
+ * The audit already reads profile.description and serviceItems on the
+ * location object. This version surfaces those into the snapshot AND the
+ * description gap so the dashboard can offer two actionable fixes:
+ *   - description gap carries `current_description` + `description_length`
+ *     so the "Rewrite with AI" flow can show before/after.
+ *   - service_items get summarized (count + names) into the snapshot so the
+ *     "See suggested services" guide can diff current-vs-suggested without a
+ *     second API call.
+ * The description gap is also upgraded from a pure presence check to a
+ * QUALITY check: a present-but-weak description (too short, or missing
+ * city / service-area signals) still surfaces a medium gap so the rewrite
+ * has a reason to exist even on an otherwise-complete profile.
  *
  * Auth/billing: callers (routes/gbp.js) gate on hasReviewsAccess BEFORE
  * calling. This service reuses reviewsHelper.authedRequest for token refresh
- * + 401 retry — the same path the Reviews integration uses.
+ * + 401 retry.
  */
 
 const db = require("../lib/db");
@@ -37,8 +44,7 @@ const reviewsHelper = require("../lib/reviewsHelper");
 const BIZ_INFO_BASE  = "https://mybusinessbusinessinformation.googleapis.com/v1";
 const LEGACY_V4_BASE = "https://mybusiness.googleapis.com/v4";
 
-// readMask for locations.get — only fields we actually score on. Keeping this
-// tight avoids "invalid field mask" errors and unnecessary payload.
+// readMask for locations.get — only fields we actually score on.
 const LOCATION_READ_MASK = [
   "name",
   "title",
@@ -52,11 +58,16 @@ const LOCATION_READ_MASK = [
   "serviceArea",
 ].join(",");
 
-// Freshness thresholds (days). Past these, the axis loses points.
-const POST_STALE_DAYS  = 14;   // a post older than this = losing freshness
-const POST_DEAD_DAYS   = 30;   // no post in 30 days = zero post-freshness
-const PHOTO_STALE_DAYS = 90;   // newest photo older than this starts losing pts
+// Freshness thresholds (days).
+const POST_STALE_DAYS  = 14;
+const POST_DEAD_DAYS   = 30;
+const PHOTO_STALE_DAYS = 90;
 const PHOTO_DEAD_DAYS  = 180;
+
+// Description quality thresholds (chars). Google hard limit is 750.
+const DESC_MIN_OK    = 80;    // below this = "thin", presence point lost
+const DESC_STRONG    = 600;   // at/above this = using the space well
+const DESC_MAX       = 750;   // Google hard limit
 
 function daysSince(iso) {
   if (!iso) return Infinity;
@@ -65,9 +76,6 @@ function daysSince(iso) {
   return (Date.now() - t) / (1000 * 60 * 60 * 24);
 }
 
-/**
- * Load the tenant with the Google columns authedRequest + the API calls need.
- */
 async function loadTenant(tenantId) {
   const res = await db.query(
     `SELECT id, name, company_name,
@@ -79,12 +87,7 @@ async function loadTenant(tenantId) {
   return res.rows[0] || null;
 }
 
-/**
- * Read the core profile (Business Information API). Returns the raw location
- * object, or throws (caller maps to fetch_failed).
- */
 async function fetchLocation(tenant) {
-  // google_location_id is the full "locations/12345" resource name.
   const url = `${BIZ_INFO_BASE}/${tenant.google_location_id}`;
   const res = await reviewsHelper.authedRequest(tenant, "GET", url, {
     params: { readMask: LOCATION_READ_MASK },
@@ -92,11 +95,6 @@ async function fetchLocation(tenant) {
   return res.data || {};
 }
 
-/**
- * Photo inventory + recency via the legacy v4 media endpoint.
- * Returns { count, newestDays }. Best-effort: { count: 0, newestDays: Infinity }
- * on any failure so a media hiccup never sinks the whole audit.
- */
 async function fetchPhotos(tenant) {
   try {
     const url = `${LEGACY_V4_BASE}/${tenant.google_account_id}/${tenant.google_location_id}/media`;
@@ -106,7 +104,6 @@ async function fetchPhotos(tenant) {
     const items = res.data?.mediaItems || [];
     let newest = Infinity;
     for (const m of items) {
-      // createTime is the upload time on MediaItem.
       const d = daysSince(m.createTime);
       if (d < newest) newest = d;
     }
@@ -117,10 +114,6 @@ async function fetchPhotos(tenant) {
   }
 }
 
-/**
- * Most-recent localPost recency via legacy v4. Returns { count, newestDays }.
- * Best-effort. This is the single most important freshness signal.
- */
 async function fetchPosts(tenant) {
   try {
     const url = `${LEGACY_V4_BASE}/${tenant.google_account_id}/${tenant.google_location_id}/localPosts`;
@@ -140,11 +133,6 @@ async function fetchPosts(tenant) {
   }
 }
 
-/**
- * Review-response rate via legacy v4 reviews. Returns
- * { total, replied, unanswered, rate } where rate is replied/total (1 if no
- * reviews — nothing to answer = no penalty). Best-effort.
- */
 async function fetchReviewResponse(tenant) {
   try {
     const url = `${LEGACY_V4_BASE}/${tenant.google_account_id}/${tenant.google_location_id}/reviews`;
@@ -153,15 +141,75 @@ async function fetchReviewResponse(tenant) {
     });
     const reviews = res.data?.reviews || [];
     const total = reviews.length;
-    if (total === 0) return { total: 0, replied: 0, unanswered: 0, rate: 1 };
+    if (total === 0) return { total: 0, replied: 0, unanswered: 0, rate: 1, avgRating: null };
     let replied = 0;
-    for (const r of reviews) if (r.reviewReply) replied++;
-    return { total, replied, unanswered: total - replied, rate: replied / total };
+    let ratingSum = 0;
+    let ratingCount = 0;
+    const STAR = { ONE: 1, TWO: 2, THREE: 3, FOUR: 4, FIVE: 5 };
+    for (const r of reviews) {
+      if (r.reviewReply) replied++;
+      const n = STAR[r.starRating];
+      if (n) { ratingSum += n; ratingCount++; }
+    }
+    return {
+      total,
+      replied,
+      unanswered: total - replied,
+      rate: replied / total,
+      avgRating: ratingCount ? +(ratingSum / ratingCount).toFixed(1) : null,
+    };
   } catch (e) {
     console.warn("[GBP Audit] reviews fetch failed tenant=%s: %s", tenant.id, e.message);
-    // Unknown — treat as no penalty rather than punishing on an API error.
-    return { total: 0, replied: 0, unanswered: 0, rate: 1 };
+    return { total: 0, replied: 0, unanswered: 0, rate: 1, avgRating: null };
   }
+}
+
+/**
+ * Extract readable service-item names from the location.serviceItems array.
+ * Google service items are either structured (structuredServiceItem with a
+ * serviceTypeId) or free-text (freeFormServiceItem.label.displayName). We
+ * pull whatever human-readable label exists, deduped, capped.
+ */
+function extractServiceNames(serviceItems) {
+  const names = [];
+  for (const item of serviceItems || []) {
+    let label = null;
+    if (item.freeFormServiceItem?.label?.displayName) {
+      label = item.freeFormServiceItem.label.displayName;
+    } else if (item.structuredServiceItem?.description) {
+      label = item.structuredServiceItem.description;
+    } else if (item.structuredServiceItem?.serviceTypeId) {
+      // serviceTypeId is an opaque id like "job_type_id:paint_interior";
+      // surface a cleaned tail so the UI shows *something* recognizable.
+      const tail = String(item.structuredServiceItem.serviceTypeId).split(":").pop() || "";
+      label = tail.replace(/_/g, " ").trim();
+    }
+    if (label && !names.includes(label)) names.push(label);
+  }
+  return names.slice(0, 40);
+}
+
+/**
+ * Heuristic: does the description carry local-SEO signal? We look for any
+ * service-area city name or the primary-category word inside the text. Used
+ * only to decide whether to surface a "weak description" quality gap on an
+ * otherwise-present description — NOT to score, to avoid false precision.
+ */
+function descriptionLooksLocal(description, location) {
+  if (!description) return false;
+  const lc = description.toLowerCase();
+
+  // City from storefront address.
+  const city = location.storefrontAddress?.locality;
+  if (city && lc.includes(String(city).toLowerCase())) return true;
+
+  // Any service-area place name.
+  const places = location.serviceArea?.places?.placeInfos || [];
+  for (const p of places) {
+    const nm = p.placeName ? String(p.placeName).split(",")[0].toLowerCase().trim() : "";
+    if (nm && lc.includes(nm)) return true;
+  }
+  return false;
 }
 
 /**
@@ -181,35 +229,100 @@ function buildAuditFromReads(location, photos, posts, reviewResp) {
   const hasWebsite = !!(location.websiteUri && String(location.websiteUri).trim());
   const regularHours = location.regularHours || null;
   const hasHours = !!(regularHours && Array.isArray(regularHours.periods) && regularHours.periods.length > 0);
+
   const description = (location.profile && location.profile.description) || "";
   const descriptionLength = description.length;
-  const hasGoodDescription = descriptionLength >= 80;
+  const hasGoodDescription = descriptionLength >= DESC_MIN_OK;
+
   const categories = location.categories || {};
   const primaryCategory = categories.primaryCategory ? (categories.primaryCategory.displayName || categories.primaryCategory.name || null) : null;
   const additionalCategoryCount = Array.isArray(categories.additionalCategories) ? categories.additionalCategories.length : 0;
   const hasPrimaryCategory = !!primaryCategory;
+
   const serviceItems = Array.isArray(location.serviceItems) ? location.serviceItems : [];
   const serviceItemCount = serviceItems.length;
+  const serviceNames = extractServiceNames(serviceItems);
   const hasServiceItems = serviceItemCount >= 1;
 
   let presence = 0;
   if (hasPhone) presence += 8; else gaps.push({ key: "phone", severity: "high", label: "No phone number", advice: "Add a primary phone number — calls are a top conversion path from Search and Maps." });
   if (hasWebsite) presence += 8; else gaps.push({ key: "website", severity: "high", label: "No website link", advice: "Add your website (or booking page) so searchers can act." });
   if (hasHours) presence += 8; else gaps.push({ key: "hours", severity: "high", label: "No business hours set", advice: "Set regular hours — profiles without hours rank lower and lose 'open now' visibility." });
-  if (hasGoodDescription) presence += 8; else gaps.push({ key: "description", severity: "medium", label: descriptionLength === 0 ? "No business description" : "Thin business description", advice: "Write a 150+ character description naturally mentioning your main services and city." });
+
+  // ── Description: presence + QUALITY (Strength Engine) ──────────────────────
+  // Presence point: present and ≥80 chars.
+  if (hasGoodDescription) {
+    presence += 8;
+    // Even when present, surface a QUALITY gap if it's short of strong OR
+    // missing local signal — this is what gives "Rewrite with AI" a reason
+    // to exist on an otherwise-complete profile.
+    const isLocal = descriptionLooksLocal(description, location);
+    const isStrong = descriptionLength >= DESC_STRONG;
+    if (!isStrong || !isLocal) {
+      const reasons = [];
+      if (!isStrong) reasons.push(`it's using ${descriptionLength} of ${DESC_MAX} characters`);
+      if (!isLocal)  reasons.push("it doesn't clearly name your city or service area");
+      gaps.push({
+        key: "description_quality",
+        severity: "medium",
+        label: "Description could rank harder",
+        advice: `Your description is fine, but ${reasons.join(" and ")}. A rewrite that uses the full space with your services, service-area cities, and a booking call-to-action ranks better in local and AI search. Use “Rewrite with AI”.`,
+        current_description: description,
+        description_length: descriptionLength,
+        actionable: "rewrite_description",
+      });
+    }
+  } else {
+    gaps.push({
+      key: "description",
+      severity: "medium",
+      label: descriptionLength === 0 ? "No business description" : "Thin business description",
+      advice: "Write a 150+ character description naturally mentioning your main services and city. “Rewrite with AI” drafts one for you.",
+      current_description: description,
+      description_length: descriptionLength,
+      actionable: "rewrite_description",
+    });
+  }
+
   if (hasPrimaryCategory) presence += 10; else gaps.push({ key: "primary_category", severity: "high", label: "No primary category", advice: "Set the most specific primary category — it's the strongest ranking signal you control." });
-  if (hasServiceItems) presence += 8; else gaps.push({ key: "service_items", severity: "medium", label: "No services listed", advice: "Add individual services — they create keyword-rich surface area for search and AI answer engines." });
+
+  // ── Services: presence + completeness guide (Strength Engine) ──────────────
+  if (hasServiceItems) {
+    presence += 8;
+    // Even when present, a sparse list is a soft gap: more services = more
+    // keyword surface. Guide-only (no API write) — the gap routes to the
+    // "See suggested services" flow.
+    if (serviceItemCount < 4) {
+      gaps.push({
+        key: "services_sparse",
+        severity: "low",
+        label: `Only ${serviceItemCount} service${serviceItemCount === 1 ? "" : "s"} listed`,
+        advice: "More listed services create more keyword surface for search and AI answer engines. See AI-suggested services to add for your trade, then add them in your Business Profile.",
+        service_count: serviceItemCount,
+        service_names: serviceNames,
+        actionable: "suggest_services",
+      });
+    }
+  } else {
+    gaps.push({
+      key: "service_items",
+      severity: "medium",
+      label: "No services listed",
+      advice: "Add individual services — they create keyword-rich surface for search and AI answer engines. See AI-suggested services for your trade.",
+      service_count: 0,
+      service_names: [],
+      actionable: "suggest_services",
+    });
+  }
 
   // ── Freshness axis ───────────────────────────────────────────────────────
-  // Post recency (22). The single biggest lever, and the one G2 posting fixes.
   let postScore = 0;
   if (posts.newestDays <= POST_STALE_DAYS) {
     postScore = 22;
   } else if (posts.newestDays <= POST_DEAD_DAYS) {
-    // Linear-ish decay between stale and dead.
     const span = POST_DEAD_DAYS - POST_STALE_DAYS;
     const over = posts.newestDays - POST_STALE_DAYS;
-    postScore = Math.round(22 * (1 - over / span) * 0.6 + 22 * 0.4 * 0); // keep some signal but clearly reduced
+    postScore = Math.round(22 * (1 - over / span) * 0.6 + 22 * 0.4 * 0);
     postScore = Math.max(6, Math.min(18, postScore));
   } else {
     postScore = 0;
@@ -227,7 +340,6 @@ function buildAuditFromReads(location, photos, posts, reviewResp) {
     });
   }
 
-  // Photo recency (14).
   let photoScore = 0;
   if (photos.count === 0) {
     photoScore = 0;
@@ -242,10 +354,9 @@ function buildAuditFromReads(location, photos, posts, reviewResp) {
     gaps.push({ key: "photo_recency", severity: "medium", label: `Newest photo is ${Math.round(photos.newestDays)} days old`, advice: "Your photos are stale. Add recent work — a profile that hasn't added a photo in 6+ months reads as dormant." });
   }
 
-  // Review-response rate (14).
   let reviewScore = 0;
   if (reviewResp.total === 0) {
-    reviewScore = 14; // nothing to answer — no penalty
+    reviewScore = 14;
   } else {
     reviewScore = Math.round(14 * reviewResp.rate);
     if (reviewResp.rate < 0.8) {
@@ -261,7 +372,6 @@ function buildAuditFromReads(location, photos, posts, reviewResp) {
   const freshness = postScore + photoScore + reviewScore;
   const healthScore = Math.max(0, Math.min(100, presence + freshness));
 
-  // Order gaps by severity (high → medium → low) so the UI shows what matters first.
   const sev = { high: 0, medium: 1, low: 2 };
   gaps.sort((a, b) => (sev[a.severity] ?? 9) - (sev[b.severity] ?? 9));
 
@@ -273,7 +383,10 @@ function buildAuditFromReads(location, photos, posts, reviewResp) {
     has_website: hasWebsite,
     has_hours: hasHours,
     description_length: descriptionLength,
+    has_description: descriptionLength > 0,
+    description_is_local: descriptionLooksLocal(description, location),
     service_item_count: serviceItemCount,
+    service_names: serviceNames,
     photo_count: photos.count,
     newest_photo_days: Number.isFinite(photos.newestDays) ? Math.round(photos.newestDays) : null,
     post_count: posts.count,
@@ -281,17 +394,13 @@ function buildAuditFromReads(location, photos, posts, reviewResp) {
     review_total: reviewResp.total,
     review_unanswered: reviewResp.unanswered,
     review_response_rate: Math.round(reviewResp.rate * 100),
-    // sub-scores for transparency / debugging
+    review_avg_rating: reviewResp.avgRating ?? null,
     score_breakdown: { presence, post: postScore, photo: photoScore, review: reviewScore, freshness },
   };
 
   return { healthScore, gaps, snapshot };
 }
 
-/**
- * Run the full audit for a tenant: read Google, score, upsert gbp_audit,
- * return the result. Read-only against Google (no writes to the profile).
- */
 async function runAuditForTenant(tenantId) {
   const tenant = await loadTenant(tenantId);
   if (!tenant) return { ok: false, reason: "tenant_not_found" };
@@ -308,7 +417,6 @@ async function runAuditForTenant(tenantId) {
     return { ok: false, reason: "fetch_failed", message: detail };
   }
 
-  // The freshness reads are best-effort and never fail the audit.
   [photos, posts, reviewResp] = await Promise.all([
     fetchPhotos(tenant),
     fetchPosts(tenant),
@@ -336,7 +444,8 @@ async function runAuditForTenant(tenantId) {
 
 module.exports = {
   runAuditForTenant,
-  // exported for testing
   buildAuditFromReads,
+  extractServiceNames,
+  descriptionLooksLocal,
   daysSince,
 };

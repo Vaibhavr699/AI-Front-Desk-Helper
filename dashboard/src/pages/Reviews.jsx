@@ -251,6 +251,9 @@ function ReviewRequestsSection({ tenantId, showToast, sBtn }) {
             <div style={{ fontSize: 11, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
               In progress ({campaigns.length})
             </div>
+            <div style={{ fontSize: 11, color: "#92722a", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 12px", marginBottom: 10, lineHeight: 1.5 }}>
+              Don't want to ask a particular customer for a review? You have about 24 hours after the job completes to click <strong>Stop</strong> before the first text is sent.
+            </div>
             {campaigns.length === 0 ? (
               <div style={{ fontSize: 12, color: "#aaa", padding: "12px 0" }}>
                 No active review requests. They start automatically when a job is marked complete.

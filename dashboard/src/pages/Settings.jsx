@@ -29,6 +29,7 @@ import {
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import { ConfirmationModal } from "../components/ConfirmationModal";
+import VoicemailGreetingRecorder from "../components/VoicemailGreetingRecorder";
 import Billing from "./Billing";
 import Plans from "./Plans";
 import ScopeSettings from "./ScopeSettings";
@@ -3230,16 +3231,17 @@ export default function Settings({ tenantId }) {
                     </p>
                   </div>
 
-                  {/* Record greeting — placeholder stub (Round C) */}
-                  <button
-                    type="button"
-                    disabled
-                    className="w-full md:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-gray-100 text-gray-400 rounded-xl text-xs font-black uppercase tracking-widest cursor-not-allowed border border-gray-200"
-                    title="In-browser recording coming in a future update"
-                  >
-                    <Mic className="w-3.5 h-3.5" />
-                   Record greeting (coming soon)
-                  </button>
+                  {/* Record greeting — in-browser recorder (Phase 3A). Records
+                      16-bit PCM WAV client-side, uploads to Supabase, and fills
+                      the Audio URL field above. Tenant still clicks Save Changes
+                      to persist voicemail_message_url like every other field. */}
+                  <VoicemailGreetingRecorder
+                    tenantId={tenantId}
+                    currentUrl={form.voicemail_message_url}
+                    apiBase={import.meta.env.VITE_API_URL || "https://ai-front-desk-backend.onrender.com"}
+                    onSaved={(url) => handleUpdateForm("voicemail_message_url", url)}
+                    onToast={(msg, type) => (type === "error" ? toastError(msg) : success(msg))}
+                  />
                 </div>
               </section>
 

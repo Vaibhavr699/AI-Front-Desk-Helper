@@ -64,6 +64,7 @@ console.log("[Startup] Password reset: Resend=" + (process.env.RESEND_API_KEY &&
 const twilioRoutes = require("./routes/twilio");
 const dashboardRoutes = require("./routes/dashboard");
 const authRoutes = require("./routes/auth");
+const voicemailGreetingRouter = require("./routes/voicemailGreeting");
 const leadRoutes = require("./routes/leads");
 const billingRoutes = require("./routes/billing");
 const outboundRoutes = require("./routes/outbound");
@@ -850,6 +851,7 @@ app.use("/api/churn-public", require("./routes/churn-public"));
 app.use("/api/reviews", require("./routes/reviews"));
 app.use("/api/review-campaigns", authMiddleware, require("./routes/reviewCampaigns"));
 app.use("/api/gbp", authMiddleware, require("./routes/gbp"));
+app.use("/api/voicemail-greeting", authMiddleware, voicemailGreetingRouter);
 app.use("/", require("./routes/estimateLink"))
 app.use("/api/tenants", authMiddleware, require("./routes/serviceArea"));
 app.use('/api/reseller', require('./routes/reseller'));

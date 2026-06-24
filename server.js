@@ -1056,24 +1056,38 @@ function buildFallbackTwiml(message, transferNumber) {
  *
  * Build 1 — Apr 23, 2026.
  */
-function buildVoicemailTwiml(voicemailMessageUrl) {
+function buildVoicemailTwiml(voicemailMessageUrl, opts = {}) {
+  // Phase 2: capture the voicemail instead of discarding it. When we have a
+  // callSid + BASE_URL, the <Record> POSTs to /twilio/voicemail-capture
+  // (kind=missed), which re-hosts the audio, fires the bell notification, and
+  // texts the owner — same pipeline as the transfer voicemail. Without a
+  // callSid (shouldn't happen on a real call) we fall back to the old
+  // record-and-hangup so behavior never regresses.
+  const callSid = opts.callSid || "";
+  const baseUrl = opts.baseUrl || "";
+  const vmAction = (baseUrl && callSid)
+    ? `${baseUrl}/twilio/voicemail-capture?kind=missed&callSid=${encodeURIComponent(callSid)}`
+    : "";
+  const recordVerb = vmAction
+    ? `<Record action="${escapeXml(vmAction)}" method="POST" maxLength="120" playBeep="true" trim="trim-silence" timeout="5" finishOnKey="#" transcribe="false" />`
+    : `<Record maxLength="120" playBeep="true" trim="trim-silence" />`;
+ 
   if (voicemailMessageUrl) {
     return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Play>${escapeXml(voicemailMessageUrl)}</Play>
-  <Record maxLength="120" playBeep="true" trim="trim-silence" />
+  ${recordVerb}
   <Hangup/>
 </Response>`;
   }
-
+ 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Joanna">We're unable to take your call right now. Please leave a message after the tone.</Say>
-  <Record maxLength="120" playBeep="true" trim="trim-silence" />
+  ${recordVerb}
   <Hangup/>
 </Response>`;
 }
-
 /**
  * TwiML for ring-first routing. Rings the configured human number, then
  * on no-answer falls through to either the AI stream or voicemail.
@@ -1094,8 +1108,17 @@ function buildRingFirstTwiml({
   fallbackType,          // "ai_stream" | "voicemail"
   streamUrl,
   voicemailMessageUrl,
+  callSid,               // Phase 2: thread through for voicemail capture
+  baseUrl,               // Phase 2
 }) {
   const timeout = Math.min(60, Math.max(5, Number(ringFirstTimeout) || 20));
+  // Phase 2: capture the voicemail on the ring-first fallback too.
+  const _vmAction = (baseUrl && callSid)
+    ? `${baseUrl}/twilio/voicemail-capture?kind=missed&callSid=${encodeURIComponent(callSid)}`
+    : "";
+  const _recordVerb = _vmAction
+    ? `<Record action="${escapeXml(_vmAction)}" method="POST" maxLength="120" playBeep="true" trim="trim-silence" timeout="5" finishOnKey="#" transcribe="false" />`
+    : `<Record maxLength="120" playBeep="true" trim="trim-silence" />`;
 
   let fallbackVerbs;
   if (fallbackType === "ai_stream") {
@@ -1104,11 +1127,11 @@ function buildRingFirstTwiml({
   </Connect>`;
   } else if (voicemailMessageUrl) {
     fallbackVerbs = `<Play>${escapeXml(voicemailMessageUrl)}</Play>
-  <Record maxLength="120" playBeep="true" trim="trim-silence" />
+  ${_recordVerb}
   <Hangup/>`;
   } else {
     fallbackVerbs = `<Say voice="Polly.Joanna">We're unable to take your call right now. Please leave a message after the tone.</Say>
-  <Record maxLength="120" playBeep="true" trim="trim-silence" />
+  ${_recordVerb}
   <Hangup/>`;
   }
 
@@ -3817,7 +3840,10 @@ async function handleTwilioVoice(req, res, tenantId) {
 
     // Case 1: voicemail-only (AI off, no ring-first).
     if (!routing.shouldRunAi && !routing.ringFirst) {
-      res.type("text/xml").send(buildVoicemailTwiml(routing.voicemailMessageUrl));
+      res.type("text/xml").send(buildVoicemailTwiml(routing.voicemailMessageUrl, {
+        callSid: req.body?.CallSid || req.query?.CallSid,
+        baseUrl: BASE_URL,
+      }));
       return;
     }
 
@@ -3864,6 +3890,8 @@ async function handleTwilioVoice(req, res, tenantId) {
         fallbackType:        routing.shouldRunAi ? "ai_stream" : "voicemail",
         streamUrl:           wsUrl,
         voicemailMessageUrl: routing.voicemailMessageUrl,
+        callSid:             req.body?.CallSid || req.query?.CallSid,
+        baseUrl:             BASE_URL,
       });
       res.type("text/xml").send(ringTwiml);
       return;

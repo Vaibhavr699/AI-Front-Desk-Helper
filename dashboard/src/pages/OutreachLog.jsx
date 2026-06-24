@@ -11,7 +11,7 @@ import { useToast } from "../components/ui/Toast";
 // ─────────────────────────────────────────────────────────────────────
 // AI Outreach Log (Jun 17, 2026)
 //
-// The read-only record of every automated touch the AI sent on its own —
+// The read-only record of every automated touch the AI sent on its own — 
 // recovery calls/SMS, nurturing, seasonal, referral, inquiry, missed-call.
 // Built to answer one question fast: "what reached out to this person, when,
 // why, and what happened?" — the exact lookup that took eight SQL queries
@@ -264,16 +264,30 @@ export default function OutreachLog({ tenantId }) {
         <p className="text-stone-500 text-sm mt-1">Review, analyze, and action calls processed by your AI receptionist.</p>
       </header>
 
-      {/* Tab bar — Inbound Calls | AI Outreach Log */}
-      <div className="flex gap-2 border-b border-stone-200">
+      {/* Tab bar — full Call Intelligence Center nav */}
+      <div className="flex gap-2 border-b border-stone-200 overflow-x-auto">
         <button
           onClick={() => navigate("/calls")}
-          className="px-4 py-2.5 text-sm font-bold border-b-2 border-transparent text-stone-500 hover:text-stone-700 -mb-px transition-all"
+          className="px-4 py-2.5 text-sm font-bold border-b-2 border-transparent text-stone-500 hover:text-stone-700 -mb-px transition-all whitespace-nowrap"
         >
           Inbound Calls
         </button>
-        <button className="px-4 py-2.5 text-sm font-bold border-b-2 border-brand-600 text-brand-600 -mb-px transition-all">
+        <button
+          onClick={() => navigate("/outbound")}
+          className="px-4 py-2.5 text-sm font-bold border-b-2 border-transparent text-stone-500 hover:text-stone-700 -mb-px transition-all whitespace-nowrap"
+        >
+          Outbound Campaigns
+        </button>
+        <button
+          className="px-4 py-2.5 text-sm font-bold border-b-2 border-brand-600 text-brand-600 -mb-px transition-all whitespace-nowrap"
+        >
           AI Outreach Log
+        </button>
+        <button
+          onClick={() => navigate("/voicemails")}
+          className="px-4 py-2.5 text-sm font-bold border-b-2 border-transparent text-stone-500 hover:text-stone-700 -mb-px transition-all whitespace-nowrap"
+        >
+          Voicemails
         </button>
       </div>
 

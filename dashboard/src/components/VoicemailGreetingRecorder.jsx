@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Mic, Square, Play, Pause, RefreshCw, Trash2, Check, AlertCircle } from "lucide-react";
+import { uploadVoicemailGreeting } from "../api";
 
 /**
  * VoicemailGreetingRecorder (Phase 3A, Jun 2026)
@@ -250,15 +251,11 @@ export default function VoicemailGreetingRecorder({ tenantId, currentUrl, apiBas
     setStatus("uploading");
     setError("");
     try {
-      const base = (apiBase || "").replace(/\/+$/, "");
-      const resp = await fetch(`${base}/api/voicemail-greeting/upload?tenantId=${encodeURIComponent(tenantId)}`, {
-        method: "POST",
-        headers: { "Content-Type": "audio/wav" },
-        credentials: "include",
-        body: blobRef.current,
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok || !data.ok || !data.url) {
+      // Routes through api.js, which attaches `Authorization: Bearer <token>`.
+      // The previous version used a raw fetch with `credentials: "include"`
+      // (cookie auth) and got a 401 because this app uses token auth.
+      const data = await uploadVoicemailGreeting(tenantId, blobRef.current);
+      if (!data.ok || !data.url) {
         throw new Error(data.error || "Upload failed. Try again.");
       }
       onSaved?.(data.url);

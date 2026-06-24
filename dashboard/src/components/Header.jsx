@@ -144,6 +144,18 @@ export default function Header({ tenantId, tenants, onTenantChange, onMenuClick 
                     <p className="text-xs font-medium text-stone-500 uppercase tracking-wider">Signed in as</p>
                     <p className="text-sm font-medium text-stone-900 mt-1 break-all">{user?.email}</p>
                   </div>
+                  <div className="py-1 bg-white border-b border-stone-100">
+                    
+                      href="https://api.aifrontdeskhelper.com/api-docs"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="block px-4 py-2.5 text-sm font-medium text-stone-700 hover:bg-stone-100 transition-colors"
+                      role="menuitem"
+                    >
+                      API Documentation
+                    </a>
+                  </div>
                   <div className="py-1 bg-stone-50/80">
                     <button
                       type="button"

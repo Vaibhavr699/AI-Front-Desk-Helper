@@ -197,7 +197,7 @@ router.get("/transfer-dial", async (req, res) => {
   // The <Record> action carries the CallSid + the transfer target so the
   // capture handler can attribute the voicemail and text the right owner.
   const vmAction = BASE_URL
-    ? `${BASE_URL}/twilio/transfer-voicemail-done?callSid=${encodeURIComponent(req.query.CallSid || "")}&to=${encodeURIComponent(number)}`
+    ? `${BASE_URL}/twilio/voicemail-capture?kind=transfer&callSid=${encodeURIComponent(req.query.CallSid || "")}&to=${encodeURIComponent(number)}`
     : "";
   const recordVerb = vmAction
     ? `<Record action="${escapeXml(vmAction)}" method="POST" maxLength="120" playBeep="true" trim="trim-silence" timeout="5" finishOnKey="#" transcribe="false" />`
@@ -218,29 +218,36 @@ router.get("/transfer-dial", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// Transfer-voicemail capture (Phase 1, Jun 2026)
+// Voicemail capture (Phase 1 + Phase 2, Jun 2026)
 //
-// The <Record> in /transfer-dial's no-answer fall-through POSTs here when the
-// caller finishes (or hangs up). Twilio sends RecordingUrl / RecordingSid /
-// RecordingDuration in the body. We:
+// ONE handler for every voicemail a caller leaves us, driven by ?kind=:
+//   kind=transfer → caller asked for a human, the owner's Dial rang out, and
+//                   they left a message (Phase 1). Source: /transfer-dial.
+//   kind=missed   → the AI is OFF (or ring-first fell through) and the caller
+//                   left a message on the voicemail TwiML (Phase 2). Source:
+//                   buildVoicemailTwiml / buildRingFirstTwiml in server.js.
+//
+// Both kinds share ALL plumbing — the only difference is the notification +
+// SMS wording. The <Record> verb POSTs here when the caller finishes (or
+// hangs up). Twilio sends RecordingUrl / RecordingSid / RecordingDuration. We:
 //   1. Hand the recording to recordingService.handleRecordingStatus — the
 //      SAME pipeline inbound + recovery recordings already use. It downloads
 //      from Twilio, re-hosts to our storage, and writes a recordings row
 //      keyed to this CallSid (so it surfaces on the call's detail view).
-//   2. Mark the calls row disposition = 'transfer_voicemail'.
-//   3. Fire a bell notification (type 'transfer_voicemail').
-//   4. Text the owner: "📭 [caller] left a voicemail after your transfer".
+//   2. Mark the calls row disposition ('transfer_voicemail' | 'voicemail').
+//   3. Fire a bell notification.
+//   4. Text the owner so they know a caller is waiting on a call-back.
 //
-// We respond with a tiny TwiML immediately (Twilio expects a TwiML doc from a
-// <Record> action) and do all DB / notify / SMS work in setImmediate so the
-// caller's line closes cleanly. A short voicemail (< ~1s) or a missing
-// RecordingUrl is treated as "no message left" — no notification, no SMS.
+// We respond with tiny TwiML immediately and do DB / notify / SMS work in
+// setImmediate so the caller's line closes cleanly. A sub-1-second or missing
+// recording = "no message left" → no notification, no SMS.
 // ─────────────────────────────────────────────────────────────────────────
-router.post("/transfer-voicemail-done", (req, res) => {
+router.post("/voicemail-capture", (req, res) => {
   // Acknowledge to Twilio right away — the caller already heard the closing
-  // line in the /transfer-dial TwiML, so we just end cleanly here.
+  // line in the source TwiML, so we just end cleanly here.
   res.type("text/xml").send('<Response><Hangup/></Response>');
 
+  const kind        = (req.query.kind === "transfer") ? "transfer" : "missed";
   const callSid     = req.query.callSid || req.body?.CallSid || "";
   const transferTo  = req.query.to || "";
   const recUrl      = req.body?.RecordingUrl || "";
@@ -249,8 +256,8 @@ router.post("/transfer-voicemail-done", (req, res) => {
 
   // Guard: no recording, or a sub-1-second "hang-up" recording = no message.
   if (!recUrl || !callSid || recDuration < 1) {
-    console.log("[Transfer VM] No usable voicemail callSid=%s dur=%ss — skipping capture",
-      callSid || "(none)", recDuration);
+    console.log("[Voicemail:%s] No usable voicemail callSid=%s dur=%ss — skipping capture",
+      kind, callSid || "(none)", recDuration);
     return;
   }
 
@@ -266,7 +273,7 @@ router.post("/transfer-voicemail-done", (req, res) => {
         RecordingStatus:   "completed",
         RecordingDuration: recDuration,
       }).catch((e) =>
-        console.error("[Transfer VM] recording handoff failed callSid=%s err=%s", callSid, e.message)
+        console.error("[Voicemail:%s] recording handoff failed callSid=%s err=%s", kind, callSid, e.message)
       );
 
       // 2) Resolve the call + tenant for notification + SMS.
@@ -276,53 +283,67 @@ router.post("/transfer-voicemail-done", (req, res) => {
       );
       const call = callRes.rows[0];
       if (!call?.tenant_id) {
-        console.warn("[Transfer VM] No call/tenant for callSid=%s — recording saved, no notify", callSid);
+        console.warn("[Voicemail:%s] No call/tenant for callSid=%s — recording saved, no notify", kind, callSid);
         return;
       }
 
       const callerPhone = call.from_number || "Unknown caller";
 
+      // kind-specific copy
+      const isTransfer = kind === "transfer";
+      const notifType  = isTransfer ? "transfer_voicemail" : "missed_voicemail";
+      const disposition = isTransfer ? "transfer_voicemail" : "voicemail";
+      const notifTitle = isTransfer ? "New Voicemail — Missed Transfer" : "New Voicemail";
+      const notifBody  = isTransfer
+        ? `${callerPhone} asked for a team member, couldn't be reached, and left a ${recDuration}s voicemail. Listen and call them back.`
+        : `${callerPhone} left a ${recDuration}s voicemail. Listen and call them back.`;
+      const smsBody = isTransfer
+        ? `📭 New voicemail — missed transfer\n${callerPhone} asked for a team member but the call wasn't answered, so they left a ${recDuration}s message. Open your dashboard to listen and call them back.`
+        : `📭 New voicemail\n${callerPhone} left a ${recDuration}s message. Open your dashboard to listen and call them back.`;
+
       // 3) Mark disposition so the dashboard can label it a voicemail.
       await db.query(
         `UPDATE calls
-            SET disposition = 'transfer_voicemail',
+            SET disposition = $2,
                 metadata = COALESCE(metadata, '{}'::jsonb)
-                           || $2::jsonb,
+                           || $3::jsonb,
                 updated_at = now()
           WHERE id = $1`,
-        [call.id, JSON.stringify({
-          transfer_voicemail: true,
+        [call.id, disposition, JSON.stringify({
+          voicemail: true,
+          voicemail_kind: kind,
           voicemail_recording_sid: recSid || null,
           voicemail_duration_sec: recDuration,
         })]
-      ).catch((e) => console.error("[Transfer VM] disposition update failed:", e.message));
+      ).catch((e) => console.error("[Voicemail:%s] disposition update failed:", kind, e.message));
 
-      // 4) Bell notification (dedup per CallSid).
+      // 4) Bell notification (dedup per CallSid + type).
       try {
         const dup = await db.query(
           `SELECT id FROM notifications
-            WHERE tenant_id = $1 AND type = 'transfer_voicemail'
-              AND data->>'callSid' = $2 LIMIT 1`,
-          [call.tenant_id, callSid]
+            WHERE tenant_id = $1 AND type = $2
+              AND data->>'callSid' = $3 LIMIT 1`,
+          [call.tenant_id, notifType, callSid]
         );
         if (dup.rows.length === 0) {
           await db.query(
             `INSERT INTO notifications (tenant_id, type, title, body, data, created_at)
-             VALUES ($1, 'transfer_voicemail', $2, $3, $4, now())`,
+             VALUES ($1, $2, $3, $4, $5, now())`,
             [
               call.tenant_id,
-              'New Voicemail — Missed Transfer',
-              `${callerPhone} asked for a team member, couldn't be reached, and left a ${recDuration}s voicemail. Listen and call them back.`,
-              JSON.stringify({ callSid, call_id: call.id, from_number: call.from_number, duration_sec: recDuration }),
+              notifType,
+              notifTitle,
+              notifBody,
+              JSON.stringify({ callSid, call_id: call.id, from_number: call.from_number, duration_sec: recDuration, kind }),
             ]
           );
-          console.log("[Transfer VM] bell notification fired tenant=%s callSid=%s", call.tenant_id, callSid);
+          console.log("[Voicemail:%s] bell notification fired tenant=%s callSid=%s", kind, call.tenant_id, callSid);
         }
       } catch (e) {
-        console.error("[Transfer VM] notification insert failed:", e.message);
+        console.error("[Voicemail:%s] notification insert failed:", kind, e.message);
       }
 
-      // 5) Text the owner so they know NOW (caller wanted a human).
+      // 5) Text the owner so they know a caller is waiting.
       try {
         const tenantRow = await db.query(
           `SELECT t.*,
@@ -335,29 +356,25 @@ router.post("/transfer-voicemail-done", (req, res) => {
         if (tenantRow) {
           const twilioLib = require("../lib/twilio");
           const client = twilioLib.getClientForTenant(tenantRow);
-          // Prefer the configured transfer target (the owner we just tried to
-          // reach); fall back to the first transfer number.
+          // Prefer the configured transfer target (the owner we tried to reach
+          // on a transfer); fall back to the first transfer number.
           const ownerNumber = transferTo
             || (tenantRow.transfer_numbers && tenantRow.transfer_numbers[0])
             || null;
           const fromNumber = tenantRow.matched_phone || process.env.TWILIO_PHONE_NUMBER;
 
           if (client && ownerNumber && fromNumber) {
-            const body =
-              `📭 New voicemail — missed transfer\n` +
-              `${callerPhone} asked for a team member but the call wasn't answered, so they left a ${recDuration}s message. ` +
-              `Open your dashboard to listen and call them back.`;
-            await client.messages.create({ to: ownerNumber, from: fromNumber, body });
-            console.log("[Transfer VM] owner SMS sent to=%s callSid=%s", ownerNumber, callSid);
+            await client.messages.create({ to: ownerNumber, from: fromNumber, body: smsBody });
+            console.log("[Voicemail:%s] owner SMS sent to=%s callSid=%s", kind, ownerNumber, callSid);
           } else {
-            console.warn("[Transfer VM] owner SMS skipped (client/number missing) tenant=%s", call.tenant_id);
+            console.warn("[Voicemail:%s] owner SMS skipped (client/number missing) tenant=%s", kind, call.tenant_id);
           }
         }
       } catch (e) {
-        console.error("[Transfer VM] owner SMS failed:", e.message);
+        console.error("[Voicemail:%s] owner SMS failed:", kind, e.message);
       }
     } catch (err) {
-      console.error("[Transfer VM] capture handler error callSid=%s: %s", callSid, err.message);
+      console.error("[Voicemail:%s] capture handler error callSid=%s: %s", kind, callSid, err.message);
     }
   });
 });

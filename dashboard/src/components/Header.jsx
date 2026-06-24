@@ -14,9 +14,10 @@ import { useBrand } from "../contexts/BrandContext";
  * Right-side avatar continues to use its existing prop-derived logic for
  * the account switcher — unchanged from before.
  *
- * Account dropdown (Jun 24, 2026): adds an "API Documentation" link above
- * Log out. It opens the backend-served docs page in a new tab (plain <a>,
- * not <Link>, because the docs are served by the backend, not the SPA).
+ * Account dropdown (Jun 24, 2026): adds two backend-served links above
+ * Log out — "Help Center" and "API Documentation". Both open in a new tab
+ * and use plain <a> tags (not <Link>) because they're served by the backend,
+ * not the React SPA. A <Link> would try to route them in-app and 404.
  */
 export default function Header({ tenantId, tenants, onTenantChange, onMenuClick }) {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -112,7 +113,7 @@ export default function Header({ tenantId, tenants, onTenantChange, onMenuClick 
               <>
                 <NotificationBell tenantId={tenantId} />
                 <div className="hidden sm:block h-6 w-px bg-stone-200" aria-hidden />
-                <LocationSwitcher 
+                <LocationSwitcher
                   tenantId={tenantId}
                   tenants={tenants}
                   onTenantChange={onTenantChange}
@@ -149,6 +150,16 @@ export default function Header({ tenantId, tenants, onTenantChange, onMenuClick 
                     <p className="text-sm font-medium text-stone-900 mt-1 break-all">{user?.email}</p>
                   </div>
                   <div className="py-1 bg-white border-b border-stone-100">
+                    <a
+                      href="https://api.aifrontdeskhelper.com/help"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="block px-4 py-2.5 text-sm font-medium text-stone-700 hover:bg-stone-100 transition-colors"
+                      role="menuitem"
+                    >
+                      Help Center
+                    </a>
                     <a
                       href="https://api.aifrontdeskhelper.com/api-docs"
                       target="_blank"

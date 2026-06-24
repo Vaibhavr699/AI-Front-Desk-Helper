@@ -496,6 +496,15 @@ app.get("/sms-terms", (req, res) => {
 app.get("/sms-consent", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "sms-consent.html"));
 });
+// API integration guide — public docs page + PDF download (Jun 24, 2026).
+// Tenants forward this to their own developers / CRM vendors. Same static
+// serve pattern as the compliance pages above.
+app.get("/api-docs", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "api-docs.html"));
+});
+app.get("/api-docs/download", (req, res) => {
+  res.download(path.join(__dirname, "public", "api-docs.pdf"), "AIFDH-Booking-API-Guide.pdf");
+});
 // Increase body size limits slightly to support small logo uploads (e.g. base64 images) in dashboard settings.
 // Render runs us behind a load balancer. Without trust proxy, req.ip
 // returns the proxy's internal IP instead of the actual visitor IP,

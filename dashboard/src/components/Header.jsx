@@ -13,6 +13,10 @@ import { useBrand } from "../contexts/BrandContext";
  * logo_url and company_name, with AI Front Desk Helper defaults as fallback).
  * Right-side avatar continues to use its existing prop-derived logic for
  * the account switcher — unchanged from before.
+ *
+ * Account dropdown (Jun 24, 2026): adds an "API Documentation" link above
+ * Log out. It opens the backend-served docs page in a new tab (plain <a>,
+ * not <Link>, because the docs are served by the backend, not the SPA).
  */
 export default function Header({ tenantId, tenants, onTenantChange, onMenuClick }) {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -145,7 +149,7 @@ export default function Header({ tenantId, tenants, onTenantChange, onMenuClick 
                     <p className="text-sm font-medium text-stone-900 mt-1 break-all">{user?.email}</p>
                   </div>
                   <div className="py-1 bg-white border-b border-stone-100">
-                    
+                    <a
                       href="https://api.aifrontdeskhelper.com/api-docs"
                       target="_blank"
                       rel="noopener noreferrer"

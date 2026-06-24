@@ -16,6 +16,7 @@ import "./App.css";
 import Reviews from "./pages/Reviews";
 import GoogleBusinessProfile from "./pages/GoogleBusinessProfile";
 import OutreachLog from "./pages/OutreachLog";
+import Voicemails from "./pages/Voicemails";
 
 // ── Phase 2 WL Reseller Account Type (Apr 20, 2026) ────────────────────────
 import Reseller from "./pages/Reseller";
@@ -171,6 +172,7 @@ export default function App() {
             <Route path="/create-business" element={<CreateBusiness />} />
             <Route path="/calls" element={<CallsWithContext />} />
            <Route path="/outreach-log" element={<OutreachLogWithContext />} />
+            <Route path="/voicemails" element={<VoicemailsWithContext />} />
             <Route path="/calls/:id" element={<CallDetail />} />
             <Route path="/outbound" element={<OutboundWithContext />} />
             <Route path="/leads" element={<LeadsWithContext />} />
@@ -224,6 +226,11 @@ function CallsWithContext() {
 function OutreachLogWithContext() {
   const { tenantId } = useOutletContext();
   return <OutreachLog tenantId={tenantId} />;
+}
+
+function VoicemailsWithContext() {
+  const { tenantId } = useOutletContext();
+  return <Voicemails tenantId={tenantId} />;
 }
 
 function OutboundWithContext() {

@@ -78,8 +78,8 @@
   </div>
 <script>
 // Each article: { id, category, title, stub?, html }
-// IMAGES: [[img:help-images/file.png|Caption]] — save screenshots into the
-// backend's public/help-images/ folder. Missing files show a placeholder.
+// IMAGES: [[img:./file.png|Caption]] — save screenshots into the
+// backend's public/./ folder. Missing files show a placeholder.
 const ARTICLES = [
   { id: "getting-started", category: "Getting Started", title: "Welcome & overview",
     html: `
@@ -132,7 +132,7 @@ const ARTICLES = [
     html: `
       <p class="crumb">Settings</p>
       <p>The <strong>Phone &amp; voice</strong> tab is where you set up AI phone lines — buy a new number, connect one you own, and manage which line is primary.</p>
-      [[img:help-images/settings-phone.png|The Phone & voice tab, showing plan usage and Search & Provision.]]
+      [[img:./settings-phone.png|The Phone & voice tab, showing plan usage and Search & Provision.]]
       <h2>Plan usage</h2>
       <p>The blue bar shows numbers used vs your plan limit (e.g. 2 of 5 on Elite). Click <strong>Buy Extra ($12/mo)</strong> for another line, or upgrade your plan.</p>
       <h2>Getting a new AI line</h2>
@@ -152,7 +152,7 @@ const ARTICLES = [
     html: `
       <p class="crumb">Settings</p>
       <p>The <strong>Branding</strong> tab makes the dashboard look like your business — logo, company name, and brand color in the sidebar, header, browser tab, and customer emails.</p>
-      [[img:help-images/settings-branding.png|The Branding tab — company identity, support email, timezone.]]
+      [[img:./settings-branding.png|The Branding tab — company identity, support email, timezone.]]
       <h2>Company identity</h2>
       <ul>
         <li><strong>Company name</strong> — across the dashboard and in customer emails.</li>
@@ -171,7 +171,7 @@ const ARTICLES = [
     html: `
       <p class="crumb">Settings</p>
       <p>The <strong>AI behavior</strong> tab shapes how your AI talks — tone, greetings, voice, objection handling — and configures your outbound AI agent.</p>
-      [[img:help-images/settings-ai-behavior.png|The AI behavior tab — tone and welcome messages.]]
+      [[img:./settings-ai-behavior.png|The AI behavior tab — tone and welcome messages.]]
       <h2>Tone of voice</h2>
       <p>Professional, Friendly &amp; Casual, Luxury, or Direct &amp; Authoritative.</p>
       <h2>Welcome messages</h2>
@@ -187,7 +187,7 @@ const ARTICLES = [
       <p>Separate settings for when the AI <em>calls</em> leads: caller name (e.g. Alex), outbound voice, and outbound personality/instructions.</p>
       <h2>Objection handling</h2>
       <p>Up to 5 cases, each a <strong>trigger</strong> (what the caller says) and a <strong>script</strong> (how the AI responds).</p>
-      [[img:help-images/settings-objection.png|Objection handling cases.]]` },
+      [[img:./settings-objection.png|Objection handling cases.]]` },
 
   { id: "settings-knowledge", category: "Settings", title: "Knowledge base (FAQs)",
     html: `
@@ -195,14 +195,14 @@ const ARTICLES = [
       <p>The <strong>Knowledge base</strong> tab teaches the AI specific questions and answers about your business.</p>
       <h2>Adding FAQs</h2>
       <p>Click <strong>Add Question</strong>, enter a <strong>Question</strong> (e.g. "Do you offer emergency services?") and the <strong>Answer</strong> the AI should give. When a caller asks something related, the AI uses your answer.</p>
-      [[img:help-images/settings-knowledge.png|The Knowledge base tab.]]
+      [[img:./settings-knowledge.png|The Knowledge base tab.]]
       <div class="callout"><p>Add the questions customers actually ask on the phone first. Empty pairs are ignored.</p></div>` },
 
   { id: "settings-estimator", category: "Settings", title: "Estimator",
     html: `
       <p class="crumb">Settings</p>
       <p>The <strong>Estimator</strong> tab controls the "💰 Quick Quote" button on your chat widget — a popup that gives homeowners a ballpark price and captures them as a lead. (This tab appears when your plan includes the Estimator or you've added it on — see the Plans tab.)</p>
-      [[img:help-images/settings-estimator.png|The Estimator tab.]]
+      [[img:./settings-estimator.png|The Estimator tab.]]
       <h2>Turning it on</h2>
       <p>The hero toggle switches the Quick Quote button on/off.</p>
       <h2>Cost region</h2>
@@ -217,7 +217,7 @@ const ARTICLES = [
     html: `
       <p class="crumb">Settings</p>
       <p>The <strong>AI Control</strong> tab is mission control for when and how the AI answers.</p>
-      [[img:help-images/settings-ai-control.png|The AI Control tab with the master toggle.]]
+      [[img:./settings-ai-control.png|The AI Control tab with the master toggle.]]
       <h2>1. Master AI toggle</h2>
       <p>Turns the AI on/off entirely. When off, calls ring your ring-first/transfer number then fall to voicemail. With no human number set, it warns you every call goes to voicemail.</p>
       <h2>2. Your calling hours</h2>
@@ -228,7 +228,7 @@ const ARTICLES = [
       <p>Ring a human first; if no pickup within the timeout (5–60s), the call falls through to AI (or voicemail).</p>
       <h2>5. Voicemail greeting</h2>
       <p>Paste an HTTPS <code>.mp3</code>/<code>.wav</code> link, or record one in your browser. Blank = friendly default.</p>
-      [[img:help-images/settings-voicemail.png|The voicemail greeting recorder.]]
+      [[img:./settings-voicemail.png|The voicemail greeting recorder.]]
       <h2>6. Service area</h2>
       <p>Tell the AI where you work so it declines out-of-area callers. No limit / By state / By radius / By ZIP. Saves with its own <strong>Save service area</strong> button.</p>
       <h2>7. Pre-visit briefing text</h2>
@@ -248,7 +248,7 @@ const ARTICLES = [
       <p>Up to 3 each. Set <strong>months after service</strong> and a <strong>header/theme</strong> (e.g. "Spring AC Tune-Up") — the AI writes the message from your theme. Months = 0 disables a touchpoint.</p>
       <h2>12-month campaign calendar</h2>
       <p>Name each month's seasonal campaign (blank = default). "Use painting example defaults" populates a starter set.</p>
-      [[img:help-images/settings-nurturing.png|Touchpoints and the 12-month calendar.]]` },
+      [[img:./settings-nurturing.png|Touchpoints and the 12-month calendar.]]` },
 
   { id: "settings-integrations", category: "Settings", title: "Integrations",
     html: `
@@ -256,7 +256,7 @@ const ARTICLES = [
       <p>The <strong>Integrations</strong> tab connects your AI to your website, phone system, CRM, calendar, and Facebook.</p>
       <h2>Website chat widget</h2>
       <p>Copy the script tag onto your site (before <code>&lt;/body&gt;</code>) for an AI chat bubble. <strong>Copy Email for Developer</strong> copies a ready-to-send email with the script, the click-to-text button, and platform install steps.</p>
-      [[img:help-images/settings-integrations-widget.png|The website chat widget script and developer email.]]
+      [[img:./settings-integrations-widget.png|The website chat widget script and developer email.]]
       <h2>Click-to-Text button</h2>
       <p>A "Text Us to Book" button — on mobile it opens the customer's messaging app pre-filled with a booking inquiry routed to your AI. (Needs an AI phone line first.)</p>
       <h2>Your booking page</h2>
@@ -270,7 +270,7 @@ const ARTICLES = [
         <li><strong>Leg 3 — Job completed → nurturing:</strong> the <strong>Revenue Pipeline</strong> webhook records revenue and kicks off post-service nurturing when a job is Won.</li>
       </ul>
       <p>Each card's <strong>How to Connect</strong> button gives exact Zapier field mapping.</p>
-      [[img:help-images/settings-crm-loop.png|The CRM 3-step loop.]]
+      [[img:./settings-crm-loop.png|The CRM 3-step loop.]]
       <h2>Google Calendar</h2>
       <p>Connect it so the AI checks real-time availability and never double-books. Reconnect prompt appears if it ever expires.</p>
       <h2>Facebook Messenger</h2>
@@ -282,7 +282,7 @@ const ARTICLES = [
     html: `
       <p class="crumb">Settings</p>
       <p>The <strong>Plans</strong> tab is where you see your current plan, switch plans, and manage optional add-ons.</p>
-      [[img:help-images/settings-plans.png|The Plans tab — current plan, billing cycle, and add-ons.]]
+      [[img:./settings-plans.png|The Plans tab — current plan, billing cycle, and add-ons.]]
       <h2>Your current plan</h2>
       <p>At the top, the <strong>Current Plan</strong> card shows which plan you're on (Basic, Pro, or Elite) and its status. The <strong>Manage Billing</strong> button opens your billing portal to update payment details or view invoices.</p>
       <h2>Monthly vs. annual</h2>
@@ -310,7 +310,7 @@ const ARTICLES = [
       <p class="crumb">Settings</p>
       <p>The <strong>Usage &amp; Billing</strong> tab shows usage against your plan limits and your billing details.</p>
       <p>See consumed calling minutes and other metered usage this period, and manage your subscription and payment. Approaching your limit triggers a dashboard warning banner linking back here.</p>
-      [[img:help-images/settings-billing.png|The Usage & Billing tab.]]
+      [[img:./settings-billing.png|The Usage & Billing tab.]]
       <div class="callout"><p>On reseller accounts this tab is hidden — usage shows in the reseller area instead.</p></div>` },
 
   { id: "api-integrations", category: "Developer & API", title: "API & developer integrations",

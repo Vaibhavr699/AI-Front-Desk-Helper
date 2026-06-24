@@ -450,6 +450,12 @@ export default function Calls({ tenantId }) {
         >
           AI Outreach Log
         </button>
+        <button
+          onClick={() => navigate("/voicemails")}
+          className="px-4 py-2.5 text-sm font-bold border-b-2 border-transparent text-stone-500 hover:text-stone-700 -mb-px transition-all"
+        >
+          Voicemails
+        </button>
       </div>
 
       {/* Filter bar */}

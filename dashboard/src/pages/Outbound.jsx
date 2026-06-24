@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useOutletContext } from "react-router-dom";
+import { useOutletContext, useNavigate } from "react-router-dom";
 import { get, post, patch } from "../api";
 import { 
   Rocket, Package, Search, Plus, Play, Pause, MoreVertical, 
@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "../components/ui/Toast";
 
 export default function Outbound({ tenantId }) {
+  const navigate = useNavigate();
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeCampaign, setActiveCampaign] = useState(null);
@@ -75,7 +76,7 @@ export default function Outbound({ tenantId }) {
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-8 min-h-screen font-sans antialiased text-stone-900">
-      {/* SaaS Grade Header */}
+     {/* SaaS Grade Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Outbound Campaigns</h1>
@@ -89,6 +90,33 @@ export default function Outbound({ tenantId }) {
           <Plus className="w-4 h-4" /> 
           New Campaign
         </Button>
+      </div>
+
+      {/* Tab bar — links back to Call Intelligence Center + across tabs */}
+      <div className="flex gap-2 border-b border-stone-200 overflow-x-auto">
+        <button
+          onClick={() => navigate("/calls")}
+          className="px-4 py-2.5 text-sm font-bold border-b-2 border-transparent text-stone-500 hover:text-stone-700 -mb-px transition-all whitespace-nowrap"
+        >
+          Inbound Calls
+        </button>
+        <button
+          className="px-4 py-2.5 text-sm font-bold border-b-2 border-brand-600 text-brand-600 -mb-px transition-all whitespace-nowrap"
+        >
+          Outbound Campaigns
+        </button>
+        <button
+          onClick={() => navigate("/outreach-log")}
+          className="px-4 py-2.5 text-sm font-bold border-b-2 border-transparent text-stone-500 hover:text-stone-700 -mb-px transition-all whitespace-nowrap"
+        >
+          AI Outreach Log
+        </button>
+        <button
+          onClick={() => navigate("/voicemails")}
+          className="px-4 py-2.5 text-sm font-bold border-b-2 border-transparent text-stone-500 hover:text-stone-700 -mb-px transition-all whitespace-nowrap"
+        >
+          Voicemails
+        </button>
       </div>
 
       <AnimatePresence>

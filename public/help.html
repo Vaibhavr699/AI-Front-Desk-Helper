@@ -326,8 +326,111 @@ const ARTICLES = [
   { id: "conversations", category: "Your Dashboard", title: "Conversations", stub: true, html: `<p>Reading and replying to customer text and chat conversations, and taking over from the AI.</p>` },
   { id: "follow-ups", category: "Your Dashboard", title: "Follow-ups", stub: true, html: `<p>How automated follow-ups work and configuring recovery cadences.</p>` },
   { id: "metrics", category: "Your Dashboard", title: "Metrics & reporting", stub: true, html: `<p>Performance metrics, heat maps, and conversion reporting.</p>` },
-  { id: "reviews", category: "Growth", title: "Reviews", stub: true, html: `<p>How automated review requests work and managing your Google reviews.</p>` },
-  { id: "gbp", category: "Growth", title: "Google Business Profile", stub: true, html: `<p>Connecting and strengthening your Google Business Profile and the booking link.</p>` },
+  { id: "ai-coaching", category: "Your Dashboard", title: "AI Coaching", html: `
+      <p>The <strong>AI Coaching</strong> page scores your team's conversations — both phone calls and SMS threads — so you can see how well each one was handled and where reps are losing deals. Every conversation is graded by AI across eight dimensions, with the buyer's persona detected and specific, rationale-backed feedback.</p>
+      [[img:./ai-coaching-overview.png|The AI Coaching page — channel toggle and the four summary cards.]]
+      <h2>The two tabs</h2>
+      <p>At the top you'll find <strong>Conversations</strong> (the scored list) and <strong>In-Home Cues</strong> (real-time coaching prompts for in-person visits).</p>
+      <h2>Channel: Voice / SMS / All</h2>
+      <p>The channel toggle filters what you're looking at: <strong>Voice</strong> (inbound and outbound calls), <strong>SMS</strong> (text conversations), or <strong>All</strong> together. New calls are scored every few minutes; SMS threads are scored after they've been quiet for about 12 hours.</p>
+      <h2>The summary cards</h2>
+      <p>Four cards across the top give you the headline numbers for your selected date range (7, 30, or 90 days): <strong>Average Score</strong> (out of 10), <strong>Conversations Scored</strong>, <strong>Book Rate</strong> (how many scored conversations led to a booking), and <strong>Focus Area</strong> (the single lowest-scoring dimension across your team — your biggest opportunity to improve).</p>
+      <h2>Filtering the list</h2>
+      <p>Narrow the conversation list by <strong>persona</strong> (Researcher, Protector, Status Seeker, Pragmatist, Negotiator, Collaborator), by <strong>source</strong> (inbound/outbound call, SMS, rep recording), or by <strong>minimum score</strong> (8+ great, 6+ good). The list shows each conversation's date, source, detected persona, rep, outcome, and score color-coded green/amber/red.</p>
+      [[img:./ai-coaching-list.png|The conversation list — persona, rep, outcome, and color-coded scores.]]
+      <h2>One-sided calls</h2>
+      <p>By default, conversations where the customer's side wasn't captured (silent calls, hang-ups) are hidden, since they can't be fairly scored. Toggle <strong>Show one-sided calls</strong> to see them — they appear with a "Not Analyzable" badge.</p>
+      <h2>Opening a conversation</h2>
+      <p>Click any row to open the full detail — the transcript, the score breakdown across all eight dimensions (rapport, discovery, education, value framing, objection handling, close, professionalism, and property walkthrough), and the AI's reasoning for each.</p>
+      <h2>Coaching settings & Team Analytics (owners/admins)</h2>
+      <p>Two buttons at the top right: <strong>Coaching settings</strong> tunes how the engine scores and what rules it applies, and <strong>Team Analytics</strong> compares your reps side by side — average scores, how many conversations each handled, coaching-cue counts (like "missing close"), and the team's score trend over time.</p>
+      [[img:./ai-coaching-analytics.png|Team Analytics — rep comparison and the team score trend.]]
+      <div class="callout"><p><strong>Teaching the AI your style:</strong> feedback you give on conversations is turned into coaching rules that, once approved, shape how the AI handles future calls and texts — tuning it to how you want things done.</p></div>` },
+  { id: "team", category: "Account", title: "Team & users", html: `
+      <p>The <strong>Team</strong> page is where you manage who has access to your account, what they can do, and (if you use it) their AI Rep Coach mobile seats. It has two tabs: <strong>Members</strong> and <strong>Activity History</strong>.</p>
+      [[img:./team-members.png|The Members tab — your team table with roles, locations, and rep-seat controls.]]
+      <h2>Your name</h2>
+      <p>At the top of Members, set <strong>Your name</strong> — this is the display name shown above your coaching feedback in a rep's mobile app. If you leave it blank, reps see your email instead.</p>
+      <h2>Inviting a team member</h2>
+      <p>Click <strong>Invite User</strong>, enter their email, and pick a role. They'll get an email to set their password. The three roles:</p>
+      <ul>
+        <li><strong>Staff / Technician</strong> — can only see the Bookings calendar.</li>
+        <li><strong>Business Manager</strong> — operational access to leads and calls across locations; no billing or plan access.</li>
+        <li><strong>Business Owner</strong> — full access including billing, settings, and team management.</li>
+      </ul>
+      <p>On a multi-location (HQ) account, you also assign which location the member belongs to; HQ members get organization-wide visibility at their role's level.</p>
+      [[img:./team-invite.png|The Invite User modal, showing the three roles.]]
+      <h2>The members table</h2>
+      <p>Each member shows their email, assigned location (with an HQ badge for corporate), role, rep-seat status, and a remove button. Removing someone revokes their access immediately.</p>
+      <h2>AI Rep Coach & seats</h2>
+      <p>If you use the AI Rep Coach mobile app, the toggle here enables it for your account. Once on, you assign a <strong>rep seat</strong> to each member who needs the app (with a tier: Standard, Pro, or Elite). A usage meter shows how many seats are active, your current per-seat rate, and how many more seats you'd need to reach the next price break.</p>
+      <h2>Activity History</h2>
+      <p>The second tab is an audit log of account activity — logins, users removed, bookings updated, settings changed, recordings played, and more. Filter by action type and date range. On HQ accounts it also shows which location each action came from.</p>
+      [[img:./team-history.png|The Activity History tab — a filterable audit log of account activity.]]` },
+  { id: "reviews", category: "Growth", title: "Reviews",
+    html: `
+      <p class="crumb">Growth</p>
+      <p>The <strong>Reviews</strong> page does two jobs: it <em>asks</em> happy customers for Google reviews automatically after a job, and it helps you <em>respond</em> to the reviews you get with AI-drafted replies you approve in one click.</p>
+      <div class="callout"><p>Reviews is an add-on ($29/mo), <strong>included free on the Elite plan</strong>. If you don't have access yet, the page shows an unlock card; on Elite it's already on.</p></div>
+      <h2>First time: connect Google</h2>
+      <p>Once you have access, connect your Google Business Profile so the app can read your reviews and post replies. Click <strong>Connect Google Account</strong> and authorize. You only do this once.</p>
+      <h2>Review Requests — asking for reviews automatically</h2>
+      <p>At the top of the connected page is the <strong>Review Requests</strong> section (click to expand). This is the automated drip that asks customers for a review after a completed job:</p>
+      <ul>
+        <li><strong>Google review link</strong> — paste your review link here (from your Google Business Profile → "Ask for reviews"). This is what gets sent to customers. Click <strong>Save link</strong>.</li>
+        <li><strong>Automatic review requests</strong> toggle — turn the drip on/off. Default cadence: a text on day 1, another on day 3, then an email on day 7. It stops the moment they leave a review.</li>
+        <li><strong>In progress</strong> — every customer currently in the drip, each with a <strong>Stop</strong> button. You have about 24 hours after a job completes to hit Stop before the first text goes out, if you'd rather not ask that particular customer.</li>
+      </ul>
+      [[img:./reviews-requests.png|The Review Requests drip — review link, on/off toggle, and in-progress list.]]
+      <h2>Responding to reviews — the three tabs</h2>
+      <p>Below that, your reviews are organized into three tabs. Click <strong>Check for new reviews</strong> at the top right any time to pull the latest from Google (it also checks automatically every few hours).</p>
+      <h3>Pending</h3>
+      <p>New reviews waiting for a response. Each card shows the reviewer, their star rating, their review text, and an <strong>AI Draft Response</strong> written for you. You can:</p>
+      <ul>
+        <li><strong>✓ Approve &amp; Post to Google</strong> — posts the reply live.</li>
+        <li><strong>✏ Edit</strong> — tweak the wording before posting.</li>
+        <li><strong>↻ Regenerate</strong> — get a fresh AI draft if you don't like the first.</li>
+        <li><strong>Skip</strong> — move it to Skipped without replying.</li>
+      </ul>
+      [[img:./reviews-pending.png|The Pending tab — a review with its AI draft response and action buttons.]]
+      <h3>Posted</h3>
+      <p>Reviews you've already replied to, showing the response that's now live on Google and the date it posted.</p>
+      [[img:./reviews-posted.png|The Posted tab — replies that are live on Google.]]
+      <h3>Skipped</h3>
+      <p>Reviews you chose not to respond to. Nothing was posted; they're just filed here so your Pending tab stays clean.</p>
+      [[img:./reviews-skipped.png|The Skipped tab.]]
+      <div class="callout"><p><strong>Disconnecting:</strong> the <strong>Disconnect</strong> button at the top right unlinks your Google account. You'd only do this to reconnect a different account.</p></div>` },
+  { id: "gbp", category: "Growth", title: "Google Business Profile", html: `
+      <p class="crumb">Growth</p>
+      <p>The <strong>Google Business Profile</strong> page helps you keep your Google listing strong — it audits your profile, writes AI posts tuned for local and AI search, tracks performance, and manages your booking link. A strong, active profile ranks higher and gets found more.</p>
+      <h2>First time: connect Google</h2>
+      <p>Connect your Google Business account to unlock everything here. Click <strong>Connect Google Account</strong> and authorize. (This is the same connection used by the Reviews page — connect once, both work.)</p>
+      <p>Once connected, the page has six sub-tabs across the top:</p>
+      <h2>Health</h2>
+      <p>A <strong>health score</strong> (0–100) for your profile, with a prioritized list of gaps to fix — things like a stale description, missing services, or no recent posts. Click <strong>Run audit</strong> to score (or re-score) your profile.</p>
+      <p>Some gaps have a fix button built right in: <strong>✨ Rewrite with AI</strong> opens a tool that rewrites your business description (you pick a focus — wider service area, premium work, trust, etc., then review and publish), and <strong>See suggested services</strong> lists services to add to your profile for your trade.</p>
+      [[img:./gbp-health.png|The Health tab — score ring and prioritized gaps.]]
+      <h2>Drafts</h2>
+      <p>Generate AI posts for your profile. Click <strong>+ Generate draft</strong> and the AI writes a post tuned for local and AI search. Before you can publish, each post needs an image — <strong>Upload</strong> your own or <strong>Choose from Google</strong> (your existing profile photos). Then <strong>✓ Approve &amp; Publish to Google</strong> sends it live. You can also Edit the text or Archive a draft.</p>
+      [[img:./gbp-drafts.png|The Drafts tab — an AI-generated post with image and publish controls.]]
+      <h2>Published</h2>
+      <p>Every post that's gone live on your profile, with its image, text, and publish date.</p>
+      [[img:./gbp-published.png|The Published tab.]]
+      <h2>Schedule</h2>
+      <p>Automate your posting so the profile stays active without you thinking about it. Three modes:</p>
+      <ul>
+        <li><strong>Off</strong> — you post manually.</li>
+        <li><strong>Draft only (recommended)</strong> — the app generates posts on your schedule and leaves them in Drafts for you to approve. Nothing goes live without your click.</li>
+        <li><strong>Full auto</strong> — the app generates <em>and</em> publishes on your schedule, using images from your pool. Posts go live with no review.</li>
+      </ul>
+      <p>Set the <strong>cadence</strong> (posts per week, preferred days, preferred hour). For Full auto, add photos to the <strong>image pool</strong> — the app rotates through them (and falls back to your existing profile photos if the pool is empty).</p>
+      [[img:./gbp-schedule.png|The Schedule tab — posting mode, cadence, and image pool.]]
+      <h2>Performance</h2>
+      <p>How your profile is actually performing, pulled from Google: <strong>calls</strong>, <strong>website clicks</strong>, <strong>direction requests</strong>, and <strong>impressions</strong>. Click any tile to see its trend chart over 7, 30, or 90 days. Click <strong>Refresh from Google</strong> to pull the latest (Google's data lags 2–3 days, and it syncs nightly on its own).</p>
+      [[img:./gbp-performance.png|The Performance tab — metric tiles and trend chart.]]
+      <h2>Booking Link</h2>
+      <p>Manage the booking link that appears on your Google profile, so customers can book straight from your listing. (This is the link that shows in the "Appointments" slot on your public Google panel.)</p>
+      [[img:./gbp-booking.png|The Booking Link tab.]]` },
 ];
 
 const sidebar = document.getElementById("sidebar");

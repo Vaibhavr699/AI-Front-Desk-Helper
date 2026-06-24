@@ -116,6 +116,28 @@ export async function postFormData(path, formData) {
   return res.json();
 }
 
+// ── Voicemail greeting upload (Phase 3A, Jun 24, 2026) ────────────────────
+// Uploads a raw WAV recorded in-browser to the voicemail-greetings bucket.
+// Sends the Bearer token manually (like postFormData / getRecordingAudioUrl)
+// because the route is auth-gated and this isn't a JSON request — it streams
+// audio/wav bytes. The recorder calls this instead of its own fetch, which
+// fixes the 401 (the old fetch used cookie auth; this app uses token auth).
+// Returns { ok, url }.
+export async function uploadVoicemailGreeting(tenantId, wavBlob) {
+  const token = getToken();
+  const headers = { "Content-Type": "audio/wav" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(
+    `${API_BASE}/api/voicemail-greeting/upload?tenantId=${encodeURIComponent(tenantId)}`,
+    { method: "POST", headers, body: wavBlob }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+  return res.json();
+}
+
 export async function login(email, password) {
   const data = await api("/api/auth/login", {
     method: "POST",

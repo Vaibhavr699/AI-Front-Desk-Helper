@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Front Desk Helper — Help Center</title>
+<style>
+  :root {
+    --brand: #ea580c; --brand-dark: #c2410c; --ink: #1c1917;
+    --muted: #78716c; --line: #e7e5e4; --bg: #fafaf9; --panel: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--ink); background: var(--bg); line-height: 1.6; font-size: 15px; }
+  a { color: var(--brand-dark); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .topbar { position: sticky; top: 0; z-index: 20; background: var(--panel); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 16px; padding: 12px 20px; }
+  .topbar .brand { font-weight: 800; font-size: 15px; color: var(--ink); white-space: nowrap; }
+  .topbar .brand span { color: var(--brand); }
+  .search-wrap { flex: 1; position: relative; max-width: 520px; }
+  .search-wrap input { width: 100%; padding: 9px 14px 9px 36px; border: 1px solid var(--line); border-radius: 10px; font-size: 14px; outline: none; }
+  .search-wrap input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(234,88,12,0.12); }
+  .search-wrap .icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 15px; }
+  .back-link { font-size: 13px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+  .layout { display: flex; max-width: 1200px; margin: 0 auto; align-items: flex-start; }
+  .sidebar { width: 290px; flex-shrink: 0; padding: 24px 12px 60px; position: sticky; top: 61px; max-height: calc(100vh - 61px); overflow-y: auto; border-right: 1px solid var(--line); }
+  .cat { margin-bottom: 18px; }
+  .cat-title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); padding: 6px 12px; }
+  .article-link { display: block; padding: 7px 12px; border-radius: 8px; font-size: 14px; color: #44403c; cursor: pointer; border: none; background: none; width: 100%; text-align: left; font-family: inherit; }
+  .article-link:hover { background: #f5f5f4; text-decoration: none; }
+  .article-link.active { background: #fff7ed; color: var(--brand-dark); font-weight: 700; }
+  .article-link .stub-tag { font-size: 9px; font-weight: 700; text-transform: uppercase; background: #f5f5f4; color: #a8a29e; padding: 1px 5px; border-radius: 4px; margin-left: 6px; letter-spacing: 0.3px; }
+  .content { flex: 1; min-width: 0; padding: 32px 40px 80px; max-width: 780px; }
+  .content h1 { font-size: 28px; letter-spacing: -0.5px; margin: 0 0 6px; }
+  .content .crumb { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--brand); margin-bottom: 8px; }
+  .content h2 { font-size: 19px; margin: 28px 0 8px; padding-bottom: 5px; border-bottom: 1px solid var(--line); letter-spacing: -0.3px; }
+  .content h3 { font-size: 16px; margin: 20px 0 6px; }
+  .content p { margin: 10px 0; }
+  .content ul, .content ol { margin: 10px 0; padding-left: 24px; }
+  .content li { margin: 5px 0; }
+  .content code { font-family: Menlo, Monaco, Consolas, monospace; font-size: 13px; background: #f5f5f4; color: #b91c1c; padding: 1px 5px; border-radius: 4px; }
+  .content strong { color: var(--ink); }
+  .callout { border-left: 4px solid var(--brand); background: #fff7ed; color: #7c2d12; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+  .callout p { margin: 4px 0; }
+  .stub-banner { background: #f5f5f4; border: 1px dashed #d6d3d1; border-radius: 10px; padding: 20px; color: var(--muted); margin: 20px 0; }
+  .search-results-note { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  .no-results { color: var(--muted); padding: 40px 0; text-align: center; }
+  figure.help-img { margin: 18px 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #fff; }
+  figure.help-img img { display: block; width: 100%; height: auto; }
+  figure.help-img figcaption { font-size: 12px; color: var(--muted); padding: 8px 12px; border-top: 1px solid var(--line); background: #fafaf9; }
+  .img-missing { display: flex; align-items: center; justify-content: center; min-height: 120px; background: repeating-linear-gradient(45deg,#f5f5f4,#f5f5f4 10px,#fafaf9 10px,#fafaf9 20px); color: #a8a29e; font-size: 13px; font-weight: 600; text-align: center; padding: 20px; }
+  .menu-toggle { display: none; background: none; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 13px; cursor: pointer; }
+  @media (max-width: 860px) {
+    .menu-toggle { display: inline-block; }
+    .sidebar { position: fixed; left: 0; top: 57px; bottom: 0; width: 82%; max-width: 320px; background: var(--panel); z-index: 30; max-height: none; transform: translateX(-100%); transition: transform 0.2s ease; box-shadow: 2px 0 20px rgba(0,0,0,0.08); }
+    .sidebar.open { transform: translateX(0); }
+    .content { padding: 24px 20px 60px; }
+    .overlay { display: none; position: fixed; inset: 57px 0 0 0; background: rgba(28,25,23,0.3); z-index: 25; }
+    .overlay.show { display: block; }
+    .brand-sub { display: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <button class="menu-toggle" id="menuToggle">&#9776;</button>
+    <div class="brand">AI Front Desk Helper<span class="brand-sub"> · Help Center</span></div>
+    <div class="search-wrap">
+      <span class="icon">&#128269;</span>
+      <input id="search" type="text" placeholder="Search help articles…" autocomplete="off" />
+    </div>
+    <a class="back-link" href="/dashboard">&larr; Back to dashboard</a>
+  </div>
+  <div class="overlay" id="overlay"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main class="content" id="content"></main>
+  </div>
+<script>
+// Each article: { id, category, title, stub?, html }
+// IMAGES: [[img:help-images/file.png|Caption]] — save screenshots into the
+// backend's public/help-images/ folder. Missing files show a placeholder.
+const ARTICLES = [
+  { id: "getting-started", category: "Getting Started", title: "Welcome & overview",
+    html: `
+      <p>Welcome to AI Front Desk Helper. This help center walks you through every part of your dashboard — what each screen does and how to use it.</p>
+      <p>Your AI receptionist answers calls, texts, and website chats around the clock: it qualifies leads, books estimates onto your calendar, follows up automatically, and keeps every interaction in one place so nothing slips through.</p>
+      <h2>Finding your way around</h2>
+      <p>The left sidebar is your main navigation. The most-used areas are the Dashboard, the Call Intelligence Center (every call, campaign, and voicemail), Bookings, Leads, and Settings.</p>
+      <div class="callout"><p><strong>New here?</strong> Start with <strong>Settings → Phone &amp; voice</strong> to get your AI line live, then <strong>Settings → AI behavior</strong> to shape how it talks.</p></div>` },
+
+  { id: "inbound-calls", category: "Call Intelligence Center", title: "Inbound Calls",
+    html: `
+      <p class="crumb">Call Intelligence Center</p>
+      <p>The <strong>Inbound Calls</strong> tab is the record of every call your AI receptionist answered.</p>
+      <h2>Reading the list</h2>
+      <p>Each row shows the date, a <strong>lead score</strong> (0–100; green hot, amber medium, red low), the caller's name and number, the project type, and the status.</p>
+      <h2>Filtering &amp; searching</h2>
+      <p>Search by name, phone, or transcript words (search spans all calls regardless of date filter). Narrow by date range, score, or status.</p>
+      <h2>Opening &amp; actioning a call</h2>
+      <p>Click a row to expand it — estimated value, AI summary, recording, transcript. The action buttons set the lead's state: Schedule Estimate, FollowUp, Lost Lead, or Spam.</p>` },
+
+  { id: "outbound-campaigns", category: "Call Intelligence Center", title: "Outbound Campaigns",
+    html: `
+      <p class="crumb">Call Intelligence Center</p>
+      <p><strong>Outbound Campaigns</strong> launches automated AI calling campaigns to a list of contacts.</p>
+      <h2>Calling credits &amp; bundles</h2>
+      <p>Outbound calls use calling minutes. Your plan includes a monthly allotment; buy prepaid bundles (500/1,500/3,000 min) here for more — they stack on top.</p>
+      <h2>Creating &amp; tracking</h2>
+      <p>Click <strong>New Campaign</strong>, choose manual or auto-evolving A/B mode, and upload contacts. Open any campaign to pause/resume and watch success rate, bookings, and winning scripts live.</p>
+      <div class="callout"><p>Campaigns are bulk calling you launch on purpose. The Outreach Log is automated follow-up the AI sends on its own.</p></div>` },
+
+  { id: "outreach-log", category: "Call Intelligence Center", title: "AI Outreach Log",
+    html: `
+      <p class="crumb">Call Intelligence Center</p>
+      <p>The <strong>AI Outreach Log</strong> is the read-only record of every automated touch the AI sent on its own — recovery, nurturing, seasonal, referral, missed-call callbacks.</p>
+      <h2>Reading a row</h2>
+      <p>Channel icon, time, customer, and two labels: <strong>Source</strong> (why it fired) and <strong>Status</strong> (what happened).</p>
+      <h2>Filtering &amp; viewing</h2>
+      <p>Search by name/phone, filter by source chips. Click <strong>View</strong> — a call opens its recording and transcript; a text opens the conversation thread.</p>` },
+
+  { id: "voicemails", category: "Call Intelligence Center", title: "Voicemails",
+    html: `
+      <p class="crumb">Call Intelligence Center</p>
+      <p>The <strong>Voicemails</strong> tab collects messages callers left when they couldn't be connected.</p>
+      <h2>Working through them</h2>
+      <p>Each message shows the number, time, length, and a <strong>Play message</strong> button. Use <strong>Call back</strong> and <strong>Mark handled</strong>. The tab shows a count of unhandled messages.</p>
+      <div class="callout"><p>Record the greeting callers hear in <strong>Settings → AI Control → Voicemail greeting</strong>.</p></div>` },
+
+  // ── SETTINGS (10 tabs) ──
+  { id: "settings-phone", category: "Settings", title: "Phone & voice",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>Phone &amp; voice</strong> tab is where you set up AI phone lines — buy a new number, connect one you own, and manage which line is primary.</p>
+      [[img:help-images/settings-phone.png|The Phone & voice tab, showing plan usage and Search & Provision.]]
+      <h2>Plan usage</h2>
+      <p>The blue bar shows numbers used vs your plan limit (e.g. 2 of 5 on Elite). Click <strong>Buy Extra ($12/mo)</strong> for another line, or upgrade your plan.</p>
+      <h2>Getting a new AI line</h2>
+      <ul>
+        <li><strong>Search &amp; Provision</strong> — type an area code, click <strong>Find Numbers</strong>, pick one (new, or an unassigned one already "In Account") and Purchase/Connect.</li>
+        <li><strong>External Forwarding</strong> — already have a number elsewhere? Enter it to forward its calls to your AI.</li>
+      </ul>
+      <h2>Attribute to lead source</h2>
+      <p>Tag each number with its <strong>Lead Source</strong> (Google Ads, Yelp, Facebook…) so every call is attributed to the marketing channel it came from.</p>
+      <h2>Your AI phone lines &amp; primary</h2>
+      <p>Set one line as <strong>Primary</strong> (star icon) — your main caller ID. Change a line's lead source or remove it here.</p>
+      <h2>Forwarding your main line</h2>
+      <p>The dark "Forward your main line" card gives carrier codes (e.g. <code>*72</code> on AT&amp;T/Verizon) to send unanswered calls to your AI line.</p>
+      <div class="callout"><p>A plan is required to provision an AI line. A "Subscription required" lock means add a plan first.</p></div>` },
+
+  { id: "settings-branding", category: "Settings", title: "Branding",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>Branding</strong> tab makes the dashboard look like your business — logo, company name, and brand color in the sidebar, header, browser tab, and customer emails.</p>
+      [[img:help-images/settings-branding.png|The Branding tab — company identity, support email, timezone.]]
+      <h2>Company identity</h2>
+      <ul>
+        <li><strong>Company name</strong> — across the dashboard and in customer emails.</li>
+        <li><strong>Support email</strong> — used in email footers. Blank = default.</li>
+        <li><strong>Timezone</strong> — affects call routing, nurturing, and reports. Auto-detected on first save; editable here.</li>
+      </ul>
+      <h2>Visual assets</h2>
+      <p>Upload your <strong>Logo</strong> (PNG/SVG, max 1MB) and <strong>Favicon</strong> (square PNG, 32×32 or 64×64).</p>
+      <h2>Colors</h2>
+      <p>Set your <strong>Brand color</strong> (buttons, active states, website chat widget) and an optional <strong>Accent color</strong> (blank = derived from brand color).</p>
+      <h2>Custom domain</h2>
+      <p>On white-label / Elite plans, host the dashboard on your own subdomain (e.g. <code>app.yourcompany.com</code>): enter the hostname, add the CNAME it gives you, click <strong>Verify</strong>. Subdomains only.</p>
+      <div class="callout"><p>Branding changes apply on <strong>Save Changes</strong> (timezone saves on its own).</p></div>` },
+
+  { id: "settings-ai-behavior", category: "Settings", title: "AI behavior",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>AI behavior</strong> tab shapes how your AI talks — tone, greetings, voice, objection handling — and configures your outbound AI agent.</p>
+      [[img:help-images/settings-ai-behavior.png|The AI behavior tab — tone and welcome messages.]]
+      <h2>Tone of voice</h2>
+      <p>Professional, Friendly &amp; Casual, Luxury, or Direct &amp; Authoritative.</p>
+      <h2>Welcome messages</h2>
+      <ul>
+        <li><strong>Voice greeting</strong> — spoken on phone calls in your selected voice. Short (6–12 words), no emoji. Blank = greet naturally.</li>
+        <li><strong>Chat widget greeting</strong> — shown when the website chat opens. Can be longer; emoji fine.</li>
+      </ul>
+      <h2>Inbound voice</h2>
+      <p>Choose the AI's voice for inbound calls (natural AI voices like Shimmer, Ash, Echo — not robotic TTS).</p>
+      <h2>Detailed AI instructions</h2>
+      <p>Free-text direction on how the AI should behave — anything specific to your business.</p>
+      <h2>Outbound AI agent</h2>
+      <p>Separate settings for when the AI <em>calls</em> leads: caller name (e.g. Alex), outbound voice, and outbound personality/instructions.</p>
+      <h2>Objection handling</h2>
+      <p>Up to 5 cases, each a <strong>trigger</strong> (what the caller says) and a <strong>script</strong> (how the AI responds).</p>
+      [[img:help-images/settings-objection.png|Objection handling cases.]]` },
+
+  { id: "settings-knowledge", category: "Settings", title: "Knowledge base (FAQs)",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>Knowledge base</strong> tab teaches the AI specific questions and answers about your business.</p>
+      <h2>Adding FAQs</h2>
+      <p>Click <strong>Add Question</strong>, enter a <strong>Question</strong> (e.g. "Do you offer emergency services?") and the <strong>Answer</strong> the AI should give. When a caller asks something related, the AI uses your answer.</p>
+      [[img:help-images/settings-knowledge.png|The Knowledge base tab.]]
+      <div class="callout"><p>Add the questions customers actually ask on the phone first. Empty pairs are ignored.</p></div>` },
+
+  { id: "settings-estimator", category: "Settings", title: "Estimator",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>Estimator</strong> tab controls the "💰 Quick Quote" button on your chat widget — a popup that gives homeowners a ballpark price and captures them as a lead. (This tab appears when your plan includes the Estimator or you've added it on — see the Plans tab.)</p>
+      [[img:help-images/settings-estimator.png|The Estimator tab.]]
+      <h2>Turning it on</h2>
+      <p>The hero toggle switches the Quick Quote button on/off.</p>
+      <h2>Cost region</h2>
+      <p>Match your local market: Auto (from your state), High (+50%), Mid (baseline), Low (−15%), or Custom (your own %).</p>
+      <h2>Service rate adjustments</h2>
+      <p>Tune each service up or down from default. Enter a % per service — these <strong>save instantly</strong>. Click <strong>Reset</strong> to return to default.</p>
+      <h2>Standard scope</h2>
+      <p>Toggles for which scope options the estimator includes; loaded for your business type.</p>
+      <div class="callout"><p>Rate adjustments save instantly. The master toggle and cost region apply on <strong>Save Changes</strong>.</p></div>` },
+
+  { id: "settings-ai-control", category: "Settings", title: "AI Control",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>AI Control</strong> tab is mission control for when and how the AI answers.</p>
+      [[img:help-images/settings-ai-control.png|The AI Control tab with the master toggle.]]
+      <h2>1. Master AI toggle</h2>
+      <p>Turns the AI on/off entirely. When off, calls ring your ring-first/transfer number then fall to voicemail. With no human number set, it warns you every call goes to voicemail.</p>
+      <h2>2. Your calling hours</h2>
+      <p>Open/close times per day (or mark closed). Defines "business hours" vs "after hours."</p>
+      <h2>3. When should AI answer?</h2>
+      <p><strong>24/7</strong> (every call) or <strong>After-hours only</strong> (you pick up during the day).</p>
+      <h2>4. Ring-first handoff</h2>
+      <p>Ring a human first; if no pickup within the timeout (5–60s), the call falls through to AI (or voicemail).</p>
+      <h2>5. Voicemail greeting</h2>
+      <p>Paste an HTTPS <code>.mp3</code>/<code>.wav</code> link, or record one in your browser. Blank = friendly default.</p>
+      [[img:help-images/settings-voicemail.png|The voicemail greeting recorder.]]
+      <h2>6. Service area</h2>
+      <p>Tell the AI where you work so it declines out-of-area callers. No limit / By state / By radius / By ZIP. Saves with its own <strong>Save service area</strong> button.</p>
+      <h2>7. Pre-visit briefing text</h2>
+      <p>About an hour before each appointment, the AI texts a briefing. Set a fallback phone for when no technician is assigned.</p>
+      <h2>8. Booking notifications</h2>
+      <p>Text and/or email you the moment any booking lands, from any channel.</p>` },
+
+  { id: "settings-nurturing", category: "Settings", title: "Nurturing & referrals",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>Nurturing &amp; referrals</strong> tab sets up automatic post-service follow-ups — referrals, maintenance reminders, re-engagement, and seasonal campaigns. (Requires Elite or an add-on.)</p>
+      <h2>Enabling campaigns</h2>
+      <p>Three checkboxes: nurturing, referral requests, seasonal campaigns.</p>
+      <h2>Referral timing</h2>
+      <p>How many days after a completed service the AI asks for a referral.</p>
+      <h2>Maintenance &amp; re-engagement touchpoints</h2>
+      <p>Up to 3 each. Set <strong>months after service</strong> and a <strong>header/theme</strong> (e.g. "Spring AC Tune-Up") — the AI writes the message from your theme. Months = 0 disables a touchpoint.</p>
+      <h2>12-month campaign calendar</h2>
+      <p>Name each month's seasonal campaign (blank = default). "Use painting example defaults" populates a starter set.</p>
+      [[img:help-images/settings-nurturing.png|Touchpoints and the 12-month calendar.]]` },
+
+  { id: "settings-integrations", category: "Settings", title: "Integrations",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>Integrations</strong> tab connects your AI to your website, phone system, CRM, calendar, and Facebook.</p>
+      <h2>Website chat widget</h2>
+      <p>Copy the script tag onto your site (before <code>&lt;/body&gt;</code>) for an AI chat bubble. <strong>Copy Email for Developer</strong> copies a ready-to-send email with the script, the click-to-text button, and platform install steps.</p>
+      [[img:help-images/settings-integrations-widget.png|The website chat widget script and developer email.]]
+      <h2>Click-to-Text button</h2>
+      <p>A "Text Us to Book" button — on mobile it opens the customer's messaging app pre-filled with a booking inquiry routed to your AI. (Needs an AI phone line first.)</p>
+      <h2>Your booking page</h2>
+      <p>A standalone page where customers book in one tap; every booking flows into your dashboard and fires your notifications. Copy the link to share it.</p>
+      <h2>Voice &amp; SMS (Twilio)</h2>
+      <p>Set <strong>transfer numbers</strong> (where human-transfer calls go) and, if you use your own Twilio, your SID and Auth Token.</p>
+      <h2>The CRM 3-step loop</h2>
+      <ul>
+        <li><strong>Leg 1 — New lead → your CRM:</strong> paste your CRM's inbound webhook in <strong>CRM Webhook URL</strong>.</li>
+        <li><strong>Leg 2 — Estimate sent → AI follow-up:</strong> the <strong>AI Sales Recovery</strong> webhook starts a 21-day recovery sequence when you send a proposal.</li>
+        <li><strong>Leg 3 — Job completed → nurturing:</strong> the <strong>Revenue Pipeline</strong> webhook records revenue and kicks off post-service nurturing when a job is Won.</li>
+      </ul>
+      <p>Each card's <strong>How to Connect</strong> button gives exact Zapier field mapping.</p>
+      [[img:help-images/settings-crm-loop.png|The CRM 3-step loop.]]
+      <h2>Google Calendar</h2>
+      <p>Connect it so the AI checks real-time availability and never double-books. Reconnect prompt appears if it ever expires.</p>
+      <h2>Facebook Messenger</h2>
+      <p>Connect a Page so the AI replies to Messenger. "How to connect" walks through the Meta app, webhook, and tokens.</p>
+      <h2>Lead Sources</h2>
+      <p>Connect Angi, Thumbtack, Yelp, Networx and more. Each has connect steps and a unique webhook URL — new leads get an instant AI text.</p>` },
+
+  { id: "settings-plans", category: "Settings", title: "Plans",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>Plans</strong> tab is where you see your current plan, switch plans, and manage optional add-ons.</p>
+      [[img:help-images/settings-plans.png|The Plans tab — current plan, billing cycle, and add-ons.]]
+      <h2>Your current plan</h2>
+      <p>At the top, the <strong>Current Plan</strong> card shows which plan you're on (Basic, Pro, or Elite) and its status. The <strong>Manage Billing</strong> button opens your billing portal to update payment details or view invoices.</p>
+      <h2>Monthly vs. annual</h2>
+      <p>Toggle between <strong>Monthly</strong> and <strong>Annual</strong> billing. Annual includes two months free, so it's a meaningful saving if you're committed for the year.</p>
+      <h2>Choosing a plan</h2>
+      <p>The three tiers are shown as cards with their included voice minutes and SMS messages:</p>
+      <ul>
+        <li><strong>Basic</strong> — AI Front Desk Starter: 24/7 AI call answering, instant SMS follow-up, and missed-call text-back.</li>
+        <li><strong>Pro</strong> — AI Booking Assistant: everything in Basic plus Google Calendar integration and automated estimate booking.</li>
+        <li><strong>Elite</strong> — AI Sales, Follow-Up &amp; White-Label Engine: everything in Pro plus AI follow-up calls, white-label, and the nurturing and review add-ons included free.</li>
+      </ul>
+      <p>Click <strong>Change to…</strong> on any tier to switch. Your current plan is labeled and its button is disabled.</p>
+      <h2>Optional add-ons</h2>
+      <p>Some features are add-ons you can toggle on if your plan doesn't already include them:</p>
+      <ul>
+        <li><strong>Estimator</strong> — the Quick Quote widget. Included free on Elite, white-label, reseller, and franchise plans; otherwise a paid add-on. (Some early accounts are <em>grandfathered</em> in at no cost.)</li>
+        <li><strong>Customer Nurturing &amp; Referrals</strong> — automated post-service follow-ups, referral requests, and re-engagement. A paid monthly add-on, included free on Elite.</li>
+        <li><strong>AI Google Review Responses</strong> — auto-detects new Google reviews, drafts SEO-optimized replies, and posts them with one click. A paid monthly add-on, included free on Elite.</li>
+      </ul>
+      <p>Each add-on shows its price and an Enable/Add button (or an "Included" badge if your plan already covers it). Enabling starts checkout; you can cancel an active add-on and keep access through the end of the billing period.</p>
+      <div class="callout"><p><strong>On Elite?</strong> The nurturing, review-response, and estimator add-ons are all included — you'll see "Included in Elite" rather than a price.</p></div>` },
+
+  { id: "settings-billing", category: "Settings", title: "Usage & Billing",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>Usage &amp; Billing</strong> tab shows usage against your plan limits and your billing details.</p>
+      <p>See consumed calling minutes and other metered usage this period, and manage your subscription and payment. Approaching your limit triggers a dashboard warning banner linking back here.</p>
+      [[img:help-images/settings-billing.png|The Usage & Billing tab.]]
+      <div class="callout"><p>On reseller accounts this tab is hidden — usage shows in the reseller area instead.</p></div>` },
+
+  { id: "api-integrations", category: "Developer & API", title: "API & developer integrations",
+    html: `
+      <p>AI Front Desk Helper offers a booking API so a CRM, partner platform, or AI agent can check availability and create real bookings on your calendar.</p>
+      <p>Send a developer the guide:</p>
+      <p><a href="/api-docs" target="_blank" rel="noopener"><strong>Open the API Integration Guide &rarr;</strong></a></p>
+      <p>It's also in your account menu (avatar &rarr; <strong>API Documentation</strong>). You'll need your Business ID and API Key — keep the key secret; it authorizes real bookings.</p>` },
+
+  { id: "dashboard", category: "Your Dashboard", title: "Dashboard overview", stub: true, html: `<p>A walkthrough of your main Dashboard — the cards, charts, and what each metric means.</p>` },
+  { id: "bookings", category: "Your Dashboard", title: "Bookings", stub: true, html: `<p>View, manage, reschedule, and cancel scheduled estimates and appointments.</p>` },
+  { id: "leads", category: "Your Dashboard", title: "Leads & pipeline", stub: true, html: `<p>How leads flow through your pipeline, lead detail, and managing customer records.</p>` },
+  { id: "conversations", category: "Your Dashboard", title: "Conversations", stub: true, html: `<p>Reading and replying to customer text and chat conversations, and taking over from the AI.</p>` },
+  { id: "follow-ups", category: "Your Dashboard", title: "Follow-ups", stub: true, html: `<p>How automated follow-ups work and configuring recovery cadences.</p>` },
+  { id: "metrics", category: "Your Dashboard", title: "Metrics & reporting", stub: true, html: `<p>Performance metrics, heat maps, and conversion reporting.</p>` },
+  { id: "reviews", category: "Growth", title: "Reviews", stub: true, html: `<p>How automated review requests work and managing your Google reviews.</p>` },
+  { id: "gbp", category: "Growth", title: "Google Business Profile", stub: true, html: `<p>Connecting and strengthening your Google Business Profile and the booking link.</p>` },
+];
+
+const sidebar = document.getElementById("sidebar");
+const content = document.getElementById("content");
+const search  = document.getElementById("search");
+const menuToggle = document.getElementById("menuToggle");
+const overlay = document.getElementById("overlay");
+let activeId = null;
+
+function renderImages(html) {
+  return html.replace(/\[\[img:([^|\]]+)(?:\|([^\]]*))?\]\]/g, (m, path, caption) => {
+    const safePath = path.trim().replace(/"/g, "");
+    const cap = (caption || "").trim();
+    return `<figure class="help-img">
+      <img src="${safePath}" alt="${cap.replace(/"/g,'&quot;')}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
+      <div class="img-missing" style="display:none">Screenshot coming soon${cap ? ' — ' + cap.replace(/</g,'&lt;') : ''}</div>
+      ${cap ? `<figcaption>${cap.replace(/</g,'&lt;')}</figcaption>` : ""}
+    </figure>`;
+  });
+}
+function categories() {
+  const order = []; const map = {};
+  for (const a of ARTICLES) { if (!map[a.category]) { map[a.category] = []; order.push(a.category); } map[a.category].push(a); }
+  return order.map(c => ({ name: c, articles: map[c] }));
+}
+function renderSidebar(filter) {
+  const q = (filter || "").trim().toLowerCase();
+  sidebar.innerHTML = "";
+  for (const cat of categories()) {
+    const matching = cat.articles.filter(a => !q || a.title.toLowerCase().includes(q) || a.html.toLowerCase().includes(q));
+    if (matching.length === 0) continue;
+    const catEl = document.createElement("div"); catEl.className = "cat";
+    const t = document.createElement("div"); t.className = "cat-title"; t.textContent = cat.name; catEl.appendChild(t);
+    for (const a of matching) {
+      const btn = document.createElement("button");
+      btn.className = "article-link" + (a.id === activeId ? " active" : "");
+      btn.innerHTML = a.title + (a.stub ? ' <span class="stub-tag">soon</span>' : "");
+      btn.onclick = () => { openArticle(a.id); closeMobileNav(); };
+      catEl.appendChild(btn);
+    }
+    sidebar.appendChild(catEl);
+  }
+  if (!sidebar.hasChildNodes()) sidebar.innerHTML = '<div class="cat-title">No articles match your search</div>';
+}
+function openArticle(id) {
+  const a = ARTICLES.find(x => x.id === id);
+  if (!a) return;
+  activeId = id; history.replaceState(null, "", "#" + id);
+  let body = renderImages(a.html);
+  if (a.stub) body += '<div class="stub-banner">📝 <strong>This article is being written.</strong><br>A full walkthrough of this page is coming soon.</div>';
+  content.innerHTML = '<h1>' + a.title + '</h1>' + body;
+  window.scrollTo(0, 0); renderSidebar(search.value);
+}
+function runSearch() {
+  const q = search.value.trim().toLowerCase();
+  renderSidebar(q);
+  if (!q) return;
+  const hits = ARTICLES.filter(a => a.title.toLowerCase().includes(q) || a.html.toLowerCase().includes(q));
+  if (hits.length === 0) { content.innerHTML = '<div class="no-results">No articles match “' + escapeHtml(search.value) + '”.</div>'; return; }
+  let html = '<div class="search-results-note">' + hits.length + ' result' + (hits.length !== 1 ? "s" : "") + ' for “' + escapeHtml(search.value) + '”</div>';
+  for (const a of hits) {
+    html += '<div style="padding:14px 0;border-bottom:1px solid var(--line)">' +
+      '<a href="#' + a.id + '" data-id="' + a.id + '" class="result-link" style="font-size:16px;font-weight:700">' + a.title + '</a>' +
+      '<div style="color:var(--muted);font-size:13px;margin-top:2px">' + a.category + (a.stub ? ' · coming soon' : '') + '</div></div>';
+  }
+  content.innerHTML = html;
+  content.querySelectorAll(".result-link").forEach(el => { el.onclick = (e) => { e.preventDefault(); openArticle(el.getAttribute("data-id")); }; });
+}
+function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c])); }
+function openMobileNav() { sidebar.classList.add("open"); overlay.classList.add("show"); }
+function closeMobileNav() { sidebar.classList.remove("open"); overlay.classList.remove("show"); }
+menuToggle.onclick = openMobileNav;
+overlay.onclick = closeMobileNav;
+search.addEventListener("input", runSearch);
+(function init() {
+  renderSidebar("");
+  const hash = (location.hash || "").replace("#", "");
+  if (hash && ARTICLES.find(a => a.id === hash)) openArticle(hash);
+  else openArticle(ARTICLES[0].id);
+})();
+</script>
+</body>
+</html>

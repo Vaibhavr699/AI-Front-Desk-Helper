@@ -4604,18 +4604,31 @@ wss.on("connection", async (twilioSocket, req) => {
         // ─────────────────────────────────────────────────────────────────
         const verbatimGreeting =
           (tenant?.voice_welcome_message || "").trim() ||
-          (tenant?.welcome_message || "").trim() ||
-          `Thanks for calling ${tenant?.company_name || "us"}. How can I help you today?`;
+          (tenant?.welcome_message || "").trim();
 
-        console.log("[AI-Desk] Triggering initial INBOUND greeting (verbatim): \"%s\"", verbatimGreeting);
-
-        sendToOpenAI({
-          type: "response.create",
-          response: {
-            output_modalities: ["audio"],
-            instructions: `Your first utterance on this call must be EXACTLY this, word-for-word, spoken warmly:\n\n"${verbatimGreeting}"\n\nDo not paraphrase, do not add words before or after. After you say this greeting, stop and wait for the caller to respond.`,
-          },
-        });
+        if (verbatimGreeting) {
+          // Greeting field is set → pin it word-for-word (existing behavior).
+          console.log("[AI-Desk] Triggering initial INBOUND greeting (verbatim): \"%s\"", verbatimGreeting);
+          sendToOpenAI({
+            type: "response.create",
+            response: {
+              output_modalities: ["audio"],
+              instructions: `Your first utterance on this call must be EXACTLY this, word-for-word, spoken warmly:\n\n"${verbatimGreeting}"\n\nDo not paraphrase, do not add words before or after. After you say this greeting, stop and wait for the caller to respond.`,
+            },
+          });
+        } else {
+          // Greeting field blank → let the AI open from its session instructions
+          // (the # Opening section, if present). Natural, varied, tagline-driven.
+          // Falls back to a plain warm greeting if no # Opening section exists.
+          console.log("[AI-Desk] Triggering initial INBOUND greeting (instruction-driven, no verbatim pin)");
+          sendToOpenAI({
+            type: "response.create",
+            response: {
+              output_modalities: ["audio"],
+              instructions: "Open the call now. Greet the caller warmly and naturally, following your # Opening guidance if you have it. Then stop and wait for the caller to respond.",
+            },
+          });
+        }
         
       } else {
         // For OUTBOUND/RECOVERY, initiate response using campaign persona set in session.update

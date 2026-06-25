@@ -694,6 +694,7 @@ export default function Settings({ tenantId }) {
         logo_url: t.logo_url || "",
         favicon_url: t.favicon_url || "",
         support_email: t.support_email || "",
+        website: t.website || "",
         // Everything else
         welcome_message: t.welcome_message || "",
         voice_welcome_message: t.voice_welcome_message || "",

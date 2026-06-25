@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { getCalls, getRecordingAudioUrl, updateCall } from "../api";
+import { getCalls, getRecordingAudioUrl, updateCall, initiateVoicemailCallback } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import {
   Phone, Play, Voicemail, PhoneForwarded, PhoneMissed,
@@ -25,6 +25,13 @@ import { useToast } from "../components/ui/Toast";
  * Data: reuses getCalls(tenantId) and filters client-side, matching how
  * Calls.jsx already filters everything in-memory. At larger scale a dedicated
  * GET /voicemails endpoint would be better — noted for later.
+ *
+ * Call back (Jun 25, 2026): the green "Call back" button now places a real
+ * SYSTEM callback instead of a tel: link. It rings the owner's transfer
+ * number, then bridges them to the caller with the business line as caller
+ * ID (so the customer sees the business number, and the call is logged).
+ * The phone number at the top of the card is still a plain tel: tap-to-dial
+ * for when you'd rather just call from your own phone.
  */
 
 // ─── AudioPlayer — same lazy-load pattern as Calls.jsx ────────────────
@@ -103,6 +110,7 @@ function isHandled(call) {
 function VoicemailCard({ call, onChanged }) {
   const { success, error: toastError } = useToast();
   const [saving, setSaving] = useState(false);
+  const [calling, setCalling] = useState(false);
   const kind = voicemailKind(call);
   const dur = voicemailDuration(call);
   const handled = isHandled(call);
@@ -118,6 +126,23 @@ function VoicemailCard({ call, onChanged }) {
       toastError("Couldn't update. Try again.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  // System callback — rings the owner's transfer number, then bridges to the
+  // caller with the business line as caller ID. Falls back gracefully: if the
+  // backend can't place it (no transfer number, Twilio error), the toast tells
+  // the owner to call from their phone instead, and the tel: link on the
+  // number above still works.
+  const handleSystemCallback = async () => {
+    setCalling(true);
+    try {
+      const r = await initiateVoicemailCallback(call.id);
+      success(r?.message || "Calling your phone now — pick up to connect to the caller.");
+    } catch (e) {
+      toastError(e?.message || "Couldn't place the call. Try calling from your phone.");
+    } finally {
+      setCalling(false);
     }
   };
 
@@ -179,12 +204,15 @@ function VoicemailCard({ call, onChanged }) {
               <span className="text-xs text-stone-400 italic">Recording still processing…</span>
             )}
 
-            <a
-              href={telHref}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors"
+            <button
+              onClick={handleSystemCallback}
+              disabled={calling}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors disabled:opacity-50"
+              title="We'll ring your phone, then connect you to the caller from your business line."
             >
-              <Phone className="w-3 h-3" /> Call back
-            </a>
+              {calling ? <LumaSpin className="w-3 h-3" /> : <Phone className="w-3 h-3" />}
+              {calling ? "Calling…" : "Call back"}
+            </button>
 
             {!handled && (
               <button

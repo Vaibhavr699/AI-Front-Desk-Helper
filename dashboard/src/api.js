@@ -363,6 +363,15 @@ export function updateCall(id, body) {
   });
 }
 
+// ── Voicemail system callback (Jun 25, 2026) ──────────────────────────────
+// Places a bridged callback: rings the owner's transfer number, then connects
+// them to the original caller with the business line as caller ID. Backend:
+// POST /voicemails/:callId/callback in routes/dashboard.js.
+// Returns { ok, message, owner_number, caller_number, call_sid }.
+export function initiateVoicemailCallback(callId) {
+  return api(`/api/voicemails/${callId}/callback`, { method: "POST" });
+}
+
 export function getMetrics(tenantId, period = '30d') {
   const query = tenantId === 'all' ? `tenant_id=all&rollup=true&period=${period}` : `tenant_id=${tenantId}&period=${period}`;
   return api(`/api/metrics?${query}`);

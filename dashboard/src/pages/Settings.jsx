@@ -536,6 +536,9 @@ export default function Settings({ tenantId }) {
   const [genLoading, setGenLoading] = useState(false);
   const [genDraft, setGenDraft] = useState(null);      // the generated text under review
   const [genMeta, setGenMeta] = useState(null);        // { used_website, reused_faqs, reused_objections }
+  // Unreviewed-draft indicator (#3): a draft saved server-side in a prior
+  // session that the owner generated but never applied. null = none pending.
+  const [pendingDraft, setPendingDraft] = useState(null); // { draft, generated_at }
 
   // Form states
   const [form, setForm] = useState({
@@ -868,6 +871,22 @@ export default function Settings({ tenantId }) {
       });
   }, [activeTab, tenantId]);
 
+  // Unreviewed-draft indicator (#3) — when the AI tab opens, check whether a
+  // draft was generated in a past session but never applied. If so, surface a
+  // banner offering to load it. Read-only; nothing changes until the owner acts.
+  useEffect(() => {
+    if (activeTab !== "ai" || !tenantId) return;
+    getInstructionsDraft(tenantId)
+      .then((data) => {
+        if (data?.status === "unreviewed" && data?.draft) {
+          setPendingDraft({ draft: data.draft, generated_at: data.generated_at });
+        } else {
+          setPendingDraft(null);
+        }
+      })
+      .catch(() => setPendingDraft(null));
+  }, [activeTab, tenantId]);
+  
   // Load custom domain state when Branding tab is active (V2, May 13, 2026)
   useEffect(() => {
     if (activeTab !== "branding" || !tenantId) return;
@@ -1047,6 +1066,7 @@ export default function Settings({ tenantId }) {
         reused_objections: res.reused_objections,
       });
       success("Draft generated. Review it below before applying.");
+      setPendingDraft(null);
     } catch (e) {
       // 422 = industry not set; surface the backend's actionable message
       toastError(e.message || "Could not generate a draft.");
@@ -1064,6 +1084,7 @@ export default function Settings({ tenantId }) {
     handleUpdateForm("instructions", genDraft);
     setGenDraft(null);
     setGenMeta(null);
+    setPendingDraft(null);
     success("Draft moved into your instructions. Review, then click Save Changes.");
   };
 
@@ -2749,6 +2770,45 @@ export default function Settings({ tenantId }) {
                           {genLoading ? "Generating…" : (form.instructions?.trim() ? "Regenerate draft" : "Generate draft")}
                         </button>
                       </div>
+                      
+                       {/* Unreviewed-draft banner (#3) — only when a saved draft
+                          exists AND we're not already showing a live draft. */}
+                      {pendingDraft && genDraft == null && (
+                        <div className="mt-4 p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-black text-amber-900 uppercase tracking-wide">
+                              You have an unreviewed draft
+                            </p>
+                            <p className="text-[11px] text-amber-800/80 leading-relaxed mt-0.5">
+                              You generated instructions
+                              {pendingDraft.generated_at
+                                ? ` on ${new Date(pendingDraft.generated_at).toLocaleDateString()}`
+                                : " earlier"} but never applied them. Load it to review, or generate a fresh one above.
+                            </p>
+                            <div className="flex items-center gap-2 mt-2 flex-wrap">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setGenDraft(pendingDraft.draft);
+                                  setGenMeta(null);
+                                  setPendingDraft(null);
+                                }}
+                                className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-amber-700 transition-all"
+                              >
+                                Load draft
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPendingDraft(null)}
+                                className="px-3 py-1.5 bg-white border border-amber-200 text-amber-700 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-amber-100 transition-all"
+                              >
+                                Dismiss
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       {genDraft != null && (
                         <div className="mt-4 animate-in fade-in slide-in-from-top-2 duration-300">

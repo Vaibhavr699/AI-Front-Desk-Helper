@@ -541,6 +541,7 @@ export default function Settings({ tenantId }) {
   const [form, setForm] = useState({
     // ── Branding (white-label) ────────────────────────────────
     company_name: "",
+    website: "",
     brand_color: "#E8600A",
     accent_color: "",
     logo_url: "",
@@ -1376,6 +1377,7 @@ export default function Settings({ tenantId }) {
       logo_url: form.logo_url || null,
       favicon_url: form.favicon_url || null,
       support_email: supportEmailTrimmed || null,
+      website: form.website.trim() || null,
       // Everything else
       welcome_message: form.welcome_message || null,
       voice_welcome_message: form.voice_welcome_message.trim() || null,
@@ -2103,6 +2105,17 @@ export default function Settings({ tenantId }) {
                     className="w-full md:max-w-md px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-sm focus:ring-4 focus:ring-primary/5 transition-all outline-none placeholder:text-slate-500"
                   />
                   <p className="text-xs text-gray-500 mt-2">Used in email footers ("Reply to this email or contact..."). Leave blank to use the AI Front Desk Helper default.</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Website</label>
+                  <input
+                    type="url"
+                    value={form.website}
+                    onChange={(e) => handleUpdateForm("website", e.target.value)}
+                    placeholder="https://www.yourcompany.com"
+                    className="w-full md:max-w-md px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-sm focus:ring-4 focus:ring-primary/5 transition-all outline-none placeholder:text-slate-500"
+                  />
+                  <p className="text-xs text-gray-500 mt-2">Your public website. The AI instruction generator reads this to draft your assistant's instructions, and it's used for SEO on your booking page.</p>
                 </div>
 
                 {/* ── Timezone picker (Apr 23, 2026) ──────────────────── */}

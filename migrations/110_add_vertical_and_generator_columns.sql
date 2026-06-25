@@ -1,31 +1,25 @@
 -- ============================================================================
--- Migration 110 — Vertical field + instruction-generator support columns
+-- Migration 110 (revised) — Instruction-generator draft columns
 -- Feature 1: draft-time instruction generation (no live call-path changes)
 -- ============================================================================
 --
--- Adds:
---   tenants.vertical            — the business's industry (roofing, painting,
---                                 fencing, hvac, ...). This is the REQUIRED
---                                 input for the instruction generator. It is
---                                 NOT the same as business_type, which stores
---                                 account structure (standalone/parent/child).
+-- IMPORTANT REVISION: the "vertical" field already exists on tenants as
+-- `industry` (enum enforced at self-serve signup in routes/dashboard.js
+-- POST /tenants — VALID_INDUSTRIES = painting, roofing, fencing, plumbing,
+-- hvac, electrical, general_contractor, other). We do NOT add a new column.
+-- The generator reads tenants.industry.
 --
---   tenants.instructions_draft         — generated draft text, held for owner
---                                        review. Never read by the live bot;
---                                        the live bot only ever reads
---                                        tenants.instructions.
---   tenants.instructions_draft_status  — 'none' | 'unreviewed' | 'applied'.
---                                        Drives the review banner in the UI.
---   tenants.instructions_draft_generated_at — audit timestamp.
+-- NOTE: industry is only enforced for self-serve standalone signups, so it
+-- may be NULL for tenants created via admin/seed paths (e.g. the existing
+-- 24). The generator handles a missing industry by returning a "set your
+-- industry first" message rather than guessing.
 --
--- website already exists on tenants (text) — no change needed here. This
--- migration only references it; it does not create it.
+-- This migration ONLY adds the columns that hold the generated draft for
+-- owner review. The live bot never reads these — it only reads
+-- tenants.instructions.
 --
--- All additive + IF NOT EXISTS, so it is safe to re-run.
+-- All additive + IF NOT EXISTS, safe to re-run.
 -- ============================================================================
-
-ALTER TABLE tenants
-  ADD COLUMN IF NOT EXISTS vertical text;
 
 ALTER TABLE tenants
   ADD COLUMN IF NOT EXISTS instructions_draft text;
@@ -36,8 +30,6 @@ ALTER TABLE tenants
 ALTER TABLE tenants
   ADD COLUMN IF NOT EXISTS instructions_draft_generated_at timestamptz;
 
--- Optional: a light check so the status column can't drift to junk values.
--- Wrapped in a DO block so re-running doesn't error on an existing constraint.
 DO $$
 BEGIN
   IF NOT EXISTS (

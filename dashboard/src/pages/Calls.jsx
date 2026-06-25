@@ -69,6 +69,22 @@ function getCallProject(call) {
   return lead.project_type || lead.scope || "General Inquiry";
 }
 
+// Format a call's duration as "Xm Ys" (or "Ys" under a minute). Returns null
+// for missing / zero-length calls (missed, voicemail, instant hangups) so the
+// UI can skip rendering rather than show a meaningless "0s".
+//
+// duration_minutes is written by processStatusPayload in routes/twilio.js as a
+// decimal (e.g. 4.2 = 4 min 12 sec), so we convert to whole seconds first.
+function formatDuration(call) {
+  const mins = call.duration_minutes;
+  if (mins == null || !Number.isFinite(Number(mins)) || Number(mins) <= 0) return null;
+  const totalSec = Math.round(Number(mins) * 60);
+  if (totalSec < 1) return null;
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
 // ─── Filter Bar ───────────────────────────────────────────────────────
 function FilterBar({ filters, setFilters, totalCount, filteredCount }) {
   const ranges = [
@@ -197,6 +213,7 @@ function CompactRow({ call, expanded, onToggle, timezone }) {
   const score = getCallScore(call);
   const name = getCallName(call);
   const project = getCallProject(call);
+  const duration = formatDuration(call);
 
   return (
     <button
@@ -222,6 +239,11 @@ function CompactRow({ call, expanded, onToggle, timezone }) {
         <p className="text-sm font-semibold text-stone-900 truncate">{name}</p>
         <p className="text-xs text-stone-500 truncate">{call.from_number}</p>
       </div>
+      {duration && (
+        <span className="hidden lg:inline-flex items-center gap-1 text-xs text-stone-500 shrink-0 tabular-nums">
+          <Clock className="w-3 h-3" /> {duration}
+        </span>
+      )}
       <span className="hidden md:inline text-xs text-stone-600 truncate max-w-[140px] bg-brand-50 px-2 py-0.5 rounded">
         {project}
       </span>
@@ -244,6 +266,7 @@ function ExpandedDetail({ call, onUpdate }) {
   const projectValue = lead.estimated_value
     ? `$${parseFloat(lead.estimated_value).toLocaleString()}`
     : "N/A";
+  const duration = formatDuration(call);
   const { success, error: toastError } = useToast();
   const [isUpdating, setIsUpdating] = useState(false);
 
@@ -288,6 +311,14 @@ function ExpandedDetail({ call, onUpdate }) {
             {call.status}
           </span>
         </div>
+        {duration && (
+          <div>
+            <h4 className="text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-2">Call Length</h4>
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-stone-700">
+              <Clock className="w-3.5 h-3.5 text-stone-400" /> {duration}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Middle column: AI summary + recording + transcript */}

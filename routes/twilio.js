@@ -212,6 +212,43 @@ router.post("/recording-status", (req, res) => {
   res.status(200).send();
 });
 
+// ── Voicemail callback bridge (Jun 25, 2026) ───────────────────────────
+// Leg 2 of the "Call back" system call from the Voicemails tab. The
+// dashboard endpoint (POST /api/voicemails/:callId/callback) used
+// lib/outboundCall.create to dial the OWNER's number (transfer_numbers[0]),
+// pointing the call's TwiML here. When the owner answers, we announce, then
+// <Dial> the original CALLER using the tenant's business line as caller ID —
+// so the customer sees the business number, not the owner's personal cell.
+// Owner and caller are now bridged.
+//
+// Params (query string, GET — outboundCall dials with method=GET):
+//   to       = the original caller's number (who left the voicemail)
+//   callerId = the tenant's business line (shown to the caller)
+//
+// This route is intentionally simple and self-contained: no DB, no tenant
+// lookup. Everything it needs is in the query string the dashboard endpoint
+// built. If `to` is missing we hang up cleanly rather than dialing garbage.
+router.get("/callback-bridge", (req, res) => {
+  const to       = req.query.to || "";
+  const callerId = req.query.callerId || "";
+  if (!to) {
+    res.type("text/xml").send('<Response><Say voice="Polly.Joanna">Sorry, there is no number to connect. Goodbye.</Say><Hangup/></Response>');
+    return;
+  }
+  const dialNum = to.replace(/\D/g, "").replace(/^1?(\d{10})$/, "+1$1");
+  const callerAttr = callerId ? ` callerId="${escapeXml(callerId)}"` : "";
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">Connecting you to your caller now.</Say>
+  <Dial timeout="30"${callerAttr}>
+    <Number>${escapeXml(dialNum)}</Number>
+  </Dial>
+  <Say voice="Polly.Joanna">The call could not be connected. Goodbye.</Say>
+  <Hangup/>
+</Response>`;
+  res.type("text/xml").send(twiml);
+});
+
 router.get("/transfer-dial", async (req, res) => {
   const to = req.query.to;
   if (!to) {

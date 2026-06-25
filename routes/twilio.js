@@ -109,7 +109,7 @@ router.post("/voice/:tenantId?", async (req, res) => {
           await callsService.createCall(tenant.id, CallSid, fromNumber, toNumber, direction).catch(() => {});
 
           let offTwiml;
-          if (pn.ring_first_enabled && pn.ring_first_phone) {
+          if (pn?.ring_first_enabled && pn?.ring_first_phone) {
             // Ring the human's number. If they don't answer, fall through to a
             // voicemail recorded via the existing /voicemail-capture pipeline.
             const ringNum = pn.ring_first_phone.replace(/\D/g, "").replace(/^1?(\d{10})$/, "+1$1");

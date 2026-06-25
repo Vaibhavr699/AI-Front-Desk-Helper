@@ -203,8 +203,13 @@ function CompactRow({ call, expanded, onToggle }) {
       onClick={onToggle}
       className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-stone-50 transition-colors"
     >
-      <span className="text-xs text-stone-500 font-medium w-20 shrink-0 hidden sm:inline">
-        {new Date(call.started_at).toLocaleDateString()}
+      <span className="w-20 shrink-0 hidden sm:flex flex-col leading-tight">
+        <span className="text-xs text-stone-500 font-medium">
+          {new Date(call.started_at).toLocaleDateString()}
+        </span>
+        <span className="text-[10px] text-stone-400 font-medium">
+          {new Date(call.started_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+        </span>
       </span>
       <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border w-12 text-center shrink-0 ${getScoreColor(score)}`}>
         {score}

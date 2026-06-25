@@ -4304,4 +4304,174 @@ router.get("/outbound-activity", async (req, res) => {
   }
 });
 
+// ═════════════════════════════════════════════════════════════════════════
+// AI INSTRUCTION GENERATOR (Feature 1) — paste this entire block into
+// routes/dashboard.js directly ABOVE the final `module.exports = router;`.
+//
+// Draft-time only. None of this touches the live voice/SMS path. The owner
+// generates a draft, reviews it, and explicitly applies it (copies it into
+// tenants.instructions). Until applied, the live bot keeps using whatever is
+// already in tenants.instructions.
+//
+// Three endpoints:
+//   POST /tenants/:id/instructions/generate  → build a draft, store it as
+//                                              instructions_draft (status
+//                                              'unreviewed'), return it.
+//   GET  /tenants/:id/instructions/draft     → fetch the current draft +
+//                                              status (for the review banner).
+//   POST /tenants/:id/instructions/apply     → copy the draft into
+//                                              instructions (status 'applied').
+//
+// Auth: the staff-level gate (owner/admin/manager/staff) is already applied
+// by the router.use(...) middleware earlier in this file. We add the same
+// per-location ownership check used by reset-api-key / booking-domain so a
+// child-location's draft can only be touched by its own owner or the parent.
+// ═════════════════════════════════════════════════════════════════════════
+
+const instructionGenerator = require("../lib/instructionGenerator");
+
+// Shared ownership guard — mirrors the shape used by reset-api-key. Returns
+// the tenant row (with the fields the generator needs) or sends the response
+// and returns null.
+async function loadTenantForGenerator(req, res) {
+  const id = req.params.id;
+  const r = await db.query(
+    `SELECT id, parent_id, company_name, name, industry, city, state, website,
+            tone_of_voice, transfer_numbers, afterhours_behavior,
+            faqs, objection_handling_config,
+            instructions, instructions_draft, instructions_draft_status,
+            instructions_draft_generated_at
+       FROM tenants WHERE id = $1`,
+    [id]
+  );
+  const tenant = r.rows[0];
+  if (!tenant) {
+    res.status(404).json({ error: "Tenant not found" });
+    return null;
+  }
+  if (req.user?.tenant_id && req.user.tenant_id !== id && !req.user.is_super_admin) {
+    if (req.user.tenant_business_type !== "parent" || tenant.parent_id !== req.user.tenant_id) {
+      res.status(403).json({ error: "Forbidden — insufficient permissions for this location" });
+      return null;
+    }
+  }
+  return tenant;
+}
+
+// POST /tenants/:id/instructions/generate
+router.post("/tenants/:id/instructions/generate", async (req, res) => {
+  try {
+    const tenant = await loadTenantForGenerator(req, res);
+    if (!tenant) return;
+
+    const result = await instructionGenerator.generateInstructionsDraft(tenant);
+    if (!result.ok) {
+      // missing_industry is a 422 (actionable) rather than a 500.
+      const code = result.reason === "missing_industry" ? 422 : 502;
+      return res.status(code).json({ ok: false, reason: result.reason, error: result.message });
+    }
+
+    await db.query(
+      `UPDATE tenants
+          SET instructions_draft = $1,
+              instructions_draft_status = 'unreviewed',
+              instructions_draft_generated_at = now(),
+              updated_at = now()
+        WHERE id = $2`,
+      [result.draft, tenant.id]
+    );
+
+    await logAction({
+      tenant_id: String(tenant.id),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "instructions_draft_generated",
+      entity_type: "tenant",
+      entity_id: String(tenant.id),
+      new_value: {
+        used_website: result.usedWebsite,
+        reused_faqs: result.reusedFaqs,
+        reused_objections: result.reusedObjections,
+      },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
+
+    res.json({
+      ok: true,
+      draft: result.draft,
+      status: "unreviewed",
+      used_website: result.usedWebsite,
+      reused_faqs: result.reusedFaqs,
+      reused_objections: result.reusedObjections,
+    });
+  } catch (e) {
+    console.error("[InstructionGen] generate error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// GET /tenants/:id/instructions/draft
+router.get("/tenants/:id/instructions/draft", async (req, res) => {
+  try {
+    const tenant = await loadTenantForGenerator(req, res);
+    if (!tenant) return;
+    res.json({
+      ok: true,
+      draft: tenant.instructions_draft || null,
+      status: tenant.instructions_draft_status || "none",
+      generated_at: tenant.instructions_draft_generated_at || null,
+      // include current live instructions so the UI can show a before/after diff
+      current_instructions: tenant.instructions || "",
+    });
+  } catch (e) {
+    console.error("[InstructionGen] draft fetch error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// POST /tenants/:id/instructions/apply
+// Body (optional): { edited_draft } — if the owner tweaked the draft in the
+// UI before applying, send the edited text and we apply THAT instead of the
+// stored draft. Either way the result lands in tenants.instructions and the
+// draft is marked 'applied'.
+router.post("/tenants/:id/instructions/apply", async (req, res) => {
+  try {
+    const tenant = await loadTenantForGenerator(req, res);
+    if (!tenant) return;
+
+    const incoming = typeof req.body?.edited_draft === "string" ? req.body.edited_draft.trim() : "";
+    const toApply = incoming || (tenant.instructions_draft || "").trim();
+
+    if (!toApply) {
+      return res.status(400).json({ error: "No draft to apply. Generate one first." });
+    }
+
+    await db.query(
+      `UPDATE tenants
+          SET instructions = $1,
+              instructions_draft = $1,
+              instructions_draft_status = 'applied',
+              updated_at = now()
+        WHERE id = $2`,
+      [toApply, tenant.id]
+    );
+
+    await logAction({
+      tenant_id: String(tenant.id),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "instructions_draft_applied",
+      entity_type: "tenant",
+      entity_id: String(tenant.id),
+      new_value: { length: toApply.length, edited: !!incoming },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
+
+    res.json({ ok: true, status: "applied", instructions: toApply });
+  } catch (e) {
+    console.error("[InstructionGen] apply error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 module.exports = router;

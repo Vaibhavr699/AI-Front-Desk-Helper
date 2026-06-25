@@ -4474,4 +4474,165 @@ router.post("/tenants/:id/instructions/apply", async (req, res) => {
   }
 });
 
+// ═════════════════════════════════════════════════════════════════════════
+// VOICEMAIL SYSTEM CALLBACK (Jun 25, 2026) — paste this entire block into
+// routes/dashboard.js directly ABOVE the final `module.exports = router;`.
+//
+// Powers the "Call back" button in the Voicemails tab. Instead of a tel:
+// link that dials from the owner's personal cell (caller sees the cell
+// number, nothing logged), this places a real bridged call:
+//
+//   1. We dial the OWNER's number (tenant.transfer_numbers[0]) via
+//      lib/outboundCall.create, with the call's TwiML pointing at
+//      /twilio/callback-bridge.
+//   2. When the owner answers, the bridge route <Dial>s the original
+//      CALLER using the tenant's business line as caller ID.
+//   3. The caller sees the BUSINESS number (recognizable), and the whole
+//      thing is logged as an outbound call tied to the lead.
+//
+// Cost: two Twilio call legs per callback (owner leg + caller leg).
+//
+// Auth: the staff-level gate (owner/admin/manager/staff) is already applied
+// by router.use(...) earlier in this file. We resolve the tenant from the
+// call row and confirm it's in the caller's allowed tenant scope before
+// dialing, so a user can't trigger callbacks for a tenant they can't see.
+// ═════════════════════════════════════════════════════════════════════════
+
+const outboundCall = require("../lib/outboundCall");
+
+// POST /voicemails/:callId/callback
+// Places the bridged callback for the voicemail identified by :callId.
+router.post("/voicemails/:callId/callback", async (req, res) => {
+  try {
+    const callId = req.params.callId;
+
+    // 1. Load the call row → caller number + tenant_id.
+    const callRes = await db.query(
+      "SELECT id, tenant_id, from_number, lead_id FROM calls WHERE id = $1",
+      [callId]
+    );
+    const call = callRes.rows[0];
+    if (!call) return res.status(404).json({ error: "Call not found" });
+
+    // 2. Confirm the caller may act on this tenant (same scope the rest of
+    //    the dashboard uses). getTargetTenantIds returns every tenant the
+    //    user can see; the call's tenant must be one of them.
+    const allowedTenantIds = await getTargetTenantIds(req);
+    if (!allowedTenantIds.includes(call.tenant_id)) {
+      return res.status(403).json({ error: "Forbidden — this voicemail isn't in your business scope" });
+    }
+
+    // 3. The caller's number is who we bridge TO. Without it there's no one
+    //    to call back.
+    const callerNumber = call.from_number;
+    if (!callerNumber) {
+      return res.status(400).json({ error: "This voicemail has no caller number to call back." });
+    }
+
+    // 4. Load the tenant with the fields outboundCall needs: Twilio creds,
+    //    transfer_numbers (the owner number we ring), and the business line
+    //    (matched_phone — primary phone — used as caller ID on BOTH legs).
+    const tenantRes = await db.query(
+      `SELECT t.*,
+              (SELECT pn.phone FROM phone_numbers pn
+                WHERE pn.tenant_id = t.id
+                ORDER BY pn.is_primary DESC NULLS LAST, pn.created_at ASC
+                LIMIT 1) AS matched_phone
+         FROM tenants t WHERE t.id = $1`,
+      [call.tenant_id]
+    );
+    const tenant = tenantRes.rows[0];
+    if (!tenant) return res.status(404).json({ error: "Tenant not found" });
+
+    // 5. Resolve the owner number to ring. transfer_numbers is a jsonb/text[]
+    //    array; take the first entry. Fall back to nothing → error.
+    let ownerNumber = null;
+    const tn = tenant.transfer_numbers;
+    if (Array.isArray(tn) && tn.length > 0) {
+      ownerNumber = tn[0];
+    } else if (typeof tn === "string" && tn.trim()) {
+      // Could be a JSON string or comma list.
+      try {
+        const parsed = JSON.parse(tn);
+        if (Array.isArray(parsed) && parsed.length > 0) ownerNumber = parsed[0];
+      } catch (_) {
+        ownerNumber = tn.split(",")[0].trim();
+      }
+    }
+    if (!ownerNumber) {
+      return res.status(400).json({
+        error: "No transfer/owner number is configured. Add one under Settings → AI Control → transfer numbers to use system callback.",
+      });
+    }
+
+    const businessLine = tenant.matched_phone || process.env.TWILIO_PHONE_NUMBER || null;
+    if (!businessLine) {
+      return res.status(400).json({ error: "No business phone number is configured for this tenant." });
+    }
+
+    // 6. Build the bridge TwiML URL. outboundCall dials with method=GET, so
+    //    /twilio/callback-bridge reads `to` (the caller) and `callerId`
+    //    (the business line) from the query string.
+    const base = (process.env.BASE_URL || "").replace(/\/+$/, "");
+    if (!base) {
+      return res.status(500).json({ error: "Server is missing BASE_URL configuration." });
+    }
+    const bridgeUrl = `${base}/twilio/callback-bridge`
+      + `?to=${encodeURIComponent(callerNumber)}`
+      + `&callerId=${encodeURIComponent(businessLine)}`;
+
+    // 7. Place the call to the OWNER. outboundCall uses tenant.matched_phone
+    //    as the `from` on this first leg, so the owner sees the business
+    //    line calling them. It also writes a calls row + ties it to the lead.
+    const result = await outboundCall.create({
+      tenant,
+      to: ownerNumber,
+      twimlUrl: bridgeUrl,
+      source: "voicemail_callback",
+      leadId: call.lead_id || null,
+      sourceId: call.id,
+      meta: {
+        voicemail_callback: true,
+        original_call_id: call.id,
+        caller_number: callerNumber,
+        owner_number: ownerNumber,
+      },
+    });
+
+    if (!result.ok) {
+      console.error("[VoicemailCallback] dial failed tenant=%s reason=%s", tenant.id, result.reason);
+      return res.status(502).json({
+        ok: false,
+        error: "Could not place the callback right now. Please try again, or call back from your phone.",
+        reason: result.reason,
+      });
+    }
+
+    await logAction({
+      tenant_id: String(tenant.id),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "voicemail_callback_initiated",
+      entity_type: "call",
+      entity_id: String(call.id),
+      new_value: { caller_number: callerNumber, owner_number: ownerNumber, call_sid: result.callSid },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
+
+    console.log("[VoicemailCallback] bridging owner=%s ↔ caller=%s tenant=%s callSid=%s",
+      ownerNumber, callerNumber, tenant.id, result.callSid);
+
+    res.json({
+      ok: true,
+      message: "Calling your phone now — when you pick up, we'll connect you to the caller.",
+      owner_number: ownerNumber,
+      caller_number: callerNumber,
+      call_sid: result.callSid,
+    });
+  } catch (e) {
+    console.error("[VoicemailCallback] error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 module.exports = router;

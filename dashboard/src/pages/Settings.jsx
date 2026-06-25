@@ -1377,7 +1377,7 @@ export default function Settings({ tenantId }) {
       logo_url: form.logo_url || null,
       favicon_url: form.favicon_url || null,
       support_email: supportEmailTrimmed || null,
-      website: form.website.trim() || null,
+      website: (form.website || "").trim() || null,
       // Everything else
       welcome_message: form.welcome_message || null,
       voice_welcome_message: form.voice_welcome_message.trim() || null,

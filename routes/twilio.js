@@ -100,7 +100,7 @@ router.post("/voice/:tenantId?", async (req, res) => {
         );
         const pn = pnRes.rows[0];
 
-        if (pn && pn.ai_status === "off") {
+       if (tenant.ai_master_enabled === false) {
           console.log("[AI-Desk] AI is OFF for tenant=%s to=%s — routing to %s",
             tenant.id, toNumber,
             (pn.ring_first_enabled && pn.ring_first_phone) ? "ring-first" : "voicemail");

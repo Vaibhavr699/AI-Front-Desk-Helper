@@ -79,13 +79,26 @@ router.post("/voice/:tenantId?", async (req, res) => {
     }
 
     // ── AI-off gate (inbound only) ─────────────────────────────────────────
-    // The AI Control "off" toggle writes ai_status='off' on the phone_numbers
-    // row. Until now this handler ignored it and always connected the AI —
-    // owners turned the AI off and it kept answering. Gate it here: if the
-    // dialed number has ai_status='off', route to ring-first (if configured)
-    // or voicemail, and do NOT open the AI stream. Outbound/recovery calls use
-    // other routes and are never affected.
-    if (direction === "inbound" && !franchiseMode) {
+    // The AI Control "off" toggle writes ai_master_enabled=false on the
+    // tenants row. Until now this handler ignored it and always connected the
+    // AI — owners turned the AI off and it kept answering. Gate it here: if
+    // the tenant's master switch is off, route to ring-first (if the dialed
+    // number has it configured) or voicemail, and do NOT open the AI stream.
+    // Outbound/recovery/nurturing calls use other routes and are never
+    // affected. Franchisor mode bypasses the gate (it has its own toggle).
+    //
+    // The phone_numbers lookup is only for ring-first settings; the on/off
+    // decision is tenant-level (tenant.ai_master_enabled), so one switch
+    // covers all of a tenant's numbers.
+    //
+    // If a custom voicemail greeting is recorded (tenant.voicemail_message_url)
+    // we <Play> it; otherwise we fall back to a spoken Polly default so the
+    // caller never hits dead air.
+    //
+    // Wrapped in try/catch that FAILS OPEN — if the gate check throws for any
+    // reason, we fall through to the normal AI path rather than dropping the
+    // call. Better the AI answers than the caller gets silence.
+    if (direction === "inbound" && !franchiseMode && tenant.ai_master_enabled === false) {
       try {
         const db = require("../lib/db");
         const pnRes = await db.query(
@@ -100,57 +113,55 @@ router.post("/voice/:tenantId?", async (req, res) => {
         );
         const pn = pnRes.rows[0];
 
-       if (tenant.ai_master_enabled === false) {
-          console.log("[AI-Desk] AI is OFF for tenant=%s to=%s — routing to %s",
-            tenant.id, toNumber,
-            (pn.ring_first_enabled && pn.ring_first_phone) ? "ring-first" : "voicemail");
+        console.log("[AI-Desk] AI is OFF for tenant=%s to=%s — routing to %s",
+          tenant.id, toNumber,
+          (pn?.ring_first_enabled && pn?.ring_first_phone) ? "ring-first" : "voicemail");
 
-          // Make sure the call still gets a row so it appears in the dashboard.
-          await callsService.createCall(tenant.id, CallSid, fromNumber, toNumber, direction).catch(() => {});
+        // Make sure the call still gets a row so it appears in the dashboard.
+        await callsService.createCall(tenant.id, CallSid, fromNumber, toNumber, direction).catch(() => {});
 
-          let offTwiml;
-          if (pn?.ring_first_enabled && pn?.ring_first_phone) {
-            // Ring the human's number. If they don't answer, fall through to a
-            // voicemail recorded via the existing /voicemail-capture pipeline.
-            const ringNum = pn.ring_first_phone.replace(/\D/g, "").replace(/^1?(\d{10})$/, "+1$1");
-            const timeout = pn.ring_first_timeout_seconds || 20;
-            const vmAction = BASE_URL
-              ? `${BASE_URL}/twilio/voicemail-capture?kind=missed&callSid=${encodeURIComponent(CallSid || "")}`
-              : "";
-            const recVerb = vmAction
-              ? `<Record action="${escapeXml(vmAction)}" method="POST" maxLength="120" playBeep="true" trim="trim-silence" timeout="5" finishOnKey="#" transcribe="false" />`
-              : `<Hangup/>`;
-            offTwiml = `<Response>`
-              + `<Dial timeout="${timeout}"><Number>${escapeXml(ringNum)}</Number></Dial>`
-              + `<Say voice="Polly.Joanna">Sorry we couldn't reach someone right now. Please leave a brief message after the tone with your name and number, and we'll call you right back.</Say>`
-              + recVerb
-              + `<Say voice="Polly.Joanna">Thanks — we'll be in touch shortly. Goodbye.</Say><Hangup/>`
-              + `</Response>`;
-          } else {
-            // Straight to voicemail.
-            const vmAction = BASE_URL
-              ? `${BASE_URL}/twilio/voicemail-capture?kind=missed&callSid=${encodeURIComponent(CallSid || "")}`
-              : "";
-            const recVerb = vmAction
-              ? `<Record action="${escapeXml(vmAction)}" method="POST" maxLength="120" playBeep="true" trim="trim-silence" timeout="5" finishOnKey="#" transcribe="false" />`
-              : `<Hangup/>`;
-            offTwiml = `<Response>`
-              + `<Say voice="Polly.Joanna">Thanks for calling. No one is available to take your call right now. Please leave a brief message after the tone with your name and number, and we'll call you right back.</Say>`
-              + recVerb
-              + `<Say voice="Polly.Joanna">Thanks — we'll be in touch shortly. Goodbye.</Say><Hangup/>`
-              + `</Response>`;
-          }
+        const vmAction = BASE_URL
+          ? `${BASE_URL}/twilio/voicemail-capture?kind=missed&callSid=${encodeURIComponent(CallSid || "")}`
+          : "";
+        const recVerb = vmAction
+          ? `<Record action="${escapeXml(vmAction)}" method="POST" maxLength="120" playBeep="true" trim="trim-silence" timeout="5" finishOnKey="#" transcribe="false" />`
+          : `<Hangup/>`;
 
-          res.type("text/xml").send(offTwiml);
-          return;
+        let offTwiml;
+        if (pn?.ring_first_enabled && pn?.ring_first_phone) {
+          // Ring the human's number. If they don't answer, fall through to a
+          // voicemail recorded via the existing /voicemail-capture pipeline.
+          const ringNum = pn.ring_first_phone.replace(/\D/g, "").replace(/^1?(\d{10})$/, "+1$1");
+          const timeout = pn.ring_first_timeout_seconds || 20;
+          const rfGreeting = tenant.voicemail_message_url
+            ? `<Play>${escapeXml(tenant.voicemail_message_url)}</Play>`
+            : `<Say voice="Polly.Joanna">Sorry we couldn't reach someone right now. Please leave a brief message after the tone with your name and number, and we'll call you right back.</Say>`;
+          offTwiml = `<Response>`
+            + `<Dial timeout="${timeout}"><Number>${escapeXml(ringNum)}</Number></Dial>`
+            + rfGreeting
+            + recVerb
+            + `<Say voice="Polly.Joanna">Thanks — we'll be in touch shortly. Goodbye.</Say><Hangup/>`
+            + `</Response>`;
+        } else {
+          // Straight to voicemail.
+          const greeting = tenant.voicemail_message_url
+            ? `<Play>${escapeXml(tenant.voicemail_message_url)}</Play>`
+            : `<Say voice="Polly.Joanna">Thanks for calling. No one is available to take your call right now. Please leave a brief message after the tone with your name and number, and we'll call you right back.</Say>`;
+          offTwiml = `<Response>`
+            + greeting
+            + recVerb
+            + `<Say voice="Polly.Joanna">Thanks — we'll be in touch shortly. Goodbye.</Say><Hangup/>`
+            + `</Response>`;
         }
+
+        res.type("text/xml").send(offTwiml);
+        return;
       } catch (gateErr) {
-        // If the gate check fails for any reason, fall through to normal AI
-        // behavior rather than dropping the call. Fail-open is the safe default
-        // here — better the AI answers than the caller gets dead air.
+        // Fail open: never drop the call on a gate error.
         console.error("[AI-Desk] AI-off gate check failed (continuing to AI):", gateErr.message);
       }
     }
+
     await callsService.createCall(tenant.id, CallSid, fromNumber, toNumber, direction);
     console.log("[AI-Desk] Voice webhook call created CallSid=%s tenantId=%s direction=%s", CallSid, tenant.id, direction);
 

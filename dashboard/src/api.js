@@ -235,6 +235,26 @@ export function updateTenant(id, body) {
   });
 }
 
+// ── AI Instruction Generator (Feature 1) ──────────────────────────────────
+// Draft-time generator: build → review → apply. None of this touches the live
+// call path until applyInstructionsDraft copies the draft into instructions.
+export function generateInstructionsDraft(tenantId) {
+  return api(`/api/tenants/${tenantId}/instructions/generate`, { method: "POST" });
+}
+
+export function getInstructionsDraft(tenantId) {
+  return api(`/api/tenants/${tenantId}/instructions/draft`);
+}
+
+// editedDraft optional — if the owner tweaked the draft in the textarea before
+// applying, pass it and the backend applies THAT instead of the stored draft.
+export function applyInstructionsDraft(tenantId, editedDraft = null) {
+  return api(`/api/tenants/${tenantId}/instructions/apply`, {
+    method: "POST",
+    body: JSON.stringify(editedDraft ? { edited_draft: editedDraft } : {}),
+  });
+}
+
 // ── Service area (mig 068, May 14, 2026) ──────────────────────────────────
 // PATCH the tenant's service area boundary. Three shapes accepted on the
 // backend (states / radius / zips). Pass null to clear.

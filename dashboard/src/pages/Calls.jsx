@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { getCalls, getRecordingAudioUrl, updateCall } from "../api";
+import { getCalls, getRecordingAudioUrl, updateCall, getTenant } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import {
   Phone, Clock, MessageSquare, Play, TrendingUp, User,
@@ -193,7 +193,7 @@ function FilterBar({ filters, setFilters, totalCount, filteredCount }) {
 }
 
 // ─── Compact Row (collapsed view) ─────────────────────────────────────
-function CompactRow({ call, expanded, onToggle }) {
+function CompactRow({ call, expanded, onToggle, timezone }) {
   const score = getCallScore(call);
   const name = getCallName(call);
   const project = getCallProject(call);
@@ -204,9 +204,18 @@ function CompactRow({ call, expanded, onToggle }) {
       className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-stone-50 transition-colors"
     >
       <span className="w-20 shrink-0 hidden sm:flex flex-col leading-tight">
+        <span className="w-20 shrink-0 hidden sm:flex flex-col leading-tight">
         <span className="text-xs text-stone-500 font-medium">
-          {new Date(call.started_at).toLocaleDateString()}
+          {new Date(call.started_at).toLocaleDateString([], timezone ? { timeZone: timezone } : {})}
         </span>
+        <span className="text-[10px] text-stone-400 font-medium">
+          {new Date(call.started_at).toLocaleTimeString([], {
+            hour: "numeric",
+            minute: "2-digit",
+            ...(timezone ? { timeZone: timezone } : {}),
+          })}
+        </span>
+      </span>
         <span className="text-[10px] text-stone-400 font-medium">
           {new Date(call.started_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
         </span>
@@ -356,6 +365,7 @@ export default function Calls({ tenantId }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [expandedIds, setExpandedIds] = useState(new Set());
+  const [tenantTimezone, setTenantTimezone] = useState(null);
   const { error: toastError } = useToast();
 
   // Filter state — default to last 30 days, all scores, all statuses, empty search
@@ -376,6 +386,13 @@ export default function Calls({ tenantId }) {
   };
 
   useEffect(() => { fetchCalls(); }, [tenantId]);
+
+  useEffect(() => {
+    if (!tenantId || tenantId === "all") return;
+    getTenant(tenantId)
+      .then((t) => setTenantTimezone(t?.timezone || null))
+      .catch(() => setTenantTimezone(null));
+  }, [tenantId]);
 
   // Apply filters in-memory. Search bypasses the date filter so old
   // customers stay findable regardless of which date window is selected.
@@ -491,6 +508,7 @@ export default function Calls({ tenantId }) {
                 call={c}
                 expanded={expandedIds.has(c.id)}
                 onToggle={() => toggleExpanded(c.id)}
+                timezone={tenantTimezone}
               />
               {expandedIds.has(c.id) && (
                 <ExpandedDetail call={c} onUpdate={fetchCalls} />

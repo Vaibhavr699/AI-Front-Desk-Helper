@@ -26,6 +26,9 @@ import {
   verifyCustomDomain,
   disconnectCustomDomain,
   updateServiceArea,
+  generateInstructionsDraft,
+  getInstructionsDraft,
+  applyInstructionsDraft,
 } from "../api";
 import { LumaSpin } from "../components/ui/luma-spin";
 import { ConfirmationModal } from "../components/ConfirmationModal";
@@ -529,6 +532,11 @@ export default function Settings({ tenantId }) {
   // Webhook guide drawer state — null | "job-completed" | "estimate-sent"
   const [openGuide, setOpenGuide] = useState(null);
 
+  // ── AI Instruction Generator (Feature 1) ──
+  const [genLoading, setGenLoading] = useState(false);
+  const [genDraft, setGenDraft] = useState(null);      // the generated text under review
+  const [genMeta, setGenMeta] = useState(null);        // { used_website, reused_faqs, reused_objections }
+
   // Form states
   const [form, setForm] = useState({
     // ── Branding (white-label) ────────────────────────────────
@@ -1025,6 +1033,37 @@ export default function Settings({ tenantId }) {
   };
 
  const MAX_OBJECTION_CASES = 5;
+
+  const handleGenerateDraft = async () => {
+    setGenLoading(true);
+    try {
+      const res = await generateInstructionsDraft(tenantId);
+      setGenDraft(res.draft || "");
+      setGenMeta({
+        used_website: res.used_website,
+        reused_faqs: res.reused_faqs,
+        reused_objections: res.reused_objections,
+      });
+      success("Draft generated. Review it below before applying.");
+    } catch (e) {
+      // 422 = industry not set; surface the backend's actionable message
+      toastError(e.message || "Could not generate a draft.");
+    } finally {
+      setGenLoading(false);
+    }
+  };
+
+  // "Apply" just drops the (possibly edited) draft into the instructions
+  // textarea. The owner still clicks Save Changes to persist — same as every
+  // other field. We DON'T call applyInstructionsDraft here so nothing goes
+  // live without the normal Save flow the owner already knows.
+  const handleApplyDraftToForm = () => {
+    if (genDraft == null) return;
+    handleUpdateForm("instructions", genDraft);
+    setGenDraft(null);
+    setGenMeta(null);
+    success("Draft moved into your instructions. Review, then click Save Changes.");
+  };
 
   // Phase 7 V1.5 — Save or reset a per-service rate override
   // newPercentageWhole: number like 20 (meaning +20%), or null/empty to reset
@@ -2671,6 +2710,76 @@ export default function Settings({ tenantId }) {
                          <option value="ballad">Ballad (Male - Professional)</option>
                          <option value="sage">Sage (Male - Warm)</option>
                       </select>
+                    </div>
+                  </div>
+                  {/* AI Instruction Generator (Feature 1) — draft-time helper */}
+                  <div className="col-span-2">
+                    <div className="p-5 bg-gradient-to-br from-primary/5 to-primary/10 border-2 border-primary/20 rounded-2xl">
+                      <div className="flex items-start justify-between gap-4 flex-wrap">
+                        <div className="flex-1 min-w-0">
+                          <h3 className="text-sm font-black text-gray-800 flex items-center gap-2">
+                            <Zap className="w-4 h-4 text-primary" />
+                            Generate instructions from your business info
+                          </h3>
+                          <p className="text-xs text-gray-600 leading-relaxed mt-1 max-w-xl">
+                            Builds a first draft from your trade, hours, FAQs, and website. It reuses your existing FAQs and objection scripts as-is, and marks anything it doesn't know with <span className="font-mono bg-white px-1 rounded">[brackets]</span> for you to fill in. Nothing goes live until you review and save.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleGenerateDraft}
+                          disabled={genLoading}
+                          className="px-4 py-2.5 bg-gray-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-black transition-all disabled:opacity-50 flex items-center gap-2 shrink-0"
+                        >
+                          {genLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 text-primary" />}
+                          {genLoading ? "Generating…" : (form.instructions?.trim() ? "Regenerate draft" : "Generate draft")}
+                        </button>
+                      </div>
+
+                      {genDraft != null && (
+                        <div className="mt-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                          {genMeta && (
+                            <div className="flex flex-wrap gap-2 mb-2">
+                              <span className={`px-2 py-0.5 text-[9px] font-black uppercase tracking-widest rounded-md border ${genMeta.used_website ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-gray-100 text-gray-500 border-gray-200"}`}>
+                                {genMeta.used_website ? "Used your website" : "No website read"}
+                              </span>
+                              {genMeta.reused_faqs && (
+                                <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-widest rounded-md bg-blue-50 text-blue-700 border border-blue-200">Reused your FAQs</span>
+                              )}
+                              {genMeta.reused_objections && (
+                                <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-widest rounded-md bg-purple-50 text-purple-700 border border-purple-200">Reused your objections</span>
+                              )}
+                            </div>
+                          )}
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5">
+                            Draft (editable — fill in any [brackets])
+                          </label>
+                          <textarea
+                            value={genDraft}
+                            onChange={(e) => setGenDraft(e.target.value)}
+                            rows={10}
+                            className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-primary/5 transition-all outline-none font-mono text-xs leading-relaxed"
+                          />
+                          <div className="flex items-center gap-2 mt-3 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={handleApplyDraftToForm}
+                              className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-emerald-700 transition-all flex items-center gap-2"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              Use this draft
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setGenDraft(null); setGenMeta(null); }}
+                              className="px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-gray-50 transition-all"
+                            >
+                              Discard
+                            </button>
+                            <p className="text-[11px] text-gray-500 italic">"Use this draft" drops it into the box below — then click Save Changes at the top.</p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="col-span-2">

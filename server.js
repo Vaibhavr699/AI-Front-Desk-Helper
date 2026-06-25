@@ -6037,6 +6037,7 @@ from = msg.start?.customParameters?.From || msg.start?.from || from || null;
             sendToOpenAI({
               type: "session.update",
               session: {
+                type: "realtime",
                 instructions: `THIS CALLER HAS CONTACTED BEFORE. Greet them like a returning customer.\n\nPrevious conversation summary/transcript:\n${history}\n\n${instructions}`
               }
             });

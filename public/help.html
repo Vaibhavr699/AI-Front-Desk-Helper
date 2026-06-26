@@ -93,17 +93,20 @@ const ARTICLES = [
     html: `
       <p class="crumb">Call Intelligence Center</p>
       <p>The <strong>Inbound Calls</strong> tab is the record of every call your AI receptionist answered.</p>
+      [[img:./inbound-calls.png|The Inbound Calls list — each row shows date/time, lead score, name, call length, project, and status.]]
       <h2>Reading the list</h2>
       <p>Each row shows the date and time, a <strong>lead score</strong> (0–100; green hot, amber medium, red low), the caller's name and number, the <strong>call length</strong> (for calls that connected), the project type, and the status. Missed calls and voicemails don't show a length, since there was no conversation to time.</p>
       <h2>Filtering &amp; searching</h2>
       <p>Search by name, phone, or transcript words (search spans all calls regardless of date filter). Narrow by date range, score, or status.</p>
       <h2>Opening &amp; actioning a call</h2>
-      <p>Click a row to expand it — estimated value, AI summary, call length, recording, transcript. The action buttons set the lead's state: Schedule Estimate, FollowUp, Lost Lead, or Spam.</p>` },
+      <p>Click a row to expand it — estimated value, AI summary, call length, recording, transcript. The action buttons set the lead's state: Schedule Estimate, FollowUp, Lost Lead, or Spam.</p>
+      [[img:./inbound-calls-expanded.png|An expanded call — lead value, project, status, call length, AI summary, recording, and action buttons.]]` },
 
   { id: "outbound-campaigns", category: "Call Intelligence Center", title: "Outbound Campaigns",
     html: `
       <p class="crumb">Call Intelligence Center</p>
       <p><strong>Outbound Campaigns</strong> launches automated AI calling campaigns to a list of contacts.</p>
+      [[img:./outbound-campaigns.png|The Outbound Campaigns tab — campaign list with success rate, bookings, and status.]]
       <h2>Calling credits &amp; bundles</h2>
       <p>Outbound calls use calling minutes. Your plan includes a monthly allotment; buy prepaid bundles (500/1,500/3,000 min) here for more — they stack on top.</p>
       <h2>Creating &amp; tracking</h2>
@@ -114,6 +117,7 @@ const ARTICLES = [
     html: `
       <p class="crumb">Call Intelligence Center</p>
       <p>The <strong>AI Outreach Log</strong> is the read-only record of every automated touch the AI sent on its own — recovery, nurturing, seasonal, referral, missed-call callbacks.</p>
+      [[img:./outreach-log.png|The AI Outreach Log — automated touches with Source and Status labels.]]
       <h2>Reading a row</h2>
       <p>Channel icon, time, customer, and two labels: <strong>Source</strong> (why it fired) and <strong>Status</strong> (what happened).</p>
       <h2>Filtering &amp; viewing</h2>
@@ -123,10 +127,12 @@ const ARTICLES = [
     html: `
       <p class="crumb">Call Intelligence Center</p>
       <p>The <strong>Voicemails</strong> tab collects messages callers left when they couldn't be connected.</p>
+      [[img:./voicemails.png|The Voicemails tab — each message with its number, time, length, Play, Call back, and Mark handled.]]
       <h2>Working through them</h2>
       <p>Each message shows the number, time, length, and a <strong>Play message</strong> button. The tab shows a count of unhandled messages.</p>
       <h2>Calling a customer back</h2>
       <p>The green <strong>Call back</strong> button places the call <em>for</em> you: it rings your phone first, and when you pick up it connects you to the customer with your business number showing as the caller ID — so the customer sees your business line, not your personal cell, and the call is logged like any other. Tap it and you'll see "Calling…" while your phone rings. (You can also tap the customer's number at the top of the message to dial them straight from your own phone the old way.)</p>
+      [[img:./voicemails-callback.png|Tapping Call back shows a "Calling…" state while your phone rings.]]
       <p>Once you've dealt with a message, hit <strong>Mark handled</strong> to clear it from the list.</p>
       <div class="callout"><p>The business number used for the callback is your <strong>primary</strong> AI line, and your phone rings at your <strong>transfer number</strong>. Set the greeting callers hear in <strong>Settings → AI Control → Voicemail greeting</strong>.</p></div>` },
 

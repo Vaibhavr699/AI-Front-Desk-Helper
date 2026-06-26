@@ -4635,4 +4635,165 @@ router.post("/voicemails/:callId/callback", async (req, res) => {
   }
 });
 
+// ═════════════════════════════════════════════════════════════════════════
+// OUTBOUND AI INSTRUCTION GENERATOR (Jun 26, 2026) — paste this entire block
+// into routes/dashboard.js directly ABOVE the final `module.exports = router;`.
+//
+// Sibling of the inbound AI Instruction Generator block above. Draft-time only;
+// never touches the live outbound-call path. The owner generates an outbound
+// personality/instructions draft (re-engagement + sales-follow-up framing),
+// reviews it, and explicitly applies it into tenants.outbound_instructions.
+//
+// Three endpoints mirroring the inbound trio:
+//   POST /tenants/:id/outbound-instructions/generate
+//   GET  /tenants/:id/outbound-instructions/draft
+//   POST /tenants/:id/outbound-instructions/apply
+//
+// Persists to mig columns: outbound_instructions_draft,
+// outbound_instructions_draft_status, outbound_instructions_draft_generated_at.
+//
+// instructionGenerator is already required higher up in this file for the
+// inbound block, so we don't re-require it here.
+// ═════════════════════════════════════════════════════════════════════════
+
+// Ownership guard + tenant load for the OUTBOUND generator. Mirrors
+// loadTenantForGenerator but selects the outbound-relevant fields (agent name,
+// live outbound_instructions, and the outbound draft columns).
+async function loadTenantForOutboundGenerator(req, res) {
+  const id = req.params.id;
+  const r = await db.query(
+    `SELECT id, parent_id, company_name, name, industry, city, state, website,
+            tone_of_voice, transfer_numbers,
+            outbound_agent_name, objection_handling_config,
+            outbound_instructions, outbound_instructions_draft,
+            outbound_instructions_draft_status, outbound_instructions_draft_generated_at
+       FROM tenants WHERE id = $1`,
+    [id]
+  );
+  const tenant = r.rows[0];
+  if (!tenant) {
+    res.status(404).json({ error: "Tenant not found" });
+    return null;
+  }
+  if (req.user?.tenant_id && req.user.tenant_id !== id && !req.user.is_super_admin) {
+    if (req.user.tenant_business_type !== "parent" || tenant.parent_id !== req.user.tenant_id) {
+      res.status(403).json({ error: "Forbidden — insufficient permissions for this location" });
+      return null;
+    }
+  }
+  return tenant;
+}
+
+// POST /tenants/:id/outbound-instructions/generate
+router.post("/tenants/:id/outbound-instructions/generate", async (req, res) => {
+  try {
+    const tenant = await loadTenantForOutboundGenerator(req, res);
+    if (!tenant) return;
+
+    const result = await instructionGenerator.generateOutboundInstructionsDraft(tenant);
+    if (!result.ok) {
+      const code = result.reason === "missing_industry" ? 422 : 502;
+      return res.status(code).json({ ok: false, reason: result.reason, error: result.message });
+    }
+
+    await db.query(
+      `UPDATE tenants
+          SET outbound_instructions_draft = $1,
+              outbound_instructions_draft_status = 'unreviewed',
+              outbound_instructions_draft_generated_at = now(),
+              updated_at = now()
+        WHERE id = $2`,
+      [result.draft, tenant.id]
+    );
+
+    await logAction({
+      tenant_id: String(tenant.id),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "outbound_instructions_draft_generated",
+      entity_type: "tenant",
+      entity_id: String(tenant.id),
+      new_value: {
+        used_website: result.usedWebsite,
+        reused_objections: result.reusedObjections,
+      },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
+
+    res.json({
+      ok: true,
+      draft: result.draft,
+      status: "unreviewed",
+      used_website: result.usedWebsite,
+      reused_faqs: result.reusedFaqs,
+      reused_objections: result.reusedObjections,
+    });
+  } catch (e) {
+    console.error("[OutboundInstructionGen] generate error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// GET /tenants/:id/outbound-instructions/draft
+router.get("/tenants/:id/outbound-instructions/draft", async (req, res) => {
+  try {
+    const tenant = await loadTenantForOutboundGenerator(req, res);
+    if (!tenant) return;
+    res.json({
+      ok: true,
+      draft: tenant.outbound_instructions_draft || null,
+      status: tenant.outbound_instructions_draft_status || "none",
+      generated_at: tenant.outbound_instructions_draft_generated_at || null,
+      current_instructions: tenant.outbound_instructions || "",
+    });
+  } catch (e) {
+    console.error("[OutboundInstructionGen] draft fetch error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// POST /tenants/:id/outbound-instructions/apply
+// Body (optional): { edited_draft } — if the owner tweaked the draft in the UI
+// before applying, send the edited text and we apply THAT instead of the stored
+// draft. Result lands in tenants.outbound_instructions; draft → 'applied'.
+router.post("/tenants/:id/outbound-instructions/apply", async (req, res) => {
+  try {
+    const tenant = await loadTenantForOutboundGenerator(req, res);
+    if (!tenant) return;
+
+    const incoming = typeof req.body?.edited_draft === "string" ? req.body.edited_draft.trim() : "";
+    const toApply = incoming || (tenant.outbound_instructions_draft || "").trim();
+
+    if (!toApply) {
+      return res.status(400).json({ error: "No draft to apply. Generate one first." });
+    }
+
+    await db.query(
+      `UPDATE tenants
+          SET outbound_instructions = $1,
+              outbound_instructions_draft = $1,
+              outbound_instructions_draft_status = 'applied',
+              updated_at = now()
+        WHERE id = $2`,
+      [toApply, tenant.id]
+    );
+
+    await logAction({
+      tenant_id: String(tenant.id),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "outbound_instructions_draft_applied",
+      entity_type: "tenant",
+      entity_id: String(tenant.id),
+      new_value: { length: toApply.length, edited: !!incoming },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
+
+    res.json({ ok: true, status: "applied", instructions: toApply });
+  } catch (e) {
+    console.error("[OutboundInstructionGen] apply error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 module.exports = router;

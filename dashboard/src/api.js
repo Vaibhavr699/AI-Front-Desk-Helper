@@ -255,6 +255,28 @@ export function applyInstructionsDraft(tenantId, editedDraft = null) {
   });
 }
 
+// ── Outbound AI Instruction Generator (Jun 26, 2026) ──────────────────────
+// Sibling of the inbound generator helpers above. Draft-time build → review →
+// apply for the Outbound AI Agent's personality/instructions. None of this
+// touches the live outbound-call path until applyOutboundInstructionsDraft
+// copies the draft into tenants.outbound_instructions.
+export function generateOutboundInstructionsDraft(tenantId) {
+  return api(`/api/tenants/${tenantId}/outbound-instructions/generate`, { method: "POST" });
+}
+
+export function getOutboundInstructionsDraft(tenantId) {
+  return api(`/api/tenants/${tenantId}/outbound-instructions/draft`);
+}
+
+// editedDraft optional — if the owner tweaked the draft in the textarea before
+// applying, pass it and the backend applies THAT instead of the stored draft.
+export function applyOutboundInstructionsDraft(tenantId, editedDraft = null) {
+  return api(`/api/tenants/${tenantId}/outbound-instructions/apply`, {
+    method: "POST",
+    body: JSON.stringify(editedDraft ? { edited_draft: editedDraft } : {}),
+  });
+}
+
 // ── Service area (mig 068, May 14, 2026) ──────────────────────────────────
 // PATCH the tenant's service area boundary. Three shapes accepted on the
 // backend (states / radius / zips). Pass null to clear.

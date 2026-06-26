@@ -4796,4 +4796,133 @@ router.post("/tenants/:id/outbound-instructions/apply", async (req, res) => {
   }
 });
 
+// ═════════════════════════════════════════════════════════════════════════
+// WEBSITE AUDIT / EXTRACTOR (Website Intelligence, Phase 1 — Jun 26, 2026)
+// Paste this entire block into routes/dashboard.js directly ABOVE the final
+// `module.exports = router;`.
+//
+// Owner-triggered "Analyze my website": crawls the tenant's site (homepage +
+// value-scored inner pages, 8-page cap), extracts a structured facts object,
+// and PERSISTS every run into website_audits. The inbound + outbound
+// instruction generators read the latest stored facts (they do NOT crawl on
+// every draft), so this is the one place the expensive crawl happens.
+//
+// Two endpoints:
+//   POST /tenants/:id/website-audit/run  → run a fresh crawl + extract, store,
+//                                          return facts + meta + audit trail.
+//   GET  /tenants/:id/website-audit      → latest stored audit (for the
+//                                          "last analyzed" state + facts view).
+//
+// Auth: the staff-level gate (owner/admin/manager/staff) is already applied by
+// router.use(...) earlier in this file. We add the same per-location ownership
+// check used by the instruction generators.
+// ═════════════════════════════════════════════════════════════════════════
+
+const websiteAudit = require("../services/websiteAudit");
+
+// Ownership guard for the website audit endpoints. Mirrors
+// loadTenantForGenerator but only needs id/parent_id/website to authorize +
+// confirm there's a site to crawl. Returns the tenant row or sends the
+// response and returns null.
+async function loadTenantForWebsiteAudit(req, res) {
+  const id = req.params.id;
+  const r = await db.query(
+    "SELECT id, parent_id, website FROM tenants WHERE id = $1",
+    [id]
+  );
+  const tenant = r.rows[0];
+  if (!tenant) {
+    res.status(404).json({ error: "Tenant not found" });
+    return null;
+  }
+  if (req.user?.tenant_id && req.user.tenant_id !== id && !req.user.is_super_admin) {
+    if (req.user.tenant_business_type !== "parent" || tenant.parent_id !== req.user.tenant_id) {
+      res.status(403).json({ error: "Forbidden — insufficient permissions for this location" });
+      return null;
+    }
+  }
+  return tenant;
+}
+
+// POST /tenants/:id/website-audit/run
+router.post("/tenants/:id/website-audit/run", async (req, res) => {
+  try {
+    const tenant = await loadTenantForWebsiteAudit(req, res);
+    if (!tenant) return;
+
+    if (!tenant.website || !String(tenant.website).trim()) {
+      return res.status(422).json({
+        ok: false,
+        reason: "no_website",
+        error: "Add your website in the Branding tab first, then analyze it.",
+      });
+    }
+
+    const result = await websiteAudit.runWebsiteAuditForTenant(tenant.id);
+
+    await logAction({
+      tenant_id: String(tenant.id),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "website_audit_run",
+      entity_type: "tenant",
+      entity_id: String(tenant.id),
+      new_value: {
+        ok: result.ok,
+        reason: result.reason || null,
+        pages_fetched: result.meta?.pages_fetched ?? null,
+        pages_used: result.meta?.pages_used ?? null,
+        homepage_thin: result.meta?.homepage_thin ?? null,
+      },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
+
+    // Even a partial/failed extraction is persisted and returned (with its
+    // audit trail) so the UI can show WHY — e.g. a JS-rendered site. We send
+    // 200 with ok:false rather than an error status so the client branches on
+    // `reason` instead of throwing.
+    res.json({
+      ok: result.ok,
+      reason: result.reason || null,
+      facts: result.facts,
+      fetched_pages: result.fetched_pages,
+      meta: result.meta,
+      audit_id: result.audit_id,
+      url: result.url,
+    });
+  } catch (e) {
+    console.error("[WebsiteAudit] run error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// GET /tenants/:id/website-audit
+router.get("/tenants/:id/website-audit", async (req, res) => {
+  try {
+    const tenant = await loadTenantForWebsiteAudit(req, res);
+    if (!tenant) return;
+
+    const latest = await websiteAudit.getLatestWebsiteAudit(tenant.id);
+    if (!latest) {
+      return res.json({ ok: true, audit: null });
+    }
+
+    // facts/fetched_pages/meta are jsonb — pg returns them as objects already.
+    res.json({
+      ok: true,
+      audit: {
+        id: latest.id,
+        url: latest.url,
+        facts: latest.facts,
+        fetched_pages: latest.fetched_pages,
+        meta: latest.meta,
+        created_at: latest.created_at,
+      },
+    });
+  } catch (e) {
+    console.error("[WebsiteAudit] fetch error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 module.exports = router;

@@ -816,6 +816,64 @@ export default function GoogleBusinessProfile({ tenantId }) {
 
             {websiteAudit && websiteAudit.facts && (
               <div style={{ padding: "16px 18px" }}>
+                {/* ── Scorecard: overall ring + two sub-scores (Phase 2.1) ──
+                    Two halves because getting FOUND (discovery) and SECURING
+                    the lead (conversion) are different funnel stages; the
+                    headline tells the owner which one is leaking. */}
+                {websiteAudit.meta?.scorecard && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 24, marginBottom: 18, paddingBottom: 18, borderBottom: "1px solid #f5f5f5", flexWrap: "wrap" }}>
+                    <ScoreRing score={websiteAudit.meta.scorecard.score} />
+                    <div style={{ flex: 1, minWidth: 240 }}>
+                      <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                        {[
+                          { label: "Get found", key: "discovery", color: "#2563eb" },
+                          { label: "Secure the lead", key: "conversion", color: "#16a34a" },
+                        ].map((h) => {
+                          const val = websiteAudit.meta.scorecard[h.key] ?? 0;
+                          const band = h.key === "discovery"
+                            ? websiteAudit.meta.scorecard.summary?.discovery_label
+                            : websiteAudit.meta.scorecard.summary?.conversion_label;
+                          return (
+                            <div key={h.key} style={{ flex: 1, minWidth: 150, background: "#fafaf9", border: "1px solid #e8e6e0", borderRadius: 10, padding: "10px 12px" }}>
+                              <div style={{ fontSize: 10, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>{h.label}</div>
+                              <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                                <span style={{ fontSize: 22, fontWeight: 800, color: h.color, lineHeight: 1 }}>{val}</span>
+                                {band && <span style={{ fontSize: 11, color: "#888", fontWeight: 600 }}>{band}</span>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {websiteAudit.meta.scorecard.summary?.headline && (
+                        <div style={{ fontSize: 12, color: "#666", lineHeight: 1.5 }}>
+                          {websiteAudit.meta.scorecard.summary.headline}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Scorecard gaps (weak dimensions, severity-tagged) ── */}
+                {websiteAudit.meta?.scorecard?.gaps?.length > 0 && (
+                  <div style={{ marginBottom: 18 }}>
+                    {websiteAudit.meta.scorecard.gaps.map((g, i) => {
+                      const sev = SEV_STYLE[g.severity] || SEV_STYLE.low;
+                      return (
+                        <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 12px", background: sev.bg, border: `1px solid ${sev.border}`, borderRadius: 8, marginBottom: 8 }}>
+                          <div style={{ width: 8, height: 8, borderRadius: "50%", background: sev.dot, marginTop: 5, flexShrink: 0 }} />
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: "#1a1a1a" }}>{g.label}</span>
+                              <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 20, background: "#fff", color: sev.dot, border: `1px solid ${sev.border}`, textTransform: "uppercase" }}>{sev.label}</span>
+                            </div>
+                            <div style={{ fontSize: 11, color: "#666", lineHeight: 1.5 }}>{g.advice}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
                 <div style={{ fontSize: 11, color: "#888", marginBottom: 14 }}>
                   Analyzed {websiteAudit.created_at ? new Date(websiteAudit.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "just now"}
                   {websiteAudit.meta?.pages_used != null ? ` · read ${websiteAudit.meta.pages_used} of ${websiteAudit.meta.pages_fetched} pages` : ""}

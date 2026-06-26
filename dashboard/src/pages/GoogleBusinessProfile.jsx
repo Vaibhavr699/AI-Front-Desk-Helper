@@ -123,6 +123,10 @@ export default function GoogleBusinessProfile({ tenantId }) {
   // presence cross-reference: site⇄GBP consistency gaps (Phase 2.3, Jun 26 2026)
   const [crossRef, setCrossRef] = useState(null);
 
+  // competitive benchmark: how the tenant stacks up vs nearby painters (Phase 3.3)
+  const [competitor, setCompetitor] = useState(null);
+  const [competitorLoading, setCompetitorLoading] = useState(false);
+
   // drafts / published
   const [posts, setPosts] = useState([]);
   const [postsLoading, setPostsLoading] = useState(false);
@@ -256,6 +260,19 @@ export default function GoogleBusinessProfile({ tenantId }) {
     }
   }, [tenantId]);
 
+  // Latest competitive benchmark for this tenant (or null). Stores the whole
+  // payload (benchmark + competitors + meta); the card decides what to show.
+  const loadCompetitor = useCallback(async () => {
+    if (!tenantId) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/tenants/${tenantId}/competitor-audit?_t=${Date.now()}`, NO_CACHE);
+      const data = await res.json();
+      setCompetitor(data.audit || null);
+    } catch {
+      setCompetitor(null);
+    }
+  }, [tenantId]);
+
   const loadPosts = useCallback(async (statusFilter) => {
     if (!tenantId) return;
     setPostsLoading(true);
@@ -310,12 +327,12 @@ export default function GoogleBusinessProfile({ tenantId }) {
   useEffect(() => {
     if (status === null) return;
     if (!status.connected) return;
-    if (subTab === "health") { loadAudit(); loadWebsiteAudit(); loadCrossRef(); }
+    if (subTab === "health") { loadAudit(); loadWebsiteAudit(); loadCrossRef(); loadCompetitor(); }
     else if (subTab === "drafts") loadPosts("draft");
     else if (subTab === "published") loadPosts("published");
     else if (subTab === "schedule") { loadSchedule(); loadPool(); }
     else if (subTab === "performance") loadPerf(perfRange);
-  }, [status, subTab, loadAudit, loadWebsiteAudit, loadCrossRef, loadPosts, loadSchedule, loadPool, loadPerf, perfRange]);
+  }, [status, subTab, loadAudit, loadWebsiteAudit, loadCrossRef, loadCompetitor, loadPosts, loadSchedule, loadPool, loadPerf, perfRange]);
 
   // ── Actions ───────────────────────────────────────────────────────────────
   async function handleConnect() {
@@ -371,6 +388,34 @@ export default function GoogleBusinessProfile({ tenantId }) {
       loadCrossRef();
     } catch (e) { showToast(e.message || "Analysis failed", "error"); }
     finally { setWebsiteLoading(false); }
+  }
+
+  // Pull the top nearby painters via Places and benchmark the tenant against
+  // them. Like the website audit, the endpoint returns 200 with ok:false for
+  // "no competitors / no search term / API problem" — the run is persisted
+  // either way, so we reload to show whatever came back.
+  async function runCompetitor() {
+    setCompetitorLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/tenants/${tenantId}/competitor-audit/run`, {
+        method: "POST", headers: hdrs(),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Benchmark failed");
+      if (data.ok === false) {
+        const msg = {
+          no_search_term: "Add the business city (or a custom competitor search term) in Settings, then benchmark.",
+          no_competitors: "We couldn't find nearby painters to compare against — the area may be sparse or the search too narrow.",
+          no_api_key: "The competitor benchmark isn't configured yet (no Places API key).",
+          search_failed: "We couldn't reach Google Places. Please try again.",
+        }[data.reason] || "We couldn't complete the benchmark.";
+        showToast(msg, "error");
+      } else {
+        showToast("Benchmark complete ✓");
+      }
+      await loadCompetitor();
+    } catch (e) { showToast(e.message || "Benchmark failed", "error"); }
+    finally { setCompetitorLoading(false); }
   }
 
   async function handleGenerate() {
@@ -992,6 +1037,131 @@ export default function GoogleBusinessProfile({ tenantId }) {
               <div style={{ padding: "0 18px 18px" }}>
                 <div style={{ fontSize: 12, color: "#888", lineHeight: 1.6 }}>
                   Not analyzed yet. Click <strong>Analyze website</strong> to read your site and feed those facts into your inbound &amp; outbound AI instructions.
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── COMPETITIVE BENCHMARK (Phase 3.3, Jun 26 2026) ──
+              How the tenant stacks up against nearby painters on the signals
+              Google Places can honestly return: reviews, freshness, photos.
+              Each gap routes to the AIFDH feature that closes it (review drip,
+              GBP photos). Services/booking are NOT benchmarked competitively —
+              Places doesn't expose those for businesses you don't own — so they
+              stay the self-comparison handled by the cards above. */}
+          <div style={{ ...s.card, padding: 0, marginTop: 4 }}>
+            <div style={{ padding: "16px 18px", borderBottom: (competitor && competitor.benchmark?.ok) ? "1px solid #f5f5f5" : "none", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 240 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>How you stack up nearby</div>
+                <div style={{ fontSize: 12, color: "#888", marginTop: 2, lineHeight: 1.5, maxWidth: 520 }}>
+                  We compare your Google profile against the top painters in your area on what Google can measure — reviews, how recent they are, and photos — and point each gap at the tool that closes it.
+                </div>
+              </div>
+              <button onClick={runCompetitor} disabled={competitorLoading} style={s.btn("#2563eb", "rgba(37,99,235,0.08)")}>
+                {competitorLoading ? "Comparing…" : (competitor ? "Re-run" : "Benchmark")}
+              </button>
+            </div>
+
+            {competitor && competitor.benchmark?.ok && (
+              <div style={{ padding: "16px 18px" }}>
+                {/* Field summary line */}
+                <div style={{ fontSize: 11, color: "#888", marginBottom: 14 }}>
+                  Compared against {competitor.benchmark.field?.count || 0} nearby painters
+                  {competitor.search?.term ? ` · "${competitor.search.term}"` : ""}
+                  {competitor.created_at ? ` · ${new Date(competitor.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}
+                </div>
+
+                {/* Three axis tiles */}
+                <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+                  {(() => {
+                    const ax = competitor.benchmark.axes || {};
+                    const tiles = [];
+                    if (ax.reviews) {
+                      tiles.push({
+                        label: "Reviews",
+                        you: ax.reviews.tenant_reviews ?? "—",
+                        field: ax.reviews.field_median_reviews != null ? `median ${ax.reviews.field_median_reviews}` : "—",
+                        ahead: ax.reviews.review_rank != null && ax.reviews.review_rank >= 0.5,
+                      });
+                    }
+                    if (ax.freshness?.available) {
+                      tiles.push({
+                        label: "Review freshness",
+                        you: ax.freshness.tenant_newest_review_days != null ? `${ax.freshness.tenant_newest_review_days}d` : "—",
+                        field: ax.freshness.field_median_newest_review_days != null ? `median ${ax.freshness.field_median_newest_review_days}d` : "—",
+                        ahead: ax.freshness.freshness_rank != null && ax.freshness.freshness_rank >= 0.5,
+                      });
+                    }
+                    if (ax.photos?.available) {
+                      tiles.push({
+                        label: "Photos",
+                        you: ax.photos.tenant_photo_bucket || "—",
+                        field: ax.photos.field_median_photo_bucket ? `field ${ax.photos.field_median_photo_bucket}` : "—",
+                        ahead: false,
+                      });
+                    }
+                    return tiles.map((t, i) => (
+                      <div key={i} style={{ flex: 1, minWidth: 140, background: "#fafaf9", border: "1px solid #e8e6e0", borderRadius: 10, padding: "10px 12px" }}>
+                        <div style={{ fontSize: 10, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{t.label}</div>
+                        <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                          <span style={{ fontSize: 20, fontWeight: 800, color: t.ahead ? "#16a34a" : "#1a1a1a", lineHeight: 1 }}>{t.you}</span>
+                          <span style={{ fontSize: 11, color: "#888" }}>{t.field}</span>
+                        </div>
+                      </div>
+                    ));
+                  })()}
+                </div>
+
+                {/* Benchmark gaps (severity-tagged, same row markup as the rest) */}
+                {competitor.benchmark.gaps?.length > 0 ? (
+                  competitor.benchmark.gaps.map((g, i) => {
+                    const sev = SEV_STYLE[g.severity] || SEV_STYLE.low;
+                    return (
+                      <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 12px", background: sev.bg, border: `1px solid ${sev.border}`, borderRadius: 8, marginBottom: 8 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: "50%", background: sev.dot, marginTop: 5, flexShrink: 0 }} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: "#1a1a1a" }}>{g.label}</span>
+                            <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 20, background: "#fff", color: sev.dot, border: `1px solid ${sev.border}`, textTransform: "uppercase" }}>{sev.label}</span>
+                          </div>
+                          <div style={{ fontSize: 11, color: "#666", lineHeight: 1.5 }}>{g.advice}</div>
+                          {g.actionable === "review_drip" && (
+                            <button onClick={() => (window.location.href = "/reviews")} style={{ ...s.btn(), marginTop: 8, padding: "5px 12px" }}>Set up review requests →</button>
+                          )}
+                          {g.actionable === "gbp_photos" && (
+                            <button onClick={() => setSubTab("schedule")} style={{ ...s.btn("#2563eb", "rgba(37,99,235,0.08)"), marginTop: 8, padding: "5px 12px" }}>Manage photos →</button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div style={{ fontSize: 12, color: "#16a34a", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "10px 12px", lineHeight: 1.5 }}>
+                    You're at or ahead of the nearby field on reviews, freshness, and photos. Keep the momentum — your review drip and posting schedule maintain it.
+                  </div>
+                )}
+
+                {/* Honest boundary note */}
+                <div style={{ fontSize: 11, color: "#aaa", marginTop: 12, lineHeight: 1.5 }}>
+                  Services and booking links aren't compared here — Google doesn't share those for other businesses. Those are covered by the cards above.
+                </div>
+              </div>
+            )}
+
+            {competitor && competitor.benchmark && !competitor.benchmark.ok && (
+              <div style={{ padding: "0 18px 18px" }}>
+                <div style={{ fontSize: 12, color: "#888", lineHeight: 1.6 }}>
+                  {competitor.meta?.warnings?.length
+                    ? competitor.meta.warnings[0]
+                    : "We couldn't find nearby painters to compare against. The area may be sparse or the search term too narrow."}
+                </div>
+              </div>
+            )}
+
+            {!competitor && !competitorLoading && (
+              <div style={{ padding: "0 18px 18px" }}>
+                <div style={{ fontSize: 12, color: "#888", lineHeight: 1.6 }}>
+                  Not benchmarked yet. Click <strong>Benchmark</strong> to see how your Google profile compares to the top painters near you.
                 </div>
               </div>
             )}

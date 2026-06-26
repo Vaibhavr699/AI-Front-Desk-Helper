@@ -116,6 +116,10 @@ export default function GoogleBusinessProfile({ tenantId }) {
   const [audit, setAudit] = useState(null);
   const [auditLoading, setAuditLoading] = useState(false);
 
+  // website intelligence (Phase 1, Jun 26 2026)
+  const [websiteAudit, setWebsiteAudit] = useState(null);
+  const [websiteLoading, setWebsiteLoading] = useState(false);
+
   // drafts / published
   const [posts, setPosts] = useState([]);
   const [postsLoading, setPostsLoading] = useState(false);
@@ -220,6 +224,19 @@ export default function GoogleBusinessProfile({ tenantId }) {
     }
   }, [tenantId]);
 
+  // Latest stored website audit for this tenant (or null). Lives on the
+  // dashboard router (/api/tenants/:id/website-audit), not the gbp router.
+  const loadWebsiteAudit = useCallback(async () => {
+    if (!tenantId) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/tenants/${tenantId}/website-audit?_t=${Date.now()}`, NO_CACHE);
+      const data = await res.json();
+      setWebsiteAudit(data.audit || null);
+    } catch {
+      setWebsiteAudit(null);
+    }
+  }, [tenantId]);
+
   const loadPosts = useCallback(async (statusFilter) => {
     if (!tenantId) return;
     setPostsLoading(true);
@@ -274,12 +291,12 @@ export default function GoogleBusinessProfile({ tenantId }) {
   useEffect(() => {
     if (status === null) return;
     if (!status.connected) return;
-    if (subTab === "health") loadAudit();
+    if (subTab === "health") { loadAudit(); loadWebsiteAudit(); }
     else if (subTab === "drafts") loadPosts("draft");
     else if (subTab === "published") loadPosts("published");
     else if (subTab === "schedule") { loadSchedule(); loadPool(); }
     else if (subTab === "performance") loadPerf(perfRange);
-  }, [status, subTab, loadAudit, loadPosts, loadSchedule, loadPool, loadPerf, perfRange]);
+  }, [status, subTab, loadAudit, loadWebsiteAudit, loadPosts, loadSchedule, loadPool, loadPerf, perfRange]);
 
   // ── Actions ───────────────────────────────────────────────────────────────
   async function handleConnect() {
@@ -306,6 +323,33 @@ export default function GoogleBusinessProfile({ tenantId }) {
       await loadAudit();
     } catch (e) { showToast(e.message || "Audit failed", "error"); }
     finally { setAuditLoading(false); }
+  }
+
+  // Crawl + extract the tenant's website, persist the run, reload the result.
+  // The endpoint returns 200 with ok:false for partial/failed extractions
+  // (e.g. a JS-rendered site) — the run is still persisted, so we reload to
+  // show whatever was captured rather than treating it as a hard error.
+  async function runWebsiteAudit() {
+    setWebsiteLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/tenants/${tenantId}/website-audit/run`, {
+        method: "POST", headers: hdrs(),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Analysis failed");
+      if (data.ok === false) {
+        const msg = {
+          no_website: "Add your website in Settings → Branding first, then analyze it.",
+          no_usable_content: "We couldn't read usable text from your site — it may be JavaScript-rendered.",
+          extraction_failed: "The analyzer hit an error. Please try again.",
+        }[data.reason] || "We couldn't fully analyze your site.";
+        showToast(msg, "error");
+      } else {
+        showToast("Website analyzed ✓");
+      }
+      await loadWebsiteAudit();
+    } catch (e) { showToast(e.message || "Analysis failed", "error"); }
+    finally { setWebsiteLoading(false); }
   }
 
   async function handleGenerate() {
@@ -688,7 +732,8 @@ export default function GoogleBusinessProfile({ tenantId }) {
 
         {/* ── HEALTH ── */}
         {subTab === "health" && (
-          !audit ? (
+          <>
+          {!audit ? (
             <div style={{ ...s.card, padding: 40, textAlign: "center" }}>
               <div style={{ fontSize: 32, marginBottom: 12 }}>🔎</div>
               <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a", marginBottom: 6 }}>No audit yet</div>
@@ -750,7 +795,89 @@ export default function GoogleBusinessProfile({ tenantId }) {
                 );
               })}
             </>
-          )
+          )}
+
+          {/* ── WEBSITE INTELLIGENCE (Phase 1, Jun 26 2026) ──
+              Reads the tenant's site and shows the facts the AI should know.
+              No score yet — Phase 2 adds scoring + the site-vs-GBP consistency
+              check, at which point this merges with the GBP card above. */}
+          <div style={{ ...s.card, padding: 0, marginTop: 4 }}>
+            <div style={{ padding: "16px 18px", borderBottom: websiteAudit ? "1px solid #f5f5f5" : "none", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 240 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>Website — what your site tells your AI</div>
+                <div style={{ fontSize: 12, color: "#888", marginTop: 2, lineHeight: 1.5, maxWidth: 520 }}>
+                  We read your website and pull the facts your AI assistant should know — services, service area, trust signals, and how customers book. Re-run this whenever you update your site.
+                </div>
+              </div>
+              <button onClick={runWebsiteAudit} disabled={websiteLoading} style={s.btn("#2563eb", "rgba(37,99,235,0.08)")}>
+                {websiteLoading ? "Analyzing…" : (websiteAudit ? "Re-analyze" : "Analyze website")}
+              </button>
+            </div>
+
+            {websiteAudit && websiteAudit.facts && (
+              <div style={{ padding: "16px 18px" }}>
+                <div style={{ fontSize: 11, color: "#888", marginBottom: 14 }}>
+                  Analyzed {websiteAudit.created_at ? new Date(websiteAudit.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "just now"}
+                  {websiteAudit.meta?.pages_used != null ? ` · read ${websiteAudit.meta.pages_used} of ${websiteAudit.meta.pages_fetched} pages` : ""}
+                  {websiteAudit.url ? ` · ${String(websiteAudit.url).replace(/^https?:\/\//, "")}` : ""}
+                </div>
+
+                {websiteAudit.meta?.homepage_thin && (
+                  <div style={{ fontSize: 12, color: "#92400e", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 8, padding: "10px 12px", marginBottom: 14, lineHeight: 1.5 }}>
+                    Your site appears to be JavaScript-rendered, so we could only read limited text. The facts below may be incomplete.
+                  </div>
+                )}
+
+                {[
+                  ["Services", websiteAudit.facts.services, "#16a34a", "#f0fdf4", "#bbf7d0"],
+                  ["Service area", websiteAudit.facts.service_area_mentions, "#2563eb", "rgba(37,99,235,0.06)", "#bfdbfe"],
+                  ["Pricing & offers", websiteAudit.facts.pricing_cues, "#E8600A", "rgba(232,96,10,0.07)", "#fed7aa"],
+                  ["Trust signals", websiteAudit.facts.trust_signals, "#7c3aed", "rgba(124,58,237,0.06)", "#ddd6fe"],
+                  ["Differentiators", websiteAudit.facts.differentiators, "#0891b2", "rgba(8,145,178,0.06)", "#a5f3fc"],
+                  ["Contact methods", websiteAudit.facts.contact_methods, "#888", "#fafaf9", "#e8e6e0"],
+                ].map(([label, items, color, bg, border], gi) => (
+                  (Array.isArray(items) && items.length > 0) ? (
+                    <div key={gi} style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>{label}</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {items.map((it, i) => (
+                          <span key={i} style={{ fontSize: 12, color, background: bg, border: `1px solid ${border}`, borderRadius: 20, padding: "4px 12px" }}>{it}</span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null
+                ))}
+
+                <div style={{ marginTop: 4 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Booking path</div>
+                  {websiteAudit.facts.booking_path?.present ? (
+                    <span style={{ fontSize: 12, color: "#16a34a", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 20, padding: "4px 12px" }}>
+                      ✓ Booking/contact path found{websiteAudit.facts.booking_path.location ? ` · ${websiteAudit.facts.booking_path.location}` : ""}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 12, color: "#dc2626", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 20, padding: "4px 12px" }}>
+                      No clear booking or contact path found on the site
+                    </span>
+                  )}
+                </div>
+
+                {!(websiteAudit.facts.services?.length || websiteAudit.facts.service_area_mentions?.length || websiteAudit.facts.trust_signals?.length || websiteAudit.facts.pricing_cues?.length || websiteAudit.facts.differentiators?.length) && (
+                  <div style={{ fontSize: 12, color: "#888", fontStyle: "italic", marginTop: 10 }}>
+                    We couldn't pull clear facts from this site. It may be light on text or JavaScript-rendered — your AI will fall back to your trade and settings.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!websiteAudit && !websiteLoading && (
+              <div style={{ padding: "0 18px 18px" }}>
+                <div style={{ fontSize: 12, color: "#888", lineHeight: 1.6 }}>
+                  Not analyzed yet. Click <strong>Analyze website</strong> to read your site and feed those facts into your inbound &amp; outbound AI instructions.
+                </div>
+              </div>
+            )}
+          </div>
+          </>
         )}
 
         {/* ── DRAFTS ── */}

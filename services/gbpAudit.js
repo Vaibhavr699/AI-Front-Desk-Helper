@@ -190,6 +190,23 @@ function extractServiceNames(serviceItems) {
 }
 
 /**
+ * Extract the service-area place names from location.serviceArea. Google
+ * returns these under serviceArea.places.placeInfos[].placeName (e.g.
+ * "Papillion, NE"). Surfaced so the Website⇄GBP cross-reference
+ * (lib/presenceCrossRef.js) can name exactly which site-listed cities GBP's
+ * area is missing, instead of only knowing whether the description mentions one.
+ */
+function extractServiceAreaPlaces(location) {
+  const out = [];
+  const places = location?.serviceArea?.places?.placeInfos || [];
+  for (const p of places) {
+    const nm = p.placeName ? String(p.placeName).trim() : "";
+    if (nm && !out.includes(nm)) out.push(nm);
+  }
+  return out.slice(0, 40);
+}
+
+/**
  * Heuristic: does the description carry local-SEO signal? We look for any
  * service-area city name or the primary-category word inside the text. Used
  * only to decide whether to surface a "weak description" quality gap on an
@@ -391,6 +408,7 @@ function buildAuditFromReads(location, photos, posts, reviewResp) {
     description_length: descriptionLength,
     has_description: descriptionLength > 0,
     description_is_local: descriptionLooksLocal(description, location),
+    service_area_places: extractServiceAreaPlaces(location),
     service_item_count: serviceItemCount,
     service_names: serviceNames,
     photo_count: photos.count,
@@ -452,6 +470,7 @@ module.exports = {
   runAuditForTenant,
   buildAuditFromReads,
   extractServiceNames,
+  extractServiceAreaPlaces,
   descriptionLooksLocal,
   daysSince,
 };

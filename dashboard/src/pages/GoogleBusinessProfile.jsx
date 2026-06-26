@@ -120,6 +120,9 @@ export default function GoogleBusinessProfile({ tenantId }) {
   const [websiteAudit, setWebsiteAudit] = useState(null);
   const [websiteLoading, setWebsiteLoading] = useState(false);
 
+  // presence cross-reference: site⇄GBP consistency gaps (Phase 2.3, Jun 26 2026)
+  const [crossRef, setCrossRef] = useState(null);
+
   // drafts / published
   const [posts, setPosts] = useState([]);
   const [postsLoading, setPostsLoading] = useState(false);
@@ -237,6 +240,22 @@ export default function GoogleBusinessProfile({ tenantId }) {
     }
   }, [tenantId]);
 
+  // Site⇄GBP consistency gaps. Reads the latest website audit + GBP audit and
+  // returns where they disagree (services on the site missing from Google,
+  // service-area cities Google doesn't list). Returns ok:false with a reason
+  // when one side isn't analyzed yet — we just store the whole payload and let
+  // the card decide what to show.
+  const loadCrossRef = useCallback(async () => {
+    if (!tenantId) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/tenants/${tenantId}/presence-crossref?_t=${Date.now()}`, NO_CACHE);
+      const data = await res.json();
+      setCrossRef(data || null);
+    } catch {
+      setCrossRef(null);
+    }
+  }, [tenantId]);
+
   const loadPosts = useCallback(async (statusFilter) => {
     if (!tenantId) return;
     setPostsLoading(true);
@@ -291,12 +310,12 @@ export default function GoogleBusinessProfile({ tenantId }) {
   useEffect(() => {
     if (status === null) return;
     if (!status.connected) return;
-    if (subTab === "health") { loadAudit(); loadWebsiteAudit(); }
+    if (subTab === "health") { loadAudit(); loadWebsiteAudit(); loadCrossRef(); }
     else if (subTab === "drafts") loadPosts("draft");
     else if (subTab === "published") loadPosts("published");
     else if (subTab === "schedule") { loadSchedule(); loadPool(); }
     else if (subTab === "performance") loadPerf(perfRange);
-  }, [status, subTab, loadAudit, loadWebsiteAudit, loadPosts, loadSchedule, loadPool, loadPerf, perfRange]);
+  }, [status, subTab, loadAudit, loadWebsiteAudit, loadCrossRef, loadPosts, loadSchedule, loadPool, loadPerf, perfRange]);
 
   // ── Actions ───────────────────────────────────────────────────────────────
   async function handleConnect() {
@@ -321,6 +340,7 @@ export default function GoogleBusinessProfile({ tenantId }) {
       if (!res.ok) throw new Error(data.detail || data.error || "Audit failed");
       showToast("Audit complete ✓");
       await loadAudit();
+      loadCrossRef();
     } catch (e) { showToast(e.message || "Audit failed", "error"); }
     finally { setAuditLoading(false); }
   }
@@ -348,6 +368,7 @@ export default function GoogleBusinessProfile({ tenantId }) {
         showToast("Website analyzed ✓");
       }
       await loadWebsiteAudit();
+      loadCrossRef();
     } catch (e) { showToast(e.message || "Analysis failed", "error"); }
     finally { setWebsiteLoading(false); }
   }
@@ -795,6 +816,46 @@ export default function GoogleBusinessProfile({ tenantId }) {
                 );
               })}
             </>
+          )}
+
+          {/* ── PRESENCE CROSS-REFERENCE (Phase 2.3, Jun 26 2026) ──
+              The connective tissue between the Google profile (above) and the
+              website (below): where the two disagree. Renders only once both
+              sides have been analyzed and there's something to say. Reuses
+              SEV_STYLE + the gap-row markup; actions reuse the same rewrite /
+              suggest-services modals as the GBP and website gaps. */}
+          {crossRef && crossRef.ok && Array.isArray(crossRef.gaps) && crossRef.gaps.length > 0 && (
+            <div style={{ ...s.card, padding: 0, marginTop: 4 }}>
+              <div style={{ padding: "16px 18px", borderBottom: "1px solid #f5f5f5" }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a" }}>Site &amp; Google — where they disagree</div>
+                <div style={{ fontSize: 12, color: "#888", marginTop: 2, lineHeight: 1.5, maxWidth: 520 }}>
+                  Your website is the source your AI speaks from. These are facts your site shows that your Google Business Profile is missing — closing them lifts you in local and AI search.
+                </div>
+              </div>
+              <div style={{ padding: "16px 18px" }}>
+                {crossRef.gaps.map((g, i) => {
+                  const sev = SEV_STYLE[g.severity] || SEV_STYLE.low;
+                  return (
+                    <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 12px", background: sev.bg, border: `1px solid ${sev.border}`, borderRadius: 8, marginBottom: i === crossRef.gaps.length - 1 ? 0 : 8 }}>
+                      <div style={{ width: 8, height: 8, borderRadius: "50%", background: sev.dot, marginTop: 5, flexShrink: 0 }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: "#1a1a1a" }}>{g.label}</span>
+                          <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 20, background: "#fff", color: sev.dot, border: `1px solid ${sev.border}`, textTransform: "uppercase" }}>{sev.label}</span>
+                        </div>
+                        <div style={{ fontSize: 11, color: "#666", lineHeight: 1.5 }}>{g.advice}</div>
+                        {g.actionable === "rewrite_description" && (
+                          <button onClick={() => openDescModal(g)} style={{ ...s.btn(), marginTop: 8, padding: "5px 12px" }}>✨ Rewrite with AI →</button>
+                        )}
+                        {g.actionable === "suggest_services" && (
+                          <button onClick={openServicesModal} style={{ ...s.btn("#2563eb", "rgba(37,99,235,0.08)"), marginTop: 8, padding: "5px 12px" }}>See suggested services →</button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           )}
 
           {/* ── WEBSITE INTELLIGENCE (Phase 1, Jun 26 2026) ──

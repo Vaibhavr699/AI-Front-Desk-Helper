@@ -29,6 +29,7 @@
 
 const db = require("../lib/db");
 const placesCompetitors = require("../lib/placesCompetitors");
+const competitorBenchmark = require("../lib/competitorBenchmark");
 
 // Pull everything we need to resolve a search + exclude self, in one query.
 // gbp_audit.profile_snapshot carries primary_category; tenants carries city/
@@ -129,9 +130,15 @@ async function runCompetitorAuditForTenant(tenantId) {
     selfName: tenant.company_name || tenant.name || null,
   });
 
-  // The benchmark scorer lands in Phase 3.3 — for now we persist the raw pull
-  // so the first live run is verifiable (which API answered, which painters
-  // came back) before any scoring logic depends on it. benchmark stays {}.
+  // Compute the benchmark: the tenant's own GBP numbers vs the competitor set.
+  // Pure function — no network, never throws. Empty competitor set yields an
+  // ok:false benchmark that the card treats as "couldn't benchmark yet".
+  const tenantSnap = tenantSnapshotFor(tenant);
+  const benchmark = competitorBenchmark.buildBenchmark({
+    tenant: tenantSnap || {},
+    competitors: pull.competitors || [],
+  });
+
   const searchRecord = {
     strategy: search.strategy,
     term: search.term,
@@ -145,8 +152,8 @@ async function runCompetitorAuditForTenant(tenantId) {
     competitor_count: Array.isArray(pull.competitors) ? pull.competitors.length : 0,
     api_used: pull.api_used || null,
     warnings: pull.warnings || [],
-    // tenant's own numbers at run time, for the benchmark to compare against later
-    tenant_snapshot: tenantSnapshotFor(tenant),
+    // tenant's own numbers at run time, for the benchmark to compare against
+    tenant_snapshot: tenantSnap,
   };
 
   let auditId = null;
@@ -159,7 +166,7 @@ async function runCompetitorAuditForTenant(tenantId) {
         tenantId,
         JSON.stringify(searchRecord),
         JSON.stringify(pull.competitors || []),
-        JSON.stringify({}), // benchmark filled in Phase 3.3
+        JSON.stringify(benchmark || {}),
         JSON.stringify(meta),
       ]
     );
@@ -169,9 +176,11 @@ async function runCompetitorAuditForTenant(tenantId) {
   }
 
   console.log(
-    "[competitorAudit] tenant=%s ok=%s api=%s competitors=%d strategy=%s reason=%s audit=%s",
+    "[competitorAudit] tenant=%s ok=%s api=%s competitors=%d strategy=%s gaps=%d reason=%s audit=%s",
     tenantId, pull.ok, pull.api_used || "none",
-    meta.competitor_count, search.strategy, pull.reason || "none", auditId || "none"
+    meta.competitor_count, search.strategy,
+    Array.isArray(benchmark?.gaps) ? benchmark.gaps.length : 0,
+    pull.reason || "none", auditId || "none"
   );
 
   return {
@@ -179,6 +188,7 @@ async function runCompetitorAuditForTenant(tenantId) {
     reason: pull.reason || null,
     search: searchRecord,
     competitors: pull.competitors || [],
+    benchmark,
     meta,
     audit_id: auditId,
   };

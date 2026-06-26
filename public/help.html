@@ -460,7 +460,36 @@ const ARTICLES = [
       <h2>Configure Follow-ups</h2>
       <p>The <strong>Configure Follow-ups</strong> button (top right) opens settings for channels, cadence, quiet hours, and the master on/off toggle.</p>
       <div class="callout"><p>If you see a <strong>"Follow-ups are paused"</strong> banner, the master toggle is OFF — every row is scheduled but nothing will actually send until you turn it back on in Configure Follow-ups.</p></div>` },
-  { id: "metrics", category: "Your Dashboard", title: "Metrics & reporting", stub: true, html: `<p>Performance metrics, heat maps, and conversion reporting.</p>` },
+  { id: "metrics", category: "Your Dashboard", title: "Metrics & reporting",
+    html: `
+      <p class="crumb">Your Dashboard</p>
+      <p>The <strong>Business Metrics</strong> page is your deep-dive analytics — how your AI is performing, where leads come from, which customers convert, and where revenue is flowing. It has two tabs: <strong>Performance</strong> (the analytics) and <strong>Goals</strong> (targets you set).</p>
+      [[img:./metrics-performance.png|The Business Metrics page — hero stats and insight banners up top.]]
+      <h2>Time range</h2>
+      <p>On the Performance tab, pick the window with the selector — <strong>Today</strong>, <strong>7d</strong>, <strong>30d</strong>, <strong>90d</strong>, or <strong>All time</strong>. Everything below recalculates for that range (a few all-time sections like Customer Intel are noted as such). For multi-location accounts, the header shows whether you're viewing all locations or one branch, with a per-location breakdown table.</p>
+      <h2>The hero &amp; insight banners</h2>
+      <p>At the top, headline numbers — revenue per call, calls handled, confirmed revenue, and an estimate of revenue you'd have lost without the AI. Below that, the system surfaces <strong>insight banners</strong> that read your data and tell you what to do: e.g. if the hang-up rate climbs above target it flags it and suggests reviewing your greeting; if confusion is low it tells you the AI is understanding callers well.</p>
+      <h2>Primary KPIs</h2>
+      <p>Five at-a-glance cards: <strong>Calls Answered</strong>, <strong>Booking Rate</strong>, <strong>Estimate Acceptance Rate</strong>, <strong>Active Follow-ups</strong>, and <strong>No-show Rate</strong> — each with a target or trend so you know if you're on track.</p>
+      <h2>AI performance breakdown</h2>
+      <p>Success rate (booked + follow-up), failure rate (hung up + confused), and transfer rate, plus a <strong>call outcome breakdown</strong> bar showing how every call resolved. Two deeper analysis cards dig in: <strong>Hung-up call analysis</strong> (when in the call people dropped — under 10s, 10–30s, 30s+, with a coaching note on whether it's a greeting problem or a conversation-flow problem) and <strong>Confused call triggers</strong> (which phrases tripped the AI up and whether it recovered).</p>
+      [[img:./metrics-ai-breakdown.png|AI performance breakdown — outcomes, hung-up analysis, and confusion triggers.]]
+      <h2>Lead source &amp; contact method</h2>
+      <p>Two tables side by side. <strong>By Marketing Source</strong> attributes each lead to the channel that drove it (Google Ads, LSA, Facebook, Yelp, referral, yard signs, and more) with leads, bookings, rate, and revenue per source. <strong>By Contact Method</strong> shows how people reached you — phone, SMS, chat, Facebook, email — with the same conversion columns. Together they tell you which marketing is actually paying off.</p>
+      [[img:./metrics-sources.png|Lead source and contact-method analysis tables.]]
+      <h2>Operational metrics</h2>
+      <p>Four cards: <strong>Missed Calls Recovered</strong> (would've gone to voicemail), <strong>Avg Time to Book</strong>, <strong>Follow-up Conversion</strong> (leads won specifically by follow-up), and <strong>Avg Job Value</strong>.</p>
+      <h2>Call funnel &amp; heat maps</h2>
+      <p>Visualizations of where calls flow and when they happen — a <strong>call funnel</strong> (how calls move from answered to booked), a <strong>call-volume heat map</strong> (busiest hours and days), and a <strong>booking heat map</strong> — so you can spot staffing gaps and peak times.</p>
+      [[img:./metrics-heatmaps.png|Call funnel and volume/booking heat maps.]]
+      <h2>Customer Intel — which types convert</h2>
+      <p>An all-time table breaking conversions down by <strong>DISC profile</strong> — for each type, how many leads, how many open/won/lost, the conversion rate, and won revenue. It answers "which kind of customer actually pays." Conversion rates only appear once a type has enough settled outcomes, so you're never shown a misleading number off two data points.</p>
+      [[img:./metrics-customer-intel.png|Customer Intel — conversion and revenue by DISC type.]]
+      <h2>Net revenue flow</h2>
+      <p>A bottom summary tying it together: confirmed revenue from your CRM, revenue lost to cancellations, and total pipeline value.</p>
+      <h2>Goals tab</h2>
+      <p>Switch to <strong>Goals</strong> to set and track your targets — the numbers the Coach's Alerts on your dashboard measure against.</p>
+      <div class="callout"><p>Some figures depend on CRM revenue tracking (DripJobs/Zapier). If revenue cards read low or empty, connect tracking from the dashboard's Pipeline section so won jobs report back here.</p></div>` },
   { id: "ai-coaching", category: "Your Dashboard", title: "AI Coaching", html: `
       <p>The <strong>AI Coaching</strong> page scores your team's conversations — both phone calls and SMS threads — so you can see how well each one was handled and where reps are losing deals. Every conversation is graded by AI across eight dimensions, with the buyer's persona detected and specific, rationale-backed feedback.</p>
       [[img:./ai-coaching-overview.png|The AI Coaching page — channel toggle and the four summary cards.]]

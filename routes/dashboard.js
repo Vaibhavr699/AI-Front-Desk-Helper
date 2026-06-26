@@ -4973,4 +4973,98 @@ router.get("/tenants/:id/presence-crossref", async (req, res) => {
   }
 });
 
+// ═════════════════════════════════════════════════════════════════════════
+// COMPETITOR AUDIT (Website Intelligence, Phase 3 — Jun 26, 2026)
+// Paste this entire block into routes/dashboard.js directly ABOVE the final
+// `module.exports = router;` (after the WEBSITE AUDIT + PRESENCE CROSS-REF
+// blocks).
+//
+// Owner-triggered "Benchmark against nearby painters": resolves the search,
+// pulls the top competitors via Google Places, and PERSISTS every run into
+// competitor_audits. For Phase 3 verification the run stores the raw pull (no
+// score yet) so the first live call confirms which Places API answered and
+// whether real competitors come back, before the benchmark scorer is built.
+//
+// Two endpoints:
+//   POST /tenants/:id/competitor-audit/run  → run a fresh pull, store, return
+//                                             competitors + meta (api_used!).
+//   GET  /tenants/:id/competitor-audit      → latest stored run.
+//
+// Auth: staff-level gate already applied by router.use(...). Reuses
+// loadTenantForWebsiteAudit for the per-location ownership check (defined in
+// the Phase 1 website-audit block above).
+// ═════════════════════════════════════════════════════════════════════════
+
+const competitorAudit = require("../services/competitorAudit");
+
+// POST /tenants/:id/competitor-audit/run
+router.post("/tenants/:id/competitor-audit/run", async (req, res) => {
+  try {
+    const tenant = await loadTenantForWebsiteAudit(req, res);
+    if (!tenant) return;
+
+    const result = await competitorAudit.runCompetitorAuditForTenant(tenant.id);
+
+    await logAction({
+      tenant_id: String(tenant.id),
+      user_id: req.user?.sub ? String(req.user.sub) : null,
+      action: "competitor_audit_run",
+      entity_type: "tenant",
+      entity_id: String(tenant.id),
+      new_value: {
+        ok: result.ok,
+        reason: result.reason || null,
+        api_used: result.meta?.api_used ?? null,
+        competitor_count: result.meta?.competitor_count ?? null,
+        strategy: result.search?.strategy ?? null,
+      },
+      ip_address: req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip || null,
+      user_agent: req.get("user-agent") || null,
+    }).catch(() => {});
+
+    // 200 with ok:false for "couldn't find competitors / no search term / API
+    // problem" — the client branches on `reason` rather than throwing, same as
+    // the website audit.
+    res.json({
+      ok: result.ok,
+      reason: result.reason || null,
+      search: result.search,
+      competitors: result.competitors,
+      meta: result.meta,
+      audit_id: result.audit_id,
+    });
+  } catch (e) {
+    console.error("[CompetitorAudit] run error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// GET /tenants/:id/competitor-audit
+router.get("/tenants/:id/competitor-audit", async (req, res) => {
+  try {
+    const tenant = await loadTenantForWebsiteAudit(req, res);
+    if (!tenant) return;
+
+    const latest = await competitorAudit.getLatestCompetitorAudit(tenant.id);
+    if (!latest) {
+      return res.json({ ok: true, audit: null });
+    }
+
+    res.json({
+      ok: true,
+      audit: {
+        id: latest.id,
+        search: latest.search,
+        competitors: latest.competitors,
+        benchmark: latest.benchmark,
+        meta: latest.meta,
+        created_at: latest.created_at,
+      },
+    });
+  } catch (e) {
+    console.error("[CompetitorAudit] fetch error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 module.exports = router;

@@ -22,6 +22,15 @@ const SOURCE_CONFIG = {
   referral: { label: 'Referral', bg: 'bg-emerald-50 text-emerald-600 border-emerald-100' },
 };
 
+// How many rows we render by default before "Show all". The full window is
+// always held in memory so search + filters reach every lead — this only
+// caps what's drawn on screen so the default view stays calm.
+const DISPLAY_CAP = 50;
+
+// How far back we keep leads in the in-memory window. Everything within this
+// window is searchable; older leads aren't loaded into the list view.
+const WINDOW_DAYS = 365;
+
 function daysSince(dateStr) {
   if (!dateStr) return null;
   return Math.floor((Date.now() - new Date(dateStr)) / 86400000);
@@ -47,15 +56,43 @@ function Pipeline({ tenantId }) {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState('All');
+  const [showAll, setShowAll] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => { fetchLeads(); }, [tenantId]);
 
+  // Reset "Show all" whenever the tenant changes so a new business starts
+  // on the calm default view.
+  useEffect(() => { setShowAll(false); }, [tenantId]);
+
   async function fetchLeads() {
     try {
       setLoading(true);
-      const data = await getLeadsByTenant(tenantId);
-      setLeads(data || []);
+      // Pull a wide window (up to 1,000) so search and filters can reach
+      // every lead, then keep only the last 365 days. The backend orders by
+      // updated_at DESC; we re-sort here explicitly so the "50 shown" are
+      // deterministic regardless of backend order. The list still renders
+      // just DISPLAY_CAP at a time so the screen stays calm — searching
+      // expands across the whole window.
+      const data = await getLeadsByTenant(tenantId, 1000, 0);
+      const all = Array.isArray(data) ? data : [];
+
+      const cutoff = Date.now() - WINDOW_DAYS * 86400000;
+      const within = all.filter((l) => {
+        const t = new Date(l.created_at).getTime();
+        return Number.isFinite(t) ? t >= cutoff : true; // keep undated leads
+      });
+
+      // Newest-first by most recent activity (updated_at), falling back to
+      // created_at — matches the backend's intent and keeps the freshest
+      // leads at the top.
+      within.sort((a, b) => {
+        const ta = new Date(a.updated_at || a.created_at || 0).getTime();
+        const tb = new Date(b.updated_at || b.created_at || 0).getTime();
+        return tb - ta;
+      });
+
+      setLeads(within);
     } catch (err) {
       console.error("Failed to fetch leads:", err);
     } finally {
@@ -82,7 +119,9 @@ function Pipeline({ tenantId }) {
 
   const FILTER_TABS = ['All', 'New Lead', 'Qualified', 'Estimate Sent', 'Won', 'Lost'];
 
-  const filtered = useMemo(() => {
+  // Full result set after search + status filter — this reaches EVERY lead in
+  // the 365-day window, so nobody is hidden from a deliberate lookup.
+  const matched = useMemo(() => {
     let list = leads;
     if (activeFilter !== 'All') list = list.filter(l => l.status === activeFilter);
     if (searchTerm) {
@@ -95,6 +134,16 @@ function Pipeline({ tenantId }) {
     }
     return list;
   }, [leads, activeFilter, searchTerm]);
+
+  // The page is "narrowed" the moment the user searches or picks a status
+  // chip — in that case show the full matched set (no cap), because they're
+  // looking for something specific. Otherwise show a calm DISPLAY_CAP.
+  const isNarrowed = activeFilter !== 'All' || searchTerm.trim().length > 0;
+
+  const filtered = useMemo(() => {
+    if (showAll || isNarrowed) return matched;
+    return matched.slice(0, DISPLAY_CAP);
+  }, [matched, showAll, isNarrowed]);
 
   const displayName = (lead) => {
     if (lead.name) return lead.name;
@@ -252,13 +301,36 @@ function Pipeline({ tenantId }) {
                 })}
               </tbody>
             </table>
-            <div className="px-5 py-3 border-t border-stone-100 bg-stone-50/50 flex items-center justify-between">
+            <div className="px-5 py-3 border-t border-stone-100 bg-stone-50/50 flex items-center justify-between gap-3 flex-wrap">
               <p className="text-xs text-stone-400">
-                Showing <span className="font-bold text-stone-600">{filtered.length}</span> of <span className="font-bold text-stone-600">{leads.length}</span> leads
+                {!isNarrowed && !showAll && matched.length > DISPLAY_CAP ? (
+                  <>
+                    Showing the <span className="font-bold text-stone-600">{DISPLAY_CAP}</span> most recent of{' '}
+                    <span className="font-bold text-stone-600">{matched.length}</span> leads ·{' '}
+                    <span className="italic">search to find any lead</span>
+                  </>
+                ) : (
+                  <>
+                    Showing <span className="font-bold text-stone-600">{filtered.length}</span> of{' '}
+                    <span className="font-bold text-stone-600">{leads.length}</span> leads
+                  </>
+                )}
               </p>
-              {activeFilter !== 'All' && (
-                <button onClick={() => setActiveFilter('All')} className="text-xs text-brand-600 font-medium hover:underline">Clear filter</button>
-              )}
+              <div className="flex items-center gap-3">
+                {!isNarrowed && !showAll && matched.length > DISPLAY_CAP && (
+                  <button onClick={() => setShowAll(true)} className="text-xs text-brand-600 font-medium hover:underline">
+                    Show all {matched.length}
+                  </button>
+                )}
+                {showAll && !isNarrowed && (
+                  <button onClick={() => setShowAll(false)} className="text-xs text-brand-600 font-medium hover:underline">
+                    Show fewer
+                  </button>
+                )}
+                {activeFilter !== 'All' && (
+                  <button onClick={() => setActiveFilter('All')} className="text-xs text-brand-600 font-medium hover:underline">Clear filter</button>
+                )}
+              </div>
             </div>
           </div>
         )}

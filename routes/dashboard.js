@@ -4925,4 +4925,52 @@ router.get("/tenants/:id/website-audit", async (req, res) => {
   }
 });
 
+// ═════════════════════════════════════════════════════════════════════════
+// PRESENCE CROSS-REFERENCE (Website Intelligence, Phase 2.3 — Jun 26, 2026)
+// Paste this entire block into routes/dashboard.js directly ABOVE the final
+// `module.exports = router;` (right after the WEBSITE AUDIT block from Phase 1).
+//
+// Exposes the site⇄GBP consistency check (lib/presenceCrossRef.js) as a single
+// GET. It reads the latest website_audits.facts and the latest gbp_audit
+// snapshot and returns a severity-tagged GAP LIST of where the two disagree —
+// services on the site but not on Google, and service-area cities the Google
+// profile is missing. The card in the Health tab renders these gaps between the
+// GBP score and the website score as the "Online Presence" connective tissue.
+//
+// Read-only. No writes, no network. Returns 200 with ok:false + a reason when
+// one side isn't available yet (no website audit, no GBP audit) so the client
+// shows a calm empty state instead of throwing.
+//
+// Auth: the staff-level gate (owner/admin/manager/staff) is already applied by
+// router.use(...) earlier in this file. We reuse loadTenantForWebsiteAudit for
+// the per-location ownership check (defined in the Phase 1 block above).
+// ═════════════════════════════════════════════════════════════════════════
+
+const presenceCrossRef = require("../lib/presenceCrossRef");
+
+// GET /tenants/:id/presence-crossref
+router.get("/tenants/:id/presence-crossref", async (req, res) => {
+  try {
+    const tenant = await loadTenantForWebsiteAudit(req, res);
+    if (!tenant) return;
+
+    const result = await presenceCrossRef.buildPresenceCrossRef(tenant.id);
+
+    // result.ok === false means a side is missing (no_website_audit /
+    // no_gbp_audit / load_error). Still 200 — the client branches on `reason`
+    // to show "analyze your site first" or "run a GBP audit first", not an error.
+    res.json({
+      ok: result.ok,
+      reason: result.reason || null,
+      gaps: result.gaps || [],
+      deltas: result.deltas || null,
+      compared: result.compared || null,
+      in_sync: result.in_sync ?? null,
+    });
+  } catch (e) {
+    console.error("[PresenceCrossRef] fetch error:", e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 module.exports = router;

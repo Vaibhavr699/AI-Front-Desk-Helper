@@ -2807,7 +2807,7 @@ export default function Settings({ tenantId }) {
                
                   {/* AI Instruction Generator (Feature 1) — draft-time helper */}
                   <div className="col-span-2">
-                    <div className="p-5 bg-gradient-to-br from-primary/5 to-primary/10 border-2 border-primary/20 rounded-2xl">
+                    <div className="p-5 bg-gradient-to-br from-blue-500/5 to-blue-500/10 border-2 border-blue-500/20 rounded-2xl">
                       <div className="flex items-start justify-between gap-4 flex-wrap">
                         <div className="flex-1 min-w-0">
                           <h3 className="text-sm font-black text-gray-800 flex items-center gap-2">

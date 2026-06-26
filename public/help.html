@@ -94,11 +94,11 @@ const ARTICLES = [
       <p class="crumb">Call Intelligence Center</p>
       <p>The <strong>Inbound Calls</strong> tab is the record of every call your AI receptionist answered.</p>
       <h2>Reading the list</h2>
-      <p>Each row shows the date, a <strong>lead score</strong> (0–100; green hot, amber medium, red low), the caller's name and number, the project type, and the status.</p>
+      <p>Each row shows the date and time, a <strong>lead score</strong> (0–100; green hot, amber medium, red low), the caller's name and number, the <strong>call length</strong> (for calls that connected), the project type, and the status. Missed calls and voicemails don't show a length, since there was no conversation to time.</p>
       <h2>Filtering &amp; searching</h2>
       <p>Search by name, phone, or transcript words (search spans all calls regardless of date filter). Narrow by date range, score, or status.</p>
       <h2>Opening &amp; actioning a call</h2>
-      <p>Click a row to expand it — estimated value, AI summary, recording, transcript. The action buttons set the lead's state: Schedule Estimate, FollowUp, Lost Lead, or Spam.</p>` },
+      <p>Click a row to expand it — estimated value, AI summary, call length, recording, transcript. The action buttons set the lead's state: Schedule Estimate, FollowUp, Lost Lead, or Spam.</p>` },
 
   { id: "outbound-campaigns", category: "Call Intelligence Center", title: "Outbound Campaigns",
     html: `
@@ -124,8 +124,11 @@ const ARTICLES = [
       <p class="crumb">Call Intelligence Center</p>
       <p>The <strong>Voicemails</strong> tab collects messages callers left when they couldn't be connected.</p>
       <h2>Working through them</h2>
-      <p>Each message shows the number, time, length, and a <strong>Play message</strong> button. Use <strong>Call back</strong> and <strong>Mark handled</strong>. The tab shows a count of unhandled messages.</p>
-      <div class="callout"><p>Record the greeting callers hear in <strong>Settings → AI Control → Voicemail greeting</strong>.</p></div>` },
+      <p>Each message shows the number, time, length, and a <strong>Play message</strong> button. The tab shows a count of unhandled messages.</p>
+      <h2>Calling a customer back</h2>
+      <p>The green <strong>Call back</strong> button places the call <em>for</em> you: it rings your phone first, and when you pick up it connects you to the customer with your business number showing as the caller ID — so the customer sees your business line, not your personal cell, and the call is logged like any other. Tap it and you'll see "Calling…" while your phone rings. (You can also tap the customer's number at the top of the message to dial them straight from your own phone the old way.)</p>
+      <p>Once you've dealt with a message, hit <strong>Mark handled</strong> to clear it from the list.</p>
+      <div class="callout"><p>The business number used for the callback is your <strong>primary</strong> AI line, and your phone rings at your <strong>transfer number</strong>. Set the greeting callers hear in <strong>Settings → AI Control → Voicemail greeting</strong>.</p></div>` },
 
   // ── SETTINGS (10 tabs) ──
   { id: "settings-phone", category: "Settings", title: "Phone & voice",
@@ -157,6 +160,7 @@ const ARTICLES = [
       <ul>
         <li><strong>Company name</strong> — across the dashboard and in customer emails.</li>
         <li><strong>Support email</strong> — used in email footers. Blank = default.</li>
+        <li><strong>Website</strong> — your public website address. The AI instruction generator reads it to draft your assistant's instructions, and it's used for SEO on your booking page.</li>
         <li><strong>Timezone</strong> — affects call routing, nurturing, and reports. Auto-detected on first save; editable here.</li>
       </ul>
       <h2>Visual assets</h2>
@@ -181,6 +185,9 @@ const ARTICLES = [
       </ul>
       <h2>Inbound voice</h2>
       <p>Choose the AI's voice for inbound calls (natural AI voices like Shimmer, Ash, Echo — not robotic TTS).</p>
+      <h2>Generate instructions from your business info</h2>
+      <p>Don't want to write the AI's instructions from scratch? Click <strong>Generate draft</strong> and the AI builds a first draft from your trade, hours, FAQs, and website. Review it (fill in anything it marks with <code>[brackets]</code>), click <strong>Use this draft</strong> to drop it into the instructions box, then <strong>Save Changes</strong>. Nothing goes live until you save.</p>
+      <p>If you generated a draft in a past session but never applied it, you'll see an <strong>amber "unreviewed draft" banner</strong> when you open this tab — click <strong>Load draft</strong> to pick up where you left off, or just generate a fresh one.</p>
       <h2>Detailed AI instructions</h2>
       <p>Free-text direction on how the AI should behave — anything specific to your business.</p>
       <h2>Outbound AI agent</h2>
@@ -219,7 +226,7 @@ const ARTICLES = [
       <p>The <strong>AI Control</strong> tab is mission control for when and how the AI answers.</p>
       [[img:./settings-ai-control.png|The AI Control tab with the master toggle.]]
       <h2>1. Master AI toggle</h2>
-      <p>Turns the AI on/off entirely. When off, calls ring your ring-first/transfer number then fall to voicemail. With no human number set, it warns you every call goes to voicemail.</p>
+      <p>Turns the AI on/off entirely. When you switch it <strong>off</strong>, the AI stops answering immediately — incoming calls ring your ring-first/transfer number and then fall to voicemail, so callers always reach a person or can leave a message. With no human number set, it warns you that every call goes straight to voicemail.</p>
       <h2>2. Your calling hours</h2>
       <p>Open/close times per day (or mark closed). Defines "business hours" vs "after hours."</p>
       <h2>3. When should AI answer?</h2>
@@ -227,7 +234,7 @@ const ARTICLES = [
       <h2>4. Ring-first handoff</h2>
       <p>Ring a human first; if no pickup within the timeout (5–60s), the call falls through to AI (or voicemail).</p>
       <h2>5. Voicemail greeting</h2>
-      <p>Paste an HTTPS <code>.mp3</code>/<code>.wav</code> link, or record one in your browser. Blank = friendly default.</p>
+      <p>Paste an HTTPS <code>.mp3</code>/<code>.wav</code> link, or record one in your browser. This is what callers hear before leaving a message — including when the AI is switched off. Blank = friendly default.</p>
       [[img:./settings-voicemail.png|The voicemail greeting recorder.]]
       <h2>6. Service area</h2>
       <p>Tell the AI where you work so it declines out-of-area callers. No limit / By state / By radius / By ZIP. Saves with its own <strong>Save service area</strong> button.</p>

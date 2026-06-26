@@ -2804,111 +2804,7 @@ export default function Settings({ tenantId }) {
                       </select>
                     </div>
                   </div>
-                {/* Outbound AI Instruction Generator (Jun 26, 2026) — mirrors the
-                      inbound generator card, drafts outbound re-engagement + sales
-                      follow-up instructions for cold/quiet leads. */}
-                  <div className="p-5 bg-gradient-to-br from-blue-500/5 to-blue-500/10 border-2 border-blue-500/20 rounded-2xl">
-                    <div className="flex items-start justify-between gap-4 flex-wrap">
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-sm font-black text-gray-800 flex items-center gap-2">
-                          <Zap className="w-4 h-4 text-blue-500" />
-                          Generate outbound instructions from your business info
-                        </h3>
-                        <p className="text-xs text-gray-600 leading-relaxed mt-1 max-w-xl">
-                          Builds a first draft for outbound calls — re-engaging leads who got an estimate or went quiet, with a warm sales push toward booking. It reuses your existing objection scripts as-is and marks anything it doesn't know with <span className="font-mono bg-white px-1 rounded">[brackets]</span> for you to fill. Nothing goes live until you review and save.
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleGenerateOutboundDraft}
-                        disabled={genOutLoading}
-                        className="px-4 py-2.5 bg-gray-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-black transition-all disabled:opacity-50 flex items-center gap-2 shrink-0"
-                      >
-                        {genOutLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 text-blue-400" />}
-                        {genOutLoading ? "Generating…" : (form.outbound_instructions?.trim() ? "Regenerate draft" : "Generate draft")}
-                      </button>
-                    </div>
-
-                    {/* Unreviewed outbound-draft banner */}
-                    {pendingOutDraft && genOutDraft == null && (
-                      <div className="mt-4 p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
-                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-black text-amber-900 uppercase tracking-wide">
-                            You have an unreviewed outbound draft
-                          </p>
-                          <p className="text-[11px] text-amber-800/80 leading-relaxed mt-0.5">
-                            You generated outbound instructions
-                            {pendingOutDraft.generated_at
-                              ? ` on ${new Date(pendingOutDraft.generated_at).toLocaleDateString()}`
-                              : " earlier"} but never applied them. Load it to review, or generate a fresh one above.
-                          </p>
-                          <div className="flex items-center gap-2 mt-2 flex-wrap">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setGenOutDraft(pendingOutDraft.draft);
-                                setGenOutMeta(null);
-                                setPendingOutDraft(null);
-                              }}
-                              className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-amber-700 transition-all"
-                            >
-                              Load draft
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setPendingOutDraft(null)}
-                              className="px-3 py-1.5 bg-white border border-amber-200 text-amber-700 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-amber-100 transition-all"
-                            >
-                              Dismiss
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {genOutDraft != null && (
-                      <div className="mt-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                        {genOutMeta && (
-                          <div className="flex flex-wrap gap-2 mb-2">
-                            <span className={`px-2 py-0.5 text-[9px] font-black uppercase tracking-widest rounded-md border ${genOutMeta.used_website ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-gray-100 text-gray-500 border-gray-200"}`}>
-                              {genOutMeta.used_website ? "Used your website" : "No website read"}
-                            </span>
-                            {genOutMeta.reused_objections && (
-                              <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-widest rounded-md bg-purple-50 text-purple-700 border border-purple-200">Reused your objections</span>
-                            )}
-                          </div>
-                        )}
-                        <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5">
-                          Outbound draft (editable — fill in any [brackets])
-                        </label>
-                        <textarea
-                          value={genOutDraft}
-                          onChange={(e) => setGenOutDraft(e.target.value)}
-                          rows={10}
-                          className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-blue-500/5 transition-all outline-none font-mono text-xs leading-relaxed"
-                        />
-                        <div className="flex items-center gap-2 mt-3 flex-wrap">
-                          <button
-                            type="button"
-                            onClick={handleApplyOutboundDraftToForm}
-                            className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-emerald-700 transition-all flex items-center gap-2"
-                          >
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            Use this draft
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => { setGenOutDraft(null); setGenOutMeta(null); }}
-                            className="px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-gray-50 transition-all"
-                          >
-                            Discard
-                          </button>
-                          <p className="text-[11px] text-gray-500 italic">"Use this draft" drops it into the box below — then click Save Changes at the top.</p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+               
                   {/* AI Instruction Generator (Feature 1) — draft-time helper */}
                   <div className="col-span-2">
                     <div className="p-5 bg-gradient-to-br from-primary/5 to-primary/10 border-2 border-primary/20 rounded-2xl">
@@ -3075,6 +2971,111 @@ export default function Settings({ tenantId }) {
                          <option value="verse">Verse (Female - Energetic)</option>
                       </select>
                     </div>
+                  </div>
+                  {/* Outbound AI Instruction Generator (Jun 26, 2026) — mirrors the
+                      inbound generator card, drafts outbound re-engagement + sales
+                      follow-up instructions for cold/quiet leads. */}
+                  <div className="p-5 bg-gradient-to-br from-blue-500/5 to-blue-500/10 border-2 border-blue-500/20 rounded-2xl">
+                    <div className="flex items-start justify-between gap-4 flex-wrap">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-sm font-black text-gray-800 flex items-center gap-2">
+                          <Zap className="w-4 h-4 text-blue-500" />
+                          Generate outbound instructions from your business info
+                        </h3>
+                        <p className="text-xs text-gray-600 leading-relaxed mt-1 max-w-xl">
+                          Builds a first draft for outbound calls — re-engaging leads who got an estimate or went quiet, with a warm sales push toward booking. It reuses your existing objection scripts as-is and marks anything it doesn't know with <span className="font-mono bg-white px-1 rounded">[brackets]</span> for you to fill. Nothing goes live until you review and save.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleGenerateOutboundDraft}
+                        disabled={genOutLoading}
+                        className="px-4 py-2.5 bg-gray-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-black transition-all disabled:opacity-50 flex items-center gap-2 shrink-0"
+                      >
+                        {genOutLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 text-blue-400" />}
+                        {genOutLoading ? "Generating…" : (form.outbound_instructions?.trim() ? "Regenerate draft" : "Generate draft")}
+                      </button>
+                    </div>
+
+                    {/* Unreviewed outbound-draft banner */}
+                    {pendingOutDraft && genOutDraft == null && (
+                      <div className="mt-4 p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-black text-amber-900 uppercase tracking-wide">
+                            You have an unreviewed outbound draft
+                          </p>
+                          <p className="text-[11px] text-amber-800/80 leading-relaxed mt-0.5">
+                            You generated outbound instructions
+                            {pendingOutDraft.generated_at
+                              ? ` on ${new Date(pendingOutDraft.generated_at).toLocaleDateString()}`
+                              : " earlier"} but never applied them. Load it to review, or generate a fresh one above.
+                          </p>
+                          <div className="flex items-center gap-2 mt-2 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setGenOutDraft(pendingOutDraft.draft);
+                                setGenOutMeta(null);
+                                setPendingOutDraft(null);
+                              }}
+                              className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-amber-700 transition-all"
+                            >
+                              Load draft
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPendingOutDraft(null)}
+                              className="px-3 py-1.5 bg-white border border-amber-200 text-amber-700 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-amber-100 transition-all"
+                            >
+                              Dismiss
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {genOutDraft != null && (
+                      <div className="mt-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                        {genOutMeta && (
+                          <div className="flex flex-wrap gap-2 mb-2">
+                            <span className={`px-2 py-0.5 text-[9px] font-black uppercase tracking-widest rounded-md border ${genOutMeta.used_website ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-gray-100 text-gray-500 border-gray-200"}`}>
+                              {genOutMeta.used_website ? "Used your website" : "No website read"}
+                            </span>
+                            {genOutMeta.reused_objections && (
+                              <span className="px-2 py-0.5 text-[9px] font-black uppercase tracking-widest rounded-md bg-purple-50 text-purple-700 border border-purple-200">Reused your objections</span>
+                            )}
+                          </div>
+                        )}
+                        <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5">
+                          Outbound draft (editable — fill in any [brackets])
+                        </label>
+                        <textarea
+                          value={genOutDraft}
+                          onChange={(e) => setGenOutDraft(e.target.value)}
+                          rows={10}
+                          className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-blue-500/5 transition-all outline-none font-mono text-xs leading-relaxed"
+                        />
+                        <div className="flex items-center gap-2 mt-3 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={handleApplyOutboundDraftToForm}
+                            className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-emerald-700 transition-all flex items-center gap-2"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            Use this draft
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setGenOutDraft(null); setGenOutMeta(null); }}
+                            className="px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-gray-50 transition-all"
+                          >
+                            Discard
+                          </button>
+                          <p className="text-[11px] text-gray-500 italic">"Use this draft" drops it into the box below — then click Save Changes at the top.</p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div className="col-span-2">
                     <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">Outbound Personality & Instructions</label>

@@ -333,11 +333,133 @@ const ARTICLES = [
       <p><a href="/api-docs" target="_blank" rel="noopener"><strong>Open the API Integration Guide &rarr;</strong></a></p>
       <p>It's also in your account menu (avatar &rarr; <strong>API Documentation</strong>). You'll need your Business ID and API Key — keep the key secret; it authorizes real bookings.</p>` },
 
-  { id: "dashboard", category: "Your Dashboard", title: "Dashboard overview", stub: true, html: `<p>A walkthrough of your main Dashboard — the cards, charts, and what each metric means.</p>` },
-  { id: "bookings", category: "Your Dashboard", title: "Bookings", stub: true, html: `<p>View, manage, reschedule, and cancel scheduled estimates and appointments.</p>` },
-  { id: "leads", category: "Your Dashboard", title: "Leads & pipeline", stub: true, html: `<p>How leads flow through your pipeline, lead detail, and managing customer records.</p>` },
-  { id: "conversations", category: "Your Dashboard", title: "Conversations", stub: true, html: `<p>Reading and replying to customer text and chat conversations, and taking over from the AI.</p>` },
-  { id: "follow-ups", category: "Your Dashboard", title: "Follow-ups", stub: true, html: `<p>How automated follow-ups work and configuring recovery cadences.</p>` },
+  { id: "dashboard", category: "Your Dashboard", title: "Dashboard overview",
+    html: `
+      <p class="crumb">Your Dashboard</p>
+      <p>The <strong>Command Center</strong> is your home screen — a live snapshot of money in your pipeline, what the AI is doing right now, and what needs your attention today. It refreshes on its own every 60 seconds (you'll see the last-updated time in the top right).</p>
+      [[img:./dashboard-overview.png|The Command Center — ROI hero, Coach's Alerts, and pipeline KPIs.]]
+      <h2>ROI at the top</h2>
+      <p>The first card is your return-on-investment hero — the headline number for what the AI has earned or saved you. It's the quickest answer to "is this paying for itself?"</p>
+      <h2>Coach's Alerts</h2>
+      <p>Just below, the AI flags things worth acting on right now based on your live data — leads going cold, a spike in a particular objection, follow-ups worth making. Think of it as the system pointing at today's most valuable next move.</p>
+      <h2>Pipeline Value</h2>
+      <p>Four tiles: <strong>Open Estimates</strong> (need follow-up), <strong>Jobs Scheduled</strong> (confirmed bookings), <strong>Pipeline Value</strong> (AI-estimated revenue in play), and <strong>Confirmed Revenue</strong> (actual won revenue tracked from your CRM). If Confirmed Revenue shows $0, a <strong>Setup tracking</strong> link walks you through connecting DripJobs/Zapier so won jobs report back.</p>
+      <h2>Voice → Estimate Funnel</h2>
+      <p>If you use the Estimator, this three-stage funnel shows how voice calls turn into money: <strong>Links Sent</strong> (the AI texted a quote link) → <strong>Filled Out</strong> (the customer completed it) → <strong>Booked</strong>. The conversion % between each stage is the diagnostic — a low fill rate points at your estimator page or SMS wording; a strong book rate means it's qualifying well. An insight line under the funnel tells you what the numbers mean.</p>
+      [[img:./dashboard-funnel.png|The Voice → Estimate funnel with conversion rates between each stage.]]
+      <h2>Why calls didn't convert</h2>
+      <p>A breakdown of the objections behind calls that didn't book — price, timing, wanted a human, or confusion — pulled from call transcripts, so you can see the top reason and adjust your AI script.</p>
+      <h2>Live Activity Feed</h2>
+      <p>A real-time stream of every AI action as it happens — calls answered, bookings made, recovery texts sent, follow-ups fired.</p>
+      <h2>Recent Calls &amp; Upcoming Appointments</h2>
+      <p>Your last few calls (with booked/transferred/completed status) and your next few appointments (with date, value, and time). <strong>View all</strong> and <strong>Calendar</strong> links jump to the full Calls and Bookings pages.</p>
+      [[img:./dashboard-calls-appts.png|Recent Calls and Upcoming Appointments side by side.]]
+      <h2>Quick Actions &amp; AI Health</h2>
+      <p>One-tap shortcuts (start outbound, add booking, send SMS, add lead) and a health strip confirming Twilio, OpenAI voice, SMS sequences, and follow-ups are all running.</p>
+      <div class="callout"><p>The dashboard auto-refreshes every 60 seconds. The "AI Online" badge up top confirms the system is live and answering.</p></div>` },
+  { id: "bookings", category: "Your Dashboard", title: "Bookings",
+    html: `
+      <p class="crumb">Your Dashboard</p>
+      <p>The <strong>Bookings</strong> page is where you manage every appointment — view them as a table or calendar, assign crew, update status, and cancel when needed. The number next to the title is your total booking count.</p>
+      [[img:./bookings-table.png|The Bookings table — customer, appointment, value, source, technician, and status.]]
+      <h2>Three views</h2>
+      <ul>
+        <li><strong>Table</strong> — a sortable, searchable list of every booking.</li>
+        <li><strong>Calendar</strong> — the same appointments laid out by date.</li>
+        <li><strong>Crew</strong> — manage your technicians (hidden for staff-level logins).</li>
+      </ul>
+      <h2>Searching &amp; filtering</h2>
+      <p>Search by name, phone, or project details. Filter by status — all, booked, confirmed, completed, or cancelled. Sort any column (customer, appointment date, value) by clicking its header.</p>
+      <h2>Assigning crew &amp; updating status — right from the table</h2>
+      <p>Each row has inline dropdowns: pick a <strong>technician</strong> and set the <strong>status</strong> (Booked, Confirmed, Completed, Rescheduled, Cancelled) without opening anything. The assigned technician is who gets the pre-visit briefing text. If the booking came from a call, a <strong>View Call</strong> button links to its recording and transcript.</p>
+      <h2>Booking details</h2>
+      <p>Click any row to open the full detail — customer, source, estimated budget, appointment date/time, and project scope, plus the same status and technician controls.</p>
+      [[img:./bookings-detail.png|The booking detail modal — budget, appointment, scope, and controls.]]
+      <h2>Cancelling a booking</h2>
+      <p>In the detail modal, <strong>Cancel Booking</strong> asks you to confirm and lets you add an optional reason. You'll get an email summary so you can follow up. (Cancelling is hidden once a booking is already cancelled.)</p>
+      <h2>Stop all communication (Do Not Contact)</h2>
+      <p>If a customer asks to stop hearing from you, open their booking and use <strong>Stop All Communication</strong>. This immediately cancels any active follow-up sequences and nurturing for that lead and blocks all future automated texts and calls — you can add a reason for your audit log. A red <strong>DNC</strong> badge then marks them, and <strong>Resume Communication</strong> reopens them later (previously-cancelled sequences stay cancelled).</p>
+      [[img:./bookings-dnc.png|The Do Not Contact controls inside a booking.]]
+      <div class="callout"><p>Assigning a technician here is what routes the pre-visit briefing text to the right person — set it up in <strong>Settings → AI Control</strong>.</p></div>` },
+  { id: "leads", category: "Your Dashboard", title: "Leads & pipeline",
+    html: `
+      <p class="crumb">Your Dashboard</p>
+      <p>The <strong>Leads Pipeline</strong> is your CRM view of every pre-booking contact — people who've called, texted, or messaged but haven't booked yet. (Once they book, they move to the <strong>Bookings</strong> page.) The page has three tabs: <strong>Pipeline</strong>, <strong>Follow-ups</strong>, and <strong>AI Conversations</strong>.</p>
+      [[img:./leads-pipeline.png|The Leads Pipeline — summary stats, status filters, and the leads table.]]
+      <h2>The four stat cards</h2>
+      <p>Across the top: <strong>Total Leads</strong>, <strong>New This Week</strong>, <strong>Open Estimates</strong>, and <strong>Won / Booked</strong> — a quick read on pipeline health.</p>
+      <h2>Filtering &amp; searching</h2>
+      <p>Filter by status with the chips — All, New Lead, Qualified, Estimate Sent, Won, Lost — each showing a count. Search by name, phone, or email to find anyone fast.</p>
+      <h2>Reading the table</h2>
+      <p>Each lead shows their contact info, a color-coded <strong>status</strong>, estimated value, <strong>source</strong> (Facebook, Website, Google, DripJobs, Referral, SMS…), and <strong>last activity</strong> — with a colored dot that turns amber after a week and red after two, so stale leads are easy to spot. Anonymous web and Facebook visitors show as such until they share real details.</p>
+      <h2>Opening a lead</h2>
+      <p>Click any row to open that lead's full detail page — their contact record, conversation history, and Customer Intel (see the <strong>Lead detail &amp; Customer Intel</strong> article).</p>
+      <h2>The other two tabs</h2>
+      <ul>
+        <li><strong>Follow-ups</strong> — your automated follow-up pipeline (see the Follow-ups help article).</li>
+        <li><strong>AI Conversations</strong> — jumps to the Conversations page to read and reply to threads.</li>
+      </ul>
+      <div class="callout"><p>Leads here are pre-booking. The moment someone books, they appear on the <strong>Bookings</strong> page instead.</p></div>` },
+  { id: "lead-detail", category: "Your Dashboard", title: "Lead detail & Customer Intel",
+    html: `
+      <p class="crumb">Your Dashboard</p>
+      <p>Click any lead in your pipeline to open their <strong>customer record</strong> — the deepest view in the app. The left column holds their profile, the AI's read on their personality and how to sell to them, crew assignment, follow-up controls, and consent records; the right column holds pricing (what they saw online vs. what your rep quoted, with AI coaching on the gap) and the full conversation history. A <strong>status stepper</strong> across the top shows where they are in your pipeline, and a status dropdown (top right) moves them along.</p>
+      [[img:./lead-detail.png|The lead detail page — profile and Customer Intel on the left, pricing and conversation feed on the right.]]
+      <h2>Profile details</h2>
+      <p>Name, phone, email, address, project type, estimated revenue, and notes — built up automatically from calls, texts, and bookings. Click <strong>Edit Profile</strong> to correct or add anything, then <strong>Save Changes</strong>.</p>
+      <h2>Customer Intel — DISC profiling</h2>
+      <p><strong>Customer Intel</strong> is the AI's read on how this person makes decisions, using the DISC framework. It shows a dominant type — <strong>D</strong>ominant, <strong>I</strong>nfluencer, <strong>S</strong>teady, or <strong>C</strong>onscientious — sometimes with a secondary type, a one-line tagline (e.g. "Direct, results-focused, fast decisions"), and a <strong>confidence</strong> score. Low confidence gets a "verify in person" flag; if the call was too short or one-sided to read, the card says so honestly rather than guessing. A <strong>DISC profile breakdown</strong> bar shows the full mix across all four.</p>
+      [[img:./lead-detail-disc.png|Customer Intel — DISC type, confidence, profile breakdown, and the how-to-work coaching.]]
+      <h2>How to work this customer</h2>
+      <p>The most useful part for selling: a plain-language playbook tailored to that DISC type, with six rows — how to <strong>open</strong>, what <strong>pace</strong> to set, what to <strong>lead with</strong>, how to handle their likely <strong>objection</strong>, how to <strong>close</strong>, and what to <strong>avoid</strong>. A Dominant customer gets "lead with the number, close fast, no small talk"; a Steady customer gets "be the patient advisor, reassure, never hard-close." It's the AI turning a personality read into a game plan your rep can use at the door.</p>
+      <h2>Was the read right? Teaching the AI</h2>
+      <p>Under the intel, a <strong>Was this accurate?</strong> prompt lets you confirm with <strong>✓ Yes</strong> or correct it with <strong>✗ No, correct it</strong> (which opens a quick form to set the real type). If the AI itself wasn't sure, it flags the lead for your review. Your verdict is recorded and helps sharpen future classifications — and once you've weighed in, the verdict locks so it reads as human-validated.</p>
+      <h2>Assigned estimator</h2>
+      <p>Once an appointment is booked, assign the estimator who'll run it. That person receives the <strong>pre-visit briefing text</strong> about an hour before the appointment. If they have no cell on file, the card warns you (the briefing falls back to your default recipient) — add their number on the Team page → Technicians tab.</p>
+      <h2>Recovery controls</h2>
+      <p>Control this lead's automated follow-ups independently of everyone else. See whether recovery is <strong>Active</strong> or <strong>Paused</strong>, set a <strong>cadence override</strong> for just this person (Aggressive, Standard, Gentle, Single, or Off), and <strong>Pause</strong> or <strong>Resume</strong> their sequence with one button.</p>
+      <h2>Compliance audit</h2>
+      <p>When a lead opted into texts, a <strong>Compliance Audit</strong> panel records the proof for TCPA — the exact disclosure they agreed to, when, the IP address, the source, and the page URL. It's your paper trail that consent was captured properly.</p>
+      <h2>Pricing: ballpark vs. real quote, with variance coaching</h2>
+      <p>The right column tracks pricing in two parts. <strong>Widget Ballpark Shown to Customer</strong> is the range they saw on your website estimator. <strong>Your Real Quote</strong> is what your rep actually priced in person — enter it here. When the two differ by a meaningful margin, the AI generates <strong>Variance Coaching</strong>: the % above or below ballpark, the likely reasons for the gap, and suggested talking points to justify the number to the customer. It's there to help a rep defend a higher quote with confidence.</p>
+      [[img:./lead-detail-quote.png|Widget ballpark vs. the rep's real quote, with AI variance coaching.]]
+      <h2>Conversation feed</h2>
+      <p>The complete timeline of every touch — SMS, website chat, Facebook, voice calls (with transcript and disposition), and bookings — each stamped with its channel and time. Inbound messages sit on one side, your/AI replies on the other, so it reads like a chat history. The count at the top right shows how many events are in the thread.</p>
+      <div class="callout"><p>The DISC read here is the same one that powers the pre-visit briefing text, so what your rep gets on-site matches what you see on this page. Correcting an inaccurate read doesn't just fix this lead — it helps tune future classifications.</p></div>` },
+  { id: "conversations", category: "Your Dashboard", title: "Conversations",
+    html: `
+      <p class="crumb">Your Dashboard</p>
+      <p>The <strong>Conversations</strong> page is your unified inbox for every text and chat thread — SMS, website chat, Facebook Messenger, and email — all in one place. The AI handles most of it automatically, and you can step in whenever you want.</p>
+      [[img:./conversations.png|The Conversations inbox — thread list on the left, full conversation on the right.]]
+      <h2>The thread list</h2>
+      <p>On the left, every conversation with the contact's name, the latest message, and when it arrived. The count at the top shows your total. Each thread shows a small icon for its channel, and booked leads get a green check.</p>
+      <h2>Searching &amp; filtering by channel</h2>
+      <p>Search by name or phone, and filter by channel using the chips — All, SMS, Website, Facebook, or Email — to focus on one type at a time.</p>
+      <h2>Reading &amp; replying</h2>
+      <p>Click any thread to open the full conversation on the right. You'll see every message in order, who sent it (customer, AI, or you), and the channel. Type a reply to jump in yourself — handy when a conversation needs a personal touch.</p>
+      <h2>Taking over from the AI &amp; handing back</h2>
+      <p>When you send a manual reply, the AI steps back so it won't talk over you on that thread. When you're done, you can resume AI handling so it picks future messages back up automatically.</p>
+      <div class="callout"><p>Opening a conversation from the <strong>AI Outreach Log</strong> deep-links straight to the right thread and highlights the exact message — so you land on the message in question, not the top of the inbox.</p></div>` },
+  { id: "follow-ups", category: "Your Dashboard", title: "Follow-ups",
+    html: `
+      <p class="crumb">Your Dashboard</p>
+      <p>The <strong>Follow-Up Pipeline</strong> shows every lead the AI is actively chasing — estimate recoveries, missed-call callbacks, upcoming appointments, and long-term nurturing — and lets you jump in with a manual text or call. (You'll find it as a tab on the Leads page.)</p>
+      [[img:./followups.png|The Follow-Up Pipeline — filter tabs and the active follow-up table.]]
+      <h2>The filter tabs</h2>
+      <p>Each tab filters by type and shows a count. Hover any tab for a full explanation:</p>
+      <ul>
+        <li><strong>Estimate Recovery</strong> — leads who got an estimate but haven't booked; the AI works a multi-day sequence of texts and calls to win them back.</li>
+        <li><strong>Missed Calls</strong> — callers the AI couldn't reach. An instant "sorry we missed you" text goes out, then callback attempts at 30 minutes and 24 hours.</li>
+        <li><strong>Appointments</strong> — confirmed bookings with reminders to cut no-shows.</li>
+        <li><strong>Nurturing</strong> — long-term touches: post-job follow-ups, maintenance reminders, seasonal campaigns, and referral requests.</li>
+      </ul>
+      <h2>Reading the table</h2>
+      <p>Each row shows the lead, value, current <strong>stage</strong> in the sequence, the <strong>next action</strong> time, and how long they've been waiting (green/amber/red by age). Appointments show a countdown — Today, Tomorrow, or "In X days."</p>
+      <h2>Taking action</h2>
+      <p>For recovery and missed-call rows you can <strong>send an SMS</strong> or <strong>trigger an AI call</strong> right now, or mark the lead <strong>Booked</strong> or <strong>Lost</strong> to pull them out of the pipeline. Appointment rows link to the booking; nurturing runs as an automated sequence.</p>
+      <h2>Configure Follow-ups</h2>
+      <p>The <strong>Configure Follow-ups</strong> button (top right) opens settings for channels, cadence, quiet hours, and the master on/off toggle.</p>
+      <div class="callout"><p>If you see a <strong>"Follow-ups are paused"</strong> banner, the master toggle is OFF — every row is scheduled but nothing will actually send until you turn it back on in Configure Follow-ups.</p></div>` },
   { id: "metrics", category: "Your Dashboard", title: "Metrics & reporting", stub: true, html: `<p>Performance metrics, heat maps, and conversion reporting.</p>` },
   { id: "ai-coaching", category: "Your Dashboard", title: "AI Coaching", html: `
       <p>The <strong>AI Coaching</strong> page scores your team's conversations — both phone calls and SMS threads — so you can see how well each one was handled and where reps are losing deals. Every conversation is graded by AI across eight dimensions, with the buyer's persona detected and specific, rationale-backed feedback.</p>

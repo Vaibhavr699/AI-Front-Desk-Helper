@@ -1077,11 +1077,13 @@ export default function GoogleBusinessProfile({ tenantId }) {
                     const ax = competitor.benchmark.axes || {};
                     const tiles = [];
                     if (ax.reviews) {
+                      const rk = ax.reviews.rank;
                       tiles.push({
                         label: "Reviews",
                         you: ax.reviews.tenant_reviews ?? "—",
                         field: ax.reviews.field_median_reviews != null ? `median ${ax.reviews.field_median_reviews}` : "—",
                         ahead: ax.reviews.review_rank != null && ax.reviews.review_rank >= 0.5,
+                        rank: rk && rk.position != null ? `#${rk.position} of ${rk.total}` : null,
                       });
                     }
                     if (ax.freshness?.available) {
@@ -1107,6 +1109,11 @@ export default function GoogleBusinessProfile({ tenantId }) {
                           <span style={{ fontSize: 20, fontWeight: 800, color: t.ahead ? "#16a34a" : "#1a1a1a", lineHeight: 1 }}>{t.you}</span>
                           <span style={{ fontSize: 11, color: "#888" }}>{t.field}</span>
                         </div>
+                        {t.rank && (
+                          <div style={{ marginTop: 6, display: "inline-block", fontSize: 10, fontWeight: 700, color: t.ahead ? "#16a34a" : "#E8600A", background: t.ahead ? "#f0fdf4" : "rgba(232,96,10,0.08)", border: `1px solid ${t.ahead ? "#bbf7d0" : "#fed7aa"}`, borderRadius: 20, padding: "2px 8px" }}>
+                            {t.rank}
+                          </div>
+                        )}
                       </div>
                     ));
                   })()}

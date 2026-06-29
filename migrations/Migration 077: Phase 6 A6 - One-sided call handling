@@ -1,0 +1,63 @@
+-- ============================================================================
+-- Migration 077: Phase 6 A6 - One-sided call handling
+-- May 18, 2026
+-- 
+-- Tracks why persona/scoring was skipped so the dashboard can filter
+-- one-sided / silent / pre-Whisper-fix backfill calls from coaching views.
+-- 
+-- skip_reason values:
+--   'insufficient_customer_speech' — < 2 customer turns in transcript
+--   'one_sided_transcript'         — 0 customer turns (likely pre-Whisper-fix)
+--   'silent_call'                  — < 30 seconds AND 0 customer turns
+--   NULL                            — call was analyzable, persona/score valid
+-- 
+-- Backfill: existing rows with 0 customer turns marked 'one_sided_transcript'.
+-- ============================================================================
+
+-- 1. Add skip_reason columns
+ALTER TABLE coaching_conversations
+  ADD COLUMN IF NOT EXISTS persona_skip_reason TEXT,
+  ADD COLUMN IF NOT EXISTS scoring_skip_reason TEXT,
+  ADD COLUMN IF NOT EXISTS customer_turn_count INT;
+
+-- 2. Index for dashboard filter (find calls WITH customer speech fast)
+CREATE INDEX IF NOT EXISTS idx_coaching_conversations_analyzable
+  ON coaching_conversations(tenant_id, scored_at DESC)
+  WHERE persona_skip_reason IS NULL;
+
+-- 3. Backfill existing rows: compute customer_turn_count for all rows
+UPDATE coaching_conversations
+   SET customer_turn_count = (
+     SELECT COUNT(*)
+       FROM jsonb_array_elements(transcript) AS turn
+      WHERE turn->>'role' = 'customer'
+   )
+ WHERE customer_turn_count IS NULL
+   AND transcript IS NOT NULL
+   AND jsonb_typeof(transcript) = 'array';
+
+-- 4. Backfill: mark one-sided calls
+UPDATE coaching_conversations
+   SET persona_skip_reason = CASE
+         WHEN customer_turn_count = 0 AND duration_seconds < 30 THEN 'silent_call'
+         WHEN customer_turn_count = 0 THEN 'one_sided_transcript'
+         WHEN customer_turn_count < 2 THEN 'insufficient_customer_speech'
+         ELSE NULL
+       END,
+       scoring_skip_reason = CASE
+         WHEN customer_turn_count = 0 AND duration_seconds < 30 THEN 'silent_call'
+         WHEN customer_turn_count = 0 THEN 'one_sided_transcript'
+         ELSE NULL
+       END
+ WHERE persona_skip_reason IS NULL;
+
+-- 5. Verify backfill
+SELECT 
+  persona_skip_reason,
+  COUNT(*) as count,
+  ROUND(AVG(customer_turn_count)::numeric, 1) as avg_customer_turns,
+  ROUND(AVG(duration_seconds)::numeric, 0) as avg_duration_sec
+FROM coaching_conversations
+WHERE tenant_id = 'a2942de5-5bfd-4cb1-8071-9207fe290a4b'
+GROUP BY persona_skip_reason
+ORDER BY count DESC;

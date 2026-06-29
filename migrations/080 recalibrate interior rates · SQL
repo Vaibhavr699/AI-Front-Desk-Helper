@@ -1,0 +1,145 @@
+-- ============================================================================
+-- Migration 080: Recalibrate Interior Painting Base Rates
+-- ============================================================================
+-- Purpose: Lower interior painting base rates to match real-world market
+-- pricing. Previous rates produced ~2× actual market prices for typical
+-- room sizes (e.g., 1 small bedroom + 1 small bathroom walls-only was
+-- returning $1,600-$1,800 base at MID region; target is $900-$1,000).
+--
+-- Diagnosis (May 18, 2026):
+--   Tested via Drew Koch (Gladiators Painting, Omaha NE — MID region).
+--   Walls-only on 1 small bedroom + 1 small bathroom returned $1,857-$2,089
+--   at LOW region (= $2,184-$2,458 at MID baseline). Drew's actual market
+--   price for the same scope is $900-$1,000.
+--
+-- Calibration math:
+--   Anchor:     $950 (midpoint of $900-$1,000 target) for 2 small rooms.
+--   Reverse:    $950 ÷ 0.95 (year=2000+ default Omaha) = $1,000 base needed.
+--   Per room:   $500 midpoint → $480 min / $520 max (~8% spread, similar
+--               to existing 12.5% spread pattern but tightened).
+--
+-- Preserves existing ratio progressions:
+--   small : medium : large : xl = 1 : 2 : 3 : 4.5  (unchanged)
+--   LOW = MID × 0.85   HIGH = MID × 1.50            (unchanged)
+--
+-- Note on modifiers: The vertical_modifier_categories values
+-- (interior_complexity.two_coat=0.25, vaulted=0.20, etc.) are correctly
+-- calibrated and do NOT need adjustment. The earlier diagnosis of
+-- "two coats = +100%" was wrong; multiple modifiers stack multiplicatively
+-- in the widget, which is what produced the $3,715 test result.
+--
+-- Note on Step 1 helper text: The widget's hardcoded promise "Walls,
+-- ceiling, trim, and doors are included for each room" is stored in
+-- vertical_widget_questions.helper_text. Replaced with neutral language
+-- since the actual included scope depends on per-tenant scope toggles.
+-- True per-tenant dynamic helper text is a Phase 7 F task.
+-- ============================================================================
+
+BEGIN;
+
+-- ─── MID region (baseline) ──────────────────────────────────────────────────
+UPDATE vertical_default_rates
+SET base_rate_min_cents = 48000, base_rate_max_cents = 52000
+WHERE vertical_id = (SELECT vertical_id FROM verticals WHERE slug = 'painting')
+  AND service_slug = 'interior' AND cost_region = 'mid' AND unit = 'room_small';
+
+UPDATE vertical_default_rates
+SET base_rate_min_cents = 96000, base_rate_max_cents = 104000
+WHERE vertical_id = (SELECT vertical_id FROM verticals WHERE slug = 'painting')
+  AND service_slug = 'interior' AND cost_region = 'mid' AND unit = 'room_medium';
+
+UPDATE vertical_default_rates
+SET base_rate_min_cents = 144000, base_rate_max_cents = 156000
+WHERE vertical_id = (SELECT vertical_id FROM verticals WHERE slug = 'painting')
+  AND service_slug = 'interior' AND cost_region = 'mid' AND unit = 'room_large';
+
+UPDATE vertical_default_rates
+SET base_rate_min_cents = 216000, base_rate_max_cents = 234000
+WHERE vertical_id = (SELECT vertical_id FROM verticals WHERE slug = 'painting')
+  AND service_slug = 'interior' AND cost_region = 'mid' AND unit = 'room_xl';
+
+-- ─── LOW region (MID × 0.85) ────────────────────────────────────────────────
+UPDATE vertical_default_rates
+SET base_rate_min_cents = 40800, base_rate_max_cents = 44200
+WHERE vertical_id = (SELECT vertical_id FROM verticals WHERE slug = 'painting')
+  AND service_slug = 'interior' AND cost_region = 'low' AND unit = 'room_small';
+
+UPDATE vertical_default_rates
+SET base_rate_min_cents = 81600, base_rate_max_cents = 88400
+WHERE vertical_id = (SELECT vertical_id FROM verticals WHERE slug = 'painting')
+  AND service_slug = 'interior' AND cost_region = 'low' AND unit = 'room_medium';
+
+UPDATE vertical_default_rates
+SET base_rate_min_cents = 122400, base_rate_max_cents = 132600
+WHERE vertical_id = (SELECT vertical_id FROM verticals WHERE slug = 'painting')
+  AND service_slug = 'interior' AND cost_region = 'low' AND unit = 'room_large';
+
+UPDATE vertical_default_rates
+SET base_rate_min_cents = 183600, base_rate_max_cents = 198900
+WHERE vertical_id = (SELECT vertical_id FROM verticals WHERE slug = 'painting')
+  AND service_slug = 'interior' AND cost_region = 'low' AND unit = 'room_xl';
+
+-- ─── HIGH region (MID × 1.50) ───────────────────────────────────────────────
+UPDATE vertical_default_rates
+SET base_rate_min_cents = 72000, base_rate_max_cents = 78000
+WHERE vertical_id = (SELECT vertical_id FROM verticals WHERE slug = 'painting')
+  AND service_slug = 'interior' AND cost_region = 'high' AND unit = 'room_small';
+
+UPDATE vertical_default_rates
+SET base_rate_min_cents = 144000, base_rate_max_cents = 156000
+WHERE vertical_id = (SELECT vertical_id FROM verticals WHERE slug = 'painting')
+  AND service_slug = 'interior' AND cost_region = 'high' AND unit = 'room_medium';
+
+UPDATE vertical_default_rates
+SET base_rate_min_cents = 216000, base_rate_max_cents = 234000
+WHERE vertical_id = (SELECT vertical_id FROM verticals WHERE slug = 'painting')
+  AND service_slug = 'interior' AND cost_region = 'high' AND unit = 'room_large';
+
+UPDATE vertical_default_rates
+SET base_rate_min_cents = 324000, base_rate_max_cents = 351000
+WHERE vertical_id = (SELECT vertical_id FROM verticals WHERE slug = 'painting')
+  AND service_slug = 'interior' AND cost_region = 'high' AND unit = 'room_xl';
+
+-- ─── Update misleading Step 1 helper text ───────────────────────────────────
+-- Old: "Walls, ceiling, trim, and doors are included for each room."
+-- This promised inclusions that don't match per-tenant scope toggles. New
+-- text is neutral; what's actually included is shown at the final quote.
+UPDATE vertical_widget_questions
+SET helper_text = 'Pick the rooms you want painted and how many of each.'
+WHERE vertical_id = (SELECT vertical_id FROM verticals WHERE slug = 'painting')
+  AND helper_text LIKE 'Walls, ceiling, trim%';
+
+COMMIT;
+
+-- ============================================================================
+-- VERIFICATION — Run these queries after the migration commits
+-- ============================================================================
+
+-- 1. Confirm new rates landed:
+--    SELECT cost_region, unit, base_rate_min_cents, base_rate_max_cents
+--      FROM vertical_default_rates vdr
+--      JOIN verticals v ON v.vertical_id = vdr.vertical_id
+--     WHERE v.slug = 'painting' AND vdr.service_slug = 'interior'
+--     ORDER BY cost_region, unit;
+--
+-- 2. Confirm helper text updated:
+--    SELECT question_slug, helper_text
+--      FROM vertical_widget_questions vwq
+--      JOIN verticals v ON v.vertical_id = vwq.vertical_id
+--     WHERE v.slug = 'painting'
+--       AND vwq.helper_text LIKE 'Pick the rooms%';
+--
+-- 3. End-to-end test in the widget:
+--    - 1 small bedroom + 1 small bathroom
+--    - Ranch, 2000+
+--    - Zero modifiers checked
+--    - LOW cost region
+--    - Expected widget output: ~$775-$840 (2 small × $40,800-$44,200
+--      = $816-$884, then × 0.95 year discount = $775-$840)
+--
+--    Switch to MID region:
+--    - Expected widget output: ~$912-$988 (matches Drew's $900-$1,000 target)
+--
+--    Switch to MID + check "two coats":
+--    - Expected: ~$1,140-$1,235 (×1.25 modifier added)
+-- ============================================================================

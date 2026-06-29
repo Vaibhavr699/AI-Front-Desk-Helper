@@ -1,0 +1,122 @@
+-- ============================================================================
+-- Migration 082 — Phase 8E DISC Feedback Capture (v0)
+-- Date: May 19, 2026
+--
+-- Captures structured feedback on DISC classifications. Parallel to
+-- coaching_feedback (which is free-text → rules), this is structured
+-- corrections (D/I/S/C verdict).
+--
+-- Submission sources:
+--   - owner  : tenant owner reviewing classifications on Lead Detail
+--   - rep    : rep validating against in-person appointment reality
+--   - ai     : AI self-grade — currently a low-confidence flag captured at
+--              classification time (disc_confidence < 0.6); future: second-
+--              pass reflection call. submitted_by_user_id is NULL for AI.
+--
+-- Phase 8E v0 = CAPTURE ONLY. The refinement cron (using corrections to
+-- improve the classifier prompt or fine-tune signal weights) is deferred
+-- until ~50 corrections accumulate per tenant. Premature refinement on
+-- thin data == noise amplification.
+--
+-- Snapshot pattern: at feedback time we copy the classified primary/
+-- secondary/confidence INTO this row, so feedback survives later
+-- re-classification (repeat callers). The feedback is a verdict on a
+-- specific moment, not the live state.
+-- ============================================================================
+
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS disc_feedback (
+  id                       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id                uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+
+  -- Source of the classification being judged
+  conversation_id          uuid REFERENCES coaching_conversations(id) ON DELETE SET NULL,
+  lead_id                  uuid REFERENCES leads(id) ON DELETE CASCADE,
+
+  -- Who submitted
+  submitted_by_user_id     uuid REFERENCES dashboard_users(id) ON DELETE SET NULL,
+  submitted_by_role        text NOT NULL,  -- 'owner' | 'rep' | 'ai'
+
+  -- Snapshot of what was classified at the time feedback was given.
+  -- Preserved even if the lead later gets re-classified by a future call.
+  classified_primary       text,
+  classified_secondary     text,
+  classified_confidence    numeric(3,2),
+
+  -- The verdict
+  was_accurate             boolean,         -- true | false | null (AI uncertain)
+  corrected_primary        text,            -- only set when was_accurate=false
+  corrected_secondary      text,            -- optional, only when correcting
+
+  -- Optional free-text context
+  -- For owners/reps: "what gave it away" — feeds future refinement
+  -- For AI: the disc_signals.reasoning at classification time
+  reason                   text,
+
+  -- Processing checkpoint for the future refinement cron
+  analyzed_at              timestamptz,
+
+  created_at               timestamptz NOT NULL DEFAULT now(),
+
+  -- ─── Constraints ──────────────────────────────────────────────────────
+  CONSTRAINT disc_feedback_submitted_by_role_chk
+    CHECK (submitted_by_role IN ('owner', 'rep', 'ai')),
+
+  CONSTRAINT disc_feedback_classified_primary_chk
+    CHECK (classified_primary IS NULL OR classified_primary IN ('D','I','S','C','unknown')),
+
+  CONSTRAINT disc_feedback_classified_secondary_chk
+    CHECK (classified_secondary IS NULL OR classified_secondary IN ('D','I','S','C')),
+
+  CONSTRAINT disc_feedback_corrected_primary_chk
+    CHECK (corrected_primary IS NULL OR corrected_primary IN ('D','I','S','C')),
+
+  CONSTRAINT disc_feedback_corrected_secondary_chk
+    CHECK (corrected_secondary IS NULL OR corrected_secondary IN ('D','I','S','C')),
+
+  CONSTRAINT disc_feedback_confidence_chk
+    CHECK (classified_confidence IS NULL OR (classified_confidence >= 0 AND classified_confidence <= 1)),
+
+  -- If was_accurate=false, MUST provide corrected_primary (otherwise the
+  -- correction is meaningless — "wrong but I won't say what's right")
+  CONSTRAINT disc_feedback_correction_required_chk
+    CHECK (was_accurate IS NOT FALSE OR corrected_primary IS NOT NULL),
+
+  -- Either conversation_id OR lead_id must be set — feedback must anchor
+  -- to a source. Most feedback will have both; AI self-grade has only
+  -- conversation_id (no lead linked yet at classification time).
+  CONSTRAINT disc_feedback_anchor_chk
+    CHECK (conversation_id IS NOT NULL OR lead_id IS NOT NULL),
+
+  -- AI submissions have NULL submitted_by_user_id; human submissions don't
+  CONSTRAINT disc_feedback_ai_user_chk
+    CHECK (
+      (submitted_by_role = 'ai' AND submitted_by_user_id IS NULL) OR
+      (submitted_by_role <> 'ai')
+    )
+);
+
+-- ─── Indexes ────────────────────────────────────────────────────────────
+-- Index for future refinement cron (find unanalyzed feedback per tenant)
+CREATE INDEX IF NOT EXISTS idx_disc_feedback_tenant_unanalyzed
+  ON disc_feedback (tenant_id, created_at)
+  WHERE analyzed_at IS NULL;
+
+-- Index for 8D accuracy dashboard (tenant accuracy rate over time)
+CREATE INDEX IF NOT EXISTS idx_disc_feedback_accuracy
+  ON disc_feedback (tenant_id, was_accurate, created_at);
+
+-- Index for "show me all feedback on this lead" — Lead Detail card needs
+-- to know if feedback already exists to render "you said this was X" state
+CREATE INDEX IF NOT EXISTS idx_disc_feedback_lead
+  ON disc_feedback (lead_id, created_at DESC)
+  WHERE lead_id IS NOT NULL;
+
+-- Index for conversation-anchored lookups (AI self-grade fires before
+-- lead is finalized; conversation is always present)
+CREATE INDEX IF NOT EXISTS idx_disc_feedback_conversation
+  ON disc_feedback (conversation_id, created_at DESC)
+  WHERE conversation_id IS NOT NULL;
+
+COMMIT;

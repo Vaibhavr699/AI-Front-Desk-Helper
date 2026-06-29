@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SMS Consent Flow Documentation — AI Front Desk Helper</title>
+  <meta name="description" content="Documentation of the SMS opt-in consent flow used by AI Front Desk Helper.">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+      color: #1c1917;
+      line-height: 1.6;
+      background: #fafaf9;
+    }
+    h1 {
+      font-size: 28px;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+    h2 {
+      font-size: 20px;
+      font-weight: 700;
+      margin-top: 32px;
+      margin-bottom: 12px;
+    }
+    h3 {
+      font-size: 16px;
+      font-weight: 700;
+      margin-top: 24px;
+      margin-bottom: 8px;
+    }
+    p, li {
+      font-size: 15px;
+      color: #44403c;
+      margin: 8px 0;
+    }
+    ul, ol {
+      margin: 8px 0 16px 24px;
+    }
+    li {
+      margin: 4px 0;
+    }
+    a {
+      color: #ea580c;
+      text-decoration: underline;
+    }
+    .effective-date {
+      color: #78716c;
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+    .modal-mock {
+      background: white;
+      border: 2px solid #e7e5e4;
+      border-radius: 12px;
+      padding: 24px;
+      margin: 16px 0;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    }
+    .modal-mock h4 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .modal-mock .consent-text {
+      font-size: 13px;
+      color: #57534e;
+      background: #f5f5f4;
+      padding: 12px 14px;
+      border-radius: 6px;
+      margin: 12px 0;
+    }
+    .modal-mock .checkbox-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin: 12px 0;
+      font-size: 14px;
+    }
+    .modal-mock .checkbox-row input {
+      margin-top: 3px;
+    }
+    .modal-mock .submit-btn {
+      background: #ea580c;
+      color: white;
+      padding: 10px 18px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 14px;
+      display: inline-block;
+      margin-top: 8px;
+    }
+    .modal-mock .submit-btn.disabled {
+      background: #d6d3d1;
+      cursor: not-allowed;
+    }
+    .flow-step {
+      background: #f5f5f4;
+      padding: 16px 20px;
+      border-radius: 8px;
+      margin: 12px 0;
+      border-left: 4px solid #ea580c;
+    }
+    .flow-step strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+    .footer-nav {
+      margin-top: 48px;
+      padding-top: 24px;
+      border-top: 1px solid #e7e5e4;
+      font-size: 14px;
+      color: #78716c;
+    }
+    .footer-nav a {
+      margin-right: 16px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>SMS Consent Flow Documentation</h1>
+  <p class="effective-date">Effective date: April 25, 2026</p>
+
+  <p>
+    This page documents the exact end-user consent flow used by AI Front Desk
+    Helper to collect SMS opt-in consent in compliance with TCPA and CTIA
+    guidelines.
+  </p>
+
+  <h2>Opt-In Methods</h2>
+  <p>
+    AI Front Desk Helper supports two opt-in flows. Both use an active,
+    affirmative consent modal that cannot be bypassed.
+  </p>
+
+  <h2>Flow 1 — Marketing Website</h2>
+
+  <ol>
+    <li>User visits <a href="https://aifrontdeskhelper.com">aifrontdeskhelper.com</a> and clicks "Get Started" or a contact form CTA.</li>
+    <li>The SMS consent modal appears, displaying the full consent language and required disclosures.</li>
+    <li>An unchecked checkbox labeled "I have read and agree to the SMS messaging terms above" is presented. The checkbox is unchecked by default.</li>
+    <li>The "Continue to sign up" button remains disabled until the checkbox is actively checked by the user.</li>
+    <li>Once checked, the button enables and the user can submit the form.</li>
+    <li>Upon submission, the user receives a welcome SMS confirming opt-in and including STOP/HELP instructions.</li>
+  </ol>
+
+  <h3>Modal as displayed (representative):</h3>
+  <div class="modal-mock">
+    <h4>Sign up for SMS updates</h4>
+    <div class="consent-text">
+      By submitting this form, you agree to receive SMS text messages from
+      AI Front Desk Helper related to your inquiry, including appointment
+      scheduling, follow-ups, and service notifications. Message frequency
+      may vary. Message and data rates may apply. Reply STOP to opt out or
+      HELP for assistance. Consent is not required as a condition of
+      purchasing services. Mobile phone numbers and SMS opt-in consent
+      are not shared with third parties or affiliates for marketing or
+      promotional purposes.
+      <br><br>
+      Privacy Policy: <a href="/privacy-policy">aifrontdeskhelper.com/privacy-policy</a><br>
+      SMS Terms: <a href="/sms-terms">aifrontdeskhelper.com/sms-terms</a>
+    </div>
+    <div class="checkbox-row">
+      <input type="checkbox" disabled>
+      <span>I have read and agree to the SMS messaging terms above.</span>
+    </div>
+    <div class="submit-btn disabled">Continue to sign up</div>
+    <p style="font-size: 12px; color: #78716c; margin-top: 8px;">
+      ↑ Button is disabled until the checkbox is actively checked.
+    </p>
+  </div>
+
+  <h2>Flow 2 — Chat Widget on Client Websites</h2>
+
+  <p>
+    AI Front Desk Helper provides an embeddable chat widget deployed on home
+    service business websites. The same pre-SMS consent modal with unchecked
+    checkbox and disabled submit button is required before any SMS is sent
+    through the widget.
+  </p>
+
+  <ol>
+    <li>Visitor interacts with the chat widget on a client business's website.</li>
+    <li>If the conversation indicates the visitor would benefit from SMS follow-up, the consent modal appears with the same terms shown above.</li>
+    <li>The visitor must actively check the consent checkbox to enable the submit button.</li>
+    <li>Only after explicit consent is captured does the system send any SMS message.</li>
+  </ol>
+
+  <h2>What We Capture</h2>
+  <p>
+    For every opt-in, we record:
+  </p>
+  <ul>
+    <li>The mobile phone number provided</li>
+    <li>The exact consent language shown to the user</li>
+    <li>The source of the opt-in (marketing site, chat widget, etc.)</li>
+    <li>The IP address of the user at the time of consent</li>
+    <li>The user agent (browser/device) of the user at the time of consent</li>
+    <li>The page URL where consent was given</li>
+    <li>The session ID</li>
+    <li>The timestamp of consent</li>
+  </ul>
+
+  <h2>Privacy Statement</h2>
+  <p>
+    Mobile phone numbers and SMS opt-in consent are not shared with third
+    parties or affiliates for marketing or promotional purposes under any
+    circumstances. See our <a href="/privacy-policy">Privacy Policy</a> for
+    full details.
+  </p>
+
+  <h2>Contact</h2>
+  <p>
+    For questions about our SMS consent flow, contact:
+  </p>
+  <p>
+    <strong>Gladiators Painting Inc.</strong><br>
+    19427 Audrey Street<br>
+    Gretna, NE 68028<br>
+    United States<br>
+    Email: <a href="mailto:drew@aifrontdeskhelper.com">drew@aifrontdeskhelper.com</a>
+  </p>
+
+  <div class="footer-nav">
+    <a href="/">← Home</a>
+    <a href="/privacy-policy">Privacy Policy</a>
+    <a href="/sms-terms">SMS Terms</a>
+  </div>
+
+</body>
+</html>

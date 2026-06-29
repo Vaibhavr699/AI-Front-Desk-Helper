@@ -1,0 +1,364 @@
+-- ============================================================================
+-- Migration 062 — Phase 7 Estimator: Roofing Vertical Seed (v2)
+-- Date:    May 11, 2026
+-- Author:  Drew Koch
+-- Phase:   7 (Estimator Engine V1, Wave 1)
+--
+-- Context:
+--   Adds Roofing as the second vertical for Phase 7. Mirrors Migration 047
+--   (painting) patterns exactly. No schema changes — only seed data.
+--
+-- v2 Changes (May 11, 2026 — same day as v1):
+--   - Pitch multipliers updated to Mighty Dog Roofing's industry-standard
+--     pitch calculator (pure Pythagorean geometry: √(rise²+run²)/run).
+--     v1 used rough estimates (low=0.95, medium=1.20, steep=1.45) that
+--     conflated geometry with labor difficulty.
+--   - Stories semantics changed from "labor multiplier" to "floor count
+--     divisor". v1 was off by ~2x for two-story homes. Total floor area
+--     divided by floor count gives footprint; footprint × pitch_multiplier
+--     gives actual roof surface area.
+--
+-- Pricing:
+--   Industry averages, NOT Gladiators-calibrated. Drew is a painter; no
+--   first-party roofing data. All rates flagged "CALIBRATE POST-LAUNCH"
+--   the same way deck_fence rates in Migration 047 were.
+--
+-- Idempotency:
+--   ON CONFLICT DO NOTHING throughout. Safe to re-run.
+-- ============================================================================
+
+BEGIN;
+
+-- ============================================================================
+-- SECTION 1: SEED — Roofing vertical
+-- ============================================================================
+INSERT INTO verticals (slug, display_name, status, pricing_mode) VALUES
+  ('roofing', 'Roofing', 'active', 'bundled')
+ON CONFLICT (slug) DO NOTHING;
+
+DO $$
+DECLARE
+  v_roofing_id INTEGER;
+BEGIN
+  SELECT vertical_id INTO v_roofing_id FROM verticals WHERE slug = 'roofing';
+  RAISE NOTICE 'Roofing vertical_id = %', v_roofing_id;
+END $$;
+
+-- ============================================================================
+-- SECTION 2: SEED — Roofing regional multipliers
+-- ============================================================================
+INSERT INTO vertical_regional_multipliers (vertical_id, bucket, multiplier)
+SELECT v.vertical_id, b.bucket, b.mult
+FROM verticals v
+CROSS JOIN (VALUES
+  ('high', 1.50),
+  ('mid',  1.00),
+  ('low',  0.85)
+) AS b(bucket, mult)
+WHERE v.slug = 'roofing'
+ON CONFLICT (vertical_id, bucket) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 3: SEED — Roofing services (5 rows)
+-- ============================================================================
+INSERT INTO vertical_services (vertical_id, service_slug, display_name, pricing_mode, unit, sort_order, materials_pct)
+SELECT v.vertical_id, s.slug, s.display_name, s.pricing_mode, s.unit, s.sort_order, s.materials_pct
+FROM verticals v
+CROSS JOIN (VALUES
+  ('asphalt_shingle',     'Asphalt Shingle',     'bundled_per_unit_area', 'square', 1, 45.00),
+  ('metal_standing_seam', 'Metal Standing Seam', 'bundled_per_unit_area', 'square', 2, 65.00),
+  ('tile',                'Tile (Clay/Concrete)','bundled_per_unit_area', 'square', 3, 60.00),
+  ('slate',               'Slate',               'bundled_per_unit_area', 'square', 4, 70.00),
+  ('flat_epdm',           'Flat / EPDM',         'bundled_per_unit_area', 'square', 5, 50.00)
+) AS s(slug, display_name, pricing_mode, unit, sort_order, materials_pct)
+WHERE v.slug = 'roofing'
+ON CONFLICT (vertical_id, service_slug) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 4: SEED — Roofing modifier categories (3 rows)
+-- ============================================================================
+-- Note: roof_pitch and stories are NOT modifiers — they're inputs consumed by
+-- computeRoofingBase() in lib/estimator.js. Pitch as geometric multiplier,
+-- stories as floor-count divisor (NOT labor multiplier — that was the v1 bug).
+-- Only the % modifiers below live in vertical_modifier_categories.
+-- ----------------------------------------------------------------------------
+INSERT INTO vertical_modifier_categories (vertical_id, category_slug, display_name, modifier_type, multi_select, options, sort_order)
+SELECT v.vertical_id, m.slug, m.display_name, m.mod_type, m.multi_select, m.options::jsonb, m.sort_order
+FROM verticals v
+CROSS JOIN (VALUES
+
+  -- Roof complexity (multi-select; each picked item compounds)
+  ('roof_complexity', 'Roof features', 'percentage', TRUE,
+   '[
+     {"value": "skylights",         "label": "Skylights",                "adjustment": 0.05},
+     {"value": "multiple_ridges",   "label": "Multiple roof ridges",     "adjustment": 0.08},
+     {"value": "dormers",           "label": "Dormers",                  "adjustment": 0.10},
+     {"value": "chimneys",          "label": "One or more chimneys",     "adjustment": 0.03}
+   ]', 1),
+
+  -- Access difficulty
+  ('access_difficulty', 'Access difficulty', 'percentage', FALSE,
+   '[
+     {"value": "standard",  "label": "Standard access",                      "adjustment": 0.00},
+     {"value": "difficult", "label": "Heavy landscaping or steep terrain",   "adjustment": 0.15}
+   ]', 2),
+
+  -- Decking condition (single-select; major routes to specialized)
+  ('decking_condition', 'Roof decking condition', 'percentage', FALSE,
+   '[
+     {"value": "sound",         "label": "Sound, no known damage",                 "adjustment": 0.00},
+     {"value": "some_repair",   "label": "Some repair likely needed",              "adjustment": 0.10},
+     {"value": "major_repair",  "label": "Major damage / extensive replacement",   "adjustment": null, "routes_to": "specialized"}
+   ]', 3)
+
+) AS m(slug, display_name, mod_type, multi_select, options, sort_order)
+WHERE v.slug = 'roofing'
+ON CONFLICT (vertical_id, category_slug) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 5: SEED — Service-modifier junction (15 rows = 3 mods × 5 services)
+-- ============================================================================
+INSERT INTO vertical_service_modifier_categories (service_id, modifier_category_id, required, sort_order)
+SELECT s.id, m.id, mapping.required, mapping.sort_order
+FROM vertical_services s
+JOIN verticals v ON s.vertical_id = v.vertical_id
+JOIN vertical_modifier_categories m ON m.vertical_id = v.vertical_id
+JOIN (VALUES
+  ('asphalt_shingle',     'roof_complexity',   FALSE, 1),
+  ('asphalt_shingle',     'access_difficulty', FALSE, 2),
+  ('asphalt_shingle',     'decking_condition', TRUE,  3),
+
+  ('metal_standing_seam', 'roof_complexity',   FALSE, 1),
+  ('metal_standing_seam', 'access_difficulty', FALSE, 2),
+  ('metal_standing_seam', 'decking_condition', TRUE,  3),
+
+  ('tile',                'roof_complexity',   FALSE, 1),
+  ('tile',                'access_difficulty', FALSE, 2),
+  ('tile',                'decking_condition', TRUE,  3),
+
+  ('slate',               'roof_complexity',   FALSE, 1),
+  ('slate',               'access_difficulty', FALSE, 2),
+  ('slate',               'decking_condition', TRUE,  3),
+
+  ('flat_epdm',           'roof_complexity',   FALSE, 1),
+  ('flat_epdm',           'access_difficulty', FALSE, 2),
+  ('flat_epdm',           'decking_condition', TRUE,  3)
+) AS mapping(service_slug, mod_slug, required, sort_order)
+  ON s.service_slug = mapping.service_slug AND m.category_slug = mapping.mod_slug
+WHERE v.slug = 'roofing'
+ON CONFLICT (service_id, modifier_category_id) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 6: SEED — Widget questions (8 universal)
+-- ============================================================================
+-- All questions have service_slug=NULL because all 5 roofing services need
+-- the same flow. The service_type select at the top picks the roof material;
+-- everything else applies universally.
+--
+-- v2 note: roof_pitch and stories option metadata corrected per Mighty Dog
+-- Roofing pitch calculator (pure geometric multipliers, floor count for
+-- footprint division). Values in JSONB are metadata for widget display;
+-- the actual math lives in lib/estimator.js computeRoofingBase().
+-- ----------------------------------------------------------------------------
+INSERT INTO vertical_widget_questions (vertical_id, service_slug, question_slug, question_type, label, helper_text, options, required, sort_order)
+SELECT v.vertical_id, q.service_slug, q.question_slug, q.question_type, q.label, q.helper_text, q.options::jsonb, q.required, q.sort_order
+FROM verticals v
+CROSS JOIN (VALUES
+
+  -- 1. Service type (roof material) — universal first question
+  (NULL, 'service_type', 'select',
+   'What type of roof do you have or want installed?',
+   'Not sure? Pick the closest match — we''ll confirm during the walkthrough.',
+   '[
+     {"value": "asphalt_shingle",     "label": "Asphalt shingle"},
+     {"value": "metal_standing_seam", "label": "Metal standing seam"},
+     {"value": "tile",                "label": "Tile (clay or concrete)"},
+     {"value": "slate",               "label": "Slate"},
+     {"value": "flat_epdm",           "label": "Flat / EPDM rubber"},
+     {"value": "specialized",         "label": "Not sure / specialized project"}
+   ]', TRUE, 1),
+
+  -- 2. Home floor sqft
+  (NULL, 'home_floor_sqft', 'number',
+   'Approximately how many square feet is your home?',
+   'Use the total finished floor area (typically on your real estate listing). We use this to estimate roof surface.',
+   '{"min": 500, "max": 10000, "step": 100, "unit": "sqft"}', TRUE, 2),
+
+  -- 3. Roof pitch — multipliers from Mighty Dog Roofing pitch calculator
+  --    (pure Pythagorean geometry, no labor adjustment baked in)
+  (NULL, 'roof_pitch', 'select',
+   'How steep is your roof?',
+   'If you''re not sure, "Standard" is correct for most homes built since 1970. Very steep roofs (12/12+) route to in-person.',
+   '[
+     {"value": "low",       "label": "Low pitch / nearly flat (under 4/12)",      "pitch_multiplier": 1.0308, "reference_pitch": "3/12"},
+     {"value": "medium",    "label": "Standard pitch (4/12 to 8/12, most common)","pitch_multiplier": 1.1180, "reference_pitch": "6/12"},
+     {"value": "steep",     "label": "Steep (9/12 to 12/12, cathedral/victorian)","pitch_multiplier": 1.3017, "reference_pitch": "10/12"},
+     {"value": "very_steep","label": "Very steep (over 12/12 / 45°)",             "routes_to": "specialized"}
+   ]', TRUE, 3),
+
+  -- 4. Stories — floor count divisor (NOT labor coefficient)
+  (NULL, 'stories', 'select',
+   'How many stories?',
+   'We divide your home''s square footage by floor count to estimate the roof footprint. 3+ stories routes to in-person estimate.',
+   '[
+     {"value": "single",     "label": "Single story",            "floors_count": 1.0},
+     {"value": "two_story",  "label": "Two-story",               "floors_count": 2.0},
+     {"value": "three_plus", "label": "Three or more stories",   "routes_to": "specialized"}
+   ]', TRUE, 4),
+
+  -- 5. Roof complexity (multi-select)
+  (NULL, 'roof_complexity', 'multi_select',
+   'Does your roof have any of these features? (Pick all that apply)',
+   NULL,
+   '[
+     {"value": "skylights",       "label": "Skylights"},
+     {"value": "multiple_ridges", "label": "Multiple roof ridges"},
+     {"value": "dormers",         "label": "Dormers"},
+     {"value": "chimneys",        "label": "One or more chimneys"}
+   ]', FALSE, 5),
+
+  -- 6. Access difficulty
+  (NULL, 'access_difficulty', 'yes_no',
+   'Is access to the roof difficult?',
+   'Heavy landscaping, steep terrain, or tight neighbors can add to the cost.',
+   '[
+     {"value": "standard",  "label": "Standard access"},
+     {"value": "difficult", "label": "Difficult access"}
+   ]', FALSE, 6),
+
+  -- 7. Decking condition
+  (NULL, 'decking_condition', 'select',
+   'What''s the condition of your roof decking?',
+   'Decking is the wood layer under your shingles or metal. Major damage routes to in-person.',
+   '[
+     {"value": "sound",        "label": "Sound, no known damage"},
+     {"value": "some_repair",  "label": "Some repair likely needed"},
+     {"value": "major_repair", "label": "Major damage / extensive replacement"}
+   ]', TRUE, 7),
+
+  -- 8. Special notes (optional, sort 90 to match painting pattern)
+  (NULL, 'special_notes', 'text',
+   'Anything else we should know? (Optional)',
+   'Tell us about anything unusual — solar panels, satellite dishes, recent storm damage, etc.',
+   '{"max_length": 500}', FALSE, 90)
+
+) AS q(service_slug, question_slug, question_type, label, helper_text, options, required, sort_order)
+WHERE v.slug = 'roofing'
+ON CONFLICT (vertical_id, service_slug, question_slug) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 7: SEED — Default rates (15 rows = 5 services × 3 buckets)
+-- ============================================================================
+-- All rates in cents per SQUARE (1 square = 100 sqft of roof surface).
+-- ALL FLAGGED "CALIBRATE POST-LAUNCH" — industry-average ballparks only.
+-- ----------------------------------------------------------------------------
+INSERT INTO vertical_default_rates (vertical_id, service_slug, cost_region, base_rate_min_cents, base_rate_max_cents, unit, notes)
+SELECT v.vertical_id, r.service_slug, r.region, r.min_cents, r.max_cents, r.unit, r.notes
+FROM verticals v
+CROSS JOIN (VALUES
+
+  -- Asphalt Shingle — 25-year architectural baseline
+  ('asphalt_shingle', 'mid',   40000,  65000, 'square', 'Industry-default: 25-year architectural. CALIBRATE POST-LAUNCH.'),
+  ('asphalt_shingle', 'high',  60000,  97500, 'square', 'Derived: Mid * 1.50'),
+  ('asphalt_shingle', 'low',   34000,  55250, 'square', 'Derived: Mid * 0.85'),
+
+  -- Metal Standing Seam — 24-gauge premium, 50-year
+  ('metal_standing_seam', 'mid',   90000, 140000, 'square', 'Industry-default: 24-gauge standing seam. CALIBRATE POST-LAUNCH.'),
+  ('metal_standing_seam', 'high', 135000, 210000, 'square', 'Derived: Mid * 1.50'),
+  ('metal_standing_seam', 'low',   76500, 119000, 'square', 'Derived: Mid * 0.85'),
+
+  -- Tile (clay/concrete)
+  ('tile', 'mid',  100000, 180000, 'square', 'Industry-default: clay or concrete tile. CALIBRATE POST-LAUNCH.'),
+  ('tile', 'high', 150000, 270000, 'square', 'Derived: Mid * 1.50'),
+  ('tile', 'low',   85000, 153000, 'square', 'Derived: Mid * 0.85'),
+
+  -- Slate
+  ('slate', 'mid',  150000, 300000, 'square', 'Industry-default: natural slate. Wide variance. CALIBRATE POST-LAUNCH.'),
+  ('slate', 'high', 225000, 450000, 'square', 'Derived: Mid * 1.50'),
+  ('slate', 'low',  127500, 255000, 'square', 'Derived: Mid * 0.85'),
+
+  -- Flat / EPDM
+  ('flat_epdm', 'mid',   70000, 100000, 'square', 'Industry-default: EPDM single-ply. CALIBRATE POST-LAUNCH.'),
+  ('flat_epdm', 'high', 105000, 150000, 'square', 'Derived: Mid * 1.50'),
+  ('flat_epdm', 'low',   59500,  85000, 'square', 'Derived: Mid * 0.85')
+
+) AS r(service_slug, region, min_cents, max_cents, unit, notes)
+WHERE v.slug = 'roofing'
+ON CONFLICT (vertical_id, service_slug, cost_region, unit) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 8: SEED — Scope options (30 rows = 6 options × 5 services)
+-- ============================================================================
+-- Same 6 options seeded across all 5 services for V1.
+--
+-- Modifier types:
+--   per_sq → multiplied by squares (roof_sqft / 100)
+--   flat   → added once when toggle is ON
+-- ----------------------------------------------------------------------------
+INSERT INTO vertical_scope_options (vertical_service_id, option_key, display_label, default_enabled, affects_includes_text, modifier_type, price_modifier_default, display_order)
+SELECT s.id, o.option_key, o.display_label, o.default_enabled, o.affects_includes_text, o.modifier_type, o.price_modifier_default, o.display_order
+FROM vertical_services s
+JOIN verticals v ON s.vertical_id = v.vertical_id
+CROSS JOIN (VALUES
+
+  ('tear_off',               'Include tear-off of existing roof',         TRUE,  TRUE, 'per_sq', 100.00, 1),
+  ('ice_water_shield',       'Include ice and water shield',              TRUE,  TRUE, 'per_sq',  40.00, 2),
+  ('drip_edge',              'Include drip edge',                         TRUE,  TRUE, 'flat',   200.00, 3),
+  ('synthetic_underlayment', 'Include synthetic underlayment upgrade',    FALSE, TRUE, 'per_sq',  30.00, 4),
+  ('ridge_vent',             'Include ridge vent upgrade',                FALSE, TRUE, 'flat',   400.00, 5),
+  ('permit_disposal',        'Include permit and disposal fees',          TRUE,  TRUE, 'flat',   300.00, 6)
+
+) AS o(option_key, display_label, default_enabled, affects_includes_text, modifier_type, price_modifier_default, display_order)
+WHERE v.slug = 'roofing'
+ON CONFLICT (vertical_service_id, option_key) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 9: VERIFICATION
+-- ============================================================================
+DO $$
+DECLARE
+  v_roofing_id            INTEGER;
+  v_services_count        INTEGER;
+  v_modifiers_count       INTEGER;
+  v_junction_count        INTEGER;
+  v_questions_count       INTEGER;
+  v_rates_count           INTEGER;
+  v_multipliers_count     INTEGER;
+  v_scope_count           INTEGER;
+BEGIN
+  SELECT vertical_id INTO v_roofing_id FROM verticals WHERE slug = 'roofing';
+
+  SELECT COUNT(*) INTO v_services_count
+    FROM vertical_services WHERE vertical_id = v_roofing_id;
+  SELECT COUNT(*) INTO v_modifiers_count
+    FROM vertical_modifier_categories WHERE vertical_id = v_roofing_id;
+  SELECT COUNT(*) INTO v_junction_count
+    FROM vertical_service_modifier_categories vsmc
+    JOIN vertical_services vs ON vs.id = vsmc.service_id
+    WHERE vs.vertical_id = v_roofing_id;
+  SELECT COUNT(*) INTO v_questions_count
+    FROM vertical_widget_questions WHERE vertical_id = v_roofing_id;
+  SELECT COUNT(*) INTO v_rates_count
+    FROM vertical_default_rates WHERE vertical_id = v_roofing_id;
+  SELECT COUNT(*) INTO v_multipliers_count
+    FROM vertical_regional_multipliers WHERE vertical_id = v_roofing_id;
+  SELECT COUNT(*) INTO v_scope_count
+    FROM vertical_scope_options vso
+    JOIN vertical_services vs ON vs.id = vso.vertical_service_id
+    WHERE vs.vertical_id = v_roofing_id;
+
+  RAISE NOTICE '====================================================================';
+  RAISE NOTICE 'Migration 062 v2 — Roofing Vertical Seed COMPLETE';
+  RAISE NOTICE '====================================================================';
+  RAISE NOTICE 'Roofing vertical_id:         %', v_roofing_id;
+  RAISE NOTICE 'Services:                    %  (expected: 5)', v_services_count;
+  RAISE NOTICE 'Modifier categories:         %  (expected: 3)', v_modifiers_count;
+  RAISE NOTICE 'Service-modifier mappings:   %  (expected: 15)', v_junction_count;
+  RAISE NOTICE 'Widget questions:            %  (expected: 8)', v_questions_count;
+  RAISE NOTICE 'Default rates:               %  (expected: 15)', v_rates_count;
+  RAISE NOTICE 'Regional multipliers:        %  (expected: 3)', v_multipliers_count;
+  RAISE NOTICE 'Scope options:               %  (expected: 30)', v_scope_count;
+  RAISE NOTICE '====================================================================';
+END $$;
+
+COMMIT;

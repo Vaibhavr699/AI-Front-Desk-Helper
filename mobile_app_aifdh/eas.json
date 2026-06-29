@@ -1,0 +1,51 @@
+{
+  "cli": {
+    "version": ">= 19.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "channel": "development",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://ai-front-desk-backend.onrender.com"
+      },
+      "android": {
+        "buildType": "apk"
+      },
+      "ios": {
+        "simulator": false
+      }
+    },
+    "production": {
+      "channel": "production",
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://ai-front-desk-backend.onrender.com"
+      },
+      "android": {
+        "buildType": "app-bundle",
+        "credentialsSource": "local"
+      },
+      "ios": {
+        "credentialsSource": "remote"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "appleTeamId": "886Y3Y9RHX",
+        "ascAppId": "6776548239"
+      }
+    }
+  }
+}

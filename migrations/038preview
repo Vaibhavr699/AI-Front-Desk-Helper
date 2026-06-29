@@ -1,0 +1,73 @@
+-- Add primary_email + phone to tenants for reseller customer management
+-- and franchise account contacts. These are separate from dashboard_users
+-- because a tenant may have 0 or N users, but always has exactly 1 primary
+-- contact email/phone on the account itself.
+ALTER TABLE tenants
+  ADD COLUMN IF NOT EXISTS primary_email TEXT,
+  ADD COLUMN IF NOT EXISTS phone TEXT;
+
+-- Index for lookups (reseller list views filter/search by email)
+CREATE INDEX IF NOT EXISTS idx_tenants_primary_email
+  ON tenants (primary_email)
+  WHERE primary_email IS NOT NULL;
+-- ============================================================================
+-- Migration 038 — Reseller Churn Grace Period
+-- Apr 21, 2026
+-- ============================================================================
+-- Adds three columns to `tenants` that track the 30-day grace window after
+-- a reseller's subscription is canceled. When a reseller churns, all their
+-- customers are atomically transferred to direct billing (reseller_id=NULL,
+-- billing_owner='direct') and issued a grace token + 30-day expiration. The
+-- customer receives an email with a tokenized URL to complete direct-billing
+-- setup. If they don't complete setup within 30 days, a daily cron suspends
+-- their tenant.
+--
+-- Columns:
+--   churn_grace_token TEXT
+--     32-byte base64url token (same pattern as franchisee_invite_token).
+--     Single-use: cleared when customer completes direct billing OR when
+--     grace expires via cron suspension. Unique across all active tokens.
+--
+--   churn_grace_expires_at TIMESTAMPTZ
+--     30-day deadline. Set by transferCustomersToDirect() to now() + 30d.
+--     Cleared alongside churn_grace_token on success or expiration.
+--
+--   churn_grace_originated_reseller_id UUID
+--     Audit trail — which reseller did this customer come from? Preserved
+--     even after grace period closes so support can reconstruct history
+--     if a transferred customer calls in confused.
+-- ============================================================================
+
+ALTER TABLE tenants
+  ADD COLUMN IF NOT EXISTS churn_grace_token TEXT,
+  ADD COLUMN IF NOT EXISTS churn_grace_expires_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS churn_grace_originated_reseller_id UUID REFERENCES tenants(id) ON DELETE SET NULL;
+
+-- Partial index: (a) fast O(1) token lookup for the public churn route,
+-- (b) fast cron scan for expired grace windows. Both queries filter by
+-- "churn_grace_token IS NOT NULL" so the partial index skips the 99%+
+-- of tenant rows that have never churned.
+CREATE INDEX IF NOT EXISTS idx_tenants_churn_grace_token
+  ON tenants (churn_grace_token)
+  WHERE churn_grace_token IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_tenants_churn_grace_expires
+  ON tenants (churn_grace_expires_at)
+  WHERE churn_grace_token IS NOT NULL AND churn_grace_expires_at IS NOT NULL;
+
+-- Enforce token uniqueness while active. (When grace completes successfully,
+-- token is cleared to NULL, so the uniqueness constraint no longer applies
+-- and the same random string could theoretically recur — fine since we use
+-- 32 bytes of entropy.)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_tenants_churn_grace_token
+  ON tenants (churn_grace_token)
+  WHERE churn_grace_token IS NOT NULL;
+
+COMMENT ON COLUMN tenants.churn_grace_token IS
+  '32-byte base64url token for tokenized direct-billing setup URL after reseller churn. Cleared on success or cron expiration. See lib/resellerBilling.transferCustomersToDirect().';
+
+COMMENT ON COLUMN tenants.churn_grace_expires_at IS
+  '30-day deadline for customer to complete direct-billing setup after reseller churn. Suspended by daily 3AM cron in server.js if not completed.';
+
+COMMENT ON COLUMN tenants.churn_grace_originated_reseller_id IS
+  'Audit trail — which reseller originally owned this customer before churn transfer. Preserved across grace close for support reconstruction.';

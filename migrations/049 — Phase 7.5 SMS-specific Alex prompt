@@ -1,0 +1,10 @@
+-- Migration 049 — Phase 7.5 SMS-specific Alex prompt
+-- May 1, 2026
+ALTER TABLE tenants
+  ADD COLUMN IF NOT EXISTS sms_instructions TEXT;
+
+-- Verify
+SELECT column_name, data_type
+  FROM information_schema.columns
+ WHERE table_name = 'tenants'
+   AND column_name = 'sms_instructions';

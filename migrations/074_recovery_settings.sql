@@ -1,0 +1,50 @@
+-- ═══════════════════════════════════════════════════════════════════════
+-- Migration 074 — Phase 9A: raw audio-signal capture column
+-- May 22, 2026
+--
+-- Adds a single jsonb column to the `calls` table. This is the handoff
+-- point between the live voice path and the off-path analyzer:
+--
+--   server.js  (live WebSocket voice handler)
+--     During the call, accumulates lightweight timing + frame data in
+--     memory. On call-end, writes that raw blob here in ONE UPDATE.
+--     No analysis, no audio decoding in the live path — just "stash it".
+--
+--   coachingScorer.js  (cron, every 5 min — off the voice path)
+--     When it creates the coaching_conversations row for a call, it
+--     reads calls.audio_signals_raw, runs services/audioSignalAnalyzer.js
+--     (the heavy logic — mu-law decode, WPM, pauses, interruptions,
+--     amplitude), and upserts the result into call_audio_signals
+--     (migration 073).
+--
+-- WHY a raw column on `calls` rather than analyzing inline:
+--   The coaching_conversations row that call_audio_signals must FK to
+--   does NOT exist at call-end time — coachingScorer.js creates it later
+--   on a cron tick. So the analysis cannot run inline anyway. Stashing
+--   the raw blob on the call row and analyzing it cron-side keeps ALL
+--   the risky logic (audio decoding, math) off the load-bearing live
+--   voice path. A bug there logs an error; it cannot degrade a live call.
+--
+-- SHAPE of audio_signals_raw (written by server.js, read by the analyzer):
+--   {
+--     "schema": 1,
+--     "customer_turns": [ { "start_ms": <int>, "end_ms": <int>,
+--                           "word_count": <int> }, ... ],
+--     "agent_turns":    [ { "start_ms": <int>, "end_ms": <int>,
+--                           "word_count": <int> }, ... ],
+--     "customer_interruptions": <int>,
+--     "agent_interruptions":    <int>,
+--     "customer_frames": [ <int rms>, ... ],   // per-frame energy, customer
+--     "frames_captured": <int>,
+--     "direction": "inbound" | "outbound"
+--   }
+--   `schema` is versioned so the analyzer can evolve the shape without a
+--   new migration. Nullable: a call that never collected data (very short
+--   hang-up, error) simply leaves the column NULL and the analyzer skips it.
+--
+-- IDEMPOTENT: ADD COLUMN IF NOT EXISTS — safe to re-run.
+-- ADDITIVE: no existing row touched, no default backfilled, no rewrite.
+-- ═══════════════════════════════════════════════════════════════════════
+
+ALTER TABLE calls
+  ADD COLUMN IF NOT EXISTS audio_signals_raw jsonb;

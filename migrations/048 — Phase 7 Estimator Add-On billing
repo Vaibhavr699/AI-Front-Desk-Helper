@@ -1,0 +1,15 @@
+-- Migration 048 — Phase 7 Estimator Add-On billing
+-- May 1, 2026
+
+ALTER TABLE tenants
+  ADD COLUMN IF NOT EXISTS stripe_estimator_subscription_id TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_tenants_stripe_estimator_subscription_id
+  ON tenants(stripe_estimator_subscription_id)
+  WHERE stripe_estimator_subscription_id IS NOT NULL;
+
+-- Verify
+SELECT column_name, data_type
+  FROM information_schema.columns
+ WHERE table_name = 'tenants'
+   AND column_name IN ('estimator_addon_purchased', 'stripe_estimator_subscription_id');

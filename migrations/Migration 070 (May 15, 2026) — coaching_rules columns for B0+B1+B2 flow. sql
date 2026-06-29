@@ -1,0 +1,12 @@
+-- Migration 070 (May 15, 2026) — coaching_rules columns for B0+B1+B2 flow.
+--
+-- mig 069 created coaching_rules with the core fields but omitted three
+-- columns the B1 extractor + B2 approval queue depend on. Without these
+-- the cron loops forever failing INSERT, and B2 reject would 500.
+--
+-- IF NOT EXISTS makes it idempotent — safe to re-run.
+
+ALTER TABLE coaching_rules
+  ADD COLUMN IF NOT EXISTS example_quote   TEXT,
+  ADD COLUMN IF NOT EXISTS rejected_at     TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS rejected_reason TEXT;

@@ -1,0 +1,392 @@
+-- ============================================================================
+-- Migration 065 — Phase 7 Estimator: Gutters Vertical Seed
+-- Date:    May 11, 2026
+-- Author:  Drew Koch
+-- Phase:   7 (Estimator Engine V1, Wave 2 — Paragon Exteriors launch)
+--
+-- Context:
+--   Adds Gutters as the fifth vertical for Phase 7. Per Drew's spec for
+--   Paragon Exteriors: "everything but cleaning" — install, replacement,
+--   repair (via specialized routing for major), downspouts, gutter guards.
+--   No standalone cleaning service.
+--
+-- Pricing model:
+--   base_cost = gutter_linear_ft × per_lf_rate
+--   downspouts billed per-unit via flat_per_item modifier (matches fence
+--   gates_count pattern from Mig 064).
+--
+-- Service strategy:
+--   Four "install gutters" services (5" aluminum, 6" aluminum, half-round,
+--   copper) plus a fifth standalone "gutter_guards" service for customers
+--   adding guards to existing gutters. Guard upgrades for new gutters are
+--   available as a per_lf scope option on each install service.
+--
+-- Idempotency:
+--   ON CONFLICT DO NOTHING throughout. Safe to re-run.
+-- ============================================================================
+
+BEGIN;
+
+-- ============================================================================
+-- SECTION 1: SEED — Gutters vertical
+-- ============================================================================
+INSERT INTO verticals (slug, display_name, status, pricing_mode) VALUES
+  ('gutters', 'Gutters', 'active', 'bundled')
+ON CONFLICT (slug) DO NOTHING;
+
+DO $$
+DECLARE
+  v_gutters_id INTEGER;
+BEGIN
+  SELECT vertical_id INTO v_gutters_id FROM verticals WHERE slug = 'gutters';
+  RAISE NOTICE 'Gutters vertical_id = %', v_gutters_id;
+END $$;
+
+-- ============================================================================
+-- SECTION 2: SEED — Gutters regional multipliers
+-- ============================================================================
+INSERT INTO vertical_regional_multipliers (vertical_id, bucket, multiplier)
+SELECT v.vertical_id, b.bucket, b.mult
+FROM verticals v
+CROSS JOIN (VALUES
+  ('high', 1.25),
+  ('mid',  1.00),
+  ('low',  0.85)
+) AS b(bucket, mult)
+WHERE v.slug = 'gutters'
+ON CONFLICT (vertical_id, bucket) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 3: SEED — Gutters services (5 rows)
+-- ============================================================================
+INSERT INTO vertical_services (vertical_id, service_slug, display_name, pricing_mode, unit, sort_order, materials_pct)
+SELECT v.vertical_id, s.slug, s.display_name, s.pricing_mode, s.unit, s.sort_order, s.materials_pct
+FROM verticals v
+CROSS JOIN (VALUES
+  ('gutter_aluminum_5in', '5" Aluminum Gutters',      'bundled_per_unit_area', 'linear_foot', 1, 40.00),
+  ('gutter_aluminum_6in', '6" Aluminum Gutters',      'bundled_per_unit_area', 'linear_foot', 2, 45.00),
+  ('gutter_half_round',   'Half-Round Gutters',       'bundled_per_unit_area', 'linear_foot', 3, 55.00),
+  ('gutter_copper',       'Copper Gutters',           'bundled_per_unit_area', 'linear_foot', 4, 75.00),
+  ('gutter_guards',       'Gutter Guards (existing)', 'bundled_per_unit_area', 'linear_foot', 5, 50.00)
+) AS s(slug, display_name, pricing_mode, unit, sort_order, materials_pct)
+WHERE v.slug = 'gutters'
+ON CONFLICT (vertical_id, service_slug) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 4: SEED — Gutters modifier categories (4 rows)
+-- ============================================================================
+-- gutter_height: percentage modifier (ladder labor scales with story count)
+-- existing_removal: percentage modifier
+-- downspouts_count: flat_per_item (mirrors fence gates_count, Mig 064)
+-- access_difficulty: percentage modifier
+-- ----------------------------------------------------------------------------
+INSERT INTO vertical_modifier_categories (vertical_id, category_slug, display_name, modifier_type, multi_select, options, sort_order)
+SELECT v.vertical_id, m.slug, m.display_name, m.mod_type, m.multi_select, m.options::jsonb, m.sort_order
+FROM verticals v
+CROSS JOIN (VALUES
+
+  -- Gutter height (single-select; affects ladder/labor difficulty)
+  ('gutter_height', 'Gutter height (stories)', 'percentage', FALSE,
+   '[
+     {"value": "single",     "label": "Single story",          "adjustment":  0.00},
+     {"value": "two_story",  "label": "Two-story",             "adjustment":  0.15},
+     {"value": "three_plus", "label": "Three or more stories", "adjustment": null, "routes_to": "specialized"}
+   ]', 1),
+
+  -- Existing removal (single-select)
+  ('existing_removal', 'Existing gutter removal', 'percentage', FALSE,
+   '[
+     {"value": "no_removal",       "label": "New construction (no removal)",   "adjustment": 0.00},
+     {"value": "aluminum_removal", "label": "Remove existing aluminum",        "adjustment": 0.05},
+     {"value": "severe_damage",    "label": "Severe damage / rusted / falling","adjustment": 0.15}
+   ]', 2),
+
+  -- Downspouts count (flat_per_item; mirrors fence gates pattern)
+  -- adjustment is per-downspout cost in CENTS (15000 = $150/downspout).
+  ('downspouts_count', 'Number of downspouts', 'flat_per_item', FALSE,
+   '[
+     {"value": "downspouts", "label": "Downspouts", "adjustment": 15000}
+   ]', 3),
+
+  -- Access difficulty (single-select)
+  ('access_difficulty', 'Access difficulty', 'percentage', FALSE,
+   '[
+     {"value": "standard",     "label": "Standard access",       "adjustment":  0.00},
+     {"value": "complex",      "label": "Tight or sloped lot",   "adjustment":  0.10},
+     {"value": "very_complex", "label": "Very difficult access", "adjustment": null, "routes_to": "specialized"}
+   ]', 4)
+
+) AS m(slug, display_name, mod_type, multi_select, options, sort_order)
+WHERE v.slug = 'gutters'
+ON CONFLICT (vertical_id, category_slug) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 5: SEED — Service-modifier junction (20 rows = 4 mods × 5 services)
+-- ============================================================================
+INSERT INTO vertical_service_modifier_categories (service_id, modifier_category_id, required, sort_order)
+SELECT s.id, m.id, mapping.required, mapping.sort_order
+FROM vertical_services s
+JOIN verticals v ON s.vertical_id = v.vertical_id
+JOIN vertical_modifier_categories m ON m.vertical_id = v.vertical_id
+JOIN (VALUES
+  ('gutter_aluminum_5in', 'gutter_height',     TRUE,  1),
+  ('gutter_aluminum_5in', 'existing_removal',  TRUE,  2),
+  ('gutter_aluminum_5in', 'downspouts_count',  FALSE, 3),
+  ('gutter_aluminum_5in', 'access_difficulty', TRUE,  4),
+
+  ('gutter_aluminum_6in', 'gutter_height',     TRUE,  1),
+  ('gutter_aluminum_6in', 'existing_removal',  TRUE,  2),
+  ('gutter_aluminum_6in', 'downspouts_count',  FALSE, 3),
+  ('gutter_aluminum_6in', 'access_difficulty', TRUE,  4),
+
+  ('gutter_half_round',   'gutter_height',     TRUE,  1),
+  ('gutter_half_round',   'existing_removal',  TRUE,  2),
+  ('gutter_half_round',   'downspouts_count',  FALSE, 3),
+  ('gutter_half_round',   'access_difficulty', TRUE,  4),
+
+  ('gutter_copper',       'gutter_height',     TRUE,  1),
+  ('gutter_copper',       'existing_removal',  TRUE,  2),
+  ('gutter_copper',       'downspouts_count',  FALSE, 3),
+  ('gutter_copper',       'access_difficulty', TRUE,  4),
+
+  ('gutter_guards',       'gutter_height',     TRUE,  1),
+  ('gutter_guards',       'existing_removal',  FALSE, 2),
+  ('gutter_guards',       'downspouts_count',  FALSE, 3),
+  ('gutter_guards',       'access_difficulty', TRUE,  4)
+) AS mapping(service_slug, mod_slug, required, sort_order)
+  ON s.service_slug = mapping.service_slug AND m.category_slug = mapping.mod_slug
+WHERE v.slug = 'gutters'
+ON CONFLICT (service_id, modifier_category_id) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 6: SEED — Widget questions (8 universal)
+-- ============================================================================
+INSERT INTO vertical_widget_questions (vertical_id, service_slug, question_slug, question_type, label, helper_text, options, required, sort_order)
+SELECT v.vertical_id, q.service_slug, q.question_slug, q.question_type, q.label, q.helper_text, q.options::jsonb, q.required, q.sort_order
+FROM verticals v
+CROSS JOIN (VALUES
+
+  -- 1. Service type
+  (NULL, 'service_type', 'select',
+   'What type of gutter work do you need?',
+   'Not sure? Pick the closest match — we''ll confirm during the walkthrough.',
+   '[
+     {"value": "gutter_aluminum_5in", "label": "5\" Aluminum gutters (standard)"},
+     {"value": "gutter_aluminum_6in", "label": "6\" Aluminum gutters (high-volume)"},
+     {"value": "gutter_half_round",   "label": "Half-round gutters"},
+     {"value": "gutter_copper",       "label": "Copper gutters (premium)"},
+     {"value": "gutter_guards",       "label": "Gutter guards on existing gutters"},
+     {"value": "specialized",         "label": "Repair / specialized project"}
+   ]', TRUE, 1),
+
+  -- 2. Linear feet — primary input
+  (NULL, 'gutter_linear_ft', 'number',
+   'How many linear feet of gutter do you need?',
+   'Total perimeter — a typical home has 100-200 linear feet of gutter.',
+   '{"min": 10, "max": 1000, "step": 10, "unit": "linear_feet"}', TRUE, 2),
+
+  -- 3. Gutter height (stories)
+  (NULL, 'gutter_height', 'select',
+   'How tall is your home?',
+   'Two-story homes require taller ladders and more labor.',
+   '[
+     {"value": "single",     "label": "Single story"},
+     {"value": "two_story",  "label": "Two-story"},
+     {"value": "three_plus", "label": "Three or more stories", "routes_to": "specialized"}
+   ]', TRUE, 3),
+
+  -- 4. Existing removal
+  (NULL, 'existing_removal', 'select',
+   'Do existing gutters need to be removed?',
+   NULL,
+   '[
+     {"value": "no_removal",       "label": "New construction (no removal)"},
+     {"value": "aluminum_removal", "label": "Remove existing aluminum gutters"},
+     {"value": "severe_damage",    "label": "Severe damage / rusted / falling"}
+   ]', TRUE, 4),
+
+  -- 5. Downspouts count (number, feeds flat_per_item modifier)
+  (NULL, 'downspouts_count', 'number',
+   'How many downspouts do you need?',
+   'Most homes need 4-8 downspouts. We''ll confirm during the walkthrough.',
+   '{"min": 0, "max": 20, "step": 1, "unit": "downspouts"}', TRUE, 5),
+
+  -- 6. Access difficulty
+  (NULL, 'access_difficulty', 'select',
+   'How would you describe property access?',
+   'Tight lots or landscaping near the house can add to ladder setup time.',
+   '[
+     {"value": "standard",     "label": "Standard — flat lot, easy access"},
+     {"value": "complex",      "label": "Tight or sloped lot"},
+     {"value": "very_complex", "label": "Very difficult access", "routes_to": "specialized"}
+   ]', TRUE, 6),
+
+  -- 7. Add gutter guards (info question — also a scope option for new installs)
+  (NULL, 'add_gutter_guards', 'select',
+   'Would you like to add gutter guards?',
+   'Gutter guards reduce maintenance and clogs. You can decide during the walkthrough — this is just for planning.',
+   '[
+     {"value": "yes",      "label": "Yes, please include guards"},
+     {"value": "no",       "label": "No, skip guards"},
+     {"value": "discuss",  "label": "I''d like to discuss options"}
+   ]', FALSE, 7),
+
+  -- 8. Special notes
+  (NULL, 'special_notes', 'text',
+   'Anything else we should know? (Optional)',
+   'Recent storm damage, leak locations, ice dam history, etc.',
+   '{"max_length": 500}', FALSE, 90)
+
+) AS q(service_slug, question_slug, question_type, label, helper_text, options, required, sort_order)
+WHERE v.slug = 'gutters'
+ON CONFLICT (vertical_id, service_slug, question_slug) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 7: SEED — Default rates (15 rows = 5 services × 3 buckets)
+-- ============================================================================
+-- All rates in cents per LINEAR FOOT.
+-- Mid = baseline. High = +25%. Low = -15%.
+-- ----------------------------------------------------------------------------
+INSERT INTO vertical_default_rates (vertical_id, service_slug, cost_region, base_rate_min_cents, base_rate_max_cents, unit, notes)
+SELECT v.vertical_id, r.service_slug, r.region, r.min_cents, r.max_cents, r.unit, r.notes
+FROM verticals v
+CROSS JOIN (VALUES
+
+  -- 5" ALUMINUM — standard residential
+  ('gutter_aluminum_5in', 'mid',    500,  1200, 'linear_foot', 'Industry-default: seamless 5" K-style aluminum. CALIBRATE POST-LAUNCH.'),
+  ('gutter_aluminum_5in', 'high',   625,  1500, 'linear_foot', 'Derived: Mid * 1.25'),
+  ('gutter_aluminum_5in', 'low',    425,  1020, 'linear_foot', 'Derived: Mid * 0.85'),
+
+  -- 6" ALUMINUM — high-volume drainage
+  ('gutter_aluminum_6in', 'mid',    700,  1500, 'linear_foot', 'Industry-default: seamless 6" oversized aluminum. CALIBRATE POST-LAUNCH.'),
+  ('gutter_aluminum_6in', 'high',   875,  1875, 'linear_foot', 'Derived: Mid * 1.25'),
+  ('gutter_aluminum_6in', 'low',    595,  1275, 'linear_foot', 'Derived: Mid * 0.85'),
+
+  -- HALF-ROUND — decorative
+  ('gutter_half_round',   'mid',   1200,  2500, 'linear_foot', 'Industry-default: aluminum or steel half-round. CALIBRATE POST-LAUNCH.'),
+  ('gutter_half_round',   'high',  1500,  3125, 'linear_foot', 'Derived: Mid * 1.25'),
+  ('gutter_half_round',   'low',   1020,  2125, 'linear_foot', 'Derived: Mid * 0.85'),
+
+  -- COPPER — premium
+  ('gutter_copper',       'mid',   2500,  5000, 'linear_foot', 'Industry-default: 16oz copper. CALIBRATE POST-LAUNCH.'),
+  ('gutter_copper',       'high',  3125,  6250, 'linear_foot', 'Derived: Mid * 1.25'),
+  ('gutter_copper',       'low',   2125,  4250, 'linear_foot', 'Derived: Mid * 0.85'),
+
+  -- GUTTER GUARDS — standalone install on existing gutters
+  ('gutter_guards',       'mid',    700,  1800, 'linear_foot', 'Industry-default: micro-mesh or screen guards. CALIBRATE POST-LAUNCH.'),
+  ('gutter_guards',       'high',   875,  2250, 'linear_foot', 'Derived: Mid * 1.25'),
+  ('gutter_guards',       'low',    595,  1530, 'linear_foot', 'Derived: Mid * 0.85')
+
+) AS r(service_slug, region, min_cents, max_cents, unit, notes)
+WHERE v.slug = 'gutters'
+ON CONFLICT (vertical_id, service_slug, cost_region, unit) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 8: SEED — Scope options (30 rows = 6 options × 5 services)
+-- ============================================================================
+-- price_modifier_default is in DOLLARS (V1.1 convention).
+-- Per Drew's spec: no standalone cleaning. Pre-install debris disposal IS
+-- in scope (it's a necessary step, not standalone cleaning service).
+-- ----------------------------------------------------------------------------
+INSERT INTO vertical_scope_options (vertical_service_id, option_key, display_label, default_enabled, affects_includes_text, modifier_type, price_modifier_default, display_order)
+SELECT s.id, opt.option_key, opt.display_label, opt.default_enabled,
+       TRUE, opt.modifier_type, opt.price_modifier_default, opt.display_order
+FROM vertical_services s
+JOIN verticals v ON s.vertical_id = v.vertical_id
+JOIN (VALUES
+
+  -- ─── 5" ALUMINUM ───────────────────────────────────────────────────
+  ('gutter_aluminum_5in', 'include_sealant',         'Include sealant at all joints',  TRUE,  'per_lf',   2.00, 1),
+  ('gutter_aluminum_5in', 'include_hidden_hangers',  'Include hidden hangers',         TRUE,  'per_lf',   1.00, 2),
+  ('gutter_aluminum_5in', 'include_disposal',        'Include disposal of old gutters',TRUE,  'flat',   200.00, 3),
+  ('gutter_aluminum_5in', 'include_color_match',     'Include premium color match',    FALSE, 'per_lf',   2.00, 4),
+  ('gutter_aluminum_5in', 'include_gutter_guards',   'Include gutter guards upgrade',  FALSE, 'per_lf',   7.00, 5),
+  ('gutter_aluminum_5in', 'include_fascia_repair',   'Include minor fascia repair',    FALSE, 'per_lf',   5.00, 6),
+
+  -- ─── 6" ALUMINUM ───────────────────────────────────────────────────
+  ('gutter_aluminum_6in', 'include_sealant',         'Include sealant at all joints',  TRUE,  'per_lf',   2.00, 1),
+  ('gutter_aluminum_6in', 'include_hidden_hangers',  'Include heavy-duty hidden hangers',TRUE,'per_lf',   1.50, 2),
+  ('gutter_aluminum_6in', 'include_disposal',        'Include disposal of old gutters',TRUE,  'flat',   200.00, 3),
+  ('gutter_aluminum_6in', 'include_color_match',     'Include premium color match',    FALSE, 'per_lf',   2.50, 4),
+  ('gutter_aluminum_6in', 'include_gutter_guards',   'Include gutter guards upgrade',  FALSE, 'per_lf',   9.00, 5),
+  ('gutter_aluminum_6in', 'include_fascia_repair',   'Include minor fascia repair',    FALSE, 'per_lf',   5.00, 6),
+
+  -- ─── HALF-ROUND ────────────────────────────────────────────────────
+  ('gutter_half_round',   'include_sealant',             'Include sealant at all joints',  TRUE,  'per_lf',  2.50, 1),
+  ('gutter_half_round',   'include_disposal',            'Include disposal of old gutters',TRUE,  'flat',  250.00, 2),
+  ('gutter_half_round',   'include_decorative_brackets', 'Include decorative brackets',    FALSE, 'per_unit',35.00, 3),
+  ('gutter_half_round',   'include_premium_finish',      'Include premium finish',         FALSE, 'per_lf',  3.00, 4),
+  ('gutter_half_round',   'include_color_match',         'Include premium color match',    FALSE, 'per_lf',  3.00, 5),
+  ('gutter_half_round',   'include_fascia_repair',       'Include minor fascia repair',    FALSE, 'per_lf',  5.00, 6),
+
+  -- ─── COPPER ────────────────────────────────────────────────────────
+  ('gutter_copper',       'include_sealant',           'Include solder/sealant at joints',TRUE,  'per_lf',  3.00, 1),
+  ('gutter_copper',       'include_disposal',          'Include disposal of old gutters', TRUE,  'flat',  300.00, 2),
+  ('gutter_copper',       'include_patina_prep',       'Include patina prep treatment',   FALSE, 'per_lf',  2.00, 3),
+  ('gutter_copper',       'include_premium_brackets',  'Include premium copper brackets', FALSE, 'per_unit',50.00, 4),
+  ('gutter_copper',       'include_lifetime_warranty', 'Include lifetime warranty',       FALSE, 'flat',  500.00, 5),
+  ('gutter_copper',       'include_fascia_repair',     'Include minor fascia repair',     FALSE, 'per_lf',  5.00, 6),
+
+  -- ─── GUTTER GUARDS (standalone) ────────────────────────────────────
+  ('gutter_guards', 'include_corner_pieces',    'Include corner pieces',           TRUE,  'per_unit',25.00, 1),
+  ('gutter_guards', 'include_disposal',         'Include disposal of fall debris', TRUE,  'flat',   150.00, 2),
+  ('gutter_guards', 'include_screen_upgrade',   'Include premium screen upgrade',  FALSE, 'per_lf',   4.00, 3),
+  ('gutter_guards', 'include_color_match',      'Include color match',             FALSE, 'per_lf',   3.00, 4),
+  ('gutter_guards', 'include_minor_repair',     'Include minor gutter repair',     FALSE, 'flat',   300.00, 5),
+  ('gutter_guards', 'include_extended_warranty','Include extended warranty',       FALSE, 'flat',   200.00, 6)
+
+) AS opt(target_service_slug, option_key, display_label, default_enabled, modifier_type, price_modifier_default, display_order)
+  ON s.service_slug = opt.target_service_slug
+WHERE v.slug = 'gutters'
+ON CONFLICT (vertical_service_id, option_key) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 9: VERIFICATION
+-- ============================================================================
+DO $$
+DECLARE
+  v_gutters_id           INTEGER;
+  v_services_count       INTEGER;
+  v_modifiers_count      INTEGER;
+  v_junction_count       INTEGER;
+  v_questions_count      INTEGER;
+  v_rates_count          INTEGER;
+  v_multipliers_count    INTEGER;
+  v_scope_count          INTEGER;
+BEGIN
+  SELECT vertical_id INTO v_gutters_id FROM verticals WHERE slug = 'gutters';
+
+  SELECT COUNT(*) INTO v_services_count
+    FROM vertical_services WHERE vertical_id = v_gutters_id;
+  SELECT COUNT(*) INTO v_modifiers_count
+    FROM vertical_modifier_categories WHERE vertical_id = v_gutters_id;
+  SELECT COUNT(*) INTO v_junction_count
+    FROM vertical_service_modifier_categories vsmc
+    JOIN vertical_services vs ON vs.id = vsmc.service_id
+    WHERE vs.vertical_id = v_gutters_id;
+  SELECT COUNT(*) INTO v_questions_count
+    FROM vertical_widget_questions WHERE vertical_id = v_gutters_id;
+  SELECT COUNT(*) INTO v_rates_count
+    FROM vertical_default_rates WHERE vertical_id = v_gutters_id;
+  SELECT COUNT(*) INTO v_multipliers_count
+    FROM vertical_regional_multipliers WHERE vertical_id = v_gutters_id;
+  SELECT COUNT(*) INTO v_scope_count
+    FROM vertical_scope_options vso
+    JOIN vertical_services vs ON vs.id = vso.vertical_service_id
+    WHERE vs.vertical_id = v_gutters_id;
+
+  RAISE NOTICE '====================================================================';
+  RAISE NOTICE 'Migration 065 — Gutters Vertical Seed COMPLETE';
+  RAISE NOTICE '====================================================================';
+  RAISE NOTICE 'Gutters vertical_id:         %', v_gutters_id;
+  RAISE NOTICE 'Services:                    %  (expected: 5)', v_services_count;
+  RAISE NOTICE 'Modifier categories:         %  (expected: 4)', v_modifiers_count;
+  RAISE NOTICE 'Service-modifier mappings:   %  (expected: 20)', v_junction_count;
+  RAISE NOTICE 'Widget questions:            %  (expected: 8)', v_questions_count;
+  RAISE NOTICE 'Default rates:               %  (expected: 15)', v_rates_count;
+  RAISE NOTICE 'Regional multipliers:        %  (expected: 3)', v_multipliers_count;
+  RAISE NOTICE 'Scope options:               %  (expected: 30)', v_scope_count;
+  RAISE NOTICE '====================================================================';
+END $$;
+
+COMMIT;

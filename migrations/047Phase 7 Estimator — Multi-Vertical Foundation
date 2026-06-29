@@ -1,0 +1,993 @@
+ Date:    April 30, 2026
+-- Author:  Drew Koch
+-- Phase:   7 (Estimator Engine V1)
+--
+-- Context:
+--   Establishes the multi-vertical architecture for Phase 7 Estimator.
+--   Per Drew's Path B decision (Apr 30): build vertical-aware tables from
+--   Day 1 rather than refactoring after painting V1 ships. Painting is
+--   seeded as the first (and only) vertical for V1. Roofing, fencing, and
+--   future verticals add via configuration only — no code changes.
+--
+--   Captures decisions from Brain Dump Sessions 1 & 2 (Apr 29-30, 2026).
+--   See conversation transcript for full decision rationale.
+--
+-- Tables created:
+--   1. verticals                            — vertical registry
+--   2. vertical_services                    — service types per vertical
+--   3. vertical_modifier_categories         — modifier dictionary per vertical
+--   4. vertical_service_modifier_categories — junction (which mods apply to which services)
+--   5. vertical_widget_questions            — homeowner-facing form questions
+--   6. vertical_default_rates               — per-service/region default rates
+--   7. state_cost_buckets                   — global state→bucket mapping
+--   8. vertical_regional_multipliers        — per-vertical bucket multipliers
+--
+-- Tenant column additions:
+--   - vertical_id                  — which vertical the tenant operates in
+--   - cost_region                  — bucket override (high/mid/low/custom/null=auto)
+--   - cost_custom_percentage       — used when cost_region='custom'
+--   - estimator_widget_enabled     — toggle 1: widget on website
+--   - estimator_pop_enabled        — toggle 2: proactive bubble pop
+--   - estimator_voice_enabled      — toggle 3: voice quoting (V1 placeholder, V2 wires real)
+--   - estimator_addon_purchased    — Basic/Pro paywall gate ($15/mo add-on)
+--
+-- Lead column addition:
+--   - estimator_payload JSONB      — full project scope from estimator widget
+--
+-- Idempotency:
+--   Safe to run multiple times. Uses CREATE TABLE IF NOT EXISTS, defensive
+--   DO blocks for column additions, and ON CONFLICT clauses for seed data.
+-- ============================================================================
+
+BEGIN;
+
+-- ============================================================================
+-- SECTION 1: SCHEMA — Tables, indexes, foreign keys
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- Table 1: verticals
+-- The registry of home services verticals supported by the estimator engine.
+-- Painting is seeded in V1. Roofing, fencing, HVAC, etc. add as new rows in V2+.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS verticals (
+  vertical_id    SERIAL PRIMARY KEY,
+  slug           VARCHAR(50) UNIQUE NOT NULL,
+  display_name   VARCHAR(100) NOT NULL,
+  status         VARCHAR(20) NOT NULL DEFAULT 'active',
+    -- 'active' | 'draft' | 'archived'
+  pricing_mode   VARCHAR(30) NOT NULL DEFAULT 'bundled',
+    -- 'bundled' | 'split' (labor + materials separate)
+    -- Painting V1 = bundled. Roofing/Fencing V2 = split.
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_verticals_slug ON verticals(slug);
+CREATE INDEX IF NOT EXISTS idx_verticals_status ON verticals(status);
+
+COMMENT ON TABLE verticals IS
+  'Registry of home services verticals (painting, roofing, fencing, etc.). One row per vertical.';
+COMMENT ON COLUMN verticals.pricing_mode IS
+  'bundled = single rate covers labor+materials. split = labor and materials priced separately. Painting V1 = bundled.';
+
+-- ----------------------------------------------------------------------------
+-- Table 2: vertical_services
+-- The services offered within each vertical. Per-service pricing_mode allows
+-- different math per service even within one vertical (Interior is per-room,
+-- Exterior is per-paintable-sqft, Cabinets is per-facing).
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS vertical_services (
+  id                  SERIAL PRIMARY KEY,
+  vertical_id         INTEGER NOT NULL REFERENCES verticals(vertical_id) ON DELETE CASCADE,
+  service_slug        VARCHAR(50) NOT NULL,
+  display_name        VARCHAR(100) NOT NULL,
+  pricing_mode        VARCHAR(40) NOT NULL,
+    -- 'bundled_per_unit_area' | 'bundled_per_item_count' | 'split_per_unit_area' | 'flat_range'
+  unit                VARCHAR(30) NOT NULL,
+    -- 'sqft' | 'linear_ft' | 'door_drawer_facing' | 'room' | 'item' | 'job'
+  sort_order          INTEGER NOT NULL DEFAULT 0,
+  enabled_by_default  BOOLEAN NOT NULL DEFAULT TRUE,
+  is_specialized      BOOLEAN NOT NULL DEFAULT FALSE,
+    -- TRUE = routes to in-person, no widget quote
+  materials_pct       DECIMAL(5,2),
+    -- Painting metadata only (V1). NULL for split-mode verticals.
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (vertical_id, service_slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vertical_services_vertical_id ON vertical_services(vertical_id);
+
+COMMENT ON TABLE vertical_services IS
+  'Services offered within each vertical. Painting has Interior/Exterior/Cabinets/Deck-Fence + specialized.';
+COMMENT ON COLUMN vertical_services.pricing_mode IS
+  'Math model for this service. bundled_per_unit_area=rate*area*modifiers. bundled_per_item_count=rate*count*modifiers.';
+COMMENT ON COLUMN vertical_services.materials_pct IS
+  'Painting V1 metadata: approximate % of rate that is materials. Does not affect math, used for analytics.';
+
+-- ----------------------------------------------------------------------------
+-- Table 3: vertical_modifier_categories
+-- The modifier dictionary per vertical. Each category has options stored as
+-- JSONB. Engine reads (category_slug, selected_option) and looks up adjustment.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS vertical_modifier_categories (
+  id                  SERIAL PRIMARY KEY,
+  vertical_id         INTEGER NOT NULL REFERENCES verticals(vertical_id) ON DELETE CASCADE,
+  category_slug       VARCHAR(50) NOT NULL,
+  display_name        VARCHAR(100) NOT NULL,
+  modifier_type       VARCHAR(20) NOT NULL DEFAULT 'percentage',
+    -- 'percentage' | 'flat_per_item' | 'flat_per_project'
+  multi_select        BOOLEAN NOT NULL DEFAULT FALSE,
+    -- TRUE = homeowner can pick multiple options, all adjustments compound
+  options             JSONB NOT NULL DEFAULT '[]'::jsonb,
+    -- [{value, label, adjustment}] — adjustment is decimal (0.25 = +25%)
+    -- For flat_per_item: adjustment is dollar amount in cents (3500 = $35)
+  sort_order          INTEGER NOT NULL DEFAULT 0,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (vertical_id, category_slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vertical_modifier_categories_vertical_id
+  ON vertical_modifier_categories(vertical_id);
+
+COMMENT ON TABLE vertical_modifier_categories IS
+  'Modifier dictionary per vertical. Pricing engine reads category+selection, applies adjustment.';
+COMMENT ON COLUMN vertical_modifier_categories.modifier_type IS
+  'percentage = multiplicative (1+adj). flat_per_item = additive in cents. flat_per_project = single addition.';
+
+-- ----------------------------------------------------------------------------
+-- Table 4: vertical_service_modifier_categories (junction)
+-- Maps which modifier categories apply to which services. Cabinets gets
+-- finish_change/glass_inserts/damage. Interior gets year_built/style/complexity.
+-- Without this, widget would show year-built question to Cabinets shoppers.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS vertical_service_modifier_categories (
+  id                          SERIAL PRIMARY KEY,
+  service_id                  INTEGER NOT NULL REFERENCES vertical_services(id) ON DELETE CASCADE,
+  modifier_category_id        INTEGER NOT NULL REFERENCES vertical_modifier_categories(id) ON DELETE CASCADE,
+  required                    BOOLEAN NOT NULL DEFAULT FALSE,
+  sort_order                  INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (service_id, modifier_category_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vsmc_service_id
+  ON vertical_service_modifier_categories(service_id);
+CREATE INDEX IF NOT EXISTS idx_vsmc_modifier_category_id
+  ON vertical_service_modifier_categories(modifier_category_id);
+
+COMMENT ON TABLE vertical_service_modifier_categories IS
+  'Junction: which modifier categories apply to which services. Painting has different mod sets per service.';
+
+-- ----------------------------------------------------------------------------
+-- Table 5: vertical_widget_questions
+-- The homeowner-facing form questions. Widget loads these per tenant's vertical
+-- via /api/widget/estimator-config. Order, required-ness, options all driven
+-- from this table — no hardcoded form structure in widget JS.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS vertical_widget_questions (
+  id                SERIAL PRIMARY KEY,
+  vertical_id       INTEGER NOT NULL REFERENCES verticals(vertical_id) ON DELETE CASCADE,
+  service_slug      VARCHAR(50),
+    -- NULL = applies to all services in vertical
+    -- non-NULL = only shown when this service is selected
+  question_slug     VARCHAR(50) NOT NULL,
+  question_type     VARCHAR(30) NOT NULL,
+    -- 'select' | 'multi_select' | 'number' | 'year_input' | 'text' | 'yes_no' | 'size_bucket'
+  label             TEXT NOT NULL,
+  helper_text       TEXT,
+  options           JSONB DEFAULT '[]'::jsonb,
+    -- For select/multi_select: [{value, label}]
+    -- For number: {min, max, step, unit}
+    -- For size_bucket: [{value, label, midpoint_value}]
+  required          BOOLEAN NOT NULL DEFAULT TRUE,
+  sort_order        INTEGER NOT NULL DEFAULT 0,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (vertical_id, service_slug, question_slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vertical_widget_questions_vertical_id
+  ON vertical_widget_questions(vertical_id);
+CREATE INDEX IF NOT EXISTS idx_vertical_widget_questions_service_slug
+  ON vertical_widget_questions(service_slug);
+
+COMMENT ON TABLE vertical_widget_questions IS
+  'Homeowner-facing form questions. Widget renders dynamically from this table per tenant vertical.';
+COMMENT ON COLUMN vertical_widget_questions.service_slug IS
+  'NULL = applies to all services. Set = only rendered when this service is selected.';
+
+-- ----------------------------------------------------------------------------
+-- Table 6: vertical_default_rates
+-- Per-service, per-region base rate ranges. Mid bucket is baseline (seeded
+-- from Gladiators data). High = Mid * vertical's high multiplier. Low = Mid * low.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS vertical_default_rates (
+  id                       SERIAL PRIMARY KEY,
+  vertical_id              INTEGER NOT NULL REFERENCES verticals(vertical_id) ON DELETE CASCADE,
+  service_slug             VARCHAR(50) NOT NULL,
+  cost_region              VARCHAR(10) NOT NULL,
+    -- 'high' | 'mid' | 'low'
+  base_rate_min_cents      INTEGER NOT NULL,
+  base_rate_max_cents      INTEGER NOT NULL,
+  unit                     VARCHAR(30) NOT NULL,
+    -- 'sqft' | 'linear_ft' | 'door_drawer_facing' | 'room_small' | 'room_medium' | 'room_large' | 'room_xl'
+  notes                    TEXT,
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (vertical_id, service_slug, cost_region, unit)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vertical_default_rates_lookup
+  ON vertical_default_rates(vertical_id, service_slug, cost_region);
+
+COMMENT ON TABLE vertical_default_rates IS
+  'Per-service, per-region default rate ranges. Mid = baseline (Gladiators-seeded). Painters customize in Settings.';
+
+-- ----------------------------------------------------------------------------
+-- Table 7: state_cost_buckets
+-- Global state→bucket mapping. All verticals use the same state-to-bucket
+-- assignment (cost-of-living differences are a fact, not vertical-specific).
+-- Per-vertical multipliers in vertical_regional_multipliers.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS state_cost_buckets (
+  state_code   CHAR(2) PRIMARY KEY,
+  bucket       VARCHAR(10) NOT NULL,
+    -- 'high' | 'mid' | 'low'
+  notes        TEXT,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+COMMENT ON TABLE state_cost_buckets IS
+  'Global state-to-bucket mapping. Roughly tracks regional cost-of-living for trades work.';
+
+-- ----------------------------------------------------------------------------
+-- Table 8: vertical_regional_multipliers
+-- Per-vertical multipliers applied to Mid-bucket base rates to produce
+-- High and Low bucket rates. Painting V1: high=1.50, mid=1.00, low=0.85.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS vertical_regional_multipliers (
+  id           SERIAL PRIMARY KEY,
+  vertical_id  INTEGER NOT NULL REFERENCES verticals(vertical_id) ON DELETE CASCADE,
+  bucket       VARCHAR(10) NOT NULL,
+    -- 'high' | 'mid' | 'low'
+  multiplier   DECIMAL(4,2) NOT NULL,
+    -- e.g. 1.50, 1.00, 0.85
+  UNIQUE (vertical_id, bucket)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vertical_regional_multipliers_vertical_id
+  ON vertical_regional_multipliers(vertical_id);
+
+COMMENT ON TABLE vertical_regional_multipliers IS
+  'Per-vertical multipliers per bucket. Roofing in High = different mult than Painting in High.';
+
+-- ============================================================================
+-- SECTION 2: TENANT COLUMN ADDITIONS
+-- ============================================================================
+-- Adding estimator-related columns to tenants table. Defensive DO block
+-- handles re-runs gracefully.
+-- ----------------------------------------------------------------------------
+
+DO $$
+BEGIN
+  -- vertical_id: which vertical this tenant operates in
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name='tenants' AND column_name='vertical_id') THEN
+    ALTER TABLE tenants ADD COLUMN vertical_id INTEGER REFERENCES verticals(vertical_id);
+    RAISE NOTICE 'Added tenants.vertical_id';
+  END IF;
+
+  -- cost_region: bucket override (NULL = auto-detect from state)
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name='tenants' AND column_name='cost_region') THEN
+    ALTER TABLE tenants ADD COLUMN cost_region VARCHAR(10) DEFAULT NULL;
+      -- 'high' | 'mid' | 'low' | 'custom' | NULL (auto-detect from state)
+    RAISE NOTICE 'Added tenants.cost_region';
+  END IF;
+
+  -- cost_custom_percentage: used when cost_region='custom'
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name='tenants' AND column_name='cost_custom_percentage') THEN
+    ALTER TABLE tenants ADD COLUMN cost_custom_percentage DECIMAL(5,2) DEFAULT NULL;
+      -- e.g. 18.00 means +18%, validated -50 to +100 in app layer
+    RAISE NOTICE 'Added tenants.cost_custom_percentage';
+  END IF;
+
+  -- Three estimator toggles (per Brain Dump Session 1, Q5)
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name='tenants' AND column_name='estimator_widget_enabled') THEN
+    ALTER TABLE tenants ADD COLUMN estimator_widget_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+    RAISE NOTICE 'Added tenants.estimator_widget_enabled';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name='tenants' AND column_name='estimator_pop_enabled') THEN
+    ALTER TABLE tenants ADD COLUMN estimator_pop_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+    RAISE NOTICE 'Added tenants.estimator_pop_enabled';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name='tenants' AND column_name='estimator_voice_enabled') THEN
+    ALTER TABLE tenants ADD COLUMN estimator_voice_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+      -- V1 placeholder. V2 wires real voice integration.
+    RAISE NOTICE 'Added tenants.estimator_voice_enabled (V1 placeholder)';
+  END IF;
+
+  -- estimator_addon_purchased: Basic/Pro paywall gate
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name='tenants' AND column_name='estimator_addon_purchased') THEN
+    ALTER TABLE tenants ADD COLUMN estimator_addon_purchased BOOLEAN NOT NULL DEFAULT FALSE;
+      -- Elite/Franchise/HQ tiers: ignored (always have access)
+      -- Basic/Pro: must be TRUE for toggles to function
+      -- Reseller-acquired: hidden entirely (handled in app layer)
+    RAISE NOTICE 'Added tenants.estimator_addon_purchased';
+  END IF;
+END $$;
+
+-- ============================================================================
+-- SECTION 3: LEAD COLUMN ADDITION
+-- ============================================================================
+-- Per Brain Dump Session 1, Q7a: full estimator project payload as JSONB on
+-- existing leads table. No separate estimator_submissions table.
+-- ----------------------------------------------------------------------------
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name='leads' AND column_name='estimator_payload') THEN
+    ALTER TABLE leads ADD COLUMN estimator_payload JSONB DEFAULT NULL;
+      -- Full submission: service, area, modifiers selected, calculated range, etc.
+      -- Painter sees this rendered as "Project details from estimator" on lead detail page.
+    RAISE NOTICE 'Added leads.estimator_payload';
+  END IF;
+END $$;
+
+-- ============================================================================
+-- SECTION 4: SEED DATA — State cost buckets (51 rows: 50 states + DC)
+-- ============================================================================
+-- Bucket assignment based on regional cost-of-living for trades work.
+-- Roughly tracks median household income, labor cost, licensing complexity.
+-- ON CONFLICT DO NOTHING so this section is idempotent.
+-- ----------------------------------------------------------------------------
+
+INSERT INTO state_cost_buckets (state_code, bucket, notes) VALUES
+  -- High-cost markets (10): coastal metros + Hawaii
+  ('CA', 'high', 'California — high labor, licensing complexity, union presence'),
+  ('NY', 'high', 'New York — NYC + suburbs drive average up'),
+  ('MA', 'high', 'Massachusetts — Boston metro, high labor cost'),
+  ('WA', 'high', 'Washington — Seattle metro, tech-driven cost-of-living'),
+  ('HI', 'high', 'Hawaii — island logistics, material premiums'),
+  ('NJ', 'high', 'New Jersey — NYC commuter belt'),
+  ('CT', 'high', 'Connecticut — NYC commuter belt'),
+  ('MD', 'high', 'Maryland — DC suburbs'),
+  ('DC', 'high', 'District of Columbia'),
+  ('OR', 'high', 'Oregon — Portland metro'),
+
+  -- Low-cost markets (11): rural + low-COL states
+  ('WY', 'low', 'Wyoming — rural, low labor cost'),
+  ('MS', 'low', 'Mississippi — lowest median income state'),
+  ('AR', 'low', 'Arkansas — rural, low COL'),
+  ('WV', 'low', 'West Virginia — rural, low COL'),
+  ('OK', 'low', 'Oklahoma — low COL, low licensing barrier'),
+  ('AL', 'low', 'Alabama — low COL'),
+  ('KY', 'low', 'Kentucky — low COL'),
+  ('NM', 'low', 'New Mexico — low COL'),
+  ('LA', 'low', 'Louisiana — low COL outside New Orleans'),
+  ('TN', 'low', 'Tennessee — low COL outside Nashville'),
+  ('IN', 'low', 'Indiana — low COL'),
+
+  -- Mid-cost markets (30): everything else, includes Gladiators (NE)
+  ('AK', 'mid', 'Alaska — high logistics offset by low population'),
+  ('AZ', 'mid', 'Arizona — Phoenix metro mid, rural low'),
+  ('CO', 'mid', 'Colorado — Denver/Boulder driving up'),
+  ('DE', 'mid', 'Delaware'),
+  ('FL', 'mid', 'Florida — variance high, Miami high but state mid'),
+  ('GA', 'mid', 'Georgia — Atlanta metro mid'),
+  ('IA', 'mid', 'Iowa'),
+  ('ID', 'mid', 'Idaho — Boise driving up from Low'),
+  ('IL', 'mid', 'Illinois — Chicago metro pulls up state average'),
+  ('KS', 'mid', 'Kansas'),
+  ('ME', 'mid', 'Maine'),
+  ('MI', 'mid', 'Michigan'),
+  ('MN', 'mid', 'Minnesota — Twin Cities metro'),
+  ('MO', 'mid', 'Missouri'),
+  ('MT', 'mid', 'Montana'),
+  ('NC', 'mid', 'North Carolina — Charlotte/RDU metros'),
+  ('ND', 'mid', 'North Dakota'),
+  ('NE', 'mid', 'Nebraska — Gladiators home market, baseline reference'),
+  ('NH', 'mid', 'New Hampshire'),
+  ('NV', 'mid', 'Nevada — Las Vegas metro'),
+  ('OH', 'mid', 'Ohio'),
+  ('PA', 'mid', 'Pennsylvania — Philly metro mid'),
+  ('RI', 'mid', 'Rhode Island'),
+  ('SC', 'mid', 'South Carolina'),
+  ('SD', 'mid', 'South Dakota'),
+  ('TX', 'mid', 'Texas — wide variance, Austin/Dallas higher than rural'),
+  ('UT', 'mid', 'Utah — Salt Lake metro'),
+  ('VA', 'mid', 'Virginia — DC suburbs high but state average mid'),
+  ('VT', 'mid', 'Vermont'),
+  ('WI', 'mid', 'Wisconsin')
+ON CONFLICT (state_code) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 5: SEED DATA — Painting vertical
+-- ============================================================================
+-- The first vertical seeded for V1. All values grounded in Gladiators
+-- pricing data captured during Brain Dump Sessions 1 & 2 (Apr 29-30, 2026).
+-- Industry-default values flagged in comments for post-launch calibration.
+-- ----------------------------------------------------------------------------
+
+-- ----- 5.1: Insert painting vertical -----
+INSERT INTO verticals (slug, display_name, status, pricing_mode) VALUES
+  ('painting', 'Painting', 'active', 'bundled')
+ON CONFLICT (slug) DO NOTHING;
+
+-- Capture the painting vertical_id for use in subsequent inserts
+DO $$
+DECLARE
+  v_painting_id INTEGER;
+BEGIN
+  SELECT vertical_id INTO v_painting_id FROM verticals WHERE slug = 'painting';
+  RAISE NOTICE 'Painting vertical_id = %', v_painting_id;
+END $$;
+
+-- ----- 5.2: Painting regional multipliers -----
+INSERT INTO vertical_regional_multipliers (vertical_id, bucket, multiplier)
+SELECT v.vertical_id, b.bucket, b.mult
+FROM verticals v
+CROSS JOIN (VALUES
+  ('high', 1.50),
+  ('mid',  1.00),
+  ('low',  0.85)
+) AS b(bucket, mult)
+WHERE v.slug = 'painting'
+ON CONFLICT (vertical_id, bucket) DO NOTHING;
+
+-- ----- 5.3: Painting services -----
+-- 4 quoted services + specialized (specialized handled via routing logic in app, not as service row)
+INSERT INTO vertical_services (vertical_id, service_slug, display_name, pricing_mode, unit, sort_order, materials_pct)
+SELECT v.vertical_id, s.slug, s.display_name, s.pricing_mode, s.unit, s.sort_order, s.materials_pct
+FROM verticals v
+CROSS JOIN (VALUES
+  ('interior',   'Interior Painting',     'bundled_per_item_count', 'room',                1, 22.00),
+  ('exterior',   'Exterior Painting',     'bundled_per_unit_area',  'paintable_sqft',      2, 28.00),
+  ('cabinets',   'Cabinet Refinishing',   'bundled_per_item_count', 'door_drawer_facing',  3, 25.00),
+  ('deck_fence', 'Deck & Fence',          'bundled_per_unit_area',  'sqft_or_linear_ft',   4, 40.00)
+) AS s(slug, display_name, pricing_mode, unit, sort_order, materials_pct)
+WHERE v.slug = 'painting'
+ON CONFLICT (vertical_id, service_slug) DO NOTHING;
+
+-- ----- 5.4: Painting modifier categories -----
+-- Each category has its options as JSONB. Adjustments are decimal multipliers
+-- (0.25 = +25%) for percentage type, cents for flat_per_item type.
+INSERT INTO vertical_modifier_categories (vertical_id, category_slug, display_name, modifier_type, multi_select, options, sort_order)
+SELECT v.vertical_id, m.slug, m.display_name, m.mod_type, m.multi_select, m.options::jsonb, m.sort_order
+FROM verticals v
+CROSS JOIN (VALUES
+  -- Year built (Interior + Exterior)
+  ('year_built', 'Year built', 'percentage', FALSE,
+   '[
+     {"value": "pre_1978",     "label": "Before 1978",   "adjustment": 0.25},
+     {"value": "1978_2000",    "label": "1978-2000",     "adjustment": 0.00},
+     {"value": "2000_plus",    "label": "2000 or later", "adjustment": -0.05},
+     {"value": "custom_historic", "label": "Custom or historic home", "adjustment": null, "routes_to": "specialized"}
+   ]', 1),
+
+  -- Home style (Interior + Exterior)
+  ('home_style', 'Home style', 'percentage', FALSE,
+   '[
+     {"value": "ranch",     "label": "Ranch (single story)",   "adjustment": 0.00},
+     {"value": "two_story", "label": "Two-story",              "adjustment": 0.10},
+     {"value": "split",     "label": "Split-level",            "adjustment": 0.08},
+     {"value": "modern",    "label": "Modern / Contemporary",  "adjustment": 0.05},
+     {"value": "victorian", "label": "Victorian / Craftsman",  "adjustment": null, "routes_to": "specialized"}
+   ]', 2),
+
+  -- Interior complexity (multi-select)
+  ('interior_complexity', 'Project details', 'percentage', TRUE,
+   '[
+     {"value": "vaulted_ceilings",  "label": "Vaulted or high ceilings",        "adjustment": 0.20},
+     {"value": "occupied_home",     "label": "Home occupied during work",       "adjustment": 0.15},
+     {"value": "decorative_trim",   "label": "Lots of decorative trim",         "adjustment": 0.15},
+     {"value": "two_coat",          "label": "Two-coat coverage required",      "adjustment": 0.25}
+   ]', 3),
+
+  -- Hallway/staircase height modifier
+  ('stair_hall_height', 'Hallway or staircase access', 'percentage', FALSE,
+   '[
+     {"value": "standard", "label": "Standard 8-10 foot ceilings", "adjustment": 0.00},
+     {"value": "tall",     "label": "Tall (10+ foot or staircase)", "adjustment": 0.05}
+   ]', 4),
+
+  -- Exterior story coefficient (built into pricing logic, not a modifier — but documented here for audit)
+  -- Implemented in widget question logic, not as a modifier multiplication.
+
+  -- Exterior walk-out basement
+  ('walk_out_basement', 'Walk-out basement', 'percentage', FALSE,
+   '[
+     {"value": "no",  "label": "No walk-out basement", "adjustment": 0.00},
+     {"value": "yes", "label": "Walk-out basement",   "adjustment": 0.20}
+   ]', 5),
+
+  -- Exterior coatings tier
+  ('coatings', 'Surface preparation', 'percentage', FALSE,
+   '[
+     {"value": "paint_on_paint",     "label": "Paint over existing paint (typical)", "adjustment": 0.00},
+     {"value": "primer_one_coat",    "label": "Primer + 1 coat",                     "adjustment": 0.25},
+     {"value": "primer_two_coat",    "label": "Primer + 2 coats (premium)",          "adjustment": 0.50},
+     {"value": "heavy_damage",       "label": "Significant damage / extensive prep", "adjustment": null, "routes_to": "specialized"}
+   ]', 6),
+
+  -- Exterior difficult access
+  ('difficult_access', 'Access difficulty', 'percentage', FALSE,
+   '[
+     {"value": "standard",  "label": "Standard access",                        "adjustment": 0.00},
+     {"value": "difficult", "label": "Heavy landscaping or steep terrain",     "adjustment": 0.15}
+   ]', 7),
+
+  -- Cabinets: finish change
+  ('finish_change', 'Current and desired finish', 'percentage', FALSE,
+   '[
+     {"value": "paint_to_paint", "label": "Painted now → paint again",         "adjustment": 0.00},
+     {"value": "stain_to_stain", "label": "Stained now → stain again",         "adjustment": 0.60},
+     {"value": "stain_to_paint", "label": "Stained now → want it painted",    "adjustment": 0.60}
+   ]', 8),
+
+  -- Cabinets: glass inserts (FLAT per item, not percentage)
+  ('glass_inserts', 'Glass-front cabinet doors', 'flat_per_item', FALSE,
+   '[
+     {"value": "count", "label": "Number of doors with glass inserts", "adjustment": 3500, "unit_label": "$35 per door"}
+   ]', 9),
+
+  -- Cabinets: damage/repair
+  ('cabinet_damage', 'Damage or repair needed', 'percentage', FALSE,
+   '[
+     {"value": "no",  "label": "No repairs needed",     "adjustment": 0.00},
+     {"value": "yes", "label": "Some repair needed",    "adjustment": 0.10}
+   ]', 10),
+
+  -- Cabinets: large island
+  ('large_island', 'Large kitchen island', 'percentage', FALSE,
+   '[
+     {"value": "no",  "label": "No island or small island", "adjustment": 0.00},
+     {"value": "yes", "label": "Yes, large island",         "adjustment": 0.10}
+   ]', 11),
+
+  -- Deck/Fence: deck condition (industry default — Drew to calibrate post-launch)
+  ('deck_condition', 'Deck condition', 'percentage', FALSE,
+   '[
+     {"value": "good",         "label": "Good condition",        "adjustment": 0.00},
+     {"value": "weathered",    "label": "Weathered / gray",      "adjustment": 0.20},
+     {"value": "heavy_weather","label": "Heavy weathering",      "adjustment": 0.40}
+   ]', 12),
+
+  -- Deck/Fence: fence height
+  ('fence_height', 'Fence height', 'percentage', FALSE,
+   '[
+     {"value": "4_foot", "label": "4-foot",            "adjustment": -0.15},
+     {"value": "6_foot", "label": "6-foot (standard)", "adjustment": 0.00},
+     {"value": "8_foot", "label": "8-foot (privacy)",  "adjustment": 0.25}
+   ]', 13),
+
+  -- Deck/Fence: two-sided staining
+  ('two_sided_stain', 'Stain both sides of fence', 'percentage', FALSE,
+   '[
+     {"value": "no",  "label": "One side only", "adjustment": 0.00},
+     {"value": "yes", "label": "Both sides",     "adjustment": 0.60}
+   ]', 14)
+) AS m(slug, display_name, mod_type, multi_select, options, sort_order)
+WHERE v.slug = 'painting'
+ON CONFLICT (vertical_id, category_slug) DO NOTHING;
+
+-- ----- 5.5: Junction — which modifiers apply to which services -----
+-- This is the table that prevents the widget from showing year-built question
+-- to a homeowner picking Cabinets.
+INSERT INTO vertical_service_modifier_categories (service_id, modifier_category_id, required, sort_order)
+SELECT s.id, m.id, mapping.required, mapping.sort_order
+FROM vertical_services s
+JOIN verticals v ON s.vertical_id = v.vertical_id
+JOIN vertical_modifier_categories m ON m.vertical_id = v.vertical_id
+JOIN (VALUES
+  -- Interior service modifiers
+  ('interior',   'year_built',          TRUE,  1),
+  ('interior',   'home_style',          TRUE,  2),
+  ('interior',   'interior_complexity', FALSE, 3),
+  ('interior',   'stair_hall_height',   FALSE, 4),
+
+  -- Exterior service modifiers
+  ('exterior',   'year_built',          TRUE,  1),
+  ('exterior',   'home_style',          TRUE,  2),
+  ('exterior',   'walk_out_basement',   TRUE,  3),
+  ('exterior',   'coatings',            TRUE,  4),
+  ('exterior',   'difficult_access',    FALSE, 5),
+
+  -- Cabinets service modifiers
+  ('cabinets',   'finish_change',       TRUE,  1),
+  ('cabinets',   'cabinet_damage',      TRUE,  2),
+  ('cabinets',   'large_island',        TRUE,  3),
+  ('cabinets',   'glass_inserts',       FALSE, 4),
+
+  -- Deck/Fence service modifiers
+  ('deck_fence', 'deck_condition',      FALSE, 1),
+  ('deck_fence', 'fence_height',        FALSE, 2),
+  ('deck_fence', 'two_sided_stain',     FALSE, 3)
+) AS mapping(service_slug, mod_slug, required, sort_order)
+  ON s.service_slug = mapping.service_slug AND m.category_slug = mapping.mod_slug
+WHERE v.slug = 'painting'
+ON CONFLICT (service_id, modifier_category_id) DO NOTHING;
+
+-- ----- 5.6: Painting widget questions -----
+-- The form questions homeowners answer. service_slug = NULL means applies to
+-- all services. Specific service_slug means only shown when that service is selected.
+INSERT INTO vertical_widget_questions (vertical_id, service_slug, question_slug, question_type, label, helper_text, options, required, sort_order)
+SELECT v.vertical_id, q.service_slug, q.question_slug, q.question_type, q.label, q.helper_text, q.options::jsonb, q.required, q.sort_order
+FROM verticals v
+CROSS JOIN (VALUES
+
+  -- Universal first question: which service?
+  (NULL, 'service_type', 'select',
+   'What service do you need?',
+   'Pick the closest match — we''ll route specialized work to an in-person visit.',
+   '[
+     {"value": "interior",   "label": "Interior Painting"},
+     {"value": "exterior",   "label": "Exterior Painting"},
+     {"value": "cabinets",   "label": "Cabinet Refinishing"},
+     {"value": "deck_fence", "label": "Deck & Fence Staining"},
+     {"value": "specialized","label": "Specialized project (in-person estimate)"}
+   ]', TRUE, 1),
+
+  -- ===== Interior questions =====
+  ('interior', 'rooms_to_paint', 'multi_select_with_count',
+   'Which rooms do you want painted?',
+   'Walls, ceiling, trim, and doors are included for each room.',
+   '[
+     {"value": "bedroom",   "label": "Bedroom"},
+     {"value": "bathroom",  "label": "Bathroom"},
+     {"value": "living",    "label": "Living room"},
+     {"value": "dining",    "label": "Dining room"},
+     {"value": "kitchen",   "label": "Kitchen (walls/ceiling, not cabinets)"},
+     {"value": "hallway",   "label": "Hallway"},
+     {"value": "stairs",    "label": "Staircase"},
+     {"value": "family",    "label": "Family / bonus room"},
+     {"value": "other",     "label": "Other room"}
+   ]', TRUE, 2),
+
+  ('interior', 'room_size', 'size_bucket',
+   'For each selected room, what''s the rough size?',
+   'Most bedrooms are Medium. Master suites and living rooms are often Large.',
+   '[
+     {"value": "small",  "label": "Small (~10x10)",            "midpoint_sqft": 100},
+     {"value": "medium", "label": "Medium (~12x16)",           "midpoint_sqft": 200},
+     {"value": "large",  "label": "Large (~14x20)",            "midpoint_sqft": 300},
+     {"value": "xl",     "label": "Extra large (16x24+)",      "midpoint_sqft": 450}
+   ]', TRUE, 3),
+
+  ('interior', 'year_built', 'year_input',
+   'What year was your home built?',
+   'Pre-1978 homes may need extra prep due to lead paint.',
+   '{"min": 1850, "max": 2026, "step": 1}', TRUE, 4),
+
+  ('interior', 'home_style', 'select',
+   'What style is your home?',
+   NULL,
+   '[
+     {"value": "ranch",     "label": "Ranch (single story)"},
+     {"value": "two_story", "label": "Two-story"},
+     {"value": "split",     "label": "Split-level"},
+     {"value": "modern",    "label": "Modern / Contemporary"},
+     {"value": "victorian", "label": "Victorian / Craftsman"}
+   ]', TRUE, 5),
+
+  ('interior', 'interior_complexity', 'multi_select',
+   'Anything special about the project? (Pick all that apply)',
+   NULL,
+   '[
+     {"value": "vaulted_ceilings",  "label": "Vaulted or high ceilings"},
+     {"value": "occupied_home",     "label": "We''ll be living there during work"},
+     {"value": "decorative_trim",   "label": "Lots of decorative trim/molding"},
+     {"value": "two_coat",          "label": "Major color change (two coats needed)"}
+   ]', FALSE, 6),
+
+  -- ===== Exterior questions =====
+  ('exterior', 'home_floor_sqft', 'number',
+   'Approximately how many square feet is your home?',
+   'Use total finished floor area (typically on your real estate listing).',
+   '{"min": 500, "max": 10000, "step": 100, "unit": "sqft"}', TRUE, 2),
+
+  ('exterior', 'stories', 'select',
+   'How many stories?',
+   '3+ stories will route to in-person estimate.',
+   '[
+     {"value": "single",    "label": "Single story",      "coefficient": 0.85},
+     {"value": "split",     "label": "Split-level",        "coefficient": 1.20},
+     {"value": "two_story", "label": "Two-story",          "coefficient": 1.50},
+     {"value": "three_plus","label": "Three or more stories", "routes_to": "specialized"}
+   ]', TRUE, 3),
+
+  ('exterior', 'year_built', 'year_input',
+   'What year was your home built?',
+   NULL,
+   '{"min": 1850, "max": 2026, "step": 1}', TRUE, 4),
+
+  ('exterior', 'home_style', 'select',
+   'What style is your home?',
+   NULL,
+   '[
+     {"value": "ranch",     "label": "Ranch"},
+     {"value": "two_story", "label": "Two-story Colonial / Traditional"},
+     {"value": "split",     "label": "Split-level"},
+     {"value": "modern",    "label": "Modern / Contemporary"},
+     {"value": "victorian", "label": "Victorian / Craftsman"}
+   ]', TRUE, 5),
+
+  ('exterior', 'walk_out_basement', 'yes_no',
+   'Do you have a walk-out basement?',
+   'A walk-out basement adds significant exterior surface to paint.',
+   '[
+     {"value": "no",  "label": "No"},
+     {"value": "yes", "label": "Yes"}
+   ]', TRUE, 6),
+
+  ('exterior', 'coatings', 'select',
+   'What level of preparation does your home need?',
+   'Most jobs are paint-over-paint. Major damage routes to in-person.',
+   '[
+     {"value": "paint_on_paint",  "label": "Paint over existing (typical)"},
+     {"value": "primer_one_coat", "label": "Primer + 1 coat"},
+     {"value": "primer_two_coat", "label": "Primer + 2 coats (premium)"},
+     {"value": "heavy_damage",    "label": "Significant damage / wood replacement"}
+   ]', TRUE, 7),
+
+  ('exterior', 'difficult_access', 'yes_no',
+   'Is access difficult? (Heavy landscaping, steep terrain)',
+   NULL,
+   '[
+     {"value": "no",  "label": "Standard access"},
+     {"value": "yes", "label": "Difficult access"}
+   ]', FALSE, 8),
+
+  -- ===== Cabinets questions =====
+  ('cabinets', 'facing_count_method', 'select',
+   'How many cabinet doors and drawer fronts?',
+   'Walk through your kitchen and count, or pick a kitchen size below.',
+   '[
+     {"value": "exact",  "label": "I''ll count them"},
+     {"value": "small",  "label": "Small kitchen (12-18 facings)",   "midpoint_count": 15},
+     {"value": "medium", "label": "Medium kitchen (22-32 facings)",  "midpoint_count": 27},
+     {"value": "large",  "label": "Large kitchen (35+ facings)",     "midpoint_count": 40}
+   ]', TRUE, 2),
+
+  ('cabinets', 'facing_count_exact', 'number',
+   'Exact count of doors and drawer fronts:',
+   'Only fill in if you picked "I''ll count them" above.',
+   '{"min": 1, "max": 100, "step": 1, "unit": "facings"}', FALSE, 3),
+
+  ('cabinets', 'finish_change', 'select',
+   'What''s the current finish, and what do you want?',
+   NULL,
+   '[
+     {"value": "paint_to_paint", "label": "Painted now → paint again"},
+     {"value": "stain_to_stain", "label": "Stained now → stain again"},
+     {"value": "stain_to_paint", "label": "Stained now → want it painted"}
+   ]', TRUE, 4),
+
+  ('cabinets', 'cabinet_damage', 'yes_no',
+   'Do any cabinets need repair before refinishing?',
+   NULL,
+   '[
+     {"value": "no",  "label": "No, they''re in good shape"},
+     {"value": "yes", "label": "Yes, some repair needed"}
+   ]', TRUE, 5),
+
+  ('cabinets', 'large_island', 'yes_no',
+   'Do you have a large kitchen island?',
+   NULL,
+   '[
+     {"value": "no",  "label": "No, or small island"},
+     {"value": "yes", "label": "Yes, large island"}
+   ]', TRUE, 6),
+
+  ('cabinets', 'glass_inserts_count', 'number',
+   'How many doors have glass inserts? (0 if none)',
+   NULL,
+   '{"min": 0, "max": 30, "step": 1, "unit": "doors"}', FALSE, 7),
+
+  -- ===== Deck/Fence questions =====
+  ('deck_fence', 'deck_or_fence', 'select',
+   'Deck, fence, or both?',
+   NULL,
+   '[
+     {"value": "deck",  "label": "Deck"},
+     {"value": "fence", "label": "Fence"},
+     {"value": "both",  "label": "Both"}
+   ]', TRUE, 2),
+
+  ('deck_fence', 'deck_size', 'number',
+   'Approximate deck square footage:',
+   'A typical 12x16 deck is about 200 sqft.',
+   '{"min": 50, "max": 2000, "step": 25, "unit": "sqft"}', FALSE, 3),
+
+  ('deck_fence', 'fence_linear_ft', 'number',
+   'Approximate fence length in linear feet:',
+   NULL,
+   '{"min": 20, "max": 1000, "step": 10, "unit": "linear_ft"}', FALSE, 4),
+
+  ('deck_fence', 'deck_condition', 'select',
+   'What condition is the deck in?',
+   NULL,
+   '[
+     {"value": "good",          "label": "Good condition"},
+     {"value": "weathered",     "label": "Weathered / gray"},
+     {"value": "heavy_weather", "label": "Heavy weathering"}
+   ]', FALSE, 5),
+
+  ('deck_fence', 'fence_height', 'select',
+   'Fence height:',
+   NULL,
+   '[
+     {"value": "4_foot", "label": "4-foot"},
+     {"value": "6_foot", "label": "6-foot (standard privacy)"},
+     {"value": "8_foot", "label": "8-foot"}
+   ]', FALSE, 6),
+
+  ('deck_fence', 'two_sided_stain', 'yes_no',
+   'Do you want both sides of the fence stained?',
+   NULL,
+   '[
+     {"value": "no",  "label": "One side only"},
+     {"value": "yes", "label": "Both sides"}
+   ]', FALSE, 7),
+
+  -- ===== Universal final questions (apply to all services) =====
+  (NULL, 'special_notes', 'text',
+   'Anything else we should know? (Optional)',
+   'Tell us about anything unusual — vaulted ceilings, custom finishes, accessibility needs, etc.',
+   '{"max_length": 500}', FALSE, 90)
+
+) AS q(service_slug, question_slug, question_type, label, helper_text, options, required, sort_order)
+WHERE v.slug = 'painting'
+ON CONFLICT (vertical_id, service_slug, question_slug) DO NOTHING;
+
+-- ----- 5.7: Painting default rates (Mid bucket = Gladiators baseline) -----
+-- High and Low buckets derived from Mid via vertical_regional_multipliers.
+-- Storing all three explicitly lets app layer query directly without computing.
+-- Cents-based for precision (no floating point currency math).
+
+-- Insert Mid bucket rates first (the source of truth from Gladiators data)
+-- Then High = Mid * 1.50, Low = Mid * 0.85
+
+INSERT INTO vertical_default_rates (vertical_id, service_slug, cost_region, base_rate_min_cents, base_rate_max_cents, unit, notes)
+SELECT v.vertical_id, r.service_slug, r.region, r.min_cents, r.max_cents, r.unit, r.notes
+FROM verticals v
+CROSS JOIN (VALUES
+  -- ===== Interior — per-room-size-bucket rates =====
+  -- Per Brain Dump Session 2: $8-$9/sqft of floor area, full pack
+  -- Small ~100 sqft = $800-$900 (Mid baseline)
+  -- Medium ~200 sqft = $1600-$1800
+  -- Large ~300 sqft = $2400-$2700
+  -- XL ~450 sqft = $3600-$4050
+
+  ('interior', 'mid',  80000,  90000, 'room_small',  'Gladiators-seed: 10x10 room full pack'),
+  ('interior', 'mid', 160000, 180000, 'room_medium', 'Gladiators-seed: 12x16 room full pack'),
+  ('interior', 'mid', 240000, 270000, 'room_large',  'Gladiators-seed: 14x20 room full pack'),
+  ('interior', 'mid', 360000, 405000, 'room_xl',     'Gladiators-seed: 16x24+ room full pack'),
+
+  -- High bucket = Mid * 1.50
+  ('interior', 'high', 120000, 135000, 'room_small',  'Derived: Mid * 1.50'),
+  ('interior', 'high', 240000, 270000, 'room_medium', 'Derived: Mid * 1.50'),
+  ('interior', 'high', 360000, 405000, 'room_large',  'Derived: Mid * 1.50'),
+  ('interior', 'high', 540000, 607500, 'room_xl',     'Derived: Mid * 1.50'),
+
+  -- Low bucket = Mid * 0.85
+  ('interior', 'low',  68000,  76500, 'room_small',  'Derived: Mid * 0.85'),
+  ('interior', 'low', 136000, 153000, 'room_medium', 'Derived: Mid * 0.85'),
+  ('interior', 'low', 204000, 229500, 'room_large',  'Derived: Mid * 0.85'),
+  ('interior', 'low', 306000, 344250, 'room_xl',     'Derived: Mid * 0.85'),
+
+  -- ===== Exterior — per-paintable-sqft rates =====
+  -- Per Brain Dump Session 2: $2.05-$2.95/sqft of paintable surface (paint-on-paint baseline)
+  -- 205 cents to 295 cents per sqft for Mid bucket
+
+  ('exterior', 'mid',  205, 295, 'paintable_sqft', 'Gladiators-seed: paint-on-paint baseline'),
+  ('exterior', 'high', 308, 443, 'paintable_sqft', 'Derived: Mid * 1.50'),
+  ('exterior', 'low',  174, 251, 'paintable_sqft', 'Derived: Mid * 0.85'),
+
+  -- ===== Cabinets — flat $125 per facing =====
+  -- Per Brain Dump Session 2: $125 flat per door/drawer facing, paint-on-paint
+  -- Variance comes from quantity, not per-facing rate
+  -- Stored as min=max for "flat" rate semantics
+
+  ('cabinets', 'mid',  12500, 12500, 'door_drawer_facing', 'Gladiators-seed: $125 flat per facing, paint-on-paint'),
+  ('cabinets', 'high', 18750, 18750, 'door_drawer_facing', 'Derived: Mid * 1.50'),
+  ('cabinets', 'low',  10625, 10625, 'door_drawer_facing', 'Derived: Mid * 0.85'),
+
+  -- ===== Deck/Fence — industry-default rates (NOT Gladiators-calibrated) =====
+  -- Per Brain Dump Session 2 Path 2: industry averages, calibrate post-launch
+  -- Deck staining: $2.50-$4.50/sqft Mid baseline
+  -- Fence staining: $2.50-$4.00/linear ft Mid baseline (6-foot standard)
+
+  ('deck_fence', 'mid',  250, 450, 'deck_sqft',   'Industry-default: deck staining/sealing. CALIBRATE POST-LAUNCH.'),
+  ('deck_fence', 'high', 375, 675, 'deck_sqft',   'Derived: Mid * 1.50'),
+  ('deck_fence', 'low',  213, 383, 'deck_sqft',   'Derived: Mid * 0.85'),
+
+  ('deck_fence', 'mid',  250, 400, 'fence_linear_ft', 'Industry-default: 6-foot fence staining. CALIBRATE POST-LAUNCH.'),
+  ('deck_fence', 'high', 375, 600, 'fence_linear_ft', 'Derived: Mid * 1.50'),
+  ('deck_fence', 'low',  213, 340, 'fence_linear_ft', 'Derived: Mid * 0.85')
+
+) AS r(service_slug, region, min_cents, max_cents, unit, notes)
+WHERE v.slug = 'painting'
+ON CONFLICT (vertical_id, service_slug, cost_region, unit) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 6: VERIFICATION
+-- ============================================================================
+-- RAISE NOTICE statements that print key counts so you can verify the migration
+-- worked as expected. These appear in psql output when running.
+-- ----------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  v_verticals_count       INTEGER;
+  v_services_count        INTEGER;
+  v_modifiers_count       INTEGER;
+  v_questions_count       INTEGER;
+  v_rates_count           INTEGER;
+  v_states_count          INTEGER;
+  v_multipliers_count     INTEGER;
+  v_junction_count        INTEGER;
+BEGIN
+  SELECT COUNT(*) INTO v_verticals_count FROM verticals;
+  SELECT COUNT(*) INTO v_services_count FROM vertical_services;
+  SELECT COUNT(*) INTO v_modifiers_count FROM vertical_modifier_categories;
+  SELECT COUNT(*) INTO v_questions_count FROM vertical_widget_questions;
+  SELECT COUNT(*) INTO v_rates_count FROM vertical_default_rates;
+  SELECT COUNT(*) INTO v_states_count FROM state_cost_buckets;
+  SELECT COUNT(*) INTO v_multipliers_count FROM vertical_regional_multipliers;
+  SELECT COUNT(*) INTO v_junction_count FROM vertical_service_modifier_categories;
+
+  RAISE NOTICE '====================================================================';
+  RAISE NOTICE 'Migration 047 — Phase 7 Estimator Multi-Vertical Foundation COMPLETE';
+  RAISE NOTICE '====================================================================';
+  RAISE NOTICE 'Verticals:                   %', v_verticals_count;
+  RAISE NOTICE 'Vertical services:           %', v_services_count;
+  RAISE NOTICE 'Modifier categories:         %', v_modifiers_count;
+  RAISE NOTICE 'Service-modifier mappings:   %', v_junction_count;
+  RAISE NOTICE 'Widget questions:            %', v_questions_count;
+  RAISE NOTICE 'Default rates:               %', v_rates_count;
+  RAISE NOTICE 'State cost buckets:          %', v_states_count;
+  RAISE NOTICE 'Regional multipliers:        %', v_multipliers_count;
+  RAISE NOTICE '====================================================================';
+  RAISE NOTICE 'Expected: 1 vertical (painting), 4 services, ~14 modifier categories,';
+  RAISE NOTICE 'multiple service-modifier mappings, ~25 widget questions, multiple';
+  RAISE NOTICE 'default rates across 3 regions, 51 state buckets, 3 regional mults.';
+  RAISE NOTICE '====================================================================';
+END $$;
+
+COMMIT;
+
+-- ============================================================================
+-- ROLLBACK (manual, run separately if migration needs to be reversed)
+-- ============================================================================
+-- WARNING: This drops all Phase 7 data. Only run if you need a clean revert.
+-- Uncomment the BEGIN/ROLLBACK lines and the DROP statements to execute.
+--
+-- BEGIN;
+--
+-- ALTER TABLE leads DROP COLUMN IF EXISTS estimator_payload;
+--
+-- ALTER TABLE tenants DROP COLUMN IF EXISTS estimator_addon_purchased;
+-- ALTER TABLE tenants DROP COLUMN IF EXISTS estimator_voice_enabled;
+-- ALTER TABLE tenants DROP COLUMN IF EXISTS estimator_pop_enabled;
+-- ALTER TABLE tenants DROP COLUMN IF EXISTS estimator_widget_enabled;
+-- ALTER TABLE tenants DROP COLUMN IF EXISTS cost_custom_percentage;
+-- ALTER TABLE tenants DROP COLUMN IF EXISTS cost_region;
+-- ALTER TABLE tenants DROP COLUMN IF EXISTS vertical_id;
+--
+-- DROP TABLE IF EXISTS vertical_regional_multipliers CASCADE;
+-- DROP TABLE IF EXISTS state_cost_buckets CASCADE;
+-- DROP TABLE IF EXISTS vertical_default_rates CASCADE;
+-- DROP TABLE IF EXISTS vertical_widget_questions CASCADE;
+-- DROP TABLE IF EXISTS vertical_service_modifier_categories CASCADE;
+-- DROP TABLE IF EXISTS vertical_modifier_categories CASCADE;
+-- DROP TABLE IF EXISTS vertical_services CASCADE;
+-- DROP TABLE IF EXISTS verticals CASCADE;
+--
+-- COMMIT;

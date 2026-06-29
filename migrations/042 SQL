@@ -1,0 +1,41 @@
+-- ============================================================
+-- Migration 042: leads.contact_method
+-- Adds acquisition-channel bucket for Rollup V5 donut + Phase 6
+-- ============================================================
+
+-- Step 1: Add nullable column (safe, no constraint yet)
+ALTER TABLE leads
+ADD COLUMN contact_method TEXT;
+
+-- Step 2: Backfill existing rows
+UPDATE leads
+SET contact_method = CASE
+  WHEN facebook_id IS NOT NULL           THEN 'facebook'
+  WHEN web_id IS NOT NULL                THEN 'web_form'
+  WHEN lead_source = 'phone'             THEN 'voice'
+  WHEN lead_source ILIKE '%dripjobs%'    THEN 'crm'
+  WHEN lead_source ILIKE '%crm%'         THEN 'crm'
+  WHEN lead_source ILIKE '%webhook%'     THEN 'crm'
+  ELSE 'unknown'
+END;
+
+-- Step 3: Verify backfill before locking — should show zero NULLs
+SELECT contact_method, COUNT(*)
+FROM leads
+GROUP BY contact_method
+ORDER BY COUNT(*) DESC;
+
+-- Step 4: Lock it down — NOT NULL + CHECK + default for future inserts
+ALTER TABLE leads
+ALTER COLUMN contact_method SET DEFAULT 'unknown';
+
+ALTER TABLE leads
+ALTER COLUMN contact_method SET NOT NULL;
+
+ALTER TABLE leads
+ADD CONSTRAINT leads_contact_method_check
+CHECK (contact_method IN ('voice','sms','web_form','facebook','crm','unknown'));
+
+-- Step 5: Index for the donut query (tenant-scoped aggregation)
+CREATE INDEX IF NOT EXISTS idx_leads_tenant_contact_method
+ON leads (tenant_id, contact_method);

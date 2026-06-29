@@ -1,0 +1,726 @@
+"use strict";
+
+/**
+ * services/sms.js
+ *
+ * Customer-facing transactional SMS messages + the multi-turn SMS
+ * cancellation conversation flow + outbound estimate link sender.
+ *
+ * Phase 2 (May 4, 2026): sendBookingCancellationSms — formal confirmation
+ *   SMS fired from cancelBooking() when cancellation comes from the
+ *   dashboard, voice, or any non-SMS callsite.
+ *
+ * Phase 4C (May 4, 2026): initiateSmsCancellation +
+ *   handleSmsCancellationIncoming — multi-turn state machine that lets a
+ *   customer cancel their appointment by texting "I want to cancel". The
+ *   AI orchestrator detects intent (sets should_cancel=true) and we drive
+ *   the rest deterministically: lookup → confirm date/time → capture
+ *   reason → fire cancelBooking with cancelled_via='sms'. State lives on
+ *   the in-memory SMS thread (server.js getOrCreateSmsThread).
+ *
+ * Phase E1 (May 4, 2026): sendEstimateLinkSms — fires when the voice AI
+ *   calls the send_estimate_link tool during a phone call. Sends the
+ *   caller a vertical-agnostic SMS with a link to the hosted estimator
+ *   page (routes/estimateLink.js). Link includes ?call_id=<callId> for
+ *   attribution back to the originating call.
+ *
+ * Migration 059 (May 8, 2026): DNC suppression added to both outbound
+ *   functions (sendBookingCancellationSms + sendEstimateLinkSms). The
+ *   customer-initiated cancellation flow is intentionally NOT gated by
+ *   DNC — those are responses to inbound customer messages, not outbound
+ *   automation. A customer who texts "cancel my appointment" deserves a
+ *   reply even if they're on the do-not-contact list.
+ *
+ * Bug #5/#6 Fix (May 13, 2026): added DNC + complaint escape hatches at
+ *   the top of handleSmsCancellationIncoming. Discovered via Bob Prange
+ *   transcript — customers expressing TCPA opt-out ("take me off your
+ *   list") or complaints ("you guys never showed up") mid-cancel-flow
+ *   were getting bounced indefinitely against the YES/NO matcher. Now
+ *   those phrases exit the state machine and fall through to the AI
+ *   orchestrator + soft-intent DNC path in processSmsConversation.
+ *
+ * Phase 12 A2 (Jun 10, 2026): durable cancel-flow state. The cancel state
+ *   machine's progress (cancelState + pendingCancelBookingId +
+ *   pendingCancelBookingsList) lived ONLY on the in-memory thread, so a
+ *   Render restart/redeploy mid-cancel wiped it and the customer had to
+ *   start over. Now mirrored to the conversation_states table (mig 091)
+ *   via persistCancelState / clearCancelState, keyed on lead_id (1-hour
+ *   TTL in lib/conversationState.js). resumeCancelMessage produces the
+ *   human "welcome back" re-orient when server.js rehydrates a cancel
+ *   flow after a gap. Mirrors the booking-flow persistence in
+ *   services/smsBooking.js exactly.
+ */
+
+const db = require("../lib/db");
+const twilio = require("../lib/twilio");
+const conversationState = require("../lib/conversationState");
+
+// ─────────────────────────────────────────────────────────────────────
+// Helpers — formatting + phone lookup
+// ─────────────────────────────────────────────────────────────────────
+
+function formatFriendlyDate(dateValue) {
+  if (!dateValue) return "your scheduled";
+  try {
+    const dateStr = typeof dateValue === "string" && !dateValue.includes("T")
+      ? `${dateValue}T00:00:00`
+      : dateValue;
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "your scheduled";
+
+    const weekday = d.toLocaleDateString("en-US", { weekday: "long" });
+    const month   = d.toLocaleDateString("en-US", { month: "long" });
+    const day     = d.getDate();
+
+    const suffix = (n) => {
+      if (n >= 11 && n <= 13) return "th";
+      switch (n % 10) {
+        case 1:  return "st";
+        case 2:  return "nd";
+        case 3:  return "rd";
+        default: return "th";
+      }
+    };
+
+    return `${weekday}, ${month} ${day}${suffix(day)}`;
+  } catch (e) {
+    return "your scheduled";
+  }
+}
+
+function getFirstName(fullName) {
+  if (!fullName || typeof fullName !== "string") return "there";
+  const parts = fullName.trim().split(/\s+/);
+  return parts[0] || "there";
+}
+
+/**
+ * Look up the tenant's primary phone number for outbound SMS. Used as
+ * both the From: number and (sometimes) embedded in body as a callback
+ * number. Mirrors the ordering rule from estimateRecovery.executeStep:
+ * primary first, then oldest.
+ */
+async function getTenantPrimaryPhone(tenantId) {
+  const res = await db.query(
+    `SELECT phone FROM phone_numbers
+      WHERE tenant_id = $1
+      ORDER BY is_primary DESC NULLS LAST, created_at ASC
+      LIMIT 1`,
+    [tenantId]
+  );
+  return res.rows[0]?.phone || null;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// DNC SUPPRESSION (Migration 059, May 8 2026)
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Check whether a phone is on the do-not-contact list for a tenant.
+ *
+ * Matches on both E.164 exact and last-10-digit normalized form to catch
+ * +14025551234 vs (402) 555-1234 vs 4025551234.
+ *
+ * Cheap query thanks to the partial index idx_leads_do_not_contact —
+ * the WHERE do_not_contact = true predicate scans only flagged rows.
+ *
+ * Returns true if blocked, false if safe to proceed.
+ */
+async function isPhoneDoNotContact(tenantId, phone) {
+  if (!tenantId || !phone) return false;
+  const last10 = String(phone).replace(/\D/g, "").slice(-10);
+  const r = await db.query(
+    `SELECT 1 FROM leads
+      WHERE tenant_id = $1
+        AND do_not_contact = true
+        AND (
+          phone = $2
+          OR right(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) = $3
+        )
+      LIMIT 1`,
+    [tenantId, phone, last10]
+  );
+  return r.rows.length > 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 2: transactional cancellation SMS
+// ─────────────────────────────────────────────────────────────────────
+
+async function sendBookingCancellationSms(tenant, booking) {
+  if (!tenant || !booking) {
+    console.warn("[SMS Cancel] Missing tenant or booking, skipping");
+    return { ok: false, skipped: "missing_args" };
+  }
+
+  // Phase 4C dedup: if cancellation came via SMS flow itself, skip the
+  // formal SMS (customer is already mid-conversation with us).
+  if (booking.cancelled_via === "sms") {
+    console.log("[SMS Cancel] Skipping — cancelled_via=sms (avoid duplicate SMS in same thread) bookingId=%s", booking.id);
+    return { ok: false, skipped: "cancelled_via_sms" };
+  }
+
+  if (!booking.contact_phone) {
+    console.warn("[SMS Cancel] No contact_phone for booking=%s, skipping", booking.id);
+    return { ok: false, skipped: "no_phone" };
+  }
+
+  // DNC suppression (Migration 059): never send a cancellation confirmation
+  // to a do-not-contact customer. Even though it's transactional, they
+  // explicitly opted out of all communication. The dashboard user who
+  // triggered the cancellation already sees it cancelled in their UI.
+  if (await isPhoneDoNotContact(tenant.id, booking.contact_phone)) {
+    console.log("[SMS Cancel] DNC blocked bookingId=%s tenant=%s phone=%s — suppressing",
+      booking.id, tenant.id, booking.contact_phone);
+    return { ok: false, skipped: "do_not_contact" };
+  }
+
+  const firstName    = getFirstName(booking.contact_name);
+  const companyName  = tenant.company_name || tenant.name || "your contractor";
+  const friendlyDate = formatFriendlyDate(booking.preferred_date);
+
+  // For the body's "call us back at" line we need the tenant's from phone.
+  // outboundSms.send looks this up again internally, but we need it here
+  // for body composition. If lookup fails the helper will also fail and
+  // we return cleanly.
+  const fromPhone = await getTenantPrimaryPhone(tenant.id);
+  if (!fromPhone) {
+    console.warn("[SMS Cancel] No primary phone for tenant=%s", tenant.id);
+    return { ok: false, skipped: "no_from_phone" };
+  }
+
+  const body =
+    `Hi ${firstName}, this is ${companyName}. ` +
+    `Your ${friendlyDate} appointment has been cancelled. ` +
+    `If this was a mistake or you'd like to reschedule, reply to this ` +
+    `message or call ${fromPhone}. — ${companyName}`;
+
+  // Phase 8B visibility refactor (May 28, 2026): route through lib/outboundSms
+  // so the cancellation SMS writes to the messages table.
+  const outboundSms = require("../lib/outboundSms");
+  const result = await outboundSms.send({
+    tenant,
+    to:       booking.contact_phone,
+    body,
+    source:   "cancellation_confirm",
+    leadId:   booking.lead_id || null,
+    sourceId: booking.id,
+    meta: {
+      booking_id:        booking.id,
+      preferred_date:    booking.preferred_date,
+      cancelled_via:     booking.cancelled_via || null,
+    },
+  });
+
+  if (result.ok) {
+    await db.query(
+      "UPDATE bookings SET cancellation_sms_sent_at = now() WHERE id = $1",
+      [booking.id]
+    ).catch((e) =>
+      console.error("[SMS Cancel] cancellation_sms_sent_at update failed bookingId=%s err=%s",
+        booking.id, e.message)
+    );
+    console.log("[SMS Cancel] Sent bookingId=%s to=%s sid=%s",
+      booking.id, booking.contact_phone, result.sid);
+    return { ok: true, sid: result.sid };
+  } else {
+    console.error("[SMS Cancel] send failed bookingId=%s reason=%s error=%s",
+      booking.id, result.reason || "unknown", result.error || "(none)");
+    return { ok: false, error: result.error || result.reason };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase E1 (May 4, 2026): outbound estimate link SMS
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Send the caller an SMS with a link to the hosted estimator page. Fired
+ * from server.js when the voice AI calls the send_estimate_link tool
+ * during a phone call.
+ *
+ * Vertical-agnostic by design — body says "free instant estimate" rather
+ * than "painting estimate" so the same code works for painting, roofing,
+ * fencing, HVAC, etc. The estimator page itself adapts to the tenant's
+ * configured vertical (Phase 7 V1).
+ *
+ * Why this lives in services/sms.js (not lib/twilio.js or a new file):
+ * the Twilio client lookup, primary-phone lookup, and structured logging
+ * are already battle-tested here. Reusing them keeps behavior consistent
+ * across all our customer-facing SMS — same tenant credentials, same
+ * From: number, same error handling.
+ *
+ * Never throws. Returns { ok, sid?, error? }. The dispatcher in server.js
+ * checks ok and either confirms to the AI or instructs it to apologize +
+ * transfer.
+ *
+ * @param {object} tenant       - Tenant row (must have id, company_name OR name)
+ * @param {string} toPhone      - Recipient phone (E.164 or any format Twilio accepts)
+ * @param {string} link         - Full estimator URL with call_id query param
+ * @param {string} sourceCallId - Originating call ID (for log only — already in link)
+ * @returns {Promise<{ok: boolean, sid?: string, error?: string, skipped?: string}>}
+ */
+async function sendEstimateLinkSms(tenant, toPhone, link, sourceCallId = null) {
+  if (!tenant || !toPhone || !link) {
+    console.warn("[Estimate Link] Missing args tenant=%s phone=%s link=%s",
+      tenant ? "ok" : "MISSING", toPhone || "MISSING", link || "MISSING");
+    return { ok: false, error: "missing_args" };
+  }
+
+  // DNC suppression (Migration 059): never text an estimator link to a
+  // do-not-contact customer, even if they're on a live call asking for it.
+  // Edge case (DNC'd customer calls in and asks for an estimator link)
+  // should be handled by the AI offering an in-person estimate instead.
+  if (await isPhoneDoNotContact(tenant.id, toPhone)) {
+    console.log("[Estimate Link] DNC blocked tenant=%s to=%s call_id=%s — suppressing",
+      tenant.id, toPhone, sourceCallId || "(none)");
+    return { ok: false, error: "do_not_contact", skipped: "do_not_contact" };
+  }
+
+  const companyName = tenant.company_name || tenant.name || "us";
+
+  // Body locked May 4, 2026 (Drew, Phase E1):
+  //   Vertical-agnostic — works for painting, roofing, fencing, etc.
+  //   Includes the "what happens next" close ("fill it out and book
+  //   right from there") which matches what the voice AI says verbally.
+  //   Single line for SMS readability.
+  const body =
+    `Hi from ${companyName}! Tap to get your free instant estimate: ` +
+    `${link} — fill it out and you can book right from there.`;
+
+  // Phase 8B visibility refactor (May 28, 2026): route through lib/outboundSms.
+  // leadId resolution: we have the source call ID — look up the lead linked
+  // to that call so the SMS lands on the right lead timeline. Best-effort —
+  // if lookup fails we still send, just without leadId.
+  let leadId = null;
+  if (sourceCallId) {
+    try {
+      const r = await db.query(
+        "SELECT lead_id FROM calls WHERE id = $1 LIMIT 1",
+        [sourceCallId]
+      );
+      leadId = r.rows[0]?.lead_id || null;
+    } catch (err) {
+      console.warn("[Estimate Link] lead lookup failed call_id=%s err=%s",
+        sourceCallId, err.message);
+    }
+  }
+
+  const outboundSms = require("../lib/outboundSms");
+  const result = await outboundSms.send({
+    tenant,
+    to:       toPhone,
+    body,
+    source:   "estimate_link",
+    leadId,
+    sourceId: sourceCallId || null,
+    meta: {
+      source_call_id: sourceCallId || null,
+      link,
+    },
+  });
+
+  if (result.ok) {
+    console.log("[Estimate Link] Sent tenant=%s to=%s call_id=%s sid=%s leadId=%s",
+      tenant.id, toPhone, sourceCallId || "(none)", result.sid, leadId || "(none)");
+    return { ok: true, sid: result.sid };
+  } else {
+    console.error("[Estimate Link] send failed tenant=%s to=%s reason=%s err=%s",
+      tenant.id, toPhone, result.reason || "unknown", result.error || "(none)");
+    return { ok: false, error: result.error || result.reason };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 4C: SMS cancellation conversation state machine
+//
+// NOTE: These functions intentionally do NOT have DNC suppression. They
+// respond to inbound customer messages — a DNC'd customer who texts in
+// asking to cancel their appointment deserves a reply. DNC suppresses
+// outbound automation, not responses to direct customer requests.
+// ─────────────────────────────────────────────────────────────────────
+
+function isAffirmation(text) {
+  return /\b(yes|yeah|yep|yup|yea|sure|confirm|please|go ahead|correct|right|ok|okay|absolutely|definitely)\b/i.test(text);
+}
+
+function isNegation(text) {
+  return /\b(no|nope|nah|don'?t|keep|stop|nevermind|never mind|forget|cancel that)\b/i.test(text);
+}
+
+function isSkipReason(text) {
+  return /^(none|no|nothing|skip|n\/?a|no thanks|no thank you|nope|nah)$/i.test(text.trim());
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Bug #5/#6 fix (May 13, 2026): escape-hatch detectors
+//
+// These regex sets detect when a customer mid-cancel-flow is expressing
+// something OTHER than a YES/NO answer — specifically TCPA opt-out
+// language or complaints/anger. When matched, handleSmsCancellationIncoming
+// exits the state machine and returns null so the caller falls through to
+// the AI orchestrator (which can then classify should_dnc OR generate an
+// empathetic reply + escalation notification).
+//
+// Why regex instead of LLM intent here: the cancellation state machine is
+// deliberately deterministic. We don't want to add a second LLM call inside
+// it. The AI orchestrator (one layer up) is the right place for LLM-based
+// intent — we just need to know when to STOP intercepting and let it run.
+//
+// Discovered via Bob Prange transcript May 13: phrases like "Take me off
+// your list and wait for my review", "It is 2:15 if you cannot tell time",
+// "You guys never showed up for the appointment. So quit bothering me"
+// were all bouncing indefinitely against "Sorry, I didn't catch that.
+// Please reply YES to confirm cancellation, or NO to keep your
+// appointment."
+// ─────────────────────────────────────────────────────────────────────
+
+const DNC_PHRASES = [
+  /\btake me off (your|the) list\b/i,
+  /\b(stop|quit) (calling|texting|messaging|contacting|bothering)\b/i,
+  /\bdon'?t (call|text|message|contact) me\b/i,
+  /\bnever (call|text|message|contact)\b/i,
+  /\bremove me from\b/i,
+  /\bquit bothering me\b/i,
+  /\bunsubscribe\b/i,
+  /\bopt(ing)? out\b/i,
+];
+
+const COMPLAINT_PHRASES = [
+  /\b(never|didn'?t) (show|came|arrived)\b/i,
+  /\b(missed|skipped) (the|my|our) appointment\b/i,
+  /\bwait for (my|our|the) (bad )?review\b/i,
+  /\b(leaving|leave|posting|writing) (a|my|the) (bad )?review\b/i,
+  /\b(terrible|awful|horrible|worst|garbage) (service|experience|company|business)\b/i,
+  /\bcomplain(t|ing|ed)?\b/i,
+  /\byou guys (never|didn'?t|won'?t|aren'?t)\b/i,
+  /\bripped me off\b/i,
+  /\bwaste of (my )?time\b/i,
+];
+
+function isDncPhrase(text) {
+  return DNC_PHRASES.some((rx) => rx.test(text));
+}
+
+function isComplaintPhrase(text) {
+  return COMPLAINT_PHRASES.some((rx) => rx.test(text));
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Phase 12 A2 (Jun 10, 2026) — durable cancel-flow state persistence.
+//
+// Mirrors smsBooking.js: snapshot the three cancel-machine fields to the
+// conversation_states table at each transition that leaves the flow
+// ACTIVE; clear the persisted row at every terminal/abort transition.
+// All fire-and-forget — never blocks the customer reply, never throws.
+// Keyed on lead_id (channel-agnostic, 1-hour TTL in lib/conversationState).
+// ─────────────────────────────────────────────────────────────────────
+
+function persistCancelState(thread, tenant) {
+  if (!thread.leadId || !tenant || !thread.cancelState) return;
+  conversationState.save(thread.leadId, tenant.id, {
+    cancelState: thread.cancelState,
+    pendingCancelBookingId: thread.pendingCancelBookingId || null,
+    pendingCancelBookingsList: thread.pendingCancelBookingsList || null,
+  }).catch(() => {});
+}
+
+function clearCancelState(thread) {
+  if (thread.leadId) conversationState.clear(thread.leadId).catch(() => {});
+  thread.cancelState = null;
+  thread.pendingCancelBookingId = null;
+  thread.pendingCancelBookingsList = null;
+}
+
+/**
+ * Produce the human "picking back up" reply after server.js rehydrates a
+ * cancel flow whose state was lost to a restart (gap > 3 min). A human
+ * receptionist resuming reminds you where you were and re-shows what you
+ * need — they don't make you re-explain. Returns { reply } or null.
+ *
+ * awaiting_choice → re-show the numbered booking list.
+ * awaiting_confirm → re-show the YES/NO confirm for the held booking
+ *                    (re-fetched for a friendly label; generic if lookup fails).
+ * awaiting_reason → re-prompt for the optional reason.
+ */
+async function resumeCancelMessage(thread, tenant) {
+  if (!thread.cancelState) return null;
+  const bookingsService = require("./bookings");
+
+  if (thread.cancelState === "awaiting_choice") {
+    const list = thread.pendingCancelBookingsList || [];
+    if (list.length === 0) {
+      clearCancelState(thread);
+      return { reply: "Welcome back! Which appointment did you want to cancel? Reply CANCEL to start over." };
+    }
+    const reList = list.map((it, i) => `${i + 1}) ${it.friendly}`).join("\n");
+    return {
+      reply: `Welcome back — you were cancelling an appointment. Which one?\n${reList}\n\nReply with the number, or NONE to keep them all.`,
+    };
+  }
+
+  if (thread.cancelState === "awaiting_confirm") {
+    const id = thread.pendingCancelBookingId;
+    let friendly = "your appointment";
+    if (id) {
+      try {
+        const b = await bookingsService.getBookingById(id);
+        if (b) friendly = bookingsService.formatBookingForVoiceConfirm(b);
+      } catch (e) {
+        /* fall through with the generic label */
+      }
+    }
+    return {
+      reply: `Welcome back — just to pick up where we left off: cancel ${friendly}? Reply YES to confirm or NO to keep it.`,
+    };
+  }
+
+  if (thread.cancelState === "awaiting_reason") {
+    return {
+      reply: "Welcome back — your appointment is set to be cancelled. Was there anything specific that came up, just so we can let the team know? Reply with a quick note, or NONE to skip.",
+    };
+  }
+
+  return null;
+}
+
+async function initiateSmsCancellation(thread, tenant) {
+  const bookingsService = require("./bookings");
+  const phone = thread.leadCapture?.phone || thread.phone;
+
+  if (!phone) {
+    return {
+      reply: "I'd love to help cancel — could you confirm the phone number on the appointment so I can look it up?",
+    };
+  }
+
+  let upcoming = [];
+  try {
+    upcoming = await bookingsService.findUpcomingBookingsByPhone(tenant.id, phone);
+  } catch (e) {
+    console.error("[SMS Cancel Flow] Lookup failed phone=%s tenant=%s err=%s",
+      phone, tenant.id, e.message);
+    return {
+      reply: "I'm having trouble looking up your appointment right now. Please call us directly so we can help.",
+    };
+  }
+
+  if (upcoming.length === 0) {
+    console.log("[SMS Cancel Flow] No upcoming bookings phone=%s tenant=%s", phone, tenant.id);
+    return {
+      reply: "I don't see any upcoming appointments under this number. If you booked under a different phone number, please call us directly so we can look it up.",
+    };
+  }
+
+  if (upcoming.length === 1) {
+    const b = upcoming[0];
+    const friendly = bookingsService.formatBookingForVoiceConfirm(b);
+    thread.cancelState = "awaiting_confirm";
+    thread.pendingCancelBookingId = b.id;
+    thread.pendingCancelBookingsList = null;
+    persistCancelState(thread, tenant);
+    console.log("[SMS Cancel Flow] 1 booking found, awaiting confirm bookingId=%s", b.id);
+    return {
+      reply: `I see your appointment ${friendly}. Reply YES to confirm cancellation, or NO to keep it.`,
+    };
+  }
+
+  const items = upcoming.map((b) => ({
+    id: b.id,
+    friendly: bookingsService.formatBookingForVoiceConfirm(b),
+  }));
+  thread.cancelState = "awaiting_choice";
+  thread.pendingCancelBookingsList = items;
+  thread.pendingCancelBookingId = null;
+  persistCancelState(thread, tenant);
+  console.log("[SMS Cancel Flow] %d bookings found, awaiting choice phone=%s",
+    items.length, phone);
+
+  const list = items.map((it, i) => `${i + 1}) ${it.friendly}`).join("\n");
+  return {
+    reply: `I see multiple upcoming appointments under this number:\n${list}\n\nWhich would you like to cancel? Reply with the number, or NONE to keep them all.`,
+  };
+}
+
+async function handleSmsCancellationIncoming(thread, incomingText, tenant) {
+  if (!thread.cancelState) return null;
+
+  const text = (incomingText || "").trim();
+  const lc = text.toLowerCase();
+
+  if (/^(nevermind|never mind|forget it|cancel that|stop)$/i.test(lc)) {
+    console.log("[SMS Cancel Flow] Universal abort from state=%s", thread.cancelState);
+    clearCancelState(thread);
+    return { reply: "No problem, keeping your appointment as-is." };
+  }
+
+  // ─── Bug #5/#6 escape hatches (May 13, 2026) ──────────────────────
+  // If the customer is expressing TCPA opt-out OR a complaint while
+  // we're mid-cancel-flow, exit the state machine and return null.
+  // The caller (processSmsConversation) treats null as "I didn't handle
+  // this" and falls through to the AI orchestrator, which can:
+  //   - DNC phrase → fire soft-intent DNC path → formal opt-out reply
+  //   - Complaint phrase → generate empathetic reply + (eventually)
+  //     trigger an owner escalation notification
+  //
+  // Without these escape hatches, every non-YES/NO response loops back
+  // to "Sorry, I didn't catch that. Please reply YES to confirm
+  // cancellation, or NO to keep your appointment." — which is what
+  // happened to Bob Prange (multiple times) on May 13.
+  if (isDncPhrase(text)) {
+    console.log("[SMS Cancel Flow] DNC phrase detected mid-cancel state=%s text=%s — exiting flow, falling through to AI",
+      thread.cancelState, text.slice(0, 100));
+    clearCancelState(thread);
+    return null;
+  }
+
+  if (isComplaintPhrase(text)) {
+    console.log("[SMS Cancel Flow] Complaint phrase detected mid-cancel state=%s text=%s — exiting flow, falling through to AI",
+      thread.cancelState, text.slice(0, 100));
+    clearCancelState(thread);
+    return null;
+  }
+
+  switch (thread.cancelState) {
+
+    case "awaiting_choice": {
+      const list = thread.pendingCancelBookingsList || [];
+
+      if (/^(none|no)$/i.test(lc)) {
+        console.log("[SMS Cancel Flow] awaiting_choice → cancelled by customer");
+        clearCancelState(thread);
+        return { reply: "Got it, keeping all your appointments." };
+      }
+
+      const digitMatch = lc.match(/\d+/);
+      const num = digitMatch ? parseInt(digitMatch[0], 10) : NaN;
+
+      if (!num || num < 1 || num > list.length) {
+        const reList = list.map((it, i) => `${i + 1}) ${it.friendly}`).join("\n");
+        return {
+          reply: `Sorry, I didn't catch that. Please reply with the number of the appointment you'd like to cancel:\n${reList}\n\nOr NONE to keep them all.`,
+        };
+      }
+
+      const chosen = list[num - 1];
+      thread.cancelState = "awaiting_confirm";
+      thread.pendingCancelBookingId = chosen.id;
+      thread.pendingCancelBookingsList = null;
+      persistCancelState(thread, tenant);
+      console.log("[SMS Cancel Flow] awaiting_choice → awaiting_confirm bookingId=%s", chosen.id);
+      return {
+        reply: `Just to confirm, you want to cancel: ${chosen.friendly}? Reply YES to confirm or NO to keep it.`,
+      };
+    }
+
+    case "awaiting_confirm": {
+      const yes = isAffirmation(lc);
+      const no  = isNegation(lc);
+
+      if (yes && no) {
+        return {
+          reply: "Sorry, I want to make sure I get this right. Please reply with just YES to cancel, or NO to keep your appointment.",
+        };
+      }
+
+      if (no) {
+        console.log("[SMS Cancel Flow] awaiting_confirm → declined");
+        clearCancelState(thread);
+        return { reply: "Got it, keeping your appointment." };
+      }
+
+      if (!yes) {
+        return {
+          reply: "Sorry, I didn't catch that. Please reply YES to confirm cancellation, or NO to keep your appointment.",
+        };
+      }
+
+      thread.cancelState = "awaiting_reason";
+      persistCancelState(thread, tenant);
+      console.log("[SMS Cancel Flow] awaiting_confirm → awaiting_reason bookingId=%s",
+        thread.pendingCancelBookingId);
+      return {
+        reply: "No problem — was there anything specific that came up, just so we can let the team know? Reply with a quick note, or NONE to skip.",
+      };
+    }
+
+    case "awaiting_reason": {
+      const bookingId = thread.pendingCancelBookingId;
+      if (!bookingId) {
+        console.error("[SMS Cancel Flow] awaiting_reason with no pendingCancelBookingId — resetting");
+        clearCancelState(thread);
+        return {
+          reply: "Sorry, something went wrong on our end. Please call us if you still need to cancel.",
+        };
+      }
+
+      const reason = isSkipReason(lc) ? null : text.slice(0, 500);
+
+      try {
+        const bookingsService = require("./bookings");
+        const booking = await bookingsService.cancelBooking(bookingId, {
+          cancelled_via: "sms",
+          cancellation_reason: reason,
+        });
+
+        clearCancelState(thread);
+
+        if (!booking) {
+          console.warn("[SMS Cancel Flow] cancelBooking returned null bookingId=%s", bookingId);
+          return {
+            reply: "Hmm, I couldn't find that appointment to cancel. Please call us if you still need help.",
+          };
+        }
+
+        if (booking.tenant_id !== tenant.id) {
+          console.error("[SMS Cancel Flow] tenant mismatch! booking=%s tenant=%s expected=%s",
+            booking.id, booking.tenant_id, tenant.id);
+          return {
+            reply: "Something went wrong. Please call us directly to cancel your appointment.",
+          };
+        }
+
+        console.log("[SMS Cancel Flow] Cancelled bookingId=%s tenant=%s reason=%s",
+          booking.id, tenant.id, reason ? "captured" : "none");
+
+        const friendly = bookingsService.formatBookingForVoiceConfirm(booking);
+        return {
+          reply: `Cancelled — your appointment ${friendly} has been cancelled. Would you like to set up a new time, or just leave things for now?`,
+        };
+      } catch (e) {
+        console.error("[SMS Cancel Flow] Cancel failed bookingId=%s err=%s",
+          bookingId, e.message);
+        clearCancelState(thread);
+        return {
+          reply: "Sorry, something went wrong cancelling your appointment. Please call us directly so we can help.",
+        };
+      }
+    }
+
+    default:
+      console.warn("[SMS Cancel Flow] Unknown cancelState=%s — resetting", thread.cancelState);
+      clearCancelState(thread);
+      return null;
+  }
+}
+
+module.exports = {
+  // Phase 2 (transactional cancellation SMS)
+  sendBookingCancellationSms,
+  // Phase 4C (multi-turn cancellation conversation)
+  initiateSmsCancellation,
+  handleSmsCancellationIncoming,
+  // Phase 12 A2 (durable cancel-flow resume)
+  resumeCancelMessage,
+  // Phase E1 (outbound estimate link)
+  sendEstimateLinkSms,
+  // Helpers
+  formatFriendlyDate,
+  getFirstName,
+  getTenantPrimaryPhone,
+  // DNC suppression (Migration 059)
+  isPhoneDoNotContact,
+  // Bug #5/#6 fix (May 13, 2026) — exported for unit testing
+  isDncPhrase,
+  isComplaintPhrase,
+};

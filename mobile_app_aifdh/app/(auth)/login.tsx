@@ -1,0 +1,13 @@
+import { Redirect } from "expo-router";
+
+import { LoginScreen } from "@/src/features/auth/screens/login-screen";
+import { useAuthStore } from "@/src/features/auth/store";
+
+export default function LoginRoute() {
+  const status = useAuthStore((s) => s.status);
+
+  if (status === "authenticated") return <Redirect href="/" />;
+  if (status === "awaiting_otp") return <Redirect href="/(auth)/otp" />;
+
+  return <LoginScreen />;
+}

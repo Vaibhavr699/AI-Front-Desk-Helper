@@ -1,0 +1,402 @@
+-- ============================================================================
+-- Migration 064 — Phase 7 Estimator: Fence Vertical Seed
+-- Date:    May 11, 2026
+-- Author:  Drew Koch
+-- Phase:   7 (Estimator Engine V1, Wave 2 — Paragon Exteriors launch)
+--
+-- Context:
+--   Adds Fence as the fourth vertical for Phase 7. Built off industry
+--   standards. Per-linear-foot pricing (simpler than siding/roofing —
+--   no geometric area calculation needed).
+--
+-- Pricing model:
+--   base_cost = fence_linear_ft × per_lf_rate
+--   Then apply project modifiers (height, terrain, gates, removal)
+--   Then apply scope options
+--
+-- Key differences from siding (Mig 063):
+--   - unit = 'linear_foot' instead of 'square'
+--   - No story coefficient (fences don't scale with home stories)
+--   - gates_count is a flat_per_item modifier (mirrors painting's
+--     glass_inserts pattern from Mig 047)
+--   - fence_height replaces the trim_detail dimension
+--
+-- Pricing:
+--   Industry midpoints — chain link cheapest, composite premium.
+--   Paragon-calibrate after first 10 fence jobs.
+--
+-- Idempotency:
+--   ON CONFLICT DO NOTHING throughout. Safe to re-run.
+-- ============================================================================
+
+BEGIN;
+
+-- ============================================================================
+-- SECTION 1: SEED — Fence vertical
+-- ============================================================================
+INSERT INTO verticals (slug, display_name, status, pricing_mode) VALUES
+  ('fence', 'Fence', 'active', 'bundled')
+ON CONFLICT (slug) DO NOTHING;
+
+DO $$
+DECLARE
+  v_fence_id INTEGER;
+BEGIN
+  SELECT vertical_id INTO v_fence_id FROM verticals WHERE slug = 'fence';
+  RAISE NOTICE 'Fence vertical_id = %', v_fence_id;
+END $$;
+
+-- ============================================================================
+-- SECTION 2: SEED — Fence regional multipliers
+-- ============================================================================
+INSERT INTO vertical_regional_multipliers (vertical_id, bucket, multiplier)
+SELECT v.vertical_id, b.bucket, b.mult
+FROM verticals v
+CROSS JOIN (VALUES
+  ('high', 1.25),
+  ('mid',  1.00),
+  ('low',  0.85)
+) AS b(bucket, mult)
+WHERE v.slug = 'fence'
+ON CONFLICT (vertical_id, bucket) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 3: SEED — Fence services (5 rows)
+-- ============================================================================
+INSERT INTO vertical_services (vertical_id, service_slug, display_name, pricing_mode, unit, sort_order, materials_pct)
+SELECT v.vertical_id, s.slug, s.display_name, s.pricing_mode, s.unit, s.sort_order, s.materials_pct
+FROM verticals v
+CROSS JOIN (VALUES
+  ('fence_wood_privacy',        'Wood Privacy Fence',         'bundled_per_unit_area', 'linear_foot', 1, 45.00),
+  ('fence_vinyl',               'Vinyl Fence',                'bundled_per_unit_area', 'linear_foot', 2, 55.00),
+  ('fence_chain_link',          'Chain Link Fence',           'bundled_per_unit_area', 'linear_foot', 3, 50.00),
+  ('fence_aluminum_ornamental', 'Aluminum / Ornamental Fence','bundled_per_unit_area', 'linear_foot', 4, 60.00),
+  ('fence_composite',           'Composite Fence',            'bundled_per_unit_area', 'linear_foot', 5, 65.00)
+) AS s(slug, display_name, pricing_mode, unit, sort_order, materials_pct)
+WHERE v.slug = 'fence'
+ON CONFLICT (vertical_id, service_slug) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 4: SEED — Fence modifier categories (4 rows)
+-- ============================================================================
+-- Note: fence_linear_ft is NOT a modifier — it's the primary input consumed
+-- by computeFenceBase() in lib/estimator.js. Only the modifiers below live
+-- in vertical_modifier_categories.
+--
+-- gates_count is flat_per_item — mirrors painting's glass_inserts pattern
+-- from Mig 047. adjustment is in CENTS (40000 = $400 per gate).
+-- ----------------------------------------------------------------------------
+INSERT INTO vertical_modifier_categories (vertical_id, category_slug, display_name, modifier_type, multi_select, options, sort_order)
+SELECT v.vertical_id, m.slug, m.display_name, m.mod_type, m.multi_select, m.options::jsonb, m.sort_order
+FROM verticals v
+CROSS JOIN (VALUES
+
+  -- Fence height (single-select; affects total material + labor)
+  ('fence_height', 'Fence height', 'percentage', FALSE,
+   '[
+     {"value": "4ft", "label": "4 feet (decorative)",       "adjustment": -0.15},
+     {"value": "6ft", "label": "6 feet (standard privacy)", "adjustment":  0.00},
+     {"value": "8ft", "label": "8 feet (maximum privacy)",  "adjustment":  0.25}
+   ]', 1),
+
+  -- Terrain (single-select; very_steep routes to specialized)
+  ('terrain', 'Property terrain', 'percentage', FALSE,
+   '[
+     {"value": "flat",       "label": "Flat or gentle slope",    "adjustment":  0.00},
+     {"value": "sloped",     "label": "Sloped (stepped panels)", "adjustment":  0.10},
+     {"value": "very_steep", "label": "Very steep terrain",      "adjustment": null, "routes_to": "specialized"}
+   ]', 2),
+
+  -- Existing removal (single-select)
+  ('existing_removal', 'Existing fence removal', 'percentage', FALSE,
+   '[
+     {"value": "no_removal",        "label": "No existing fence (new install)",         "adjustment": 0.00},
+     {"value": "chain_link_removal","label": "Remove existing chain link / wire",       "adjustment": 0.05},
+     {"value": "wood_removal",      "label": "Remove existing wood fence",              "adjustment": 0.10},
+     {"value": "concrete_footings", "label": "Existing concrete footings need removal", "adjustment": 0.20}
+   ]', 3),
+
+  -- Gates count (flat_per_item; per painting glass_inserts pattern)
+  -- adjustment is per-gate cost in CENTS. Widget passes `gates_count` as the
+  -- count via the same pattern as glass_inserts_count.
+  ('gates_count', 'Number of gates', 'flat_per_item', FALSE,
+   '[
+     {"value": "gates", "label": "Gates", "adjustment": 40000}
+   ]', 4)
+
+) AS m(slug, display_name, mod_type, multi_select, options, sort_order)
+WHERE v.slug = 'fence'
+ON CONFLICT (vertical_id, category_slug) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 5: SEED — Service-modifier junction (20 rows = 4 mods × 5 services)
+-- ============================================================================
+INSERT INTO vertical_service_modifier_categories (service_id, modifier_category_id, required, sort_order)
+SELECT s.id, m.id, mapping.required, mapping.sort_order
+FROM vertical_services s
+JOIN verticals v ON s.vertical_id = v.vertical_id
+JOIN vertical_modifier_categories m ON m.vertical_id = v.vertical_id
+JOIN (VALUES
+  ('fence_wood_privacy',        'fence_height',     TRUE,  1),
+  ('fence_wood_privacy',        'terrain',          TRUE,  2),
+  ('fence_wood_privacy',        'existing_removal', TRUE,  3),
+  ('fence_wood_privacy',        'gates_count',      FALSE, 4),
+
+  ('fence_vinyl',               'fence_height',     TRUE,  1),
+  ('fence_vinyl',               'terrain',          TRUE,  2),
+  ('fence_vinyl',               'existing_removal', TRUE,  3),
+  ('fence_vinyl',               'gates_count',      FALSE, 4),
+
+  ('fence_chain_link',          'fence_height',     TRUE,  1),
+  ('fence_chain_link',          'terrain',          TRUE,  2),
+  ('fence_chain_link',          'existing_removal', TRUE,  3),
+  ('fence_chain_link',          'gates_count',      FALSE, 4),
+
+  ('fence_aluminum_ornamental', 'fence_height',     TRUE,  1),
+  ('fence_aluminum_ornamental', 'terrain',          TRUE,  2),
+  ('fence_aluminum_ornamental', 'existing_removal', TRUE,  3),
+  ('fence_aluminum_ornamental', 'gates_count',      FALSE, 4),
+
+  ('fence_composite',           'fence_height',     TRUE,  1),
+  ('fence_composite',           'terrain',          TRUE,  2),
+  ('fence_composite',           'existing_removal', TRUE,  3),
+  ('fence_composite',           'gates_count',      FALSE, 4)
+) AS mapping(service_slug, mod_slug, required, sort_order)
+  ON s.service_slug = mapping.service_slug AND m.category_slug = mapping.mod_slug
+WHERE v.slug = 'fence'
+ON CONFLICT (service_id, modifier_category_id) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 6: SEED — Widget questions (8 universal)
+-- ============================================================================
+INSERT INTO vertical_widget_questions (vertical_id, service_slug, question_slug, question_type, label, helper_text, options, required, sort_order)
+SELECT v.vertical_id, q.service_slug, q.question_slug, q.question_type, q.label, q.helper_text, q.options::jsonb, q.required, q.sort_order
+FROM verticals v
+CROSS JOIN (VALUES
+
+  -- 1. Service type (fence material) — universal first question
+  (NULL, 'service_type', 'select',
+   'What type of fence are you installing?',
+   'Not sure? Pick the closest match — we''ll confirm during the walkthrough.',
+   '[
+     {"value": "fence_wood_privacy",        "label": "Wood privacy fence"},
+     {"value": "fence_vinyl",               "label": "Vinyl fence"},
+     {"value": "fence_chain_link",          "label": "Chain link fence"},
+     {"value": "fence_aluminum_ornamental", "label": "Aluminum / ornamental fence"},
+     {"value": "fence_composite",           "label": "Composite fence"},
+     {"value": "specialized",               "label": "Not sure / specialized project"}
+   ]', TRUE, 1),
+
+  -- 2. Linear feet — primary input
+  (NULL, 'fence_linear_ft', 'number',
+   'How many linear feet of fence do you need?',
+   'Total perimeter you want fenced. A typical residential backyard is 150-250 linear feet.',
+   '{"min": 10, "max": 2000, "step": 10, "unit": "linear_feet"}', TRUE, 2),
+
+  -- 3. Fence height
+  (NULL, 'fence_height', 'select',
+   'How tall do you want the fence?',
+   'Six feet is the standard privacy height. Check your HOA or municipal rules for height limits.',
+   '[
+     {"value": "4ft", "label": "4 feet (decorative)"},
+     {"value": "6ft", "label": "6 feet (standard privacy)"},
+     {"value": "8ft", "label": "8 feet (maximum privacy)"}
+   ]', TRUE, 3),
+
+  -- 4. Terrain
+  (NULL, 'terrain', 'select',
+   'What is the terrain like on your fence line?',
+   'Sloped lots require stepped panels or contoured installation, which adds cost.',
+   '[
+     {"value": "flat",       "label": "Flat or gentle slope"},
+     {"value": "sloped",     "label": "Sloped (stepped panels)"},
+     {"value": "very_steep", "label": "Very steep terrain", "routes_to": "specialized"}
+   ]', TRUE, 4),
+
+  -- 5. Existing removal
+  (NULL, 'existing_removal', 'select',
+   'Does an existing fence need to be removed?',
+   NULL,
+   '[
+     {"value": "no_removal",         "label": "No existing fence (new install)"},
+     {"value": "chain_link_removal", "label": "Remove existing chain link / wire"},
+     {"value": "wood_removal",       "label": "Remove existing wood fence"},
+     {"value": "concrete_footings",  "label": "Existing concrete footings need removal"}
+   ]', TRUE, 5),
+
+  -- 6. Gates count (number question, feeds flat_per_item modifier)
+  (NULL, 'gates_count', 'number',
+   'How many gates do you need?',
+   'Each gate is typically priced separately. Most yards need 1-2 gates.',
+   '{"min": 0, "max": 10, "step": 1, "unit": "gates"}', FALSE, 6),
+
+  -- 7. Permit / HOA
+  (NULL, 'permit_required', 'select',
+   'Do you need a permit or HOA approval?',
+   'We can help navigate permits and HOA requirements during the walkthrough.',
+   '[
+     {"value": "no",     "label": "No"},
+     {"value": "permit", "label": "Yes — city permit required"},
+     {"value": "hoa",    "label": "Yes — HOA approval required"},
+     {"value": "both",   "label": "Yes — both permit and HOA"},
+     {"value": "unsure", "label": "Not sure"}
+   ]', FALSE, 7),
+
+  -- 8. Special notes
+  (NULL, 'special_notes', 'text',
+   'Anything else we should know? (Optional)',
+   'Pool fence requirements, electric/gas line locations, pet considerations, etc.',
+   '{"max_length": 500}', FALSE, 90)
+
+) AS q(service_slug, question_slug, question_type, label, helper_text, options, required, sort_order)
+WHERE v.slug = 'fence'
+ON CONFLICT (vertical_id, service_slug, question_slug) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 7: SEED — Default rates (15 rows = 5 services × 3 buckets)
+-- ============================================================================
+-- All rates in cents per LINEAR FOOT.
+-- Mid = baseline. High = +25%. Low = -15%.
+-- Chain link is cheapest, composite is premium.
+-- ----------------------------------------------------------------------------
+INSERT INTO vertical_default_rates (vertical_id, service_slug, cost_region, base_rate_min_cents, base_rate_max_cents, unit, notes)
+SELECT v.vertical_id, r.service_slug, r.region, r.min_cents, r.max_cents, r.unit, r.notes
+FROM verticals v
+CROSS JOIN (VALUES
+
+  -- WOOD PRIVACY — most common residential
+  ('fence_wood_privacy',        'mid',   2500,  4500, 'linear_foot', 'Industry-default: 6ft cedar/pine privacy. CALIBRATE POST-LAUNCH.'),
+  ('fence_wood_privacy',        'high',  3125,  5625, 'linear_foot', 'Derived: Mid * 1.25'),
+  ('fence_wood_privacy',        'low',   2125,  3825, 'linear_foot', 'Derived: Mid * 0.85'),
+
+  -- VINYL — low maintenance premium
+  ('fence_vinyl',               'mid',   3000,  5500, 'linear_foot', 'Industry-default: solid vinyl 6ft. CALIBRATE POST-LAUNCH.'),
+  ('fence_vinyl',               'high',  3750,  6875, 'linear_foot', 'Derived: Mid * 1.25'),
+  ('fence_vinyl',               'low',   2550,  4675, 'linear_foot', 'Derived: Mid * 0.85'),
+
+  -- CHAIN LINK — economy
+  ('fence_chain_link',          'mid',   1000,  2500, 'linear_foot', 'Industry-default: galvanized 6ft. CALIBRATE POST-LAUNCH.'),
+  ('fence_chain_link',          'high',  1250,  3125, 'linear_foot', 'Derived: Mid * 1.25'),
+  ('fence_chain_link',          'low',    850,  2125, 'linear_foot', 'Derived: Mid * 0.85'),
+
+  -- ALUMINUM / ORNAMENTAL — decorative
+  ('fence_aluminum_ornamental', 'mid',   3500,  7000, 'linear_foot', 'Industry-default: powder-coated aluminum. CALIBRATE POST-LAUNCH.'),
+  ('fence_aluminum_ornamental', 'high',  4375,  8750, 'linear_foot', 'Derived: Mid * 1.25'),
+  ('fence_aluminum_ornamental', 'low',   2975,  5950, 'linear_foot', 'Derived: Mid * 0.85'),
+
+  -- COMPOSITE — premium hybrid
+  ('fence_composite',           'mid',   4000,  7500, 'linear_foot', 'Industry-default: composite/Trex-style. CALIBRATE POST-LAUNCH.'),
+  ('fence_composite',           'high',  5000,  9375, 'linear_foot', 'Derived: Mid * 1.25'),
+  ('fence_composite',           'low',   3400,  6375, 'linear_foot', 'Derived: Mid * 0.85')
+
+) AS r(service_slug, region, min_cents, max_cents, unit, notes)
+WHERE v.slug = 'fence'
+ON CONFLICT (vertical_id, service_slug, cost_region, unit) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 8: SEED — Scope options (30 rows = 6 options × 5 services)
+-- ============================================================================
+-- price_modifier_default is in DOLLARS (V1.1 convention).
+-- ----------------------------------------------------------------------------
+INSERT INTO vertical_scope_options (vertical_service_id, option_key, display_label, default_enabled, affects_includes_text, modifier_type, price_modifier_default, display_order)
+SELECT s.id, opt.option_key, opt.display_label, opt.default_enabled,
+       TRUE, opt.modifier_type, opt.price_modifier_default, opt.display_order
+FROM vertical_services s
+JOIN verticals v ON s.vertical_id = v.vertical_id
+JOIN (VALUES
+
+  -- ─── WOOD PRIVACY ──────────────────────────────────────────────────
+  ('fence_wood_privacy', 'include_concrete_footings', 'Include concrete footings',     TRUE,  'flat',    400.00, 1),
+  ('fence_wood_privacy', 'include_pressure_treated',  'Include pressure-treated posts',TRUE,  'per_lf',    3.00, 2),
+  ('fence_wood_privacy', 'include_top_rail',          'Include top rail',              TRUE,  'flat',    200.00, 3),
+  ('fence_wood_privacy', 'include_disposal',          'Include disposal of debris',    TRUE,  'flat',    300.00, 4),
+  ('fence_wood_privacy', 'include_stain_treatment',   'Include stain or seal',         FALSE, 'per_lf',    4.00, 5),
+  ('fence_wood_privacy', 'include_post_caps',         'Include decorative post caps',  FALSE, 'per_unit', 15.00, 6),
+
+  -- ─── VINYL ─────────────────────────────────────────────────────────
+  ('fence_vinyl', 'include_concrete_footings',  'Include concrete footings',    TRUE,  'flat',   400.00, 1),
+  ('fence_vinyl', 'include_disposal',           'Include disposal of debris',   TRUE,  'flat',   300.00, 2),
+  ('fence_vinyl', 'include_premium_colors',     'Include premium color upgrade',FALSE, 'per_lf',   2.00, 3),
+  ('fence_vinyl', 'include_decorative_caps',    'Include decorative post caps', FALSE, 'per_unit',20.00, 4),
+  ('fence_vinyl', 'include_lattice_top',        'Include lattice top accent',   FALSE, 'per_lf',   5.00, 5),
+  ('fence_vinyl', 'include_aluminum_inserts',   'Include aluminum inserts',     FALSE, 'per_lf',   8.00, 6),
+
+  -- ─── CHAIN LINK ────────────────────────────────────────────────────
+  ('fence_chain_link', 'include_concrete_footings',    'Include concrete footings',     TRUE,  'flat',   400.00, 1),
+  ('fence_chain_link', 'include_top_rail',             'Include top rail',              TRUE,  'flat',   200.00, 2),
+  ('fence_chain_link', 'include_disposal',             'Include disposal of debris',    TRUE,  'flat',   200.00, 3),
+  ('fence_chain_link', 'include_privacy_slats',        'Include privacy slats',         FALSE, 'per_lf',   4.00, 4),
+  ('fence_chain_link', 'include_vinyl_coating',        'Include vinyl coating upgrade', FALSE, 'per_lf',   3.00, 5),
+  ('fence_chain_link', 'include_bottom_tension_wire',  'Include bottom tension wire',   FALSE, 'flat',   150.00, 6),
+
+  -- ─── ALUMINUM / ORNAMENTAL ─────────────────────────────────────────
+  ('fence_aluminum_ornamental', 'include_concrete_footings',    'Include concrete footings',    TRUE,  'flat',   500.00, 1),
+  ('fence_aluminum_ornamental', 'include_disposal',             'Include disposal of debris',   TRUE,  'flat',   300.00, 2),
+  ('fence_aluminum_ornamental', 'include_powder_coating',       'Include premium powder coat',  FALSE, 'per_lf',   4.00, 3),
+  ('fence_aluminum_ornamental', 'include_decorative_finials',   'Include decorative finials',   FALSE, 'per_lf',   5.00, 4),
+  ('fence_aluminum_ornamental', 'include_self_closing_hinges',  'Include self-closing hinges',  FALSE, 'per_unit',150.00, 5),
+  ('fence_aluminum_ornamental', 'include_pool_code_compliance', 'Include pool code compliance', FALSE, 'flat',   300.00, 6),
+
+  -- ─── COMPOSITE ─────────────────────────────────────────────────────
+  ('fence_composite', 'include_concrete_footings', 'Include concrete footings',     TRUE,  'flat',   400.00, 1),
+  ('fence_composite', 'include_disposal',          'Include disposal of debris',    TRUE,  'flat',   300.00, 2),
+  ('fence_composite', 'include_post_caps',         'Include decorative post caps',  FALSE, 'per_unit',20.00, 3),
+  ('fence_composite', 'include_color_match',       'Include premium color match',   FALSE, 'per_lf',   4.00, 4),
+  ('fence_composite', 'include_decorative_top',    'Include decorative top pattern',FALSE, 'per_lf',   6.00, 5),
+  ('fence_composite', 'include_extended_warranty', 'Include extended warranty',     FALSE, 'flat',   200.00, 6)
+
+) AS opt(target_service_slug, option_key, display_label, default_enabled, modifier_type, price_modifier_default, display_order)
+  ON s.service_slug = opt.target_service_slug
+WHERE v.slug = 'fence'
+ON CONFLICT (vertical_service_id, option_key) DO NOTHING;
+
+-- ============================================================================
+-- SECTION 9: VERIFICATION
+-- ============================================================================
+DO $$
+DECLARE
+  v_fence_id             INTEGER;
+  v_services_count       INTEGER;
+  v_modifiers_count      INTEGER;
+  v_junction_count       INTEGER;
+  v_questions_count      INTEGER;
+  v_rates_count          INTEGER;
+  v_multipliers_count    INTEGER;
+  v_scope_count          INTEGER;
+BEGIN
+  SELECT vertical_id INTO v_fence_id FROM verticals WHERE slug = 'fence';
+
+  SELECT COUNT(*) INTO v_services_count
+    FROM vertical_services WHERE vertical_id = v_fence_id;
+  SELECT COUNT(*) INTO v_modifiers_count
+    FROM vertical_modifier_categories WHERE vertical_id = v_fence_id;
+  SELECT COUNT(*) INTO v_junction_count
+    FROM vertical_service_modifier_categories vsmc
+    JOIN vertical_services vs ON vs.id = vsmc.service_id
+    WHERE vs.vertical_id = v_fence_id;
+  SELECT COUNT(*) INTO v_questions_count
+    FROM vertical_widget_questions WHERE vertical_id = v_fence_id;
+  SELECT COUNT(*) INTO v_rates_count
+    FROM vertical_default_rates WHERE vertical_id = v_fence_id;
+  SELECT COUNT(*) INTO v_multipliers_count
+    FROM vertical_regional_multipliers WHERE vertical_id = v_fence_id;
+  SELECT COUNT(*) INTO v_scope_count
+    FROM vertical_scope_options vso
+    JOIN vertical_services vs ON vs.id = vso.vertical_service_id
+    WHERE vs.vertical_id = v_fence_id;
+
+  RAISE NOTICE '====================================================================';
+  RAISE NOTICE 'Migration 064 — Fence Vertical Seed COMPLETE';
+  RAISE NOTICE '====================================================================';
+  RAISE NOTICE 'Fence vertical_id:           %', v_fence_id;
+  RAISE NOTICE 'Services:                    %  (expected: 5)', v_services_count;
+  RAISE NOTICE 'Modifier categories:         %  (expected: 4)', v_modifiers_count;
+  RAISE NOTICE 'Service-modifier mappings:   %  (expected: 20)', v_junction_count;
+  RAISE NOTICE 'Widget questions:            %  (expected: 8)', v_questions_count;
+  RAISE NOTICE 'Default rates:               %  (expected: 15)', v_rates_count;
+  RAISE NOTICE 'Regional multipliers:        %  (expected: 3)', v_multipliers_count;
+  RAISE NOTICE 'Scope options:               %  (expected: 30)', v_scope_count;
+  RAISE NOTICE '====================================================================';
+END $$;
+
+COMMIT;

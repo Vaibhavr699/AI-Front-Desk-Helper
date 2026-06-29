@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Front Desk Helper — Help Center</title>
+<style>
+  :root {
+    --brand: #ea580c; --brand-dark: #c2410c; --ink: #1c1917;
+    --muted: #78716c; --line: #e7e5e4; --bg: #fafaf9; --panel: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; color: var(--ink); background: var(--bg); line-height: 1.6; font-size: 15px; }
+  a { color: var(--brand-dark); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .topbar { position: sticky; top: 0; z-index: 20; background: var(--panel); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 16px; padding: 12px 20px; }
+  .topbar .brand { font-weight: 800; font-size: 15px; color: var(--ink); white-space: nowrap; }
+  .topbar .brand span { color: var(--brand); }
+  .search-wrap { flex: 1; position: relative; max-width: 520px; }
+  .search-wrap input { width: 100%; padding: 9px 14px 9px 36px; border: 1px solid var(--line); border-radius: 10px; font-size: 14px; outline: none; }
+  .search-wrap input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(234,88,12,0.12); }
+  .search-wrap .icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 15px; }
+  .back-link { font-size: 13px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+  .layout { display: flex; max-width: 1200px; margin: 0 auto; align-items: flex-start; }
+  .sidebar { width: 290px; flex-shrink: 0; padding: 24px 12px 60px; position: sticky; top: 61px; max-height: calc(100vh - 61px); overflow-y: auto; border-right: 1px solid var(--line); }
+  .cat { margin-bottom: 18px; }
+  .cat-title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); padding: 6px 12px; }
+  .article-link { display: block; padding: 7px 12px; border-radius: 8px; font-size: 14px; color: #44403c; cursor: pointer; border: none; background: none; width: 100%; text-align: left; font-family: inherit; }
+  .article-link:hover { background: #f5f5f4; text-decoration: none; }
+  .article-link.active { background: #fff7ed; color: var(--brand-dark); font-weight: 700; }
+  .article-link .stub-tag { font-size: 9px; font-weight: 700; text-transform: uppercase; background: #f5f5f4; color: #a8a29e; padding: 1px 5px; border-radius: 4px; margin-left: 6px; letter-spacing: 0.3px; }
+  .content { flex: 1; min-width: 0; padding: 32px 40px 80px; max-width: 780px; }
+  .content h1 { font-size: 28px; letter-spacing: -0.5px; margin: 0 0 6px; }
+  .content .crumb { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--brand); margin-bottom: 8px; }
+  .content h2 { font-size: 19px; margin: 28px 0 8px; padding-bottom: 5px; border-bottom: 1px solid var(--line); letter-spacing: -0.3px; }
+  .content h3 { font-size: 16px; margin: 20px 0 6px; }
+  .content p { margin: 10px 0; }
+  .content ul, .content ol { margin: 10px 0; padding-left: 24px; }
+  .content li { margin: 5px 0; }
+  .content code { font-family: Menlo, Monaco, Consolas, monospace; font-size: 13px; background: #f5f5f4; color: #b91c1c; padding: 1px 5px; border-radius: 4px; }
+  .content strong { color: var(--ink); }
+  .callout { border-left: 4px solid var(--brand); background: #fff7ed; color: #7c2d12; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+  .callout p { margin: 4px 0; }
+  .stub-banner { background: #f5f5f4; border: 1px dashed #d6d3d1; border-radius: 10px; padding: 20px; color: var(--muted); margin: 20px 0; }
+  .search-results-note { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  .no-results { color: var(--muted); padding: 40px 0; text-align: center; }
+  figure.help-img { margin: 18px 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #fff; }
+  figure.help-img img { display: block; width: 100%; height: auto; }
+  figure.help-img figcaption { font-size: 12px; color: var(--muted); padding: 8px 12px; border-top: 1px solid var(--line); background: #fafaf9; }
+  .img-missing { display: flex; align-items: center; justify-content: center; min-height: 120px; background: repeating-linear-gradient(45deg,#f5f5f4,#f5f5f4 10px,#fafaf9 10px,#fafaf9 20px); color: #a8a29e; font-size: 13px; font-weight: 600; text-align: center; padding: 20px; }
+  .menu-toggle { display: none; background: none; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 13px; cursor: pointer; }
+  @media (max-width: 860px) {
+    .menu-toggle { display: inline-block; }
+    .sidebar { position: fixed; left: 0; top: 57px; bottom: 0; width: 82%; max-width: 320px; background: var(--panel); z-index: 30; max-height: none; transform: translateX(-100%); transition: transform 0.2s ease; box-shadow: 2px 0 20px rgba(0,0,0,0.08); }
+    .sidebar.open { transform: translateX(0); }
+    .content { padding: 24px 20px 60px; }
+    .overlay { display: none; position: fixed; inset: 57px 0 0 0; background: rgba(28,25,23,0.3); z-index: 25; }
+    .overlay.show { display: block; }
+    .brand-sub { display: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <button class="menu-toggle" id="menuToggle">&#9776;</button>
+    <div class="brand">AI Front Desk Helper<span class="brand-sub"> · Help Center</span></div>
+    <div class="search-wrap">
+      <span class="icon">&#128269;</span>
+      <input id="search" type="text" placeholder="Search help articles…" autocomplete="off" />
+    </div>
+    <a class="back-link" href="/dashboard">&larr; Back to dashboard</a>
+  </div>
+  <div class="overlay" id="overlay"></div>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar"></nav>
+    <main class="content" id="content"></main>
+  </div>
+<script>
+// Each article: { id, category, title, stub?, html }
+// IMAGES: [[img:./file.png|Caption]] — save screenshots into the
+// backend's public/./ folder. Missing files show a placeholder.
+const ARTICLES = [
+  { id: "getting-started", category: "Getting Started", title: "Welcome & overview",
+    html: `
+      <p>Welcome to AI Front Desk Helper. This help center walks you through every part of your dashboard — what each screen does and how to use it.</p>
+      <p>Your AI receptionist answers calls, texts, and website chats around the clock: it qualifies leads, books estimates onto your calendar, follows up automatically, and keeps every interaction in one place so nothing slips through.</p>
+      <h2>Finding your way around</h2>
+      <p>The left sidebar is your main navigation. The most-used areas are the Dashboard, the Call Intelligence Center (every call, campaign, and voicemail), Bookings, Leads, and Settings.</p>
+      <div class="callout"><p><strong>New here?</strong> Start with <strong>Settings → Phone &amp; voice</strong> to get your AI line live, then <strong>Settings → AI behavior</strong> to shape how it talks.</p></div>` },
+
+  { id: "inbound-calls", category: "Call Intelligence Center", title: "Inbound Calls",
+    html: `
+      <p class="crumb">Call Intelligence Center</p>
+      <p>The <strong>Inbound Calls</strong> tab is the record of every call your AI receptionist answered.</p>
+      [[img:./inbound-calls.png|The Inbound Calls list — each row shows date/time, lead score, name, call length, project, and status.]]
+      <h2>Reading the list</h2>
+      <p>Each row shows the date and time, a <strong>lead score</strong> (0–100; green hot, amber medium, red low), the caller's name and number, the <strong>call length</strong> (for calls that connected), the project type, and the status. Missed calls and voicemails don't show a length, since there was no conversation to time.</p>
+      <h2>Filtering &amp; searching</h2>
+      <p>Search by name, phone, or transcript words (search spans all calls regardless of date filter). Narrow by date range, score, or status.</p>
+      <h2>Opening &amp; actioning a call</h2>
+      <p>Click a row to expand it — estimated value, AI summary, call length, recording, transcript. The action buttons set the lead's state: Schedule Estimate, FollowUp, Lost Lead, or Spam.</p>
+      [[img:./inbound-calls-expanded.png|An expanded call — lead value, project, status, call length, AI summary, recording, and action buttons.]]` },
+
+  { id: "outbound-campaigns", category: "Call Intelligence Center", title: "Outbound Campaigns",
+    html: `
+      <p class="crumb">Call Intelligence Center</p>
+      <p><strong>Outbound Campaigns</strong> launches automated AI calling campaigns to a list of contacts.</p>
+      [[img:./outbound-campaigns.png|The Outbound Campaigns tab — campaign list with success rate, bookings, and status.]]
+      <h2>Calling credits &amp; bundles</h2>
+      <p>Outbound calls use calling minutes. Your plan includes a monthly allotment; buy prepaid bundles (500/1,500/3,000 min) here for more — they stack on top.</p>
+      <h2>Creating &amp; tracking</h2>
+      <p>Click <strong>New Campaign</strong>, choose manual or auto-evolving A/B mode, and upload contacts. Open any campaign to pause/resume and watch success rate, bookings, and winning scripts live.</p>
+      <div class="callout"><p>Campaigns are bulk calling you launch on purpose. The Outreach Log is automated follow-up the AI sends on its own.</p></div>` },
+
+  { id: "outreach-log", category: "Call Intelligence Center", title: "AI Outreach Log",
+    html: `
+      <p class="crumb">Call Intelligence Center</p>
+      <p>The <strong>AI Outreach Log</strong> is the read-only record of every automated touch the AI sent on its own — recovery, nurturing, seasonal, referral, missed-call callbacks.</p>
+      [[img:./outreach-log.png|The AI Outreach Log — automated touches with Source and Status labels.]]
+      <h2>Reading a row</h2>
+      <p>Channel icon, time, customer, and two labels: <strong>Source</strong> (why it fired) and <strong>Status</strong> (what happened).</p>
+      <h2>Filtering &amp; viewing</h2>
+      <p>Search by name/phone, filter by source chips. Click <strong>View</strong> — a call opens its recording and transcript; a text opens the conversation thread.</p>` },
+
+  { id: "voicemails", category: "Call Intelligence Center", title: "Voicemails",
+    html: `
+      <p class="crumb">Call Intelligence Center</p>
+      <p>The <strong>Voicemails</strong> tab collects messages callers left when they couldn't be connected.</p>
+      [[img:./voicemails.png|The Voicemails tab — each message with its number, time, length, Play, Call back, and Mark handled.]]
+      <h2>Working through them</h2>
+      <p>Each message shows the number, time, length, and a <strong>Play message</strong> button. The tab shows a count of unhandled messages.</p>
+      <h2>Calling a customer back</h2>
+      <p>The green <strong>Call back</strong> button places the call <em>for</em> you: it rings your phone first, and when you pick up it connects you to the customer with your business number showing as the caller ID — so the customer sees your business line, not your personal cell, and the call is logged like any other. Tap it and you'll see "Calling…" while your phone rings. (You can also tap the customer's number at the top of the message to dial them straight from your own phone the old way.)</p>
+      [[img:./voicemails-callback.png|Tapping Call back shows a "Calling…" state while your phone rings.]]
+      <p>Once you've dealt with a message, hit <strong>Mark handled</strong> to clear it from the list.</p>
+      <div class="callout"><p>The business number used for the callback is your <strong>primary</strong> AI line, and your phone rings at your <strong>transfer number</strong>. Set the greeting callers hear in <strong>Settings → AI Control → Voicemail greeting</strong>.</p></div>` },
+
+  // ── SETTINGS (10 tabs) ──
+  { id: "settings-phone", category: "Settings", title: "Phone & voice",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>Phone &amp; voice</strong> tab is where you set up AI phone lines — buy a new number, connect one you own, and manage which line is primary.</p>
+      [[img:./settings-phone.png|The Phone & voice tab, showing plan usage and Search & Provision.]]
+      <h2>Plan usage</h2>
+      <p>The blue bar shows numbers used vs your plan limit (e.g. 2 of 5 on Elite). Click <strong>Buy Extra ($12/mo)</strong> for another line, or upgrade your plan.</p>
+      <h2>Getting a new AI line</h2>
+      <ul>
+        <li><strong>Search &amp; Provision</strong> — type an area code, click <strong>Find Numbers</strong>, pick one (new, or an unassigned one already "In Account") and Purchase/Connect.</li>
+        <li><strong>External Forwarding</strong> — already have a number elsewhere? Enter it to forward its calls to your AI.</li>
+      </ul>
+      <h2>Attribute to lead source</h2>
+      <p>Tag each number with its <strong>Lead Source</strong> (Google Ads, Yelp, Facebook…) so every call is attributed to the marketing channel it came from.</p>
+      <h2>Your AI phone lines &amp; primary</h2>
+      <p>Set one line as <strong>Primary</strong> (star icon) — your main caller ID. Change a line's lead source or remove it here.</p>
+      <h2>Forwarding your main line</h2>
+      <p>The dark "Forward your main line" card gives carrier codes (e.g. <code>*72</code> on AT&amp;T/Verizon) to send unanswered calls to your AI line.</p>
+      <div class="callout"><p>A plan is required to provision an AI line. A "Subscription required" lock means add a plan first.</p></div>` },
+
+  { id: "settings-branding", category: "Settings", title: "Branding",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>Branding</strong> tab makes the dashboard look like your business — logo, company name, and brand color in the sidebar, header, browser tab, and customer emails.</p>
+      [[img:./settings-branding.png|The Branding tab — company identity, support email, timezone.]]
+      <h2>Company identity</h2>
+      <ul>
+        <li><strong>Company name</strong> — across the dashboard and in customer emails.</li>
+        <li><strong>Support email</strong> — used in email footers. Blank = default.</li>
+        <li><strong>Website</strong> — your public website address. The AI instruction generator reads it to draft your assistant's instructions, and it's used for SEO on your booking page.</li>
+        <li><strong>Timezone</strong> — affects call routing, nurturing, and reports. Auto-detected on first save; editable here.</li>
+      </ul>
+      <h2>Visual assets</h2>
+      <p>Upload your <strong>Logo</strong> (PNG/SVG, max 1MB) and <strong>Favicon</strong> (square PNG, 32×32 or 64×64).</p>
+      <h2>Colors</h2>
+      <p>Set your <strong>Brand color</strong> (buttons, active states, website chat widget) and an optional <strong>Accent color</strong> (blank = derived from brand color).</p>
+      <h2>Custom domain</h2>
+      <p>On white-label / Elite plans, host the dashboard on your own subdomain (e.g. <code>app.yourcompany.com</code>): enter the hostname, add the CNAME it gives you, click <strong>Verify</strong>. Subdomains only.</p>
+      <div class="callout"><p>Branding changes apply on <strong>Save Changes</strong> (timezone saves on its own).</p></div>` },
+
+  { id: "settings-ai-behavior", category: "Settings", title: "AI behavior",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>AI behavior</strong> tab shapes how your AI talks — tone, greetings, voice, objection handling — and configures your outbound AI agent.</p>
+      [[img:./settings-ai-behavior.png|The AI behavior tab — tone and welcome messages.]]
+      <h2>Tone of voice</h2>
+      <p>Professional, Friendly &amp; Casual, Luxury, or Direct &amp; Authoritative.</p>
+      <h2>Welcome messages</h2>
+      <ul>
+        <li><strong>Voice greeting</strong> — spoken on phone calls in your selected voice. Short (6–12 words), no emoji. Blank = greet naturally.</li>
+        <li><strong>Chat widget greeting</strong> — shown when the website chat opens. Can be longer; emoji fine.</li>
+      </ul>
+      <h2>Inbound voice</h2>
+      <p>Choose the AI's voice for inbound calls (natural AI voices like Shimmer, Ash, Echo — not robotic TTS).</p>
+      <h2>Generate instructions from your business info</h2>
+      <p>Don't want to write the AI's instructions from scratch? Click <strong>Generate draft</strong> and the AI builds a first draft from your trade, hours, FAQs, and website. Review it (fill in anything it marks with <code>[brackets]</code>), click <strong>Use this draft</strong> to drop it into the instructions box, then <strong>Save Changes</strong>. Nothing goes live until you save.</p>
+      <p>If you generated a draft in a past session but never applied it, you'll see an <strong>amber "unreviewed draft" banner</strong> when you open this tab — click <strong>Load draft</strong> to pick up where you left off, or just generate a fresh one.</p>
+      <h2>Detailed AI instructions</h2>
+      <p>Free-text direction on how the AI should behave — anything specific to your business.</p>
+      <h2>Outbound AI agent</h2>
+      <p>Separate settings for when the AI <em>calls</em> leads: caller name (e.g. Alex), outbound voice, and outbound personality/instructions.</p>
+      <h2>Objection handling</h2>
+      <p>Up to 5 cases, each a <strong>trigger</strong> (what the caller says) and a <strong>script</strong> (how the AI responds).</p>
+      [[img:./settings-objection.png|Objection handling cases.]]` },
+
+  { id: "settings-knowledge", category: "Settings", title: "Knowledge base (FAQs)",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>Knowledge base</strong> tab teaches the AI specific questions and answers about your business.</p>
+      <h2>Adding FAQs</h2>
+      <p>Click <strong>Add Question</strong>, enter a <strong>Question</strong> (e.g. "Do you offer emergency services?") and the <strong>Answer</strong> the AI should give. When a caller asks something related, the AI uses your answer.</p>
+      [[img:./settings-knowledge.png|The Knowledge base tab.]]
+      <div class="callout"><p>Add the questions customers actually ask on the phone first. Empty pairs are ignored.</p></div>` },
+
+  { id: "settings-estimator", category: "Settings", title: "Estimator",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>Estimator</strong> tab controls the "💰 Quick Quote" button on your chat widget — a popup that gives homeowners a ballpark price and captures them as a lead. (This tab appears when your plan includes the Estimator or you've added it on — see the Plans tab.)</p>
+      [[img:./settings-estimator.png|The Estimator tab.]]
+      <h2>Turning it on</h2>
+      <p>The hero toggle switches the Quick Quote button on/off.</p>
+      <h2>Cost region</h2>
+      <p>Match your local market: Auto (from your state), High (+50%), Mid (baseline), Low (−15%), or Custom (your own %).</p>
+      <h2>Service rate adjustments</h2>
+      <p>Tune each service up or down from default. Enter a % per service — these <strong>save instantly</strong>. Click <strong>Reset</strong> to return to default.</p>
+      <h2>Standard scope</h2>
+      <p>Toggles for which scope options the estimator includes; loaded for your business type.</p>
+      <div class="callout"><p>Rate adjustments save instantly. The master toggle and cost region apply on <strong>Save Changes</strong>.</p></div>` },
+
+  { id: "settings-ai-control", category: "Settings", title: "AI Control",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>AI Control</strong> tab is mission control for when and how the AI answers.</p>
+      [[img:./settings-ai-control.png|The AI Control tab with the master toggle.]]
+      <h2>1. Master AI toggle</h2>
+      <p>Turns the AI on/off entirely. When you switch it <strong>off</strong>, the AI stops answering immediately — incoming calls ring your ring-first/transfer number and then fall to voicemail, so callers always reach a person or can leave a message. With no human number set, it warns you that every call goes straight to voicemail.</p>
+      <h2>2. Your calling hours</h2>
+      <p>Open/close times per day (or mark closed). Defines "business hours" vs "after hours."</p>
+      <h2>3. When should AI answer?</h2>
+      <p><strong>24/7</strong> (every call) or <strong>After-hours only</strong> (you pick up during the day).</p>
+      <h2>4. Ring-first handoff</h2>
+      <p>Ring a human first; if no pickup within the timeout (5–60s), the call falls through to AI (or voicemail).</p>
+      <h2>5. Voicemail greeting</h2>
+      <p>Paste an HTTPS <code>.mp3</code>/<code>.wav</code> link, or record one in your browser. This is what callers hear before leaving a message — including when the AI is switched off. Blank = friendly default.</p>
+      [[img:./settings-voicemail.png|The voicemail greeting recorder.]]
+      <h2>6. Service area</h2>
+      <p>Tell the AI where you work so it declines out-of-area callers. No limit / By state / By radius / By ZIP. Saves with its own <strong>Save service area</strong> button.</p>
+      <h2>7. Pre-visit briefing text</h2>
+      <p>About an hour before each appointment, the AI texts a briefing. Set a fallback phone for when no technician is assigned.</p>
+      <h2>8. Booking notifications</h2>
+      <p>Text and/or email you the moment any booking lands, from any channel.</p>` },
+
+  { id: "settings-nurturing", category: "Settings", title: "Nurturing & referrals",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>Nurturing &amp; referrals</strong> tab sets up automatic post-service follow-ups — referrals, maintenance reminders, re-engagement, and seasonal campaigns. (Requires Elite or an add-on.)</p>
+      <h2>Enabling campaigns</h2>
+      <p>Three checkboxes: nurturing, referral requests, seasonal campaigns.</p>
+      <h2>Referral timing</h2>
+      <p>How many days after a completed service the AI asks for a referral.</p>
+      <h2>Maintenance &amp; re-engagement touchpoints</h2>
+      <p>Up to 3 each. Set <strong>months after service</strong> and a <strong>header/theme</strong> (e.g. "Spring AC Tune-Up") — the AI writes the message from your theme. Months = 0 disables a touchpoint.</p>
+      <h2>12-month campaign calendar</h2>
+      <p>Name each month's seasonal campaign (blank = default). "Use painting example defaults" populates a starter set.</p>
+      [[img:./settings-nurturing.png|Touchpoints and the 12-month calendar.]]` },
+
+  { id: "settings-integrations", category: "Settings", title: "Integrations",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>Integrations</strong> tab connects your AI to your website, phone system, CRM, calendar, and Facebook.</p>
+      <h2>Website chat widget</h2>
+      <p>Copy the script tag onto your site (before <code>&lt;/body&gt;</code>) for an AI chat bubble. <strong>Copy Email for Developer</strong> copies a ready-to-send email with the script, the click-to-text button, and platform install steps.</p>
+      [[img:./settings-integrations-widget.png|The website chat widget script and developer email.]]
+      <h2>Click-to-Text button</h2>
+      <p>A "Text Us to Book" button — on mobile it opens the customer's messaging app pre-filled with a booking inquiry routed to your AI. (Needs an AI phone line first.)</p>
+      <h2>Your booking page</h2>
+      <p>A standalone page where customers book in one tap; every booking flows into your dashboard and fires your notifications. Copy the link to share it.</p>
+      <h2>Voice &amp; SMS (Twilio)</h2>
+      <p>Set <strong>transfer numbers</strong> (where human-transfer calls go) and, if you use your own Twilio, your SID and Auth Token.</p>
+      <h2>The CRM 3-step loop</h2>
+      <ul>
+        <li><strong>Leg 1 — New lead → your CRM:</strong> paste your CRM's inbound webhook in <strong>CRM Webhook URL</strong>.</li>
+        <li><strong>Leg 2 — Estimate sent → AI follow-up:</strong> the <strong>AI Sales Recovery</strong> webhook starts a 21-day recovery sequence when you send a proposal.</li>
+        <li><strong>Leg 3 — Job completed → nurturing:</strong> the <strong>Revenue Pipeline</strong> webhook records revenue and kicks off post-service nurturing when a job is Won.</li>
+      </ul>
+      <p>Each card's <strong>How to Connect</strong> button gives exact Zapier field mapping.</p>
+      [[img:./settings-crm-loop.png|The CRM 3-step loop.]]
+      <h2>Google Calendar</h2>
+      <p>Connect it so the AI checks real-time availability and never double-books. Reconnect prompt appears if it ever expires.</p>
+      <h2>Facebook Messenger</h2>
+      <p>Connect a Page so the AI replies to Messenger. "How to connect" walks through the Meta app, webhook, and tokens.</p>
+      <h2>Lead Sources</h2>
+      <p>Connect Angi, Thumbtack, Yelp, Networx and more. Each has connect steps and a unique webhook URL — new leads get an instant AI text.</p>` },
+
+  { id: "settings-plans", category: "Settings", title: "Plans",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>Plans</strong> tab is where you see your current plan, switch plans, and manage optional add-ons.</p>
+      [[img:./settings-plans.png|The Plans tab — current plan, billing cycle, and add-ons.]]
+      <h2>Your current plan</h2>
+      <p>At the top, the <strong>Current Plan</strong> card shows which plan you're on (Basic, Pro, or Elite) and its status. The <strong>Manage Billing</strong> button opens your billing portal to update payment details or view invoices.</p>
+      <h2>Monthly vs. annual</h2>
+      <p>Toggle between <strong>Monthly</strong> and <strong>Annual</strong> billing. Annual includes two months free, so it's a meaningful saving if you're committed for the year.</p>
+      <h2>Choosing a plan</h2>
+      <p>The three tiers are shown as cards with their included voice minutes and SMS messages:</p>
+      <ul>
+        <li><strong>Basic</strong> — AI Front Desk Starter: 24/7 AI call answering, instant SMS follow-up, and missed-call text-back.</li>
+        <li><strong>Pro</strong> — AI Booking Assistant: everything in Basic plus Google Calendar integration and automated estimate booking.</li>
+        <li><strong>Elite</strong> — AI Sales, Follow-Up &amp; White-Label Engine: everything in Pro plus AI follow-up calls, white-label, and the nurturing and review add-ons included free.</li>
+      </ul>
+      <p>Click <strong>Change to…</strong> on any tier to switch. Your current plan is labeled and its button is disabled.</p>
+      <h2>Optional add-ons</h2>
+      <p>Some features are add-ons you can toggle on if your plan doesn't already include them:</p>
+      <ul>
+        <li><strong>Estimator</strong> — the Quick Quote widget. Included free on Elite, white-label, reseller, and franchise plans; otherwise a paid add-on. (Some early accounts are <em>grandfathered</em> in at no cost.)</li>
+        <li><strong>Customer Nurturing &amp; Referrals</strong> — automated post-service follow-ups, referral requests, and re-engagement. A paid monthly add-on, included free on Elite.</li>
+        <li><strong>AI Google Review Responses</strong> — auto-detects new Google reviews, drafts SEO-optimized replies, and posts them with one click. A paid monthly add-on, included free on Elite.</li>
+      </ul>
+      <p>Each add-on shows its price and an Enable/Add button (or an "Included" badge if your plan already covers it). Enabling starts checkout; you can cancel an active add-on and keep access through the end of the billing period.</p>
+      <div class="callout"><p><strong>On Elite?</strong> The nurturing, review-response, and estimator add-ons are all included — you'll see "Included in Elite" rather than a price.</p></div>` },
+
+  { id: "settings-billing", category: "Settings", title: "Usage & Billing",
+    html: `
+      <p class="crumb">Settings</p>
+      <p>The <strong>Usage &amp; Billing</strong> tab shows usage against your plan limits and your billing details.</p>
+      <p>See consumed calling minutes and other metered usage this period, and manage your subscription and payment. Approaching your limit triggers a dashboard warning banner linking back here.</p>
+      [[img:./settings-billing.png|The Usage & Billing tab.]]
+      <div class="callout"><p>On reseller accounts this tab is hidden — usage shows in the reseller area instead.</p></div>` },
+
+  { id: "api-integrations", category: "Developer & API", title: "API & developer integrations",
+    html: `
+      <p>AI Front Desk Helper offers a booking API so a CRM, partner platform, or AI agent can check availability and create real bookings on your calendar.</p>
+      <p>Send a developer the guide:</p>
+      <p><a href="/api-docs" target="_blank" rel="noopener"><strong>Open the API Integration Guide &rarr;</strong></a></p>
+      <p>It's also in your account menu (avatar &rarr; <strong>API Documentation</strong>). You'll need your Business ID and API Key — keep the key secret; it authorizes real bookings.</p>` },
+
+  { id: "dashboard", category: "Your Dashboard", title: "Dashboard overview",
+    html: `
+      <p class="crumb">Your Dashboard</p>
+      <p>The <strong>Command Center</strong> is your home screen — a live snapshot of money in your pipeline, what the AI is doing right now, and what needs your attention today. It refreshes on its own every 60 seconds (you'll see the last-updated time in the top right).</p>
+      [[img:./dashboard-overview.png|The Command Center — ROI hero, Coach's Alerts, and pipeline KPIs.]]
+      <h2>ROI at the top</h2>
+      <p>The first card is your return-on-investment hero — the headline number for what the AI has earned or saved you. It's the quickest answer to "is this paying for itself?"</p>
+      <h2>Coach's Alerts</h2>
+      <p>Just below, the AI flags things worth acting on right now based on your live data — leads going cold, a spike in a particular objection, follow-ups worth making. Think of it as the system pointing at today's most valuable next move.</p>
+      <h2>Pipeline Value</h2>
+      <p>Four tiles: <strong>Open Estimates</strong> (need follow-up), <strong>Jobs Scheduled</strong> (confirmed bookings), <strong>Pipeline Value</strong> (AI-estimated revenue in play), and <strong>Confirmed Revenue</strong> (actual won revenue tracked from your CRM). If Confirmed Revenue shows $0, a <strong>Setup tracking</strong> link walks you through connecting DripJobs/Zapier so won jobs report back.</p>
+      <h2>Voice → Estimate Funnel</h2>
+      <p>If you use the Estimator, this three-stage funnel shows how voice calls turn into money: <strong>Links Sent</strong> (the AI texted a quote link) → <strong>Filled Out</strong> (the customer completed it) → <strong>Booked</strong>. The conversion % between each stage is the diagnostic — a low fill rate points at your estimator page or SMS wording; a strong book rate means it's qualifying well. An insight line under the funnel tells you what the numbers mean.</p>
+      [[img:./dashboard-funnel.png|The Voice → Estimate funnel with conversion rates between each stage.]]
+      <h2>Why calls didn't convert</h2>
+      <p>A breakdown of the objections behind calls that didn't book — price, timing, wanted a human, or confusion — pulled from call transcripts, so you can see the top reason and adjust your AI script.</p>
+      <h2>Live Activity Feed</h2>
+      <p>A real-time stream of every AI action as it happens — calls answered, bookings made, recovery texts sent, follow-ups fired.</p>
+      <h2>Recent Calls &amp; Upcoming Appointments</h2>
+      <p>Your last few calls (with booked/transferred/completed status) and your next few appointments (with date, value, and time). <strong>View all</strong> and <strong>Calendar</strong> links jump to the full Calls and Bookings pages.</p>
+      [[img:./dashboard-calls-appts.png|Recent Calls and Upcoming Appointments side by side.]]
+      <h2>Quick Actions &amp; AI Health</h2>
+      <p>One-tap shortcuts (start outbound, add booking, send SMS, add lead) and a health strip confirming Twilio, OpenAI voice, SMS sequences, and follow-ups are all running.</p>
+      <div class="callout"><p>The dashboard auto-refreshes every 60 seconds. The "AI Online" badge up top confirms the system is live and answering.</p></div>` },
+  { id: "bookings", category: "Your Dashboard", title: "Bookings",
+    html: `
+      <p class="crumb">Your Dashboard</p>
+      <p>The <strong>Bookings</strong> page is where you manage every appointment — view them as a table or calendar, assign crew, update status, and cancel when needed. The number next to the title is your total booking count.</p>
+      [[img:./bookings-table.png|The Bookings table — customer, appointment, value, source, technician, and status.]]
+      <h2>Three views</h2>
+      <ul>
+        <li><strong>Table</strong> — a sortable, searchable list of every booking.</li>
+        <li><strong>Calendar</strong> — the same appointments laid out by date.</li>
+        <li><strong>Crew</strong> — manage your technicians (hidden for staff-level logins).</li>
+      </ul>
+      <h2>Searching &amp; filtering</h2>
+      <p>Search by name, phone, or project details. Filter by status — all, booked, confirmed, completed, or cancelled. Sort any column (customer, appointment date, value) by clicking its header.</p>
+      <h2>Assigning crew &amp; updating status — right from the table</h2>
+      <p>Each row has inline dropdowns: pick a <strong>technician</strong> and set the <strong>status</strong> (Booked, Confirmed, Completed, Rescheduled, Cancelled) without opening anything. The assigned technician is who gets the pre-visit briefing text. If the booking came from a call, a <strong>View Call</strong> button links to its recording and transcript.</p>
+      <h2>Booking details</h2>
+      <p>Click any row to open the full detail — customer, source, estimated budget, appointment date/time, and project scope, plus the same status and technician controls.</p>
+      [[img:./bookings-detail.png|The booking detail modal — budget, appointment, scope, and controls.]]
+      <h2>Cancelling a booking</h2>
+      <p>In the detail modal, <strong>Cancel Booking</strong> asks you to confirm and lets you add an optional reason. You'll get an email summary so you can follow up. (Cancelling is hidden once a booking is already cancelled.)</p>
+      <h2>Stop all communication (Do Not Contact)</h2>
+      <p>If a customer asks to stop hearing from you, open their booking and use <strong>Stop All Communication</strong>. This immediately cancels any active follow-up sequences and nurturing for that lead and blocks all future automated texts and calls — you can add a reason for your audit log. A red <strong>DNC</strong> badge then marks them, and <strong>Resume Communication</strong> reopens them later (previously-cancelled sequences stay cancelled).</p>
+      [[img:./bookings-dnc.png|The Do Not Contact controls inside a booking.]]
+      <div class="callout"><p>Assigning a technician here is what routes the pre-visit briefing text to the right person — set it up in <strong>Settings → AI Control</strong>.</p></div>` },
+  { id: "leads", category: "Your Dashboard", title: "Leads & pipeline",
+    html: `
+      <p class="crumb">Your Dashboard</p>
+      <p>The <strong>Leads Pipeline</strong> is your CRM view of every pre-booking contact — people who've called, texted, or messaged but haven't booked yet. (Once they book, they move to the <strong>Bookings</strong> page.) The page has three tabs: <strong>Pipeline</strong>, <strong>Follow-ups</strong>, and <strong>AI Conversations</strong>.</p>
+      [[img:./leads-pipeline.png|The Leads Pipeline — summary stats, status filters, and the leads table.]]
+      <h2>The four stat cards</h2>
+      <p>Across the top: <strong>Total Leads</strong>, <strong>New This Week</strong>, <strong>Open Estimates</strong>, and <strong>Won / Booked</strong> — a quick read on pipeline health.</p>
+      <h2>Filtering &amp; searching</h2>
+      <p>Filter by status with the chips — All, New Lead, Qualified, Estimate Sent, Won, Lost — each showing a count. Search by name, phone, or email to find anyone fast.</p>
+      <h2>Reading the table</h2>
+      <p>Each lead shows their contact info, a color-coded <strong>status</strong>, estimated value, <strong>source</strong> (Facebook, Website, Google, DripJobs, Referral, SMS…), and <strong>last activity</strong> — with a colored dot that turns amber after a week and red after two, so stale leads are easy to spot. Anonymous web and Facebook visitors show as such until they share real details.</p>
+      <h2>Opening a lead</h2>
+      <p>Click any row to open that lead's full detail page — their contact record, conversation history, and Customer Intel (see the <strong>Lead detail &amp; Customer Intel</strong> article).</p>
+      <h2>The other two tabs</h2>
+      <ul>
+        <li><strong>Follow-ups</strong> — your automated follow-up pipeline (see the Follow-ups help article).</li>
+        <li><strong>AI Conversations</strong> — jumps to the Conversations page to read and reply to threads.</li>
+      </ul>
+      <div class="callout"><p>Leads here are pre-booking. The moment someone books, they appear on the <strong>Bookings</strong> page instead.</p></div>` },
+  { id: "lead-detail", category: "Your Dashboard", title: "Lead detail & Customer Intel",
+    html: `
+      <p class="crumb">Your Dashboard</p>
+      <p>Click any lead in your pipeline to open their <strong>customer record</strong> — the deepest view in the app. The left column holds their profile, the AI's read on their personality and how to sell to them, crew assignment, follow-up controls, and consent records; the right column holds pricing (what they saw online vs. what your rep quoted, with AI coaching on the gap) and the full conversation history. A <strong>status stepper</strong> across the top shows where they are in your pipeline, and a status dropdown (top right) moves them along.</p>
+      [[img:./lead-detail.png|The lead detail page — profile and Customer Intel on the left, pricing and conversation feed on the right.]]
+      <h2>Profile details</h2>
+      <p>Name, phone, email, address, project type, estimated revenue, and notes — built up automatically from calls, texts, and bookings. Click <strong>Edit Profile</strong> to correct or add anything, then <strong>Save Changes</strong>.</p>
+      <h2>Customer Intel — DISC profiling</h2>
+      <p><strong>Customer Intel</strong> is the AI's read on how this person makes decisions, using the DISC framework. It shows a dominant type — <strong>D</strong>ominant, <strong>I</strong>nfluencer, <strong>S</strong>teady, or <strong>C</strong>onscientious — sometimes with a secondary type, a one-line tagline (e.g. "Direct, results-focused, fast decisions"), and a <strong>confidence</strong> score. Low confidence gets a "verify in person" flag; if the call was too short or one-sided to read, the card says so honestly rather than guessing. A <strong>DISC profile breakdown</strong> bar shows the full mix across all four.</p>
+      [[img:./lead-detail-disc.png|Customer Intel — DISC type, confidence, profile breakdown, and the how-to-work coaching.]]
+      <h2>How to work this customer</h2>
+      <p>The most useful part for selling: a plain-language playbook tailored to that DISC type, with six rows — how to <strong>open</strong>, what <strong>pace</strong> to set, what to <strong>lead with</strong>, how to handle their likely <strong>objection</strong>, how to <strong>close</strong>, and what to <strong>avoid</strong>. A Dominant customer gets "lead with the number, close fast, no small talk"; a Steady customer gets "be the patient advisor, reassure, never hard-close." It's the AI turning a personality read into a game plan your rep can use at the door.</p>
+      <h2>Was the read right? Teaching the AI</h2>
+      <p>Under the intel, a <strong>Was this accurate?</strong> prompt lets you confirm with <strong>✓ Yes</strong> or correct it with <strong>✗ No, correct it</strong> (which opens a quick form to set the real type). If the AI itself wasn't sure, it flags the lead for your review. Your verdict is recorded and helps sharpen future classifications — and once you've weighed in, the verdict locks so it reads as human-validated.</p>
+      <h2>Assigned estimator</h2>
+      <p>Once an appointment is booked, assign the estimator who'll run it. That person receives the <strong>pre-visit briefing text</strong> about an hour before the appointment. If they have no cell on file, the card warns you (the briefing falls back to your default recipient) — add their number on the Team page → Technicians tab.</p>
+      <h2>Recovery controls</h2>
+      <p>Control this lead's automated follow-ups independently of everyone else. See whether recovery is <strong>Active</strong> or <strong>Paused</strong>, set a <strong>cadence override</strong> for just this person (Aggressive, Standard, Gentle, Single, or Off), and <strong>Pause</strong> or <strong>Resume</strong> their sequence with one button.</p>
+      <h2>Compliance audit</h2>
+      <p>When a lead opted into texts, a <strong>Compliance Audit</strong> panel records the proof for TCPA — the exact disclosure they agreed to, when, the IP address, the source, and the page URL. It's your paper trail that consent was captured properly.</p>
+      <h2>Pricing: ballpark vs. real quote, with variance coaching</h2>
+      <p>The right column tracks pricing in two parts. <strong>Widget Ballpark Shown to Customer</strong> is the range they saw on your website estimator. <strong>Your Real Quote</strong> is what your rep actually priced in person — enter it here. When the two differ by a meaningful margin, the AI generates <strong>Variance Coaching</strong>: the % above or below ballpark, the likely reasons for the gap, and suggested talking points to justify the number to the customer. It's there to help a rep defend a higher quote with confidence.</p>
+      [[img:./lead-detail-quote.png|Widget ballpark vs. the rep's real quote, with AI variance coaching.]]
+      <h2>Conversation feed</h2>
+      <p>The complete timeline of every touch — SMS, website chat, Facebook, voice calls (with transcript and disposition), and bookings — each stamped with its channel and time. Inbound messages sit on one side, your/AI replies on the other, so it reads like a chat history. The count at the top right shows how many events are in the thread.</p>
+      <div class="callout"><p>The DISC read here is the same one that powers the pre-visit briefing text, so what your rep gets on-site matches what you see on this page. Correcting an inaccurate read doesn't just fix this lead — it helps tune future classifications.</p></div>` },
+  { id: "conversations", category: "Your Dashboard", title: "Conversations",
+    html: `
+      <p class="crumb">Your Dashboard</p>
+      <p>The <strong>Conversations</strong> page is your unified inbox for every text and chat thread — SMS, website chat, Facebook Messenger, and email — all in one place. The AI handles most of it automatically, and you can step in whenever you want.</p>
+      [[img:./conversations.png|The Conversations inbox — thread list on the left, full conversation on the right.]]
+      <h2>The thread list</h2>
+      <p>On the left, every conversation with the contact's name, the latest message, and when it arrived. The count at the top shows your total. Each thread shows a small icon for its channel, and booked leads get a green check.</p>
+      <h2>Searching &amp; filtering by channel</h2>
+      <p>Search by name or phone, and filter by channel using the chips — All, SMS, Website, Facebook, or Email — to focus on one type at a time.</p>
+      <h2>Reading &amp; replying</h2>
+      <p>Click any thread to open the full conversation on the right. You'll see every message in order, who sent it (customer, AI, or you), and the channel. Type a reply to jump in yourself — handy when a conversation needs a personal touch.</p>
+      <h2>Taking over from the AI &amp; handing back</h2>
+      <p>When you send a manual reply, the AI steps back so it won't talk over you on that thread. When you're done, you can resume AI handling so it picks future messages back up automatically.</p>
+      <div class="callout"><p>Opening a conversation from the <strong>AI Outreach Log</strong> deep-links straight to the right thread and highlights the exact message — so you land on the message in question, not the top of the inbox.</p></div>` },
+  { id: "follow-ups", category: "Your Dashboard", title: "Follow-ups",
+    html: `
+      <p class="crumb">Your Dashboard</p>
+      <p>The <strong>Follow-Up Pipeline</strong> shows every lead the AI is actively chasing — estimate recoveries, missed-call callbacks, upcoming appointments, and long-term nurturing — and lets you jump in with a manual text or call. (You'll find it as a tab on the Leads page.)</p>
+      [[img:./followups.png|The Follow-Up Pipeline — filter tabs and the active follow-up table.]]
+      <h2>The filter tabs</h2>
+      <p>Each tab filters by type and shows a count. Hover any tab for a full explanation:</p>
+      <ul>
+        <li><strong>Estimate Recovery</strong> — leads who got an estimate but haven't booked; the AI works a multi-day sequence of texts and calls to win them back.</li>
+        <li><strong>Missed Calls</strong> — callers the AI couldn't reach. An instant "sorry we missed you" text goes out, then callback attempts at 30 minutes and 24 hours.</li>
+        <li><strong>Appointments</strong> — confirmed bookings with reminders to cut no-shows.</li>
+        <li><strong>Nurturing</strong> — long-term touches: post-job follow-ups, maintenance reminders, seasonal campaigns, and referral requests.</li>
+      </ul>
+      <h2>Reading the table</h2>
+      <p>Each row shows the lead, value, current <strong>stage</strong> in the sequence, the <strong>next action</strong> time, and how long they've been waiting (green/amber/red by age). Appointments show a countdown — Today, Tomorrow, or "In X days."</p>
+      <h2>Taking action</h2>
+      <p>For recovery and missed-call rows you can <strong>send an SMS</strong> or <strong>trigger an AI call</strong> right now, or mark the lead <strong>Booked</strong> or <strong>Lost</strong> to pull them out of the pipeline. Appointment rows link to the booking; nurturing runs as an automated sequence.</p>
+      <h2>Configure Follow-ups</h2>
+      <p>The <strong>Configure Follow-ups</strong> button (top right) opens settings for channels, cadence, quiet hours, and the master on/off toggle.</p>
+      <div class="callout"><p>If you see a <strong>"Follow-ups are paused"</strong> banner, the master toggle is OFF — every row is scheduled but nothing will actually send until you turn it back on in Configure Follow-ups.</p></div>` },
+  { id: "metrics", category: "Your Dashboard", title: "Metrics & reporting",
+    html: `
+      <p class="crumb">Your Dashboard</p>
+      <p>The <strong>Business Metrics</strong> page is your deep-dive analytics — how your AI is performing, where leads come from, which customers convert, and where revenue is flowing. It has two tabs: <strong>Performance</strong> (the analytics) and <strong>Goals</strong> (targets you set).</p>
+      [[img:./metrics-performance.png|The Business Metrics page — hero stats and insight banners up top.]]
+      <h2>Time range</h2>
+      <p>On the Performance tab, pick the window with the selector — <strong>Today</strong>, <strong>7d</strong>, <strong>30d</strong>, <strong>90d</strong>, or <strong>All time</strong>. Everything below recalculates for that range (a few all-time sections like Customer Intel are noted as such). For multi-location accounts, the header shows whether you're viewing all locations or one branch, with a per-location breakdown table.</p>
+      <h2>The hero &amp; insight banners</h2>
+      <p>At the top, headline numbers — revenue per call, calls handled, confirmed revenue, and an estimate of revenue you'd have lost without the AI. Below that, the system surfaces <strong>insight banners</strong> that read your data and tell you what to do: e.g. if the hang-up rate climbs above target it flags it and suggests reviewing your greeting; if confusion is low it tells you the AI is understanding callers well.</p>
+      <h2>Primary KPIs</h2>
+      <p>Five at-a-glance cards: <strong>Calls Answered</strong>, <strong>Booking Rate</strong>, <strong>Estimate Acceptance Rate</strong>, <strong>Active Follow-ups</strong>, and <strong>No-show Rate</strong> — each with a target or trend so you know if you're on track.</p>
+      <h2>AI performance breakdown</h2>
+      <p>Success rate (booked + follow-up), failure rate (hung up + confused), and transfer rate, plus a <strong>call outcome breakdown</strong> bar showing how every call resolved. Two deeper analysis cards dig in: <strong>Hung-up call analysis</strong> (when in the call people dropped — under 10s, 10–30s, 30s+, with a coaching note on whether it's a greeting problem or a conversation-flow problem) and <strong>Confused call triggers</strong> (which phrases tripped the AI up and whether it recovered).</p>
+      [[img:./metrics-ai-breakdown.png|AI performance breakdown — outcomes, hung-up analysis, and confusion triggers.]]
+      <h2>Lead source &amp; contact method</h2>
+      <p>Two tables side by side. <strong>By Marketing Source</strong> attributes each lead to the channel that drove it (Google Ads, LSA, Facebook, Yelp, referral, yard signs, and more) with leads, bookings, rate, and revenue per source. <strong>By Contact Method</strong> shows how people reached you — phone, SMS, chat, Facebook, email — with the same conversion columns. Together they tell you which marketing is actually paying off.</p>
+      [[img:./metrics-sources.png|Lead source and contact-method analysis tables.]]
+      <h2>Operational metrics</h2>
+      <p>Four cards: <strong>Missed Calls Recovered</strong> (would've gone to voicemail), <strong>Avg Time to Book</strong>, <strong>Follow-up Conversion</strong> (leads won specifically by follow-up), and <strong>Avg Job Value</strong>.</p>
+      <h2>Call funnel &amp; heat maps</h2>
+      <p>Visualizations of where calls flow and when they happen — a <strong>call funnel</strong> (how calls move from answered to booked), a <strong>call-volume heat map</strong> (busiest hours and days), and a <strong>booking heat map</strong> — so you can spot staffing gaps and peak times.</p>
+      [[img:./metrics-heatmaps.png|Call funnel and volume/booking heat maps.]]
+      <h2>Customer Intel — which types convert</h2>
+      <p>An all-time table breaking conversions down by <strong>DISC profile</strong> — for each type, how many leads, how many open/won/lost, the conversion rate, and won revenue. It answers "which kind of customer actually pays." Conversion rates only appear once a type has enough settled outcomes, so you're never shown a misleading number off two data points.</p>
+      [[img:./metrics-customer-intel.png|Customer Intel — conversion and revenue by DISC type.]]
+      <h2>Net revenue flow</h2>
+      <p>A bottom summary tying it together: confirmed revenue from your CRM, revenue lost to cancellations, and total pipeline value.</p>
+      <h2>Goals tab</h2>
+      <p>Switch to <strong>Goals</strong> to set and track your targets — the numbers the Coach's Alerts on your dashboard measure against.</p>
+      <div class="callout"><p>Some figures depend on CRM revenue tracking (DripJobs/Zapier). If revenue cards read low or empty, connect tracking from the dashboard's Pipeline section so won jobs report back here.</p></div>` },
+  { id: "ai-coaching", category: "Your Dashboard", title: "AI Coaching", html: `
+      <p>The <strong>AI Coaching</strong> page scores your team's conversations — both phone calls and SMS threads — so you can see how well each one was handled and where reps are losing deals. Every conversation is graded by AI across eight dimensions, with the buyer's persona detected and specific, rationale-backed feedback.</p>
+      [[img:./ai-coaching-overview.png|The AI Coaching page — channel toggle and the four summary cards.]]
+      <h2>The two tabs</h2>
+      <p>At the top you'll find <strong>Conversations</strong> (the scored list) and <strong>In-Home Cues</strong> (real-time coaching prompts for in-person visits).</p>
+      <h2>Channel: Voice / SMS / All</h2>
+      <p>The channel toggle filters what you're looking at: <strong>Voice</strong> (inbound and outbound calls), <strong>SMS</strong> (text conversations), or <strong>All</strong> together. New calls are scored every few minutes; SMS threads are scored after they've been quiet for about 12 hours.</p>
+      <h2>The summary cards</h2>
+      <p>Four cards across the top give you the headline numbers for your selected date range (7, 30, or 90 days): <strong>Average Score</strong> (out of 10), <strong>Conversations Scored</strong>, <strong>Book Rate</strong> (how many scored conversations led to a booking), and <strong>Focus Area</strong> (the single lowest-scoring dimension across your team — your biggest opportunity to improve).</p>
+      <h2>Filtering the list</h2>
+      <p>Narrow the conversation list by <strong>persona</strong> (Researcher, Protector, Status Seeker, Pragmatist, Negotiator, Collaborator), by <strong>source</strong> (inbound/outbound call, SMS, rep recording), or by <strong>minimum score</strong> (8+ great, 6+ good). The list shows each conversation's date, source, detected persona, rep, outcome, and score color-coded green/amber/red.</p>
+      [[img:./ai-coaching-list.png|The conversation list — persona, rep, outcome, and color-coded scores.]]
+      <h2>One-sided calls</h2>
+      <p>By default, conversations where the customer's side wasn't captured (silent calls, hang-ups) are hidden, since they can't be fairly scored. Toggle <strong>Show one-sided calls</strong> to see them — they appear with a "Not Analyzable" badge.</p>
+      <h2>Opening a conversation</h2>
+      <p>Click any row to open the full detail — the transcript, the score breakdown across all eight dimensions (rapport, discovery, education, value framing, objection handling, close, professionalism, and property walkthrough), and the AI's reasoning for each.</p>
+      <h2>Coaching settings & Team Analytics (owners/admins)</h2>
+      <p>Two buttons at the top right: <strong>Coaching settings</strong> tunes how the engine scores and what rules it applies, and <strong>Team Analytics</strong> compares your reps side by side — average scores, how many conversations each handled, coaching-cue counts (like "missing close"), and the team's score trend over time.</p>
+      [[img:./ai-coaching-analytics.png|Team Analytics — rep comparison and the team score trend.]]
+      <div class="callout"><p><strong>Teaching the AI your style:</strong> feedback you give on conversations is turned into coaching rules that, once approved, shape how the AI handles future calls and texts — tuning it to how you want things done.</p></div>` },
+  { id: "team", category: "Account", title: "Team & users", html: `
+      <p>The <strong>Team</strong> page is where you manage who has access to your account, what they can do, and (if you use it) their AI Rep Coach mobile seats. It has two tabs: <strong>Members</strong> and <strong>Activity History</strong>.</p>
+      [[img:./team-members.png|The Members tab — your team table with roles, locations, and rep-seat controls.]]
+      <h2>Your name</h2>
+      <p>At the top of Members, set <strong>Your name</strong> — this is the display name shown above your coaching feedback in a rep's mobile app. If you leave it blank, reps see your email instead.</p>
+      <h2>Inviting a team member</h2>
+      <p>Click <strong>Invite User</strong>, enter their email, and pick a role. They'll get an email to set their password. The three roles:</p>
+      <ul>
+        <li><strong>Staff / Technician</strong> — can only see the Bookings calendar.</li>
+        <li><strong>Business Manager</strong> — operational access to leads and calls across locations; no billing or plan access.</li>
+        <li><strong>Business Owner</strong> — full access including billing, settings, and team management.</li>
+      </ul>
+      <p>On a multi-location (HQ) account, you also assign which location the member belongs to; HQ members get organization-wide visibility at their role's level.</p>
+      [[img:./team-invite.png|The Invite User modal, showing the three roles.]]
+      <h2>The members table</h2>
+      <p>Each member shows their email, assigned location (with an HQ badge for corporate), role, rep-seat status, and a remove button. Removing someone revokes their access immediately.</p>
+      <h2>AI Rep Coach & seats</h2>
+      <p>If you use the AI Rep Coach mobile app, the toggle here enables it for your account. Once on, you assign a <strong>rep seat</strong> to each member who needs the app (with a tier: Standard, Pro, or Elite). A usage meter shows how many seats are active, your current per-seat rate, and how many more seats you'd need to reach the next price break.</p>
+      <h2>Activity History</h2>
+      <p>The second tab is an audit log of account activity — logins, users removed, bookings updated, settings changed, recordings played, and more. Filter by action type and date range. On HQ accounts it also shows which location each action came from.</p>
+      [[img:./team-history.png|The Activity History tab — a filterable audit log of account activity.]]` },
+  { id: "reviews", category: "Growth", title: "Reviews",
+    html: `
+      <p class="crumb">Growth</p>
+      <p>The <strong>Reviews</strong> page does two jobs: it <em>asks</em> happy customers for Google reviews automatically after a job, and it helps you <em>respond</em> to the reviews you get with AI-drafted replies you approve in one click.</p>
+      <div class="callout"><p>Reviews is an add-on ($29/mo), <strong>included free on the Elite plan</strong>. If you don't have access yet, the page shows an unlock card; on Elite it's already on.</p></div>
+      <h2>First time: connect Google</h2>
+      <p>Once you have access, connect your Google Business Profile so the app can read your reviews and post replies. Click <strong>Connect Google Account</strong> and authorize. You only do this once.</p>
+      <h2>Review Requests — asking for reviews automatically</h2>
+      <p>At the top of the connected page is the <strong>Review Requests</strong> section (click to expand). This is the automated drip that asks customers for a review after a completed job:</p>
+      <ul>
+        <li><strong>Google review link</strong> — paste your review link here (from your Google Business Profile → "Ask for reviews"). This is what gets sent to customers. Click <strong>Save link</strong>.</li>
+        <li><strong>Automatic review requests</strong> toggle — turn the drip on/off. Default cadence: a text on day 1, another on day 3, then an email on day 7. It stops the moment they leave a review.</li>
+        <li><strong>In progress</strong> — every customer currently in the drip, each with a <strong>Stop</strong> button. You have about 24 hours after a job completes to hit Stop before the first text goes out, if you'd rather not ask that particular customer.</li>
+      </ul>
+      [[img:./reviews-requests.png|The Review Requests drip — review link, on/off toggle, and in-progress list.]]
+      <h2>Responding to reviews — the three tabs</h2>
+      <p>Below that, your reviews are organized into three tabs. Click <strong>Check for new reviews</strong> at the top right any time to pull the latest from Google (it also checks automatically every few hours).</p>
+      <h3>Pending</h3>
+      <p>New reviews waiting for a response. Each card shows the reviewer, their star rating, their review text, and an <strong>AI Draft Response</strong> written for you. You can:</p>
+      <ul>
+        <li><strong>✓ Approve &amp; Post to Google</strong> — posts the reply live.</li>
+        <li><strong>✏ Edit</strong> — tweak the wording before posting.</li>
+        <li><strong>↻ Regenerate</strong> — get a fresh AI draft if you don't like the first.</li>
+        <li><strong>Skip</strong> — move it to Skipped without replying.</li>
+      </ul>
+      [[img:./reviews-pending.png|The Pending tab — a review with its AI draft response and action buttons.]]
+      <h3>Posted</h3>
+      <p>Reviews you've already replied to, showing the response that's now live on Google and the date it posted.</p>
+      [[img:./reviews-posted.png|The Posted tab — replies that are live on Google.]]
+      <h3>Skipped</h3>
+      <p>Reviews you chose not to respond to. Nothing was posted; they're just filed here so your Pending tab stays clean.</p>
+      [[img:./reviews-skipped.png|The Skipped tab.]]
+      <div class="callout"><p><strong>Disconnecting:</strong> the <strong>Disconnect</strong> button at the top right unlinks your Google account. You'd only do this to reconnect a different account.</p></div>` },
+  { id: "gbp", category: "Growth", title: "Google Business Profile", html: `
+      <p class="crumb">Growth</p>
+      <p>The <strong>Google Business Profile</strong> page helps you keep your Google listing strong — it audits your profile, writes AI posts tuned for local and AI search, tracks performance, and manages your booking link. A strong, active profile ranks higher and gets found more.</p>
+      <h2>First time: connect Google</h2>
+      <p>Connect your Google Business account to unlock everything here. Click <strong>Connect Google Account</strong> and authorize. (This is the same connection used by the Reviews page — connect once, both work.)</p>
+      <p>Once connected, the page has six sub-tabs across the top:</p>
+      <h2>Health</h2>
+      <p>A <strong>health score</strong> (0–100) for your profile, with a prioritized list of gaps to fix — things like a stale description, missing services, or no recent posts. Click <strong>Run audit</strong> to score (or re-score) your profile.</p>
+      <p>Some gaps have a fix button built right in: <strong>✨ Rewrite with AI</strong> opens a tool that rewrites your business description (you pick a focus — wider service area, premium work, trust, etc., then review and publish), and <strong>See suggested services</strong> lists services to add to your profile for your trade.</p>
+      [[img:./gbp-health.png|The Health tab — score ring and prioritized gaps.]]
+      <h2>Drafts</h2>
+      <p>Generate AI posts for your profile. Click <strong>+ Generate draft</strong> and the AI writes a post tuned for local and AI search. Before you can publish, each post needs an image — <strong>Upload</strong> your own or <strong>Choose from Google</strong> (your existing profile photos). Then <strong>✓ Approve &amp; Publish to Google</strong> sends it live. You can also Edit the text or Archive a draft.</p>
+      [[img:./gbp-drafts.png|The Drafts tab — an AI-generated post with image and publish controls.]]
+      <h2>Published</h2>
+      <p>Every post that's gone live on your profile, with its image, text, and publish date.</p>
+      [[img:./gbp-published.png|The Published tab.]]
+      <h2>Schedule</h2>
+      <p>Automate your posting so the profile stays active without you thinking about it. Three modes:</p>
+      <ul>
+        <li><strong>Off</strong> — you post manually.</li>
+        <li><strong>Draft only (recommended)</strong> — the app generates posts on your schedule and leaves them in Drafts for you to approve. Nothing goes live without your click.</li>
+        <li><strong>Full auto</strong> — the app generates <em>and</em> publishes on your schedule, using images from your pool. Posts go live with no review.</li>
+      </ul>
+      <p>Set the <strong>cadence</strong> (posts per week, preferred days, preferred hour). For Full auto, add photos to the <strong>image pool</strong> — the app rotates through them (and falls back to your existing profile photos if the pool is empty).</p>
+      [[img:./gbp-schedule.png|The Schedule tab — posting mode, cadence, and image pool.]]
+      <h2>Performance</h2>
+      <p>How your profile is actually performing, pulled from Google: <strong>calls</strong>, <strong>website clicks</strong>, <strong>direction requests</strong>, and <strong>impressions</strong>. Click any tile to see its trend chart over 7, 30, or 90 days. Click <strong>Refresh from Google</strong> to pull the latest (Google's data lags 2–3 days, and it syncs nightly on its own).</p>
+      [[img:./gbp-performance.png|The Performance tab — metric tiles and trend chart.]]
+      <h2>Booking Link</h2>
+      <p>Manage the booking link that appears on your Google profile, so customers can book straight from your listing. (This is the link that shows in the "Appointments" slot on your public Google panel.)</p>
+      [[img:./gbp-booking.png|The Booking Link tab.]]` },
+
+  { id: "website-analyze", category: "Growth", title: "Analyze your website",
+    html: `
+      <p class="crumb">Growth</p>
+      <p>Your AI receptionist is only as good as what it knows about your business. <strong>Website analysis</strong> reads your public website, pulls out the facts that matter — your services, the cities you cover, whether you offer free estimates, whether you're licensed and insured, and whether customers can book online — and feeds them straight into how the AI answers calls and texts. It also scores how well your site is set up to <em>get found</em> and <em>turn visitors into leads</em>.</p>
+      [[img:./website-analyze.png|The website scorecard — a Discovery and Conversion score with the facts the AI pulled from your site.]]
+      <h2>Where it lives</h2>
+      <p>You'll find it on the <strong>Google Business Profile</strong> page, in the <strong>Health</strong> tab, under the <strong>Online Presence</strong> section. It uses the <strong>Website</strong> address you set in <strong>Settings → Branding</strong>, so make sure that's filled in first.</p>
+      <h2>What it reads</h2>
+      <p>When you run an analysis, the app visits your homepage and the most useful inner pages (services, about, contact, service-area pages) and extracts the facts a customer — or your AI — would want to know. For example, on a painting site it might find 8 services, 4 cities served, free estimates, licensed &amp; insured, and a working booking link. Those facts are saved, so the AI can use them even between runs.</p>
+      <div class="callout"><p>This is what makes the AI sound like it actually works at your company. When a caller asks "do you do cabinet refinishing?" or "do you cover Papillion?", the AI answers from what's really on your site — not a guess.</p></div>
+      <h2>The two scores</h2>
+      <p>Your site gets a single 0–100 score built from two halves:</p>
+      <ul>
+        <li><strong>Discovery</strong> — how well your site is set up to get <em>found</em>. The biggest factor here is a clear service area: spelling out the cities and regions you cover helps you show up when nearby customers search.</li>
+        <li><strong>Conversion</strong> — how well your site turns a visitor into a lead once they're there. The biggest factor is a <strong>booking path</strong> — a clear way to book or request an estimate. A missing booking path dents the score (it doesn't zero it out), because a visitor with no easy next step is a lead lost.</li>
+      </ul>
+      <p>Each half lists exactly what's helping and what's missing, so you know what to fix.</p>
+      <h2>Running it again</h2>
+      <p>Re-run the analysis any time you update your website — add a service, expand your service area, add an online booking button — and the new facts flow into the AI and your score updates. Every run is kept, so you can see your site improve over time.</p>` },
+
+  { id: "website-cross-ref", category: "Growth", title: "Site vs. Google — where they disagree",
+    html: `
+      <p class="crumb">Growth</p>
+      <p>Customers find you in two main places — your website and your Google listing — and when those two tell different stories, you lose trust and leads. The <strong>Site &amp; Google</strong> cross-reference compares what your website says against what your Google Business Profile says and flags every place they disagree, so you can bring them in line.</p>
+      [[img:./website-cross-ref.png|The Site & Google cross-reference — a severity-tagged list of where your website and Google listing disagree.]]
+      <h2>Where it lives</h2>
+      <p>It sits in the middle of the <strong>Online Presence</strong> section on the <strong>Google Business Profile → Health</strong> tab — between your Google profile card and your website scorecard. It uses your most recent website analysis and your most recent Google profile audit, so for the freshest comparison, run both (Run audit on the Health tab, and analyze your website) before reading it.</p>
+      <h2>What it catches</h2>
+      <ul>
+        <li><strong>Services on your site but not on Google</strong> — e.g. your website lists residential, commercial, drywall, and epoxy work, but those services aren't on your Google profile. Customers searching Google for those jobs won't find you. Each gap is tagged by severity so you know what to fix first.</li>
+        <li><strong>Service-area differences</strong> — the cities and regions you list on your site vs. what Google shows. When your site names specific cities, the comparison is precise; otherwise it falls back to a broader match.</li>
+      </ul>
+      <div class="callout"><p>This is one of the fastest wins in the whole app: when your site lists a service that isn't on Google, adding it to your Google profile opens you up to a whole stream of searches you were invisible for. The <strong>See suggested services</strong> fix on the Health tab helps you add them.</p></div>
+      <h2>Why it matters</h2>
+      <p>Google rewards consistency. A listing that matches your website — same services, same service area — reads as legitimate and ranks better. Closing these gaps makes you both more findable and more trustworthy to the customer comparing the two.</p>` },
+
+  { id: "website-benchmark", category: "Growth", title: "How you stack up nearby",
+    html: `
+      <p class="crumb">Growth</p>
+      <p><strong>How you stack up nearby</strong> shows you exactly where you stand against the other businesses in your trade and area — pulled live from Google — so you can see, in plain numbers, what's keeping you out of the top results. It's the honest competitive picture most owners never get to see.</p>
+      [[img:./website-benchmark.png|The competitive benchmark — your reviews, freshness, and photos against the local field, with the biggest gap flagged.]]
+      <h2>Where it lives</h2>
+      <p>At the bottom of the <strong>Online Presence</strong> section on the <strong>Google Business Profile → Health</strong> tab. Click <strong>Run</strong> to pull your local field; the app finds up to 10 nearby competitors in your trade and lines you up against them.</p>
+      <h2>What it compares</h2>
+      <p>It compares the three things Google actually exposes for every business — so the numbers are real, not estimated:</p>
+      <ul>
+        <li><strong>Reviews</strong> — your review count and star rating against the local field's median and average. This is the heaviest factor, because review volume is one of the strongest local-ranking signals there is.</li>
+        <li><strong>Freshness</strong> — how recently you've gotten a review, vs. how recently the field has. A profile that keeps earning reviews looks alive; one that went quiet looks stale.</li>
+        <li><strong>Photos</strong> — whether your photo presence is healthy compared to competitors.</li>
+      </ul>
+      <p>It does <em>not</em> compare services or booking links across competitors — Google doesn't reliably expose those for other businesses, and the app won't show you a number it can't stand behind.</p>
+      <h2>Reading the result</h2>
+      <p>Each axis shows where you land against the field, and the biggest gap is flagged with a severity and a fix. For example: <em>"REVIEWS — 10 vs. field median 113 — you're about 103 behind"</em>, flagged HIGH, wired straight to <strong>Set up review requests</strong> so you can start closing it the same day. A healthy axis is marked as matching the field.</p>
+      <div class="callout"><p>The single highest-leverage move this surfaces for most contractors is review volume. If you're well behind the field on reviews, turn on the automated <strong>Review Requests</strong> drip (see the Reviews article) — it asks every completed-job customer for a review automatically.</p></div>
+      <h2>Customizing the search</h2>
+      <p>By default the benchmark searches your trade plus your city (e.g. "painter near Omaha"). If your listing's category or your city doesn't capture how customers actually search for you, a custom search term lets you point it at the exact field you compete in.</p>
+      <h2>A note on the data</h2>
+      <p>The competitor numbers come live from Google's public business data and refresh each time you run it. Your own review-freshness figure may occasionally show a dash if that detail isn't in your latest profile snapshot — re-running your Google audit on the Health tab fills it in.</p>` },
+];
+
+const sidebar = document.getElementById("sidebar");
+const content = document.getElementById("content");
+const search  = document.getElementById("search");
+const menuToggle = document.getElementById("menuToggle");
+const overlay = document.getElementById("overlay");
+let activeId = null;
+
+function renderImages(html) {
+  return html.replace(/\[\[img:([^|\]]+)(?:\|([^\]]*))?\]\]/g, (m, path, caption) => {
+    const safePath = path.trim().replace(/"/g, "");
+    const cap = (caption || "").trim();
+    return `<figure class="help-img">
+      <img src="${safePath}" alt="${cap.replace(/"/g,'&quot;')}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
+      <div class="img-missing" style="display:none">Screenshot coming soon${cap ? ' — ' + cap.replace(/</g,'&lt;') : ''}</div>
+      ${cap ? `<figcaption>${cap.replace(/</g,'&lt;')}</figcaption>` : ""}
+    </figure>`;
+  });
+}
+function categories() {
+  const order = []; const map = {};
+  for (const a of ARTICLES) { if (!map[a.category]) { map[a.category] = []; order.push(a.category); } map[a.category].push(a); }
+  return order.map(c => ({ name: c, articles: map[c] }));
+}
+function renderSidebar(filter) {
+  const q = (filter || "").trim().toLowerCase();
+  sidebar.innerHTML = "";
+  for (const cat of categories()) {
+    const matching = cat.articles.filter(a => !q || a.title.toLowerCase().includes(q) || a.html.toLowerCase().includes(q));
+    if (matching.length === 0) continue;
+    const catEl = document.createElement("div"); catEl.className = "cat";
+    const t = document.createElement("div"); t.className = "cat-title"; t.textContent = cat.name; catEl.appendChild(t);
+    for (const a of matching) {
+      const btn = document.createElement("button");
+      btn.className = "article-link" + (a.id === activeId ? " active" : "");
+      btn.innerHTML = a.title + (a.stub ? ' <span class="stub-tag">soon</span>' : "");
+      btn.onclick = () => { openArticle(a.id); closeMobileNav(); };
+      catEl.appendChild(btn);
+    }
+    sidebar.appendChild(catEl);
+  }
+  if (!sidebar.hasChildNodes()) sidebar.innerHTML = '<div class="cat-title">No articles match your search</div>';
+}
+function openArticle(id) {
+  const a = ARTICLES.find(x => x.id === id);
+  if (!a) return;
+  activeId = id; history.replaceState(null, "", "#" + id);
+  let body = renderImages(a.html);
+  if (a.stub) body += '<div class="stub-banner">📝 <strong>This article is being written.</strong><br>A full walkthrough of this page is coming soon.</div>';
+  content.innerHTML = '<h1>' + a.title + '</h1>' + body;
+  window.scrollTo(0, 0); renderSidebar(search.value);
+}
+function runSearch() {
+  const q = search.value.trim().toLowerCase();
+  renderSidebar(q);
+  if (!q) return;
+  const hits = ARTICLES.filter(a => a.title.toLowerCase().includes(q) || a.html.toLowerCase().includes(q));
+  if (hits.length === 0) { content.innerHTML = '<div class="no-results">No articles match “' + escapeHtml(search.value) + '”.</div>'; return; }
+  let html = '<div class="search-results-note">' + hits.length + ' result' + (hits.length !== 1 ? "s" : "") + ' for “' + escapeHtml(search.value) + '”</div>';
+  for (const a of hits) {
+    html += '<div style="padding:14px 0;border-bottom:1px solid var(--line)">' +
+      '<a href="#' + a.id + '" data-id="' + a.id + '" class="result-link" style="font-size:16px;font-weight:700">' + a.title + '</a>' +
+      '<div style="color:var(--muted);font-size:13px;margin-top:2px">' + a.category + (a.stub ? ' · coming soon' : '') + '</div></div>';
+  }
+  content.innerHTML = html;
+  content.querySelectorAll(".result-link").forEach(el => { el.onclick = (e) => { e.preventDefault(); openArticle(el.getAttribute("data-id")); }; });
+}
+function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c])); }
+function openMobileNav() { sidebar.classList.add("open"); overlay.classList.add("show"); }
+function closeMobileNav() { sidebar.classList.remove("open"); overlay.classList.remove("show"); }
+menuToggle.onclick = openMobileNav;
+overlay.onclick = closeMobileNav;
+search.addEventListener("input", runSearch);
+(function init() {
+  renderSidebar("");
+  const hash = (location.hash || "").replace("#", "");
+  if (hash && ARTICLES.find(a => a.id === hash)) openArticle(hash);
+  else openArticle(ARTICLES[0].id);
+})();
+</script>
+</body>
+</html>

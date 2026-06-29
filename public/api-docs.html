@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Front Desk Helper — Booking API Integration Guide</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    color: #1c1917;
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 32px 24px 80px;
+    background: #fff;
+  }
+  .toolbar {
+    position: sticky; top: 0;
+    background: rgba(255,255,255,0.95);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid #e7e5e4;
+    padding: 12px 0;
+    margin: -32px -24px 24px;
+    padding-left: 24px; padding-right: 24px;
+    display: flex; align-items: center; justify-content: space-between;
+    z-index: 10;
+  }
+  .toolbar .brand { font-weight: 700; font-size: 14px; color: #0c0a09; }
+  .toolbar .brand span { color: #ea580c; }
+  .dl-btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: #ea580c; color: #fff; text-decoration: none;
+    font-size: 13px; font-weight: 700;
+    padding: 9px 16px; border-radius: 8px;
+    transition: background 0.15s;
+  }
+  .dl-btn:hover { background: #c2410c; }
+  h1 { font-size: 30px; color: #0c0a09; border-bottom: 3px solid #ea580c; padding-bottom: 10px; margin-top: 8px; margin-bottom: 4px; letter-spacing: -0.5px; }
+  h1 + p { color: #78716c; font-size: 15px; margin-top: 4px; }
+  h2 { font-size: 22px; color: #0c0a09; margin-top: 40px; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #e7e5e4; letter-spacing: -0.3px; }
+  h3 { font-size: 17px; color: #292524; margin-top: 26px; margin-bottom: 8px; }
+  a { color: #c2410c; }
+  code { font-family: "SFMono-Regular", Menlo, Monaco, Consolas, monospace; font-size: 13.5px; background: #f5f5f4; color: #b91c1c; padding: 2px 6px; border-radius: 4px; }
+  pre { background: #1c1917; color: #fafaf9; padding: 16px 18px; border-radius: 10px; overflow-x: auto; font-size: 13px; line-height: 1.55; }
+  pre code { background: none; color: #fafaf9; padding: 0; font-size: 13px; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14px; }
+  th { background: #292524; color: #fff; text-align: left; padding: 9px 12px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.4px; }
+  td { border-bottom: 1px solid #e7e5e4; padding: 9px 12px; vertical-align: top; }
+  tr:nth-child(even) td { background: #fafaf9; }
+  blockquote { border-left: 4px solid #ea580c; background: #fff7ed; margin: 16px 0; padding: 12px 18px; color: #7c2d12; border-radius: 0 8px 8px 0; }
+  blockquote p { margin: 4px 0; }
+  hr { border: none; border-top: 1px solid #e7e5e4; margin: 32px 0; }
+  ul, ol { margin: 10px 0; padding-left: 26px; }
+  li { margin: 5px 0; }
+  strong { color: #0c0a09; }
+  @media (max-width: 600px) {
+    body { font-size: 15px; padding: 24px 16px 60px; }
+    .toolbar { margin: -24px -16px 20px; padding-left: 16px; padding-right: 16px; }
+    h1 { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <div class="brand">AI Front Desk Helper<span> · API Docs</span></div>
+    <a class="dl-btn" href="/api-docs/download" download>
+      &#8595; Download PDF
+    </a>
+  </div>
+  <h1 id="ai-front-desk-helper-booking-api-integration-guide">AI Front Desk Helper — Booking API Integration Guide</h1>
+<p><strong>Version 1.0</strong> · For developers and CRM/platform integrators</p>
+<hr />
+<h2 id="overview">Overview</h2>
+<p>This guide describes how to integrate with the AI Front Desk Helper Booking API. It lets an external system — a CRM, a partner platform, or an AI agent — <strong>check a business's open appointment slots</strong> and <strong>create real bookings</strong> on that business's calendar.</p>
+<p>A booking created through this API is a <em>real</em> booking. It is identical to one created by the business's own AI receptionist: it reserves the time slot, creates the customer record, sends the customer a confirmation by text and email, and adds the appointment to the business's calendar. There is no separate "API booking" that behaves differently — the appointment lands exactly where the business already manages their work.</p>
+<p>There are two ways to integrate, and they expose the same capabilities:</p>
+<ul>
+<li><strong>REST API</strong> — standard HTTPS requests. Best for most CRM and backend integrations.</li>
+<li><strong>MCP Server</strong> — a Model Context Protocol endpoint for AI agent platforms that speak MCP. Best when an AI assistant needs to discover and call booking as a tool.</li>
+</ul>
+<p>Both are backed by the same booking system. Pick whichever fits your platform; you do not need both.</p>
+<hr />
+<h2 id="before-you-start-what-you-need">Before you start: what you need</h2>
+<p>To integrate, you need two values, both available from the business's AI Front Desk Helper dashboard:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>What it is</th>
+<th>Where it's used</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Business ID</strong></td>
+<td>A unique identifier for the business (a UUID).</td>
+<td>In the URL path of every request.</td>
+</tr>
+<tr>
+<td><strong>API Key</strong></td>
+<td>A secret key that authorizes booking creation for this business.</td>
+<td>In the request headers when creating a booking.</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>Keep the API Key secret.</strong> It authorizes the creation of real appointments and the sending of real messages to customers. Treat it like a password — store it server-side, never expose it in client-side code, browser apps, or public repositories.</p>
+</blockquote>
+<p>Throughout this guide, replace <code>{BUSINESS_ID}</code> with the business's ID and <code>{API_KEY}</code> with their key.</p>
+<p>The base URL for all requests is:</p>
+<pre><code>https://api.aifrontdeskhelper.com
+</code></pre>
+<hr />
+<h2 id="authentication">Authentication</h2>
+<p>Authentication uses the business's <strong>API Key</strong>, supplied in the request headers. Two header formats are accepted — use whichever your platform prefers:</p>
+<pre><code>Authorization: Bearer {API_KEY}
+</code></pre>
+<p>or</p>
+<pre><code>x-api-key: {API_KEY}
+</code></pre>
+<p><strong>Not every endpoint requires the key:</strong></p>
+<ul>
+<li><strong>Checking availability is public.</strong> It returns only open time slots — nothing sensitive — so no key is required to read availability.</li>
+<li><strong>Creating a booking requires the key.</strong> It writes data and sends real messages to a customer, so it must be authorized.</li>
+</ul>
+<hr />
+<h1 id="rest-api">REST API</h1>
+<h2 id="1-check-availability">1. Check availability</h2>
+<p>Returns the open appointment slots for a business.</p>
+<pre><code>GET /api/v1/availability/{BUSINESS_ID}
+</code></pre>
+<p><strong>Authentication:</strong> None required (public).</p>
+<h3 id="query-parameters">Query parameters</h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>date</code></td>
+<td>Optional</td>
+<td>A specific day to check, formatted <code>YYYY-MM-DD</code>.</td>
+</tr>
+<tr>
+<td><code>duration</code></td>
+<td>Optional</td>
+<td>Appointment length in minutes. Defaults to <code>60</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Behavior:</strong></p>
+<ul>
+<li><strong>If you provide <code>date</code></strong>, the response returns that single day's open slots.</li>
+<li><strong>If you omit <code>date</code></strong>, the API scans upcoming days and returns the next several days (up to 7) that have openings — useful for "what's open this week" without knowing a specific date.</li>
+</ul>
+<h3 id="example-a-specific-day">Example — a specific day</h3>
+<pre><code class="language-bash">curl &quot;https://api.aifrontdeskhelper.com/api/v1/availability/{BUSINESS_ID}?date=2026-07-15&amp;duration=60&quot;
+</code></pre>
+<p><strong>Response (<code>200 OK</code>):</strong></p>
+<pre><code class="language-json">{
+  &quot;ok&quot;: true,
+  &quot;tenant&quot;: { &quot;id&quot;: &quot;{BUSINESS_ID}&quot;, &quot;name&quot;: &quot;Example Painting Co&quot; },
+  &quot;date&quot;: &quot;2026-07-15&quot;,
+  &quot;duration_minutes&quot;: 60,
+  &quot;slots&quot;: [
+    { &quot;value&quot;: &quot;09:00:00&quot;, &quot;time&quot;: &quot;9:00 AM&quot; },
+    { &quot;value&quot;: &quot;13:00:00&quot;, &quot;time&quot;: &quot;1:00 PM&quot; },
+    { &quot;value&quot;: &quot;15:00:00&quot;, &quot;time&quot;: &quot;3:00 PM&quot; }
+  ]
+}
+</code></pre>
+<p>Each slot has two fields:</p>
+<ul>
+<li><strong><code>value</code></strong> — the machine value (e.g. <code>"09:00:00"</code>). <strong>This is what you pass to the booking endpoint.</strong></li>
+<li><strong><code>time</code></strong> — a human-friendly label (e.g. <code>"9:00 AM"</code>) for display to a person.</li>
+</ul>
+<h3 id="example-scan-upcoming-days">Example — scan upcoming days</h3>
+<pre><code class="language-bash">curl &quot;https://api.aifrontdeskhelper.com/api/v1/availability/{BUSINESS_ID}&quot;
+</code></pre>
+<p><strong>Response (<code>200 OK</code>):</strong></p>
+<pre><code class="language-json">{
+  &quot;ok&quot;: true,
+  &quot;tenant&quot;: { &quot;id&quot;: &quot;{BUSINESS_ID}&quot;, &quot;name&quot;: &quot;Example Painting Co&quot; },
+  &quot;duration_minutes&quot;: 60,
+  &quot;days&quot;: [
+    {
+      &quot;date&quot;: &quot;2026-07-15&quot;,
+      &quot;slots&quot;: [
+        { &quot;value&quot;: &quot;09:00:00&quot;, &quot;time&quot;: &quot;9:00 AM&quot; },
+        { &quot;value&quot;: &quot;13:00:00&quot;, &quot;time&quot;: &quot;1:00 PM&quot; }
+      ]
+    },
+    {
+      &quot;date&quot;: &quot;2026-07-16&quot;,
+      &quot;slots&quot;: [
+        { &quot;value&quot;: &quot;10:00:00&quot;, &quot;time&quot;: &quot;10:00 AM&quot; }
+      ]
+    }
+  ]
+}
+</code></pre>
+<hr />
+<h2 id="2-create-a-booking">2. Create a booking</h2>
+<p>Creates a real appointment.</p>
+<pre><code>POST /api/v1/booking/{BUSINESS_ID}
+</code></pre>
+<p><strong>Authentication:</strong> Required — <code>Authorization: Bearer {API_KEY}</code> or <code>x-api-key: {API_KEY}</code>.</p>
+<h3 id="request-body-json">Request body (JSON)</h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>date</code></td>
+<td><strong>Yes</strong></td>
+<td>Appointment date, <code>YYYY-MM-DD</code>.</td>
+</tr>
+<tr>
+<td><code>time</code></td>
+<td><strong>Yes</strong></td>
+<td>A slot <code>value</code> returned by the availability endpoint (e.g. <code>"09:00:00"</code>).</td>
+</tr>
+<tr>
+<td><code>duration_minutes</code></td>
+<td>Optional</td>
+<td>Appointment length. Defaults to <code>60</code>.</td>
+</tr>
+<tr>
+<td><code>contact.name</code></td>
+<td><strong>Yes</strong></td>
+<td>Customer's full name.</td>
+</tr>
+<tr>
+<td><code>contact.phone</code></td>
+<td><strong>Yes</strong></td>
+<td>Customer's phone number.</td>
+</tr>
+<tr>
+<td><code>contact.email</code></td>
+<td><strong>Yes</strong></td>
+<td>Customer's email address (must be valid).</td>
+</tr>
+<tr>
+<td><code>contact.address</code></td>
+<td><strong>Yes</strong></td>
+<td>Service address (street, city, ZIP).</td>
+</tr>
+<tr>
+<td><code>project_type</code></td>
+<td>Optional</td>
+<td>Type of project or service.</td>
+</tr>
+<tr>
+<td><code>project_details</code></td>
+<td>Optional</td>
+<td>Additional detail about the job.</td>
+</tr>
+<tr>
+<td><code>estimated_value</code></td>
+<td>Optional</td>
+<td>Estimated job value, in dollars. If supplied, the booking records this value.</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>All four contact fields are required</strong> — name, phone, email, and address. This is the same information the business collects on every booking through every channel, so the appointment is complete and actionable.</p>
+</blockquote>
+<h3 id="example-request">Example request</h3>
+<pre><code class="language-bash">curl -X POST &quot;https://api.aifrontdeskhelper.com/api/v1/booking/{BUSINESS_ID}&quot; \
+  -H &quot;Authorization: Bearer {API_KEY}&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{
+    &quot;date&quot;: &quot;2026-07-15&quot;,
+    &quot;time&quot;: &quot;09:00:00&quot;,
+    &quot;duration_minutes&quot;: 60,
+    &quot;contact&quot;: {
+      &quot;name&quot;: &quot;Jordan Smith&quot;,
+      &quot;phone&quot;: &quot;+14025551234&quot;,
+      &quot;email&quot;: &quot;jordan@example.com&quot;,
+      &quot;address&quot;: &quot;123 Main St, Omaha, NE 68102&quot;
+    },
+    &quot;project_type&quot;: &quot;Interior painting&quot;,
+    &quot;project_details&quot;: &quot;Two bedrooms and a hallway&quot;,
+    &quot;estimated_value&quot;: 2400
+  }'
+</code></pre>
+<h3 id="success-response-200-ok">Success response (<code>200 OK</code>)</h3>
+<pre><code class="language-json">{
+  &quot;ok&quot;: true,
+  &quot;booking_id&quot;: &quot;b1f2c3d4-...&quot;,
+  &quot;lead_id&quot;: &quot;a9b8c7d6-...&quot;,
+  &quot;date&quot;: &quot;2026-07-15&quot;,
+  &quot;time&quot;: &quot;09:00:00&quot;,
+  &quot;tenant&quot;: { &quot;id&quot;: &quot;{BUSINESS_ID}&quot;, &quot;name&quot;: &quot;Example Painting Co&quot; }
+}
+</code></pre>
+<p>On success, the customer is automatically sent a confirmation, and the appointment appears on the business's calendar and dashboard. No further calls are needed.</p>
+<hr />
+<h2 id="error-handling-rest">Error handling (REST)</h2>
+<p>Every error response has the shape <code>{ "ok": false, "error": "&lt;code&gt;", ... }</code>. The HTTP status tells you the category; the <code>error</code> code tells you the specific reason.</p>
+<table>
+<thead>
+<tr>
+<th>HTTP status</th>
+<th><code>error</code> code</th>
+<th>Meaning &amp; what to do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>401</code></td>
+<td><code>missing_api_key</code></td>
+<td>No key was provided on a booking request. Add the <code>Authorization</code> or <code>x-api-key</code> header.</td>
+</tr>
+<tr>
+<td><code>403</code></td>
+<td><code>invalid_api_key</code></td>
+<td>The key was provided but is wrong for this business. Check the key and Business ID match.</td>
+</tr>
+<tr>
+<td><code>404</code></td>
+<td><code>tenant_not_found</code></td>
+<td>The Business ID in the URL doesn't exist. Verify the ID.</td>
+</tr>
+<tr>
+<td><code>409</code></td>
+<td><code>slot_taken</code></td>
+<td>The slot was booked by someone else between your availability check and your booking call. Re-check availability and pick another slot.</td>
+</tr>
+<tr>
+<td><code>422</code></td>
+<td><code>validation_failed</code></td>
+<td>The request was understood but a field is missing or invalid. See the <code>details</code> array in the response.</td>
+</tr>
+<tr>
+<td><code>422</code></td>
+<td><code>day_closed</code></td>
+<td>The business is closed on that date. Choose another day.</td>
+</tr>
+<tr>
+<td><code>422</code></td>
+<td><code>outside_business_hours</code></td>
+<td>The time falls outside the business's working hours. Choose a time inside their hours.</td>
+</tr>
+<tr>
+<td><code>422</code></td>
+<td><code>invalid_datetime</code></td>
+<td>The date or time format wasn't understood. Check formatting.</td>
+</tr>
+<tr>
+<td><code>502</code></td>
+<td><code>availability_lookup_failed</code> / <code>booking_failed</code></td>
+<td>A temporary problem on our side. Retry after a short delay.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>A note on <code>slot_taken</code>:</strong> availability can change between the moment you read it and the moment you book, because other channels (the business's website, phone, and text line) book the same calendar in real time. Always be ready to handle a <code>409</code> by re-fetching availability and offering the customer another slot.</p>
+<h3 id="example-validation-error-422">Example validation error (<code>422</code>)</h3>
+<pre><code class="language-json">{
+  &quot;ok&quot;: false,
+  &quot;error&quot;: &quot;validation_failed&quot;,
+  &quot;details&quot;: [
+    &quot;contact.email must be a valid email&quot;,
+    &quot;contact.address is required&quot;
+  ]
+}
+</code></pre>
+<hr />
+<h1 id="mcp-server">MCP Server</h1>
+<p>For AI agent platforms that speak the <strong>Model Context Protocol (MCP)</strong>, the same booking capability is exposed as MCP tools. If you're building a standard CRM or backend integration, use the REST API above instead — this section is only for MCP-aware agents.</p>
+<h2 id="connection">Connection</h2>
+<p>Each business has its own MCP endpoint:</p>
+<pre><code>POST /api/mcp/{BUSINESS_ID}
+</code></pre>
+<p>The protocol is <strong>MCP over JSON-RPC 2.0</strong> on a single HTTP endpoint (Streamable HTTP, JSON responses). Supply the business's <strong>API Key</strong> at the transport layer using the <code>Authorization: Bearer {API_KEY}</code> or <code>x-api-key</code> header on the HTTP request — this keeps the key out of tool arguments and conversation context.</p>
+<p>A quick health/discovery probe is available via <code>GET</code> on the same path:</p>
+<pre><code class="language-bash">curl &quot;https://api.aifrontdeskhelper.com/api/mcp/{BUSINESS_ID}&quot;
+</code></pre>
+<p>This returns the server info, protocol version, and the list of available tools.</p>
+<h2 id="supported-methods">Supported methods</h2>
+<p>The server implements the core MCP surface an agent needs to connect and call tools: <code>initialize</code>, <code>notifications/initialized</code>, <code>tools/list</code>, <code>tools/call</code>, and <code>ping</code>.</p>
+<h2 id="tools">Tools</h2>
+<h3 id="check_availability"><code>check_availability</code></h3>
+<p>Checks open appointment slots. Public (no key needed).</p>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>date</code></td>
+<td>Optional</td>
+<td>A specific day, <code>YYYY-MM-DD</code>. Omit to scan upcoming days.</td>
+</tr>
+<tr>
+<td><code>duration_minutes</code></td>
+<td>Optional</td>
+<td>Appointment length. Defaults to <code>60</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Returns the same slot data as the REST availability endpoint — each slot has a <code>value</code> (pass to <code>create_booking</code>) and a human-friendly <code>time</code>.</p>
+<h3 id="create_booking"><code>create_booking</code></h3>
+<p>Creates a real appointment. Requires the API key on the connection.</p>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Required</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>date</code></td>
+<td><strong>Yes</strong></td>
+<td>Appointment date, <code>YYYY-MM-DD</code>.</td>
+</tr>
+<tr>
+<td><code>time</code></td>
+<td><strong>Yes</strong></td>
+<td>A slot <code>value</code> from <code>check_availability</code>.</td>
+</tr>
+<tr>
+<td><code>duration_minutes</code></td>
+<td>Optional</td>
+<td>Defaults to <code>60</code>.</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td><strong>Yes</strong></td>
+<td>Customer full name.</td>
+</tr>
+<tr>
+<td><code>phone</code></td>
+<td><strong>Yes</strong></td>
+<td>Customer phone number.</td>
+</tr>
+<tr>
+<td><code>email</code></td>
+<td><strong>Yes</strong></td>
+<td>Customer email address.</td>
+</tr>
+<tr>
+<td><code>address</code></td>
+<td><strong>Yes</strong></td>
+<td>Service address.</td>
+</tr>
+<tr>
+<td><code>project_type</code></td>
+<td>Optional</td>
+<td>Type of project/service.</td>
+</tr>
+<tr>
+<td><code>project_details</code></td>
+<td>Optional</td>
+<td>Extra detail about the job.</td>
+</tr>
+<tr>
+<td><code>estimated_value</code></td>
+<td>Optional</td>
+<td>Estimated job value in dollars.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="example-toolscall">Example: tools/call</h2>
+<pre><code class="language-json">{
+  &quot;jsonrpc&quot;: &quot;2.0&quot;,
+  &quot;id&quot;: 1,
+  &quot;method&quot;: &quot;tools/call&quot;,
+  &quot;params&quot;: {
+    &quot;name&quot;: &quot;create_booking&quot;,
+    &quot;arguments&quot;: {
+      &quot;date&quot;: &quot;2026-07-15&quot;,
+      &quot;time&quot;: &quot;09:00:00&quot;,
+      &quot;name&quot;: &quot;Jordan Smith&quot;,
+      &quot;phone&quot;: &quot;+14025551234&quot;,
+      &quot;email&quot;: &quot;jordan@example.com&quot;,
+      &quot;address&quot;: &quot;123 Main St, Omaha, NE 68102&quot;,
+      &quot;project_type&quot;: &quot;Interior painting&quot;
+    }
+  }
+}
+</code></pre>
+<p>Tool results are returned as MCP content blocks containing JSON text. A tool-level failure (e.g. a taken slot or a validation problem) is returned with <code>isError: true</code> and a JSON body describing the reason, using the same error codes as the REST API.</p>
+<hr />
+<h2 id="integration-checklist">Integration checklist</h2>
+<p>A reliable integration follows this flow:</p>
+<ol>
+<li><strong>Read availability</strong> with <code>GET /api/v1/availability/{BUSINESS_ID}</code> (or the <code>check_availability</code> tool). Show the customer the human-friendly <code>time</code> labels.</li>
+<li><strong>Capture the four required contact fields</strong> — name, phone, email, and address. A booking can't be created without all four.</li>
+<li><strong>Create the booking</strong> with the slot's <code>value</code> (not the display label) and the contact details, including the API key.</li>
+<li><strong>Handle <code>slot_taken</code> (409)</strong> gracefully — re-fetch availability and offer another time. This is normal because the calendar is shared across all of the business's booking channels.</li>
+<li><strong>On success</strong>, you're done — the confirmation to the customer and the calendar entry happen automatically.</li>
+</ol>
+<hr />
+<h2 id="roadmap-additional-capabilities-on-request">Roadmap — additional capabilities on request</h2>
+<p>The current API covers availability and booking. The following integration capabilities are planned and available on request — if your integration needs one of these, contact us to discuss timing:</p>
+<ul>
+<li><strong>Lead sync</strong> — programmatic read access to leads and their status.</li>
+<li><strong>Status webhooks</strong> — push notifications when a booking is created, rescheduled, completed, or cancelled, so your system stays in sync without polling.</li>
+<li><strong>Reschedule &amp; cancel endpoints</strong> — modify or cancel an existing booking via the API.</li>
+<li><strong>Customer lookup</strong> — retrieve a customer's history and prior appointments.</li>
+</ul>
+<p>If a specific integration would unlock a deal or a workflow, tell us what you need and we'll prioritize accordingly.</p>
+<hr />
+<h2 id="support">Support</h2>
+<p>For an API key, a Business ID, or integration help, contact the business's AI Front Desk Helper account owner, or reach AI Front Desk Helper support directly.</p>
+<p><em>AI Front Desk Helper — Booking API v1.0</em></p>
+</body>
+</html>

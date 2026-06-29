@@ -1,0 +1,6 @@
+BEGIN;
+
+ALTER TABLE tenants
+  ADD COLUMN IF NOT EXISTS rep_coach_enabled BOOLEAN DEFAULT false;
+
+COMMIT;

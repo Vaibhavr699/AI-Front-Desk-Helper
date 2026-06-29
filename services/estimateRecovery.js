@@ -244,6 +244,65 @@ const INQUIRY_SEQUENCE = [
 ];
 
 /**
+ * 🆕 Estimator booking-nudge sequence (Jun 2026).
+ *
+ * Fires when a homeowner completes the Quick Quote estimator, sees their
+ * ballpark, and requests a callback (renderContactForm) WITHOUT booking a
+ * real slot. Unlike the 21-day GHOST_SEQUENCE (built for a quoted lead who's
+ * gone cold) this is a SHORT, booking-focused nudge: get them onto the
+ * calendar for the in-person walkthrough, then stop.
+ *
+ * Tighter spacing than ghost — these are WARM leads who just engaged, so we
+ * strike fast and wrap inside a week:
+ *   ~1 hr  → SMS: warm immediate nudge to book the walkthrough
+ *   Day 1  → SMS: gentle "still want to move forward?"
+ *   Day 3  → CALL + voicemail: the single live attempt (catches non-texters)
+ *   Day 5  → SMS: soft close → DORMANT → seasonal campaigns
+ *
+ * Stops the instant they convert: a booking (or a reply that sets
+ * last_response_at / marks converted) halts the sequence via the same paths
+ * the other sequences use. Consent is collected at the estimator contact form
+ * (chat-widget renderContactForm) and gated at send time by canSendRecovery,
+ * exactly like every other recovery path.
+ */
+const ESTIMATOR_SEQUENCE = [
+  {
+    step: "estimator_1hr",
+    channel: "sms",
+    delayHours: 1,
+    message: (v) =>
+      `Hi ${v.first_name}! Thanks for getting a ballpark from ${v.company_name}. Want to lock in a free in-person walkthrough to get your exact price? Just reply and we'll find a time that works.`,
+    next: "estimator_day1",
+  },
+  {
+    step: "estimator_day1",
+    channel: "sms",
+    delayHours: 24,
+    message: (v) =>
+      `Hey ${v.first_name}, just following up — still want to move forward on your project? We'd love to get you scheduled for a free walkthrough. Reply anytime and we'll grab a spot.`,
+    next: "estimator_day3_call",
+  },
+  {
+    step: "estimator_day3_call",
+    channel: "call",
+    delayHours: 48,
+    script:
+      "Hi {{first_name}}, this is the AI assistant from {{company_name}}. You recently got a ballpark estimate from us online, and I'm just following up to see if you'd like to book a free in-person walkthrough to get your exact price. Is there anything I can help you with, or a day that works to have someone come out?",
+    voicemail:
+      "Hi {{first_name}}, it's {{company_name}} following up on the online estimate you got. We'd love to set up a free walkthrough to get you an exact price. The easiest thing is to just reply to our text — I'll pick it right up and get you on the calendar. Talk soon!",
+    next: "estimator_day5_close",
+  },
+  {
+    step: "estimator_day5_close",
+    channel: "sms",
+    delayHours: 48,
+    message: (v) =>
+      `Hi ${v.first_name}, we'll keep your estimate on file so it's ready whenever you are. If you'd like to schedule that free walkthrough down the road, just reach out anytime — no rush at all. Thanks for considering ${v.company_name}!`,
+    next: null,
+  },
+];
+
+/**
  * 🆕 Missed-call sequence — when AI didn't answer (busy/failed/no-answer).
  *
  * Immediate SMS is sent by the caller of startMissedCallRecovery (not by this
@@ -300,6 +359,7 @@ for (const seq of [
   SPOUSE_SEQUENCE,
   INQUIRY_SEQUENCE,
   MISSED_CALL_SEQUENCE,
+  ESTIMATOR_SEQUENCE,
 ]) {
   for (const s of seq) ALL_STEPS.set(s.step, s);
 }
@@ -698,6 +758,67 @@ async function startInquiryRecovery(tenantId, lead, options = {}) {
     ]
   );
   console.log("[Recovery] Inquiry started id=%s tenant=%s phone=%s", res.rows[0].id, tenantId, phone);
+  return res.rows[0];
+}
+
+/**
+ * 🆕 Start estimator booking-nudge recovery (Jun 2026).
+ *
+ * Called from routes/estimator.js POST /lead when a homeowner completes the
+ * Quick Quote estimator and requests a callback WITHOUT booking a real slot.
+ * Runs the short 4-touch ESTIMATOR_SEQUENCE (1hr/day1/day3-call/day5) aimed
+ * at getting them onto the calendar, then dormant → seasonal.
+ *
+ * Dedupe: if an active recovery already exists for this phone (any type),
+ * skip — a customer who got the estimator AND, say, called in, shouldn't get
+ * two overlapping sequences. Consent + every send-time gate (DNC, sentiment,
+ * quiet hours, channel toggles, master recovery_enabled) are enforced exactly
+ * as for the other sequences, since this routes through the same executeStep.
+ */
+async function startEstimatorRecovery(tenantId, lead, options = {}) {
+  const phone = normalizeRecoveryPhone(lead.phone || lead.contact_phone);
+  if (!phone) return null;
+  const last10 = getLast10Digits(phone);
+
+  const existing = await db.query(
+    `SELECT id FROM estimate_recoveries
+      WHERE tenant_id = $1
+        AND status = 'active'
+        AND (
+          contact_phone = $2
+          OR right(regexp_replace(COALESCE(contact_phone, ''), '[^0-9]', '', 'g'), 10) = $3
+        )`,
+    [tenantId, phone, last10]
+  );
+  if (existing.rows.length > 0) {
+    console.log("[Recovery] Estimator dedupe: recovery already active for %s", phone);
+    return existing.rows[0];
+  }
+
+  const now = new Date();
+  const firstStep = ESTIMATOR_SEQUENCE[0];
+  // Phase 10E: scale first-step delay by DISC bucket if enabled.
+  const delayHours = await applyDiscMultiplier(firstStep.delayHours, lead.id || null, tenantId);
+  const nextActionAt = addHours(now, delayHours);
+
+  const res = await db.query(
+    `INSERT INTO estimate_recoveries (
+      tenant_id, lead_id, call_id, contact_name, contact_phone, contact_email,
+      status, current_step, next_action_at, lead_source
+    ) VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8, 'estimator')
+    RETURNING *`,
+    [
+      tenantId,
+      lead.id || null,
+      options.call_id || null,
+      lead.name || lead.contact_name || null,
+      phone,
+      lead.email || lead.contact_email || null,
+      firstStep.step,
+      nextActionAt.toISOString(),
+    ]
+  );
+  console.log("[Recovery] Estimator recovery started id=%s tenant=%s phone=%s", res.rows[0].id, tenantId, phone);
   return res.rows[0];
 }
 
@@ -1843,6 +1964,7 @@ module.exports = {
   hasRecentNegativeSentiment,
   GHOST_SEQUENCE,
   INQUIRY_SEQUENCE,
+  ESTIMATOR_SEQUENCE,
   MISSED_CALL_SEQUENCE,
   OBJECTION_SEQUENCES,
   ALL_STEPS,

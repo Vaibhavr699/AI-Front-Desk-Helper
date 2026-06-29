@@ -535,13 +535,6 @@ router.post("/lead", async (req, res) => {
   }
 });
 
-    res.json({ success: true, lead_id: lead.id });
-  } catch (e) {
-    console.error("[Estimator] /lead error:", e.message);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
 // -------------------- POST /log-events --------------------
 //
 // Body: { tenant_id, lead_id, events: [{event_type, content, timestamp}] }

@@ -207,6 +207,11 @@ function tenantSnapshotFor(tenant) {
     photo_count: snap.photo_count ?? null,
     newest_photo_days: snap.newest_photo_days ?? null,
     days_since_last_post: snap.days_since_last_post ?? null,
+    // Phase 3.4: review recency (freshness axis) + recent review dates
+    // (gap-closure velocity projection). Both added to the GBP snapshot in
+    // services/gbpAudit.js. Null/empty until the tenant re-runs a GBP audit.
+    newest_review_days: snap.newest_review_days ?? null,
+    recent_review_dates: Array.isArray(snap.recent_review_dates) ? snap.recent_review_dates : [],
   };
 }
 

@@ -443,8 +443,8 @@ function buildAuditFromReads(location, photos, posts, reviewResp) {
     review_unanswered: reviewResp.unanswered,
     review_response_rate: Math.round(reviewResp.rate * 100),
     review_avg_rating: reviewResp.avgRating ?? null,
-    Review recency + recent dates: fuel the competitive freshness axis and
-    the gap-closure velocity projection (lib/competitorBenchmark.js).
+    //Review recency + recent dates: fuel the competitive freshness axis and
+    //the gap-closure velocity projection (lib/competitorBenchmark.js).
     newest_review_days: reviewResp.newestReviewDays ?? null,
     recent_review_dates: reviewResp.reviewDates || [],
     score_breakdown: { presence, post: postScore, photo: photoScore, review: reviewScore, freshness },

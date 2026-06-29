@@ -1334,9 +1334,14 @@
 
         if (submitBtn) submitBtn.innerText = "✓ Submitted";
         if (data.specialized) {
+          // Specialized projects have no number to reveal — they already
+          // collect contact via renderContactForm(true). Unchanged.
           renderSpecializedResult();
         } else {
-          renderQuoteResult();
+          // Soft gate: we HAVE the number, but collect contact first, then
+          // reveal it. renderQuoteGate captures + saves + enrolls, then calls
+          // renderQuoteResult to show the range.
+          renderQuoteGate();
         }
       } catch (err) {
         hideTyping();
@@ -1355,6 +1360,136 @@
         addMsg("Hmm, something went wrong calculating your range. Mind trying again? Or just give us a call.", false);
         estimatorActive = false;
       }
+    }
+
+    // ── Soft gate (Jun 2026) ─────────────────────────────────────────────
+    // Shown AFTER scope questions, BEFORE the ballpark number. Framed as
+    // "where should we send your estimate?" so it reads as the natural next
+    // step, not a paywall. On submit: saves the lead + enrolls in the booking
+    // nudge (via /api/estimator/lead), then reveals the number with
+    // renderQuoteResult. The customer has already done the scope work, so
+    // completion barely dips — but now every finished quote is a real lead.
+    function renderQuoteGate() {
+      addMsg("Your ballpark is ready! Where should we send it? (We'll text it to you and can set up a free walkthrough for your exact price.)", false);
+
+      setTimeout(() => {
+        addInteractiveBubble((bubble) => {
+          const fields = [
+            { key: "name",    label: "Name *",            type: "text",  placeholder: "First and last" },
+            { key: "phone",   label: "Phone *",           type: "tel",   placeholder: "(555) 555-5555" },
+            { key: "email",   label: "Email *",           type: "email", placeholder: "you@example.com" },
+            { key: "address", label: "Address (optional)", type: "text", placeholder: "Street, city, ZIP" },
+          ];
+          fields.forEach(f => {
+            const w = document.createElement("div");
+            w.style.marginBottom = "8px";
+            const lbl = document.createElement("div");
+            lbl.innerText = f.label;
+            Object.assign(lbl.style, { fontSize: "11px", fontWeight: "600", color: "#444", marginBottom: "3px" });
+            w.appendChild(lbl);
+            const inp = document.createElement("input");
+            inp.type = f.type;
+            inp.className = "ai-est-input";
+            inp.placeholder = f.placeholder;
+            inp.value = estimatorState.contact[f.key] || "";
+            inp.oninput = () => { estimatorState.contact[f.key] = inp.value; };
+            w.appendChild(inp);
+            bubble.appendChild(w);
+          });
+
+          // Consent — required, enrolls them in the booking-nudge follow-up.
+          const consentWrap = document.createElement("div");
+          Object.assign(consentWrap.style, { display: "flex", alignItems: "flex-start", gap: "8px", margin: "6px 0 8px 0" });
+          const consentCheck = document.createElement("input");
+          consentCheck.type = "checkbox";
+          Object.assign(consentCheck.style, { marginTop: "2px", accentColor: brandColor, width: "16px", height: "16px", flexShrink: "0" });
+          const gateDisclosure = `By submitting, you agree to receive text messages and calls from ${companyName} about your estimate and scheduling. Msg/data rates may apply. Reply STOP to opt out.`;
+          const consentLabel = document.createElement("label");
+          consentLabel.innerText = gateDisclosure;
+          Object.assign(consentLabel.style, { fontSize: "11px", color: "#888", lineHeight: "1.5" });
+          consentWrap.appendChild(consentCheck);
+          consentWrap.appendChild(consentLabel);
+          bubble.appendChild(consentWrap);
+
+          const errBox = document.createElement("div");
+          Object.assign(errBox.style, { display: "none", color: "#c00", fontSize: "11px", marginBottom: "6px" });
+          bubble.appendChild(errBox);
+
+          const submit = document.createElement("button");
+          submit.type = "button";
+          submit.innerText = "Show my estimate →";
+          Object.assign(submit.style, {
+            width: "100%", padding: "10px", background: brandColor, color: "#fff",
+            border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px",
+            fontWeight: "700", fontFamily: "inherit", marginTop: "4px",
+          });
+          submit.onclick = async () => {
+            const c = estimatorState.contact;
+            const errs = [];
+            if (!c.name || c.name.trim().length < 2) errs.push("Please enter your name.");
+            if (!c.phone || c.phone.replace(/\D/g, "").length < 10) errs.push("Please enter a valid phone.");
+            if (!c.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email)) errs.push("Please enter a valid email.");
+            if (!consentCheck.checked) errs.push("Please agree to receive texts and calls to continue.");
+            if (errs.length) {
+              errBox.innerText = errs.join(" ");
+              errBox.style.display = "block";
+              return;
+            }
+            errBox.style.display = "none";
+            bubble.querySelectorAll("input, button").forEach(el => el.disabled = true);
+            submit.innerText = "One sec...";
+
+            // Save the lead + enroll in the nudge. We do NOT block the number
+            // reveal on this — if the save fails, the customer still sees their
+            // estimate (we don't punish them for our backend hiccup); the lead
+            // just won't be captured. Fire it, then reveal regardless.
+            try {
+              await fetch(`${apiBase}/api/estimator/lead`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  tenant_id: tenantId,
+                  phone: c.phone,
+                  name: c.name,
+                  email: c.email,
+                  address: c.address || null,
+                  project_type: estimatorState.service_slug,
+                  consent: consentCheck.checked === true,
+                  consentText: gateDisclosure,
+                  estimator_payload: {
+                    service_slug: estimatorState.service_slug,
+                    inputs: estimatorState.inputs,
+                    rooms: estimatorState.rooms,
+                    session_id: sessionId,
+                    source_call_id: sourceCallId,
+                  },
+                  quote_result: estimatorState.quote_result,
+                }),
+              }).then(r => r.json()).then(resp => {
+                if (resp && resp.lead_id) {
+                  estimatorState._leadId = resp.lead_id;
+                  // flush buffered estimator events now that we have a lead id
+                  if (estimatorState.eventLog.length > 0) {
+                    fetch(`${apiBase}/api/estimator/log-events`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ tenant_id: tenantId, lead_id: resp.lead_id, events: estimatorState.eventLog }),
+                    }).catch(() => {});
+                  }
+                }
+              });
+              trackVisitor("estimator_lead_captured", sourceCallId ? { source_call_id: sourceCallId } : {});
+            } catch (err) {
+              console.warn("[AI-Widget] Soft-gate lead save failed (revealing estimate anyway):", err.message);
+            }
+
+            addMsg(`${c.name} • ${c.phone}`, true);
+            // Reveal the number.
+            setTimeout(() => renderQuoteResult(), 300);
+          };
+          bubble.appendChild(submit);
+        });
+      }, 500);
     }
 
    function renderQuoteResult() {
@@ -1463,9 +1598,12 @@ if (includes) {
               border: "1.5px solid #e0e0e0", borderRadius: "8px", cursor: "pointer",
               fontSize: "12px", fontWeight: "600", fontFamily: "inherit",
             });
-            callbackBtn.onclick = () => {
+           callbackBtn.onclick = () => {
               bubble.querySelectorAll("button").forEach(b => b.disabled = true);
-              renderContactForm(false);
+              // Contact + consent were already captured at the soft gate and
+              // the lead is enrolled in the follow-up nudge, so no need to
+              // re-collect. Just confirm someone will reach out.
+              addMsg(`Perfect — someone from ${companyName} will reach out shortly to set up your free walkthrough. Talk soon!`, false);
             };
             bubble.appendChild(callbackBtn);
           });

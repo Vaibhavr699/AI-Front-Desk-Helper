@@ -141,26 +141,50 @@ async function fetchReviewResponse(tenant) {
     });
     const reviews = res.data?.reviews || [];
     const total = reviews.length;
-    if (total === 0) return { total: 0, replied: 0, unanswered: 0, rate: 1, avgRating: null };
+    if (total === 0) {
+      return {
+        total: 0, replied: 0, unanswered: 0, rate: 1, avgRating: null,
+        newestReviewDays: null, reviewDates: [],
+      };
+    }
     let replied = 0;
     let ratingSum = 0;
     let ratingCount = 0;
     const STAR = { ONE: 1, TWO: 2, THREE: 3, FOUR: 4, FIVE: 5 };
+    // Collect each review's createTime so we can compute (a) how recent the
+    // newest review is — for the competitive freshness axis — and (b) how many
+    // landed in the last 30/90 days — for the gap-closure velocity projection.
+    const reviewDates = [];
     for (const r of reviews) {
       if (r.reviewReply) replied++;
       const n = STAR[r.starRating];
       if (n) { ratingSum += n; ratingCount++; }
+      const created = r.createTime || r.updateTime || null;
+      if (created) {
+        const t = new Date(created).getTime();
+        if (Number.isFinite(t)) reviewDates.push(t);
+      }
     }
+    reviewDates.sort((a, b) => b - a); // newest first
+    const newestReviewDays = reviewDates.length
+      ? Math.round((Date.now() - reviewDates[0]) / (1000 * 60 * 60 * 24))
+      : null;
     return {
       total,
       replied,
       unanswered: total - replied,
       rate: replied / total,
       avgRating: ratingCount ? +(ratingSum / ratingCount).toFixed(1) : null,
+      newestReviewDays,
+      // ISO strings (not raw ms) so they survive JSON storage in the snapshot.
+      reviewDates: reviewDates.map((ms) => new Date(ms).toISOString()),
     };
   } catch (e) {
     console.warn("[GBP Audit] reviews fetch failed tenant=%s: %s", tenant.id, e.message);
-    return { total: 0, replied: 0, unanswered: 0, rate: 1, avgRating: null };
+    return {
+      total: 0, replied: 0, unanswered: 0, rate: 1, avgRating: null,
+      newestReviewDays: null, reviewDates: [],
+    };
   }
 }
 
@@ -419,6 +443,10 @@ function buildAuditFromReads(location, photos, posts, reviewResp) {
     review_unanswered: reviewResp.unanswered,
     review_response_rate: Math.round(reviewResp.rate * 100),
     review_avg_rating: reviewResp.avgRating ?? null,
+    Review recency + recent dates: fuel the competitive freshness axis and
+    the gap-closure velocity projection (lib/competitorBenchmark.js).
+    newest_review_days: reviewResp.newestReviewDays ?? null,
+    recent_review_dates: reviewResp.reviewDates || [],
     score_breakdown: { presence, post: postScore, photo: photoScore, review: reviewScore, freshness },
   };
 

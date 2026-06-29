@@ -595,6 +595,65 @@ const ARTICLES = [
       <h2>Booking Link</h2>
       <p>Manage the booking link that appears on your Google profile, so customers can book straight from your listing. (This is the link that shows in the "Appointments" slot on your public Google panel.)</p>
       [[img:./gbp-booking.png|The Booking Link tab.]]` },
+
+  { id: "website-analyze", category: "Growth", title: "Analyze your website",
+    html: `
+      <p class="crumb">Growth</p>
+      <p>Your AI receptionist is only as good as what it knows about your business. <strong>Website analysis</strong> reads your public website, pulls out the facts that matter — your services, the cities you cover, whether you offer free estimates, whether you're licensed and insured, and whether customers can book online — and feeds them straight into how the AI answers calls and texts. It also scores how well your site is set up to <em>get found</em> and <em>turn visitors into leads</em>.</p>
+      [[img:./website-analyze.png|The website scorecard — a Discovery and Conversion score with the facts the AI pulled from your site.]]
+      <h2>Where it lives</h2>
+      <p>You'll find it on the <strong>Google Business Profile</strong> page, in the <strong>Health</strong> tab, under the <strong>Online Presence</strong> section. It uses the <strong>Website</strong> address you set in <strong>Settings → Branding</strong>, so make sure that's filled in first.</p>
+      <h2>What it reads</h2>
+      <p>When you run an analysis, the app visits your homepage and the most useful inner pages (services, about, contact, service-area pages) and extracts the facts a customer — or your AI — would want to know. For example, on a painting site it might find 8 services, 4 cities served, free estimates, licensed &amp; insured, and a working booking link. Those facts are saved, so the AI can use them even between runs.</p>
+      <div class="callout"><p>This is what makes the AI sound like it actually works at your company. When a caller asks "do you do cabinet refinishing?" or "do you cover Papillion?", the AI answers from what's really on your site — not a guess.</p></div>
+      <h2>The two scores</h2>
+      <p>Your site gets a single 0–100 score built from two halves:</p>
+      <ul>
+        <li><strong>Discovery</strong> — how well your site is set up to get <em>found</em>. The biggest factor here is a clear service area: spelling out the cities and regions you cover helps you show up when nearby customers search.</li>
+        <li><strong>Conversion</strong> — how well your site turns a visitor into a lead once they're there. The biggest factor is a <strong>booking path</strong> — a clear way to book or request an estimate. A missing booking path dents the score (it doesn't zero it out), because a visitor with no easy next step is a lead lost.</li>
+      </ul>
+      <p>Each half lists exactly what's helping and what's missing, so you know what to fix.</p>
+      <h2>Running it again</h2>
+      <p>Re-run the analysis any time you update your website — add a service, expand your service area, add an online booking button — and the new facts flow into the AI and your score updates. Every run is kept, so you can see your site improve over time.</p>` },
+
+  { id: "website-cross-ref", category: "Growth", title: "Site vs. Google — where they disagree",
+    html: `
+      <p class="crumb">Growth</p>
+      <p>Customers find you in two main places — your website and your Google listing — and when those two tell different stories, you lose trust and leads. The <strong>Site &amp; Google</strong> cross-reference compares what your website says against what your Google Business Profile says and flags every place they disagree, so you can bring them in line.</p>
+      [[img:./website-cross-ref.png|The Site & Google cross-reference — a severity-tagged list of where your website and Google listing disagree.]]
+      <h2>Where it lives</h2>
+      <p>It sits in the middle of the <strong>Online Presence</strong> section on the <strong>Google Business Profile → Health</strong> tab — between your Google profile card and your website scorecard. It uses your most recent website analysis and your most recent Google profile audit, so for the freshest comparison, run both (Run audit on the Health tab, and analyze your website) before reading it.</p>
+      <h2>What it catches</h2>
+      <ul>
+        <li><strong>Services on your site but not on Google</strong> — e.g. your website lists residential, commercial, drywall, and epoxy work, but those services aren't on your Google profile. Customers searching Google for those jobs won't find you. Each gap is tagged by severity so you know what to fix first.</li>
+        <li><strong>Service-area differences</strong> — the cities and regions you list on your site vs. what Google shows. When your site names specific cities, the comparison is precise; otherwise it falls back to a broader match.</li>
+      </ul>
+      <div class="callout"><p>This is one of the fastest wins in the whole app: when your site lists a service that isn't on Google, adding it to your Google profile opens you up to a whole stream of searches you were invisible for. The <strong>See suggested services</strong> fix on the Health tab helps you add them.</p></div>
+      <h2>Why it matters</h2>
+      <p>Google rewards consistency. A listing that matches your website — same services, same service area — reads as legitimate and ranks better. Closing these gaps makes you both more findable and more trustworthy to the customer comparing the two.</p>` },
+
+  { id: "website-benchmark", category: "Growth", title: "How you stack up nearby",
+    html: `
+      <p class="crumb">Growth</p>
+      <p><strong>How you stack up nearby</strong> shows you exactly where you stand against the other businesses in your trade and area — pulled live from Google — so you can see, in plain numbers, what's keeping you out of the top results. It's the honest competitive picture most owners never get to see.</p>
+      [[img:./website-benchmark.png|The competitive benchmark — your reviews, freshness, and photos against the local field, with the biggest gap flagged.]]
+      <h2>Where it lives</h2>
+      <p>At the bottom of the <strong>Online Presence</strong> section on the <strong>Google Business Profile → Health</strong> tab. Click <strong>Run</strong> to pull your local field; the app finds up to 10 nearby competitors in your trade and lines you up against them.</p>
+      <h2>What it compares</h2>
+      <p>It compares the three things Google actually exposes for every business — so the numbers are real, not estimated:</p>
+      <ul>
+        <li><strong>Reviews</strong> — your review count and star rating against the local field's median and average. This is the heaviest factor, because review volume is one of the strongest local-ranking signals there is.</li>
+        <li><strong>Freshness</strong> — how recently you've gotten a review, vs. how recently the field has. A profile that keeps earning reviews looks alive; one that went quiet looks stale.</li>
+        <li><strong>Photos</strong> — whether your photo presence is healthy compared to competitors.</li>
+      </ul>
+      <p>It does <em>not</em> compare services or booking links across competitors — Google doesn't reliably expose those for other businesses, and the app won't show you a number it can't stand behind.</p>
+      <h2>Reading the result</h2>
+      <p>Each axis shows where you land against the field, and the biggest gap is flagged with a severity and a fix. For example: <em>"REVIEWS — 10 vs. field median 113 — you're about 103 behind"</em>, flagged HIGH, wired straight to <strong>Set up review requests</strong> so you can start closing it the same day. A healthy axis is marked as matching the field.</p>
+      <div class="callout"><p>The single highest-leverage move this surfaces for most contractors is review volume. If you're well behind the field on reviews, turn on the automated <strong>Review Requests</strong> drip (see the Reviews article) — it asks every completed-job customer for a review automatically.</p></div>
+      <h2>Customizing the search</h2>
+      <p>By default the benchmark searches your trade plus your city (e.g. "painter near Omaha"). If your listing's category or your city doesn't capture how customers actually search for you, a custom search term lets you point it at the exact field you compete in.</p>
+      <h2>A note on the data</h2>
+      <p>The competitor numbers come live from Google's public business data and refresh each time you run it. Your own review-freshness figure may occasionally show a dash if that detail isn't in your latest profile snapshot — re-running your Google audit on the Health tab fills it in.</p>` },
 ];
 
 const sidebar = document.getElementById("sidebar");

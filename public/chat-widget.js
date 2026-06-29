@@ -1515,6 +1515,23 @@ if (includes) {
           bubble.appendChild(w);
         });
 
+        // Consent checkbox — required to enroll this number in SMS/call
+        // follow-ups. Matches the booking form's TCPA disclosure pattern.
+        // When checked, the lead is enrolled in the estimator booking-nudge
+        // sequence server-side; unchecked blocks submit.
+        const consentWrap = document.createElement("div");
+        Object.assign(consentWrap.style, { display: "flex", alignItems: "flex-start", gap: "8px", margin: "6px 0 8px 0" });
+        const consentCheck = document.createElement("input");
+        consentCheck.type = "checkbox";
+        Object.assign(consentCheck.style, { marginTop: "2px", accentColor: brandColor, width: "16px", height: "16px", flexShrink: "0" });
+        const estimatorDisclosure = `By submitting, you agree to receive text messages and calls from ${companyName} about your estimate and scheduling. Msg/data rates may apply. Reply STOP to opt out.`;
+        const consentLabel = document.createElement("label");
+        consentLabel.innerText = estimatorDisclosure;
+        Object.assign(consentLabel.style, { fontSize: "11px", color: "#888", lineHeight: "1.5" });
+        consentWrap.appendChild(consentCheck);
+        consentWrap.appendChild(consentLabel);
+        bubble.appendChild(consentWrap);
+
         const errBox = document.createElement("div");
         Object.assign(errBox.style, { display: "none", color: "#c00", fontSize: "11px", marginBottom: "6px" });
         bubble.appendChild(errBox);
@@ -1534,6 +1551,7 @@ if (includes) {
           if (!c.name || c.name.trim().length < 2) errs.push("Please enter your name.");
           if (!c.phone || c.phone.replace(/\D/g, "").length < 10) errs.push("Please enter a valid phone.");
           if (!c.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email)) errs.push("Please enter a valid email.");
+          if (!consentCheck.checked) errs.push("Please agree to receive texts and calls to schedule.");
           if (errs.length) {
             errBox.innerText = errs.join(" ");
             errBox.style.display = "block";
@@ -1547,13 +1565,17 @@ if (includes) {
             const res = await fetch(`${apiBase}/api/estimator/lead`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
+             body: JSON.stringify({
                 tenant_id: tenantId,
                 phone: c.phone,
                 name: c.name,
                 email: c.email,
                 address: c.address || null,
                 project_type: estimatorState.service_slug,
+                // Consent for the booking-nudge follow-up sequence. Required
+                // (validated above), so this is always true when we POST.
+                consent: consentCheck.checked === true,
+                consentText: estimatorDisclosure,
                 estimator_payload: {
                   service_slug: estimatorState.service_slug,
                   inputs: estimatorState.inputs,

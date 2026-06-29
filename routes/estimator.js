@@ -34,6 +34,7 @@ const db = require("../lib/db");
 const estimator = require("../lib/estimator");
 const leadsService = require("../services/leads");
 const scopeOptionsHelper = require("../lib/scopeOptionsHelper");
+const estimateRecovery = require("../services/estimateRecovery");
 
 const router = express.Router();
 
@@ -248,6 +249,7 @@ router.post("/lead", async (req, res) => {
       project_type,
       estimator_payload,
       quote_result,
+      consent,
     } = req.body || {};
 
     if (!tenant_id || !phone) {
@@ -491,6 +493,47 @@ router.post("/lead", async (req, res) => {
     } catch (notifErr) {
       console.error("[Estimator] Notification failed (non-fatal):", notifErr.message);
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // BOOKING-NUDGE FOLLOW-UP — enroll the lead in the short 4-touch
+    // estimator recovery sequence (1hr/day1/day3-call/day5) that nudges
+    // them to book a walkthrough. Jun 2026.
+    //
+    // Only when the customer gave SMS/call consent (the estimator contact
+    // form now requires the checkbox). Rides the tenant's existing
+    // recovery_enabled master gate + every send-time gate (DNC, quiet hours,
+    // sentiment, channel toggles) inside the recovery engine — so a tenant
+    // with recovery off, or a DNC'd number, never gets touched. Dedupe
+    // inside startEstimatorRecovery prevents stacking with an existing
+    // active recovery (e.g. if they also called in). Non-blocking: a
+    // failure here must never break lead capture.
+    //
+    // NOTE: fires on the CALLBACK-REQUEST path (this route). A customer who
+    // books a real slot goes through /api/booking/book instead and is NOT
+    // enrolled here — they've already booked, so there's nothing to nudge.
+    // ─────────────────────────────────────────────────────────────
+    if (consent === true) {
+      try {
+        await estimateRecovery.startEstimatorRecovery(tenant_id, {
+          id: lead.id,
+          name: name || null,
+          phone,
+          email: email || null,
+        });
+        console.log("[Estimator] Enrolled lead %s in estimator booking-nudge sequence", lead.id);
+      } catch (recErr) {
+        console.error("[Estimator] Recovery enrollment failed (non-fatal):", recErr.message);
+      }
+    } else {
+      console.log("[Estimator] No consent — lead %s NOT enrolled in follow-up", lead.id);
+    }
+
+    res.json({ success: true, lead_id: lead.id });
+  } catch (e) {
+    console.error("[Estimator] /lead error:", e.message);
+    res.status(500).json({ error: "Server error" });
+  }
+});
 
     res.json({ success: true, lead_id: lead.id });
   } catch (e) {
